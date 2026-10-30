@@ -34,6 +34,11 @@ const connection = ref<Record<string, any> | null>(null);
 const connectionBusy = ref(false);
 const showSync = ref(false);
 const addingServer = ref(false);
+const recoveryStatus = ref<{ label: string; checkedAt: string; location: string } | null>(null);
+const recoveryKey = ref('');
+const recoveryMadeAt = ref('');
+const recoveryBusy = ref(false);
+const recoveryNotice = ref('');
 
 const remoteAccess = computed(() => !!connection.value?.preferences?.remoteAccess);
 const syncOn = computed(() => !!connection.value?.preferences?.enabled);
@@ -64,6 +69,33 @@ function servicesLine(count: number) {
 
 function onConnectionStatus(_event: unknown, status: Record<string, any>) {
   connection.value = status;
+}
+
+function onRecoveryCreated(_event: unknown, result: any) {
+  recoveryKey.value = result.recoveryKey;
+  recoveryStatus.value = result.storage;
+  recoveryMadeAt.value = result.madeAt;
+}
+
+function checkedLine() {
+  if (!recoveryStatus.value?.checkedAt) return 'Not checked yet';
+  const elapsed = Date.now() - Date.parse(recoveryStatus.value.checkedAt);
+  if (elapsed < 60_000) return 'Last checked just now';
+  const days = Math.max(1, Math.floor(elapsed / 86_400_000));
+  return `Last checked ${ days } day${ days === 1 ? '' : 's' } ago`;
+}
+
+async function makeRecoveryKey() {
+  if (!window.confirm('Make a new recovery key?\n\nYour current key stops working everywhere. The new one is saved to iCloud Keychain and Sulla Cloud for you.')) return;
+  recoveryBusy.value = true; recoveryNotice.value = '';
+  try { onRecoveryCreated(null, await ipcRenderer.invoke('sulla-cloud:recovery-key-rotate')); recoveryNotice.value = 'New key saved'; }
+  catch (error) { recoveryNotice.value = error instanceof Error ? error.message : String(error) }
+  finally { recoveryBusy.value = false }
+}
+
+async function recoveryAction(action: 'save' | 'print' | 'copy') {
+  await ipcRenderer.invoke(`sulla-cloud:recovery-key-${ action }`, recoveryKey.value);
+  recoveryNotice.value = action === 'copy' ? 'Recovery key copied' : action === 'print' ? 'Opening print dialog' : 'Saved to Files';
 }
 
 async function setRemoteAccess(on: boolean) {
@@ -99,8 +131,13 @@ function setSubscribe(on: boolean) {
 onMounted(async() => {
   ipcRenderer.on('sulla-cloud-connection:status-changed', onConnectionStatus);
   connection.value = await ipcRenderer.invoke('sulla-cloud-connection:get-status').catch(() => null);
+  recoveryStatus.value = await ipcRenderer.invoke('sulla-cloud:recovery-key-status').catch(() => null);
+  ipcRenderer.on('sulla-cloud:recovery-key-created', onRecoveryCreated);
 });
-onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-changed', onConnectionStatus));
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('sulla-cloud-connection:status-changed', onConnectionStatus);
+  ipcRenderer.removeListener('sulla-cloud:recovery-key-created', onRecoveryCreated);
+});
 </script>
 
 <template>
@@ -583,20 +620,47 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
       </p>
     </PrefCard>
 
-    <PrefCard title="Security">
+    <PrefCard
+      title="Password and recovery"
+      subtitle="Follows you across organizations"
+    >
       <PrefRow
-        title="Master password"
-        subtitle="Unlocks your saved passwords."
+        title="Sulla password"
+        subtitle="One password signs you in and unlocks Passwords and Files."
       >
         <button
           type="button"
           class="btn sm"
           disabled
-          title="Coming soon"
         >
           Change
         </button>
-        <span class="soon">Changing it here: coming soon</span>
+        <span class="soon">Change password</span>
+      </PrefRow>
+      <PrefRow
+        title="Recovery key"
+        subtitle="Gets your vault back if you forget your password."
+        layout="col"
+      >
+        <div class="recovery-key-card">
+          <div><b>{{ recoveryStatus?.label || 'Checking recovery key…' }}</b><small>{{ checkedLine() }}</small></div>
+          <div><b>Encrypted copy in Sulla Cloud</b><small>Stored with your vault. Useless without the key itself.</small></div>
+          <div v-if="recoveryMadeAt"><b>Made on this Mac</b><small>{{ new Date(recoveryMadeAt).toLocaleString() }}</small></div>
+          <div
+            v-if="recoveryKey"
+            class="new-recovery-key"
+          >
+            <p>Your new recovery key. It's saved already. Keep a copy somewhere safe if you like.</p>
+            <code>{{ recoveryKey }}</code>
+            <div class="recovery-actions">
+              <button class="btn sm" type="button" @click="recoveryAction('save')">Save to Files</button>
+              <button class="btn sm" type="button" @click="recoveryAction('print')">Print</button>
+              <button class="btn sm" type="button" @click="recoveryAction('copy')">Copy</button>
+              <button class="btn sm pri" type="button" @click="recoveryKey = ''">Done</button>
+            </div>
+          </div>
+          <div class="recovery-foot"><span>{{ recoveryNotice || 'Old keys stop working when you make a new one' }}</span><button class="btn sm" type="button" :disabled="recoveryBusy || !cloudStatus.signedIn" @click="makeRecoveryKey">{{ recoveryBusy ? 'Making key…' : 'Make a new one' }}</button></div>
+        </div>
       </PrefRow>
       <PrefRow
         title="Passwords"
@@ -613,3 +677,9 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
     </PrefCard>
   </div>
 </template>
+
+<style scoped>
+.recovery-key-card{display:grid;gap:12px;width:100%}.recovery-key-card>div{display:grid;gap:3px}.recovery-key-card small{color:var(--muted)}
+.new-recovery-key{padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--body-bg)}
+.new-recovery-key code{display:block;padding:12px;margin:8px 0;font-size:15px;overflow-wrap:anywhere}.recovery-actions,.recovery-foot{display:flex!important;gap:8px;align-items:center;flex-wrap:wrap}.recovery-foot{justify-content:space-between}
+</style>

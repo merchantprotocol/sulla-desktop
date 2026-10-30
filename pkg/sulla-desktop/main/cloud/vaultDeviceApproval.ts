@@ -7,7 +7,10 @@ import { BrowserWindow, dialog } from 'electron';
 
 import { getConfiguredApprovalClient } from '@pkg/vault-broker';
 
-interface ApprovalRequest { id: string; vaultId: string; vaultEpoch: number; publicKey: string; expiresAt: string }
+interface ApprovalRequest {
+  id: string; vaultId: string; vaultEpoch: number; publicKey: string; expiresAt: string;
+  browser?: string; site?: string; near?: string; deviceName?: string;
+}
 
 class VaultDeviceApprovalService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -39,7 +42,7 @@ class VaultDeviceApprovalService {
       for (const request of body.requests ?? []) {
         if (this.seen.has(request.id)) continue;
         this.seen.add(request.id);
-        if (!await this.prompt()) continue; // No relay response of any kind without the tap.
+        if (!await this.prompt(request)) continue; // No relay response of any kind without the tap.
         const wrapped = await client.wrapUserKeyForApprovedDevice({ ...request, requestId: request.id, approved: true });
         await client.sullaCloudRequest({
           method: 'POST', path: `/auth/password/device-approval/requests/${ encodeURIComponent(request.id) }/respond`,
@@ -51,17 +54,17 @@ class VaultDeviceApprovalService {
     }
   }
 
-  private async prompt(): Promise<boolean> {
+  private async prompt(request: ApprovalRequest): Promise<boolean> {
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
     const options = {
       type: 'question' as const,
-      buttons: ['Don\'t approve', 'Approve'],
+      buttons: ['Deny', 'Approve'],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-      title: 'Vault access request',
-      message: 'Approve vault access for this browser/device?',
-      detail: 'Only approve if you just reset your Sulla password on that device.',
+      title: 'Sulla Desktop',
+      message: `Approve vault access for ${ request.deviceName || 'this browser' }?`,
+      detail: `Only approve if you're unlocking your vault right now.\n\nBrowser  ${ request.browser || 'Browser details unavailable' }\nSite  ${ request.site || 'vault.sulladesktop.com' }\nNear  ${ request.near || 'Location unavailable' }\nWhen  Just now`,
     };
     const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
     return result.response === 1;

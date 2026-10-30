@@ -403,6 +403,11 @@ export interface AccountPasswordRewrapResponse {
   cacheMode: 'helper-update-required';
 }
 
+export interface RecoveryKeyRotateResponse {
+  recoveryKey: string;
+  replacedExisting: boolean;
+}
+
 export interface VaultDeviceApprovalWrapRequest {
   requestId: string;
   vaultId: string;
