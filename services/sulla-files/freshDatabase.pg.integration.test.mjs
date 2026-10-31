@@ -11,11 +11,10 @@ import test from 'node:test';
 
 import pg from 'pg';
 
-import { migrate } from './db.js';
-import { LocalFilesManager } from './localManager.js';
-import { collectionIdFor, ensureSystemAreas } from './systemAreas.js';
+import { migrate } from './dist/db.js';
+import { LocalFilesManager } from './dist/localManager.js';
+import { collectionIdFor, ensureSystemAreas } from './dist/systemAreas.js';
 
-import type { Config } from './config.js';
 
 const databaseUrl = process.env.SULLA_FILES_FRESH_DATABASE_TEST_URL;
 const databaseName = databaseUrl ? new URL(databaseUrl).pathname.slice(1) : '';
@@ -29,7 +28,7 @@ integration('boots Files twice on an empty database with one stable home collect
   const config = {
     userId, orgId: undefined, dataRoot: join(root, 'data'), chunkRoot: join(root, 'chunks'),
     serverUrl: undefined, keyring: { unlocked: true, create: async() => ({ data: {}, dedup: {} }) },
-  } as unknown as Config;
+  };
   try {
     await migrate(db);
     await db.query('TRUNCATE collections CASCADE');

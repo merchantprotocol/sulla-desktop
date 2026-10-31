@@ -28,7 +28,7 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
       - run: npm run build --prefix services/sulla-files
       - name: Boot Files twice on an empty database
-        run: node --test services/sulla-files/dist/freshDatabase.pg.integration.test.js
+        run: node --test services/sulla-files/freshDatabase.pg.integration.test.mjs
         env:
           SULLA_FILES_FRESH_DATABASE_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
           SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
