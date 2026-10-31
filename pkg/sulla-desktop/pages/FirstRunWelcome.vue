@@ -17,7 +17,7 @@
         </div>
         <div class="mb-4">
           <label for="email" class="block text-sm font-medium mb-1 label-text">Email</label>
-          <input id="email" v-model="sullaEmail" type="email" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!emailError }" placeholder="you@company.com">
+          <input id="email" v-model="sullaEmail" type="text" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!emailError }" placeholder="you@company.com">
           <p v-if="emailError" class="text-sm mt-1 error-text">{{ emailError }}</p>
         </div>
       </rd-fieldset>
@@ -124,7 +124,8 @@ const syncCategories = ref([
   { key: 'liveAgents', label: 'Live agents', description: 'sync agent configuration', enabled: true },
   { key: 'usage', label: 'Usage', description: 'sync usage history', enabled: true },
 ]);
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// One @, a dotted domain, no empty labels (no trailing or doubled dots).
+const emailRegex = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 let testAutopilot = '';
 
 const cloudHeading = computed(() => {
@@ -148,8 +149,12 @@ const cloudSubmitLabel = computed(() => {
 });
 
 function validateEmail() {
-  const email = sullaEmail.value.trim();
-  emailError.value = !email ? 'Email is required.' : !emailRegex.test(email) ? 'Please enter a valid email address.' : '';
+  // Emails are case-insensitive; show and send the same normalized form.
+  const email = sullaEmail.value.trim().toLowerCase();
+  sullaEmail.value = email;
+  emailError.value = !email ? 'Email is required.'
+    : email.length > 254 ? 'That email address is too long.'
+      : !emailRegex.test(email) ? 'Please enter a valid email address.' : '';
   return !emailError.value;
 }
 
