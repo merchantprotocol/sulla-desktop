@@ -243,7 +243,8 @@ export function initIntegrationOAuthEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('integration-oauth:cancel' as any, (event: Electron.IpcMainInvokeEvent, integrationId: string): boolean => {
+  ipcMainProxy.handle('integration-oauth:cancel' as any, (event: Electron.IpcMainInvokeEvent, ...args: unknown[]): boolean => {
+    const integrationId = String(args[0] ?? '');
     assertFirstRunOrMainSender(event);
     const cancelled = getOAuthService().cancelFlow(integrationId);
     firstRunTrace('oauth', 'flow cancelled', { integrationId, active: cancelled });
@@ -251,10 +252,8 @@ export function initIntegrationOAuthEvents(): void {
   });
 
 
-  ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(
-    event: Electron.IpcMainInvokeEvent,
-    payload: { providerId?: string; apiKey?: string; workspaceId?: string },
-  ): Promise<{ success: boolean; error?: string; models?: string[] }> => {
+  ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string; models?: string[] }> => {
+    const payload = (args[0] ?? {}) as { providerId?: string; apiKey?: string; workspaceId?: string };
     assertFirstRunOrMainSender(event);
     const providerId = payload?.providerId as FirstRunApiProviderId;
     const provider = API_KEY_PROVIDERS[providerId];
