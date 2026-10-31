@@ -68,6 +68,8 @@ const LOCAL_METADATA_PROPERTIES = new Set([
   'provider_id',
   'model',
   'workspace_id',
+  'region',
+  'plan',
   'llm_access',
   'client_id',
   'oauth_client_id',

@@ -21,6 +21,7 @@
 
 import { app, BrowserWindow } from 'electron';
 
+import { alibabaBaseUrl, kimiBaseUrl } from '@pkg/agent/languagemodels/providerEndpoints';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
@@ -56,21 +57,6 @@ type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' 
 const openAiChatModel = (id: string): boolean => !/(audio|realtime|transcri(?:be|ption)|whisper|tts|speech|image|flux|diffusion|embed|rerank|moderation|guard|search)/i.test(id);
 const bearer = (apiKey: string): Record<string, string> => ({ Authorization: `Bearer ${ apiKey }` });
 const modelsUrl = (baseUrl: string): string => `${ baseUrl.replace(/\/$/, '') }/models`;
-
-function kimiBaseUrl(values: Record<string, string>): string {
-  return values.region === 'china' ? 'https://api.moonshot.cn/v1' : 'https://api.moonshot.ai/v1';
-}
-
-function alibabaBaseUrl(values: Record<string, string>): string {
-  const plan = values.plan || 'payg';
-  const region = values.region || 'intl';
-  if (plan === 'coding') return region === 'cn'
-    ? 'https://coding.dashscope.aliyuncs.com/v1'
-    : 'https://coding-intl.dashscope.aliyuncs.com/v1';
-  if (region === 'us') return 'https://dashscope-us.aliyuncs.com/compatible-mode/v1';
-  if (region === 'cn') return 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-  return 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
-}
 
 const API_KEY_PROVIDERS: Record<ApiKeyProviderId, ApiKeyProviderConfig> = {
   anthropic: {

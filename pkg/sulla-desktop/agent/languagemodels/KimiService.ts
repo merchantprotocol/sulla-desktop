@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { kimiBaseUrl } from './providerEndpoints';
 
 /**
  * Kimi (Moonshot AI) LLM provider.
@@ -23,7 +24,7 @@ export class KimiService extends OpenAICompatibleService {
     return new KimiService({
       id:      'kimi',
       model:   valMap.model || 'moonshot-v1-128k',
-      baseUrl: (valMap.region || 'international') === 'international' ? 'https://api.moonshot.ai/v1' : 'https://api.moonshot.cn/v1',
+      baseUrl: kimiBaseUrl(valMap),
       apiKey:  valMap.api_key || '',
     });
   }

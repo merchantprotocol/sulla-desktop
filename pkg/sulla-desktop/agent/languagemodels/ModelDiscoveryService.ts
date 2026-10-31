@@ -19,6 +19,7 @@ import {
 import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl } from './openAICompatibleProviders';
+import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
 
 import type { BrokerInjection } from '../../vault-broker';
 
@@ -397,7 +398,14 @@ export class ModelDiscoveryService {
     // handling below.
     try {
       const tableDefinition = OPENAI_COMPATIBLE_PROVIDERS.find(item => item.id === providerId);
-      const configuredBaseUrl = tableDefinition ? providerBaseUrl(tableDefinition, { ...(runtime?.values || {}), ...(options.region ? { region: options.region } : {}) }) : provider.baseUrl;
+      const savedValues = { ...(runtime?.values || {}), ...(options.region ? { region: options.region } : {}) };
+      const configuredBaseUrl = tableDefinition
+        ? providerBaseUrl(tableDefinition, savedValues)
+        : providerId === 'kimi'
+          ? kimiBaseUrl(savedValues)
+          : providerId === 'alibaba'
+            ? alibabaBaseUrl(savedValues)
+            : provider.baseUrl;
       const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
       if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
