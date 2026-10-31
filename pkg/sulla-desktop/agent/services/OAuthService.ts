@@ -133,6 +133,15 @@ export function getOAuthService(): OAuthService {
 // ─── Service ──────────────────────────────────────────────────────
 
 export class OAuthService {
+  private readonly activeFlows = new Map<string, () => void>();
+
+  cancelFlow(integrationId: string): boolean {
+    const cancel = this.activeFlows.get(integrationId);
+    if (!cancel) return false;
+    cancel();
+    return true;
+  }
+
   // ── Initiate OAuth flow ───────────────────────────────────────
 
   /**
@@ -166,6 +175,9 @@ export class OAuthService {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     }
     const cfg = provider.config;
+    // A retry owns this provider's one sign-in slot. Tear down the old window
+    // and callback listener before binding its fixed port again.
+    this.activeFlows.get(integrationId)?.();
     // Resolve effective client_id (built-in takes precedence for public clients).
     // Providers with registrationEndpoint can fill this after the callback
     // server starts, because DCR needs the actual redirect_uri for this flow.
@@ -199,6 +211,11 @@ export class OAuthService {
 
     let authWindow: BrowserWindow | null = null;
     let codeSource: Promise<{ code: string }> = codePromise;
+    const cancel = () => {
+      shutdown();
+      if (authWindow && !authWindow.isDestroyed()) authWindow.destroy();
+    };
+    this.activeFlows.set(integrationId, cancel);
 
     try {
       if (!effectiveClientId && cfg.registrationEndpoint) {
@@ -293,7 +310,7 @@ export class OAuthService {
         const written = writeCodexAuthFile(tokens);
         const linked = written && await linkCodexHomeIntoVm();
         firstRunTrace('codex', 'auth file prepared', { written, linked });
-        if (!written || !linked) {
+        if (!written || (persist && !linked)) {
           throw new Error('ChatGPT signed in, but its credentials could not be prepared in the Sulla VM');
         }
       }
@@ -335,6 +352,7 @@ export class OAuthService {
       firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: false, error: err instanceof Error ? err.message : String(err) });
       throw err;
     } finally {
+      if (this.activeFlows.get(integrationId) === cancel) this.activeFlows.delete(integrationId);
       // Always tear down the in-app window we opened — on success (after the
       // brief callback "you can close this" page) and on any error/cancel.
       if (authWindow && !authWindow.isDestroyed()) {

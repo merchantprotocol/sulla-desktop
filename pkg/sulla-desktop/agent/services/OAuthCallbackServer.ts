@@ -148,13 +148,10 @@ export async function startOAuthCallbackServer(
   // (EADDRINUSE on fixed-port providers when a previous flow is still
   // pending) reject here, surfacing as a failed flow instead of an unhandled
   // 'error' event crashing the process.
-  let listening = true;
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', (err) => {
       if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE' && opts.fixedPort) {
-        listening = false;
-        console.warn(`[OAuthCallbackServer] Port ${ listenPort } is busy; continuing with embedded-window interception`);
-        resolveListen();
+        rejectListen(new Error(`OAuth callback port ${ listenPort } is already in use`));
       } else {
         rejectListen(new Error(`OAuth callback server failed to listen on port ${ listenPort }: ${ err.message }`));
       }
@@ -168,7 +165,7 @@ export async function startOAuthCallbackServer(
   // A 'localhost' redirect may resolve to ::1 first, so also accept the
   // callback on IPv6 loopback. Best effort: a host without IPv6 still has
   // the 127.0.0.1 listener.
-  const v6Server = listening && opts.useLocalhostHostname ? http.createServer((req, res) => server.emit('request', req, res)) : null;
+  const v6Server = opts.useLocalhostHostname ? http.createServer((req, res) => server.emit('request', req, res)) : null;
   if (v6Server) {
     v6Server.on('error', (err) => console.warn(`[OAuthCallbackServer] IPv6 loopback listener unavailable: ${ err.message }`));
     v6Server.listen((server.address() as { port: number }).port, '::1');

@@ -13,10 +13,10 @@
         <button v-if="isBusy(provider.id)" type="button" class="frm-cancel" @click="cancel(provider.id)">Cancel</button>
       </div>
     </div>
-    <div v-if="showApiChoices && !hasConnection" class="frm-api">
+    <div v-if="showApiChoices" class="frm-api">
       <p class="frm-notice">Your key is checked now and stored only in your encrypted vault.</p>
       <div v-for="provider in providers" :key="provider.id" class="frm-api-row">
-        <button type="button" class="frm-api-choice" :disabled="apiBusy" @click="selectApiProvider(provider.id)">Use {{ apiProviderName(provider.id) }} API</button>
+        <button type="button" class="frm-api-choice" :disabled="apiBusy" @click="selectApiProvider(provider.id)">{{ apiConnectionState[provider.id] ? `${ apiProviderName(provider.id) } API key connected` : `Use ${ apiProviderName(provider.id) } API` }}</button>
         <div v-if="selectedApiProvider === provider.id" class="frm-api-fields">
           <div class="frm-api-input">
             <input v-model="apiKey" type="password" :placeholder="apiPlaceholder(provider.id)" :aria-label="`${ apiProviderName(provider.id) } API key`" :disabled="apiBusy" autocomplete="off" spellcheck="false" @keyup.enter="connectApiKey(provider.id)">
@@ -33,7 +33,7 @@
     </div>
     <div class="frm-actions">
       <button v-if="hasConnection" type="button" class="frm-btn-accent" :disabled="advancing" @click="advance">Continue</button>
-      <button v-if="!hasConnection" type="button" class="frm-btn-secondary" :disabled="advancing" @click="showApiChoices = !showApiChoices">{{ showApiChoices ? 'Hide API choices' : 'Connect through API instead' }}</button>
+      <button type="button" class="frm-btn-secondary" :disabled="advancing" @click="showApiChoices = !showApiChoices">{{ showApiChoices ? 'Hide API choices' : 'Connect through API instead' }}</button>
       <button v-if="!hasConnection" type="button" class="frm-btn-later" :disabled="advancing" @click="doLater">I'll do this later</button>
     </div>
   </div>
@@ -47,9 +47,10 @@ const emit = defineEmits<{ next: [from?: number]; back: [from?: number] }>();
 const props = defineProps<{ stepIndex?: number }>();
 type ConnectState = 'idle' | 'waiting' | 'connecting' | 'connected';
 // Why a sign-in failed, from claude-oauth:start / integration-oauth:start.
-type FailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error';
+type FailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'busy-port' | 'no-access' | 'provider-error';
 const providers = FIRST_RUN_AI_PROVIDERS;
 const connectionState = reactive<Record<FirstRunAiProviderId, ConnectState>>({ 'claude-code': 'idle', codex: 'idle', grok: 'idle' });
+const apiConnectionState = reactive<Record<FirstRunAiProviderId, boolean>>({ 'claude-code': false, codex: false, grok: false });
 const showApiChoices = ref(false); const notice = ref(''); const noticeKind = ref<'info' | 'error'>('info');
 const advancing = ref(false);
 const selectedApiProvider = ref<FirstRunAiProviderId | null>(null);
@@ -57,7 +58,7 @@ const apiKey = ref('');
 const workspaceId = ref('');
 const needsWorkspaceId = computed(() => selectedApiProvider.value === 'claude-code' && apiKey.value.trim().startsWith('sk-ant-usr-'));
 const apiBusy = ref(false);
-let disposed = false; let claudeWaitTimer: ReturnType<typeof setTimeout> | undefined;
+let disposed = false; let claudeWaitTimer: ReturnType<typeof setTimeout> | undefined; let statusPollTimer: ReturnType<typeof setInterval> | undefined;
 // Each Connect click is one attempt. Cancel or a new click retires the old
 // one, so its late result can't change the screen.
 const attempts: Record<FirstRunAiProviderId, number> = { 'claude-code': 0, codex: 0, grok: 0 };
@@ -67,7 +68,7 @@ const CONNECT_TIMEOUT_MS = 6 * 60_000;
 // start call itself never answers.
 const CONNECT_POLL_MS = 3_000;
 function isBusy(id: FirstRunAiProviderId) { return connectionState[id] === 'connecting' || connectionState[id] === 'waiting'; }
-const hasConnection = computed(() => Object.values(connectionState).some(state => state === 'connected'));
+const hasConnection = computed(() => Object.values(connectionState).some(state => state === 'connected') || Object.values(apiConnectionState).some(Boolean));
 function providerName(id: FirstRunAiProviderId) { return providers.find(provider => provider.id === id)?.name || 'The provider'; }
 function buttonLabel(id: FirstRunAiProviderId) { const state = connectionState[id]; return state === 'connected' ? 'Connected' : state === 'waiting' ? 'Waiting for Sulla…' : state === 'connecting' ? 'Connecting…' : 'Connect'; }
 async function markConnected(id: FirstRunAiProviderId) { connectionState[id] = 'connected'; noticeKind.value = 'info'; notice.value = `${ providerName(id) } is connected. Sulla picked the default model for you.`; }
@@ -82,6 +83,7 @@ function cancel(id: FirstRunAiProviderId) {
   traceFirstRun('ai', 'Cancel clicked', { provider: id, state: connectionState[id] });
   attempts[id]++;
   if (id === 'claude-code') { if (claudeWaitTimer) clearTimeout(claudeWaitTimer); void ipcRenderer.invoke('claude-oauth:cancel').catch(() => undefined); }
+  else void ipcRenderer.invoke('integration-oauth:cancel' as any, id).catch(() => undefined);
   connectionState[id] = 'idle'; noticeKind.value = 'info';
   notice.value = `${ providerName(id) } sign-in cancelled. Use Connect to try again, or pick another option.`;
 }
@@ -111,6 +113,7 @@ function failureMessage(id: FirstRunAiProviderId, reason: FailureReason | undefi
   if (reason === 'user-closed') return `${ name } sign-in was closed. Use Connect to try again, or pick another option.`;
   if (reason === 'timeout') return `${ name } sign-in took too long. Use Connect to try again, or pick another option.`;
   if (reason === 'offline') return `${ name } couldn't be reached. Check your connection, then use Connect to try again.`;
+  if (reason === 'busy-port' || reason === 'no-access') return error || `${ name } sign-in is unavailable. Try again.`;
   if (reason === 'vm-not-ready' || reason === 'cli-missing') return `Sulla's workspace isn't ready for ${ name } yet. Wait a moment, then use Connect to try again.`;
   return `${ name } didn't finish signing in${ error ? `: ${ error }` : '.' } Nothing was lost. Use Connect to retry or choose another option.`;
 }
@@ -156,18 +159,23 @@ async function runOAuth(id: FirstRunAiProviderId, automaticRetry = true) {
 function onClaudeStage(_event: unknown, text: string) {
   if (connectionState['claude-code'] === 'connecting' && typeof text === 'string' && text) { noticeKind.value = 'info'; notice.value = text; }
 }
+async function refreshConnectionStatus() {
+  const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any).catch(() => null);
+  const pending: string[] = Array.isArray(status?.pending) ? status.pending : [];
+  for (const provider of providers) {
+    if (pending.includes(provider.id) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
+    if (pending.includes(apiIntegrationId(provider.id))) apiConnectionState[provider.id] = true;
+  }
+  return pending;
+}
 onMounted(async() => {
   ipcRenderer.on('claude-oauth:stage' as any, onClaudeStage);
   // Sign-ins from before a reload are still held in main. Show them.
   try {
-    const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any);
-    const pending: string[] = Array.isArray(status?.pending) ? status.pending : [];
-    for (const provider of providers) {
-      const integrationId = apiIntegrationId(provider.id);
-      if ((pending.includes(provider.id) || pending.includes(integrationId)) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
-    }
+    const pending = await refreshConnectionStatus();
     if (pending.length) traceFirstRun('ai', 'showing sign-ins main already holds', { pending });
   } catch { /* nothing to restore */ }
+  statusPollTimer = setInterval(() => void refreshConnectionStatus(), CONNECT_POLL_MS);
 });
 onBeforeUnmount(() => ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage));
 function advance() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', 'Continue clicked', { connected: providers.filter(p => connectionState[p.id] === 'connected').map(p => p.id) }); emit('next', props.stepIndex); }
@@ -180,6 +188,7 @@ async function doLater() {
     const current = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => ({ choices: {} }));
     await ipcRenderer.invoke('first-run-state:set' as any, { choices: { ...(current?.choices || {}), aiApiProvider: apiIntegrationId(selectedApiProvider.value) } }).catch(() => undefined);
   }
+  for (const provider of providers) if (isBusy(provider.id)) cancel(provider.id);
   emit('next', props.stepIndex);
 }
 function apiIntegrationId(id: FirstRunAiProviderId): 'anthropic' | 'openai' | 'grok' { return id === 'claude-code' ? 'anthropic' : id === 'codex' ? 'openai' : 'grok'; }
@@ -211,7 +220,7 @@ async function connectApiKey(id: FirstRunAiProviderId) {
     const choices = { ...(current?.choices || {}) };
     delete choices.aiApiProvider;
     await ipcRenderer.invoke('first-run-state:set' as any, { choices }).catch(() => undefined);
-    await markConnected(id);
+    apiConnectionState[id] = true;
     notice.value = `${ apiProviderName(id) } API key connected.`;
   } catch {
     noticeKind.value = 'error'; notice.value = `Could not reach ${ apiProviderName(id) }. Check your connection.`;
@@ -222,8 +231,12 @@ async function connectApiKey(id: FirstRunAiProviderId) {
 onBeforeUnmount(() => {
   disposed = true;
   if (claudeWaitTimer) clearTimeout(claudeWaitTimer);
+  if (statusPollTimer) clearInterval(statusPollTimer);
   // Leaving mid sign-in: stop Claude's sign-in in the VM too.
   if (isBusy('claude-code')) void ipcRenderer.invoke('claude-oauth:cancel').catch(() => undefined);
+  for (const id of ['codex', 'grok'] as FirstRunAiProviderId[]) {
+    if (isBusy(id)) void ipcRenderer.invoke('integration-oauth:cancel' as any, id).catch(() => undefined);
+  }
 });
 </script>
 <style lang="scss" scoped>

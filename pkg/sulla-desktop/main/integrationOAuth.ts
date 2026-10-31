@@ -22,6 +22,7 @@
 import { app, BrowserWindow } from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
 import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
@@ -40,6 +41,8 @@ interface ApiKeyProviderConfig {
   url: string;
   headers(apiKey: string): Record<string, string>;
 }
+
+type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'busy-port' | 'no-access' | 'provider-error';
 
 const API_KEY_PROVIDERS: Record<FirstRunApiProviderId, ApiKeyProviderConfig> = {
   anthropic: {
@@ -81,6 +84,44 @@ function chooseDefaultApiModel(providerId: FirstRunApiProviderId, ids: string[])
   return eligible.sort((a, b) => rank(b).localeCompare(rank(a), undefined, { numeric: true, sensitivity: 'base' }))[0];
 }
 
+function cleanApiKey(value: unknown): { key?: string; error?: string } {
+  if (typeof value !== 'string') return {};
+  const key = value.replace(/[\s\u200B-\u200D\u2060\uFEFF“”‘’"']/gu, '');
+  if (!key) return {};
+  if (key.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(key)) {
+    return { error: "That doesn't look like a key. Copy it again." };
+  }
+  return { key };
+}
+
+function keyPrefixError(providerId: FirstRunApiProviderId, key: string): string | undefined {
+  if (key.startsWith('sk-ant-oat')) return 'That is a Claude sign-in token. Use Claude Connect instead.';
+  if (providerId === 'anthropic' && !key.startsWith('sk-ant-')) return key.startsWith('sk-') ? 'That looks like an OpenAI key. Use ChatGPT API instead.' : undefined;
+  if (providerId === 'openai' && key.startsWith('sk-ant-')) return 'That looks like an Anthropic key. Use Claude API instead.';
+  if (providerId === 'grok' && (key.startsWith('sk-ant-') || key.startsWith('sk-'))) return 'That looks like a different provider key. Use its API option instead.';
+  return undefined;
+}
+
+function probeRequest(providerId: FirstRunApiProviderId, model: string): { url: string; body: Record<string, unknown> } {
+  if (providerId === 'anthropic') {
+    return { url: 'https://api.anthropic.com/v1/messages', body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] } };
+  }
+  return {
+    url: providerId === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.x.ai/v1/chat/completions',
+    body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] },
+  };
+}
+
+function apiResponseError(providerName: string, status: number, text: string): string {
+  if (/(insufficient[_ -]?quota|credit balance|billing|payment|required|no credit)/i.test(text)) {
+    return 'Your key works, but the account has no credit.';
+  }
+  if (status === 401) return 'That key was not accepted. Check it and try again.';
+  if (status === 403) return 'That key cannot use this model. Check its permissions.';
+  if (status === 429) return 'The key works but is rate limited right now; try again shortly.';
+  return `${ providerName } could not verify that key. Try again.`;
+}
+
 function apiFailure(error: unknown, providerName: string): { error: string; errorClass: string } {
   const name = error instanceof Error ? error.name : '';
   if (name === 'TimeoutError' || name === 'AbortError' || error instanceof TypeError) {
@@ -115,7 +156,7 @@ export function initIntegrationOAuthEvents(): void {
       extraScopes?:  string[];
       firstRun?:     boolean;
     },
-  ): Promise<{ success: boolean; error?: string; reason?: 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error' }> => {
+  ): Promise<{ success: boolean; error?: string; reason?: OAuthFailureReason }> => {
     firstRunTrace('oauth', 'flow started', { integrationId: payload.integrationId, providerId: payload.providerId, firstRun: !!payload.firstRun });
     if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
       if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'Sign-in was closed.', reason: 'user-closed' };
@@ -150,6 +191,7 @@ export function initIntegrationOAuthEvents(): void {
           const { GROK_SUBSCRIPTION_BASE_URL, grokCliHeaders } = await import('@pkg/agent/languagemodels/GrokService');
           const response = await fetch(`${ GROK_SUBSCRIPTION_BASE_URL }/models`, {
             headers: { Authorization: `Bearer ${ values.access_token }`, ...grokCliHeaders() },
+            signal: AbortSignal.timeout(15_000),
           });
           const body = response.ok ? await response.json() as { data?: { id?: string }[] } : null;
           const model = body?.data?.find(item => typeof item.id === 'string' && item.id)?.id;
@@ -183,17 +225,28 @@ export function initIntegrationOAuthEvents(): void {
       console.error(`${ LOG_PREFIX } OAuth failed for ${ payload?.integrationId }:`, errMsg);
 
       const lower = errMsg.toLowerCase();
-      const reason = lower.includes('window closed') || lower.includes('cancel') ? 'user-closed'
+      const reason: OAuthFailureReason = lower.includes('already in use') || lower.includes('eaddrinuse') ? 'busy-port'
+        : lower.includes('window closed') || lower.includes('cancel') ? 'user-closed'
+          : lower.includes('could not access any models') ? 'no-access'
         : lower.includes('timed out') || lower.includes('timeout') ? 'timeout'
           : lower.includes('offline') || lower.includes('network') || lower.includes('fetch') ? 'offline'
             : lower.includes('vm') && lower.includes('ready') ? 'vm-not-ready' : 'provider-error';
-      const error = reason === 'user-closed' ? 'Sign-in was closed.'
+      const error = reason === 'busy-port' ? `Another app is using ${ payload.integrationId === 'codex' ? "ChatGPT's" : "Grok's" } sign-in port. Quit it and try again.`
+        : reason === 'no-access' ? `Your ${ payload.integrationId === 'grok' ? 'Grok' : 'AI' } plan cannot use the API.`
+          : reason === 'user-closed' ? 'Sign-in was closed.'
         : reason === 'timeout' ? 'Sign-in took too long. Try again.'
           : reason === 'offline' ? 'You appear to be offline. Check your connection and try again.'
             : errMsg.replace(/^\[OAuthService\]\s*/, '');
       firstRunTrace('oauth', 'flow completed', { integrationId: payload?.integrationId, success: false, reason, error });
       return { success: false, error, reason };
     }
+  });
+
+  ipcMainProxy.handle('integration-oauth:cancel' as any, (event: Electron.IpcMainInvokeEvent, integrationId: string): boolean => {
+    assertFirstRunOrMainSender(event);
+    const cancelled = getOAuthService().cancelFlow(integrationId);
+    firstRunTrace('oauth', 'flow cancelled', { integrationId, active: cancelled });
+    return cancelled;
   });
 
 
@@ -204,8 +257,12 @@ export function initIntegrationOAuthEvents(): void {
     assertFirstRunOrMainSender(event);
     const providerId = payload?.providerId as FirstRunApiProviderId;
     const provider = API_KEY_PROVIDERS[providerId];
-    const apiKey = typeof payload?.apiKey === 'string' ? payload.apiKey.trim() : '';
-    if (!provider || !apiKey) return { success: false, error: 'Enter an API key to connect.' };
+    const cleaned = cleanApiKey(payload?.apiKey);
+    if (!provider || (!cleaned.key && !cleaned.error)) return { success: false, error: 'Enter an API key to connect.' };
+    if (cleaned.error) return { success: false, error: cleaned.error };
+    const apiKey = cleaned.key!;
+    const prefixError = keyPrefixError(providerId, apiKey);
+    if (prefixError) return { success: false, error: prefixError };
     const workspaceId = typeof payload?.workspaceId === 'string' ? payload.workspaceId.trim() : '';
     const userLevelAnthropicKey = providerId === 'anthropic' && apiKey.startsWith('sk-ant-usr-');
     if (userLevelAnthropicKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(workspaceId)) {
@@ -223,8 +280,7 @@ export function initIntegrationOAuthEvents(): void {
       if (!response.ok) {
         let errorClass = `http-${ response.status }`;
         let error = `${ provider.name } could not verify that key. Try again.`;
-        if (response.status === 401 || response.status === 403) error = 'That key was not accepted. Check it and try again.';
-        if (response.status === 429) error = 'The key works but is rate limited right now; try again shortly.';
+        error = apiResponseError(provider.name, response.status, text);
         if (providerId === 'anthropic' && response.status === 400 && /workspace/i.test(text)) {
           errorClass = 'anthropic-workspace';
           error = userLevelAnthropicKey
@@ -242,6 +298,20 @@ export function initIntegrationOAuthEvents(): void {
       if (!model) {
         firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: 'no-chat-model' });
         return { success: false, error: `${ provider.name } accepted the key but returned no supported chat models.` };
+      }
+
+      const probe = probeRequest(providerId, model);
+      const probeResponse = await fetch(probe.url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...provider.headers(apiKey), ...(userLevelAnthropicKey ? { 'anthropic-workspace-id': workspaceId } : {}) },
+        body: JSON.stringify(probe.body),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!probeResponse.ok) {
+        const probeText = await probeResponse.text();
+        const errorClass = `probe-http-${ probeResponse.status }`;
+        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
+        return { success: false, error: apiResponseError(provider.name, probeResponse.status, probeText) };
       }
 
       queuePendingCredential({
