@@ -67,6 +67,7 @@ const LOCAL_METADATA_PROPERTIES = new Set([
   'provider',
   'provider_id',
   'model',
+  'workspace_id',
   'llm_access',
   'client_id',
   'oauth_client_id',
@@ -410,6 +411,32 @@ export class IntegrationService {
       property:       'last_sync_at',
       value:          new Date().toISOString(),
     });
+
+    if (connected) {
+      try {
+        const [{ clearBrokeredModelListCache }, { clearCodexModelCatalogCache }, { clearClaudeModelCatalogCache }] = await Promise.all([
+          import('./brokeredModelList'),
+          import('../languagemodels/codexModelCatalog'),
+          import('../languagemodels/claudeModelCatalog'),
+        ]);
+        clearBrokeredModelListCache();
+        clearCodexModelCatalogCache();
+        clearClaudeModelCatalogCache();
+      } catch (err) {
+        console.warn('[IntegrationService] Could not clear model-list caches:', err);
+      }
+    }
+
+    const { integrations } = await import('../integrations/catalog');
+    const integration = integrations[integrationId];
+    if (integration?.category === 'AI Infrastructure') {
+      try {
+        const { getModelProviderService } = await import('./ModelProviderService');
+        await getModelProviderService().reconcilePrimaryProvider(false, connected ? integrationId : '');
+      } catch (err) {
+        console.warn('[IntegrationService] Could not reconcile model provider:', err);
+      }
+    }
   }
 
   async getConnectionStatus(integrationId: string, accountId?: string): Promise<IntegrationConnectionStatus> {

@@ -150,6 +150,15 @@ interface MainEventNames {
   'sulla-managed-services-ready'(): void;
   /** The managed services failed to start after all retries; the app opens degraded. */
   'sulla-managed-services-failed'(): void;
+  /**
+   * The VM (or Docker inside it) could not start, after its automatic retry.
+   * `message` is plain text for the user; `reason` is a stable code
+   * ('disk-space' | 'data-disk' | 'timeout' | 'docker' | 'shares' | 'start').
+   * Restarting the backend is the way to try again.
+   */
+  'sulla-backend-start-failed'(failure: { reason: string; message: string }): void;
+  /** The user asked to repair the managed services: retry them now. */
+  'sulla-managed-services-repair'(): void;
 
   /**
    * Quit the application.

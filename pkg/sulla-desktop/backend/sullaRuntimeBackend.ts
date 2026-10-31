@@ -19,7 +19,9 @@ import yaml from 'yaml';
 
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
-import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages } from './bundledImages';
+import {
+  bundledImageLockError, bundledImagesDir, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages,
+} from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
@@ -33,9 +35,12 @@ import { reconcileComposeService } from './sullaServiceReconcile';
 import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
-import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
+import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
-import { assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaRuntimeActive, SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest } from './sullaRuntime/state';
+import {
+  assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaOptionalServicesPlanned, setSullaRuntimeActive, setSullaRuntimeStartFailure,
+  SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest,
+} from './sullaRuntime/state';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import PROVISION_VAULT_TLS from '@pkg/assets/scripts/provision-vault-tls';
@@ -43,6 +48,7 @@ import PROVISION_FILES_TLS from '@pkg/assets/scripts/provision-files-tls';
 import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
 import * as settingsImpl from '@pkg/config/settingsImpl';
 import { readExistingDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
@@ -59,6 +65,7 @@ import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
@@ -102,6 +109,40 @@ function logStartupPhase(phase: string, startedAt: number, details = ''): void {
   console.log(`[startup-phase] ${ new Date().toISOString() } phase=${ phase } elapsedMs=${ Date.now() - startedAt }${ suffix }`);
 }
 
+/** Below this much free space on the Mac a fresh install stops; below the warning level it only warns. */
+const DISK_BLOCK_BYTES = 10 * 1024 ** 3;
+const DISK_WARN_BYTES = 20 * 1024 ** 3;
+
+function formatGB(bytes: number): string {
+  return `${ (bytes / 1024 ** 3).toFixed(1) } GB`;
+}
+
+const OPTIONAL_SERVICE_ATTEMPTS = 8;
+/** After the fast attempts, optional services are reconciled this often (plus jitter) until all are healthy. */
+const OPTIONAL_SERVICE_RECONCILE_MS = 60_000;
+/** How long Docker may take to answer after the guest reports it ready. */
+const DOCKER_API_TIMEOUT_MS = 120_000;
+
+/**
+ * The VM or its Docker did not come up. `message` is written for the user
+ * (background.ts shows it with Try again); the cause stays in the log.
+ */
+export class SullaRuntimeBootError extends BackendError {
+  constructor(readonly reason: 'disk-space' | 'data-disk' | 'timeout' | 'docker' | 'shares' | 'start', message: string) {
+    super('Sulla couldn\'t start its engine', message, true);
+  }
+}
+
+function bootFailure(error: unknown): SullaRuntimeBootError {
+  if (error instanceof SullaRuntimeBootError) return error;
+  if (error instanceof SullaRuntimeStartError) {
+    if (error.reason === 'data-disk') return new SullaRuntimeBootError('data-disk', 'Sulla couldn\'t open its disk. It may need repair.');
+    if (error.reason === 'timeout') return new SullaRuntimeBootError('timeout', 'Sulla\'s engine took too long to start.');
+  }
+
+  return new SullaRuntimeBootError('start', 'Sulla\'s engine stopped while starting.');
+}
+
 /**
  * SullaRuntimeBackend drives the native Sulla runtime: a macOS
  * Virtualization.framework VM booted and controlled through the
@@ -119,14 +160,22 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }, console);
     // Service images embedded by the build (scripts/fetch-bundled-assets.ts).
     useBundledImages(path.join(paths.resources, 'darwin', 'images'));
+    // The Repair action (IPC 'sulla-runtime:repair-services').
+    mainEvents.on('sulla-managed-services-repair', () => {
+      this.repairManagedServices().catch(error => console.warn('[Sulla] Repair failed:', error));
+    });
   }
 
   readonly executor = this;
   readonly managesSullaServices = true;
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
-  /** Settles when the background start of the optional services finishes. */
+  /** Settles when the first background pass over the optional services finishes. */
   #optionalServicesSettled: Promise<void> = Promise.resolve();
+  /** The generation whose optional-service reconcile and health watch are running (one each per generation). */
+  #optionalReconcileGeneration?: number;
+  /** Runs the next optional-service reconcile now instead of after its delay. */
+  #wakeOptionalReconcile?: () => void;
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
   /** Services running an image bundled with the app: the exact reference they must run. */
@@ -403,13 +452,17 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       sullaApiToken = crypto.randomBytes(48).toString('base64url');
       console.log('[sulla-runtime] Generated new API token during CLI install');
     }
+    // Usually 3000; another app on the Mac may hold it (chatCompletionsPort).
+    const { chatCompletionsPort } = await import('@pkg/main/chatCompletionsServer');
+    const port = await chatCompletionsPort();
+
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenFile, JSON.stringify({
       token: sullaApiToken,
-      port:  3000,
+      port,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
-    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\n`;
+    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\nSULLA_API_PORT=${ port }\n`;
 
     await this.writeFile('/etc/sulla-env', sullaEnv, 0o644);
     console.log('[sulla-runtime] wrote /etc/sulla-env');
@@ -448,6 +501,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
       try {
         this.progressTracker.numeric('Starting Backend', 0, 100);
+        setSullaRuntimeStartFailure(undefined);
         this.ensureArchitectureMatch();
         await this.startOnSullaRuntime(config, managedServicesGeneration, backendStartTotal);
       } catch (err) {
@@ -457,7 +511,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           return;
         }
         console.error('Error starting the Sulla runtime:', err);
+        const failure = bootFailure(err);
+
+        setSullaRuntimeStartFailure({ reason: failure.reason, message: failure.message });
+        firstRunTrace('vm', 'backend start failed', { reason: failure.reason, message: failure.message, error: err });
         await this.setState(State.ERROR);
+        mainEvents.emit('sulla-backend-start-failed', { reason: failure.reason, message: failure.message });
         if (err instanceof BackendError) {
           if (!err.fatal) {
             return;
@@ -479,13 +538,32 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   protected async startOnSullaRuntime(config: BackendSettings, generation: number, backendStartTotal: number): Promise<void> {
     const shares = this.sullaRuntimeShares();
 
-    try {
-      await this.startSullaRuntimeThroughDockerReady(config, shares);
-    } catch (error) {
-      await this.stopSullaRuntime().catch(cleanupError => console.error('[sulla-runtime] cleanup after a failed start failed:', cleanupError));
-      throw error;
+    // A cold boot on a slow Mac, or a disk replaying its journal after a
+    // crash, can miss the deadline once; one more try is cheap.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.startSullaRuntimeThroughDockerReady(config, shares);
+        break;
+      } catch (error) {
+        await this.stopSullaRuntime().catch(cleanupError => console.error('[sulla-runtime] cleanup after a failed start failed:', cleanupError));
+        // A damaged disk or a full Mac will fail the same way again.
+        const retryable = !(error instanceof SullaRuntimeBootError) &&
+          !(error instanceof SullaRuntimeStartError && error.reason === 'data-disk');
+
+        if (attempt >= 2 || !retryable) throw bootFailure(error);
+        this.assertManagedServicesGeneration(generation);
+        console.warn('[sulla-runtime] the VM did not reach Docker-ready; trying once more:', error);
+        firstRunTrace('vm', 'boot failed; trying once more', { error });
+        this.progressTracker.numeric('Starting Sulla\'s engine again…', 0, 100);
+      }
     }
-    await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
+    try {
+      await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
+    } catch (error) {
+      if (error instanceof ManagedServicesReconciliationCancelled) throw error;
+      await this.stopSullaRuntime().catch(cleanupError => console.error('[sulla-runtime] cleanup after a failed start failed:', cleanupError));
+      throw error instanceof SullaRuntimeBootError ? error : new SullaRuntimeBootError('docker', 'Sulla\'s container engine didn\'t answer.');
+    }
   }
 
   /** Host folders shared into the guest under short virtio-fs tags, at the same path. */
@@ -516,6 +594,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const dataDisk = await ensureSullaRuntimeDataDisk();
 
     console.log(`[sulla-runtime] data disk ${ dataDisk.path } (${ dataDisk.source })`);
+    // Sulla's disk is sparse and grows as images load. A fresh install needs
+    // room for them; an existing one already has most of them, so it only warns.
+    const freeBytes = await this.freeDiskBytes();
+
+    if (freeBytes !== undefined && freeBytes < DISK_WARN_BYTES) {
+      firstRunTrace('vm', 'low disk space', { freeBytes, disk: dataDisk.source });
+      if (freeBytes < DISK_BLOCK_BYTES && dataDisk.source === 'blank') {
+        throw new SullaRuntimeBootError('disk-space',
+          `Your Mac has ${ formatGB(freeBytes) } free. Sulla needs at least 10 GB. Free up space, then try again.`);
+      }
+      console.warn(`[sulla-runtime] only ${ formatGB(freeBytes) } free on the Mac`);
+      this.progressTracker.numeric(`Your Mac is low on disk space (${ formatGB(freeBytes) } free)`, 2, 100);
+    }
     // A share whose folder is missing fails the VM configuration.
     for (const share of shares.filter(share => !share.readOnly)) {
       await fs.promises.mkdir(share.hostPath, { recursive: true });
@@ -528,19 +619,42 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     console.log(`[startup-perf] sulla-runtime artifacts + data disk (before spawn): ${ Date.now() - preparedAt }ms`);
     const spawnedAt = Date.now();
+    const bootStep = (text: string, percent: number) => this.progressTracker.numeric(text, percent, 100);
+    let helloSeen = false;
+    // The guest is silent until its data disk is mounted, which after an
+    // unclean shutdown includes a disk check.
+    const diskCheckNote = setTimeout(() => {
+      if (!helloSeen) bootStep('Checking Sulla\'s disk…', 8);
+    }, 15_000);
 
-    await runtime.start({
-      dataDisk:         dataDisk.path,
-      cpus:             config.virtualMachine.numberCPUs,
-      memoryMiB:        config.virtualMachine.memoryInGB * 1024,
-      shares,
-      guestUser,
-      onMilestone:      (name, elapsedMs) => console.log(`[startup-perf] sulla-runtime ${ name }: ${ elapsedMs }ms after spawn`),
-      onUnexpectedExit: (reason) => {
-        console.error(`[sulla-runtime] the runtime stopped unexpectedly (${ reason })`);
-        void this.stopSullaRuntime().finally(() => this.setState(State.ERROR));
-      },
-    });
+    bootStep('Starting Sulla\'s engine…', 5);
+    firstRunTrace('vm', 'boot started', { cpus: config.virtualMachine.numberCPUs, memoryGB: config.virtualMachine.memoryInGB, disk: dataDisk.source });
+    try {
+      await runtime.start({
+        dataDisk:         dataDisk.path,
+        cpus:             config.virtualMachine.numberCPUs,
+        memoryMiB:        config.virtualMachine.memoryInGB * 1024,
+        shares,
+        guestUser,
+        onMilestone:      (name, elapsedMs) => {
+          console.log(`[startup-perf] sulla-runtime ${ name }: ${ elapsedMs }ms after spawn`);
+          // Each milestone also restarts the boot's quiet-time deadline (NativeRuntime).
+          firstRunTrace('vm', `boot ${ name }`, { elapsedMs });
+          if (name === 'hello') {
+            helloSeen = true;
+            bootStep('Starting the container engine…', 15);
+          } else if (name === 'event:unit-ready') {
+            bootStep('Waiting for the container engine…', 25);
+          }
+        },
+        onUnexpectedExit: (reason) => {
+          console.error(`[sulla-runtime] the runtime stopped unexpectedly (${ reason })`);
+          void this.stopSullaRuntime().finally(() => this.setState(State.ERROR));
+        },
+      });
+    } finally {
+      clearTimeout(diskCheckNote);
+    }
     console.log(`[startup-perf] sulla-runtime spawn -> docker-ready (cold boot or restore): ${ Date.now() - spawnedAt }ms`);
 
     // Guest commands go through `paths.sullaRuntime`, which already points at the host binary.
@@ -568,9 +682,18 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#sullaRuntimeForwarder.start();
 
     await this.progressTracker.action('Writing sulla environment', 50, this.writeGuestSullaEnv());
-    await this.progressTracker.action('Waiting for container engine client to be ready', 50,
-      this.#containerEngineClient.waitForReady());
+    // Bounded twice: the probe stops polling at the deadline, and a single
+    // `docker system info` that hangs on a wedged socket cannot hold it either.
+    let dockerApiTimer: NodeJS.Timeout | undefined;
+
+    await this.progressTracker.action('Waiting for container engine client to be ready', 50, Promise.race([
+      this.#containerEngineClient.waitForReady(DOCKER_API_TIMEOUT_MS),
+      new Promise<never>((_, reject) => {
+        dockerApiTimer = setTimeout(() => reject(new Error(`Docker did not answer within ${ DOCKER_API_TIMEOUT_MS / 1000 }s`)), DOCKER_API_TIMEOUT_MS + 15_000);
+      }),
+    ]).finally(() => clearTimeout(dockerApiTimer)));
     logStartupPhase('docker-api-ready', backendStartTotal, 'status=ready runtime=sulla');
+    firstRunTrace('vm', 'docker answering', { msSinceBackendStart: Date.now() - backendStartTotal });
 
     await this.setState(State.DISABLED);
     mainEvents.emit('first-run-backend-booted');
@@ -583,21 +706,37 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     })().catch((error) => {
       if (!(error instanceof ManagedServicesReconciliationCancelled)) {
         console.warn(`[startup-phase] ${ new Date().toISOString() } phase=background-startup status=degraded runtime=sulla`, error);
-        // Release the boot screen: it waits for the services, and would wait forever.
-        mainEvents.emit('sulla-managed-services-failed');
       }
     });
     logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming runtime=sulla');
   }
 
-  /** Mount each share in the guest at its host path, before anything else uses it. */
+  /**
+   * Mount each share in the guest at its host path, before anything else uses
+   * it. The app's resources and its transfer folder are required: without
+   * them later steps fail far from the cause, so the boot fails here instead.
+   * Logs and cache are optional.
+   */
   protected async mountSullaRuntimeShares(shares: SullaRuntimeShare[]): Promise<void> {
+    const required = new Set(['/tmp/sulla-desktop', paths.resources]);
+
     for (const share of shares) {
-      try {
-        await this.execCommand({ root: true }, 'sh', '-c',
-          'mkdir -p "$2" && { mountpoint -q "$2" || mount -t virtiofs "$1" "$2"; }', 'sh', share.tag, share.hostPath);
-      } catch (error) {
-        console.error(`[sulla-runtime] could not mount ${ share.hostPath } in the guest:`, error);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await this.execCommand({ root: true }, 'sh', '-c',
+            'mkdir -p "$2" && { mountpoint -q "$2" || mount -t virtiofs "$1" "$2"; }', 'sh', share.tag, share.hostPath);
+          break;
+        } catch (error) {
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1_000));
+            continue;
+          }
+          console.error(`[sulla-runtime] could not mount ${ share.hostPath } in the guest:`, error);
+          if (required.has(share.hostPath)) {
+            throw new SullaRuntimeBootError('shares', 'Sulla couldn\'t connect its app folders to its engine.');
+          }
+          break;
+        }
       }
     }
   }
@@ -623,15 +762,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
   /**
    * Transient failures (Compose pull, credentials not yet available) are
-   * retried; a persistent one must surface as ERROR instead of leaving the UI
-   * showing a healthy backend with no services.
+   * retried. After the first few the backend reports ERROR and the app opens
+   * degraded ('sulla-managed-services-failed'), but retrying never stops
+   * while the app is open: the delay grows to a minute, and repair() runs the
+   * next attempt at once. A later success clears the error.
    */
   private async reconcileManagedServicesWithRetries(generation: number, config: BackendSettings): Promise<void> {
-    const retryDelaysMs = [5_000, 15_000, 30_000];
+    const retryDelaysMs = [5_000, 15_000, 30_000, 60_000];
+    let reportedFailure = false;
 
     for (let attempt = 0; ; attempt++) {
       try {
         await this.reconcileManagedServices(generation, config);
+        if (reportedFailure && this.state === State.ERROR) await this.setState(State.DISABLED);
 
         return;
       } catch (error) {
@@ -639,15 +782,51 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             generation !== this.#managedServicesGeneration) {
           throw error;
         }
-        if (attempt >= retryDelaysMs.length) {
-          console.error('[startup-phase] phase=sulla-services status=failed after retries', error);
+        firstRunTrace('services', 'core services failed; retrying', { attempt: attempt + 1, error });
+        if (attempt >= 3 && !reportedFailure) {
+          reportedFailure = true;
+          console.error('[startup-phase] phase=sulla-services status=failed after retries; still retrying every minute', error);
           await this.setState(State.ERROR);
-          throw error;
+          // Release the boot screen: it waits for the services, and would wait forever.
+          mainEvents.emit('sulla-managed-services-failed');
+        } else {
+          console.warn(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=retrying attempt=${ attempt + 1 }`, error);
         }
-        console.warn(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=retrying attempt=${ attempt + 1 }`, error);
-        await new Promise(resolve => setTimeout(resolve, retryDelaysMs[attempt]));
+        await this.waitForRepairOr(retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)]);
       }
     }
+  }
+
+  #repairRequested?: () => void;
+
+  /** Sleep, or wake early when the user asks for a repair. */
+  private waitForRepairOr(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(done, delayMs);
+
+      function done() {
+        clearTimeout(timer);
+        resolve();
+      }
+      this.#repairRequested = done;
+    }).finally(() => { this.#repairRequested = undefined });
+  }
+
+  /**
+   * The Repair action: retry the managed services now. Wakes a waiting
+   * retry, or reconciles the current generation again when nothing is in
+   * flight (which also restarts the optional-service reconcile).
+   */
+  async repairManagedServices(): Promise<void> {
+    if (!this.cfg || !isSullaRuntimeActive()) throw new Error('Sulla\'s engine is not running; restart it instead');
+    this.#wakeOptionalReconcile?.();
+    if (this.#repairRequested) {
+      this.#repairRequested();
+
+      return;
+    }
+    if (this.#managedServicesReconciliation) return;
+    await this.reconcileManagedServicesWithRetries(this.#managedServicesGeneration, this.cfg);
   }
 
   private async reconcileManagedServices(generation: number, config: BackendSettings): Promise<void> {
@@ -742,7 +921,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const lock = currentBundledImageLock();
     const imagesDir = bundledImagesDir();
 
+    const lockError = bundledImageLockError();
+
+    if (lockError) {
+      firstRunTrace('vm', 'bundled image lock unreadable; images will be pulled', { error: lockError });
+    }
     if (!lock || !imagesDir) return;
+    // A full Mac fails `docker load` partway with an error that names nothing.
+    if (reportProgress) await this.assertDiskSpaceForImages();
     const result = await ensureBundledImages({
       lock,
       imagesDir,
@@ -757,6 +943,41 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (result.loaded.length || result.failed.length) {
       console.log(`[bundled-images] present=${ result.present.join(',') || '-' } loaded=${ result.loaded.join(',') || '-' } failed=${ result.failed.map(f => f.name).join(',') || '-' }`);
     }
+    firstRunTrace('vm', 'bundled images', {
+      present: result.present, loaded: result.loaded, failed: result.failed.map(f => `${ f.name }: ${ f.error.message.split('\n')[0] }`),
+    });
+    // The images ship inside the app, so a load that fails twice means a
+    // damaged app or a full disk. Name the component loudly, but still let
+    // compose download it: online, that recovers instead of failing the boot.
+    if (result.failed.length) {
+      console.error(`[bundled-images] Couldn't load component ${ result.failed.map(f => f.name).join(', ') } from the app; ` +
+        'downloading it instead. If this keeps happening, free up disk space or reinstall Sulla.');
+    }
+  }
+
+  /** Free space on the Mac volume that holds Sulla's disk, in bytes; undefined when unknown. */
+  private async freeDiskBytes(): Promise<number | undefined> {
+    try {
+      const stats = await fs.promises.statfs(paths.appHome);
+
+      return Number(stats.bavail) * Number(stats.bsize);
+    } catch (error) {
+      console.warn('[sulla-runtime] could not read free disk space:', error);
+
+      return undefined;
+    }
+  }
+
+  /** Before loading images: under 10 GB free stops with a clear reason. */
+  private async assertDiskSpaceForImages(): Promise<void> {
+    const free = await this.freeDiskBytes();
+
+    if (free === undefined || free >= DISK_BLOCK_BYTES) return;
+    const message = `Your Mac has ${ formatGB(free) } free. Sulla needs at least 10 GB to finish setting up. Free up space, then try again.`;
+
+    firstRunTrace('vm', 'not enough disk space to load images', { freeBytes: free });
+    mainEvents.emit('sulla-backend-start-failed', { reason: 'disk-space', message });
+    throw new Error(message);
   }
 
   private async loadOrCreateVaultServiceIdentities(): Promise<{
@@ -1042,7 +1263,16 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   private async prepareSullaComposeFile(): Promise<void> {
-    const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+    const parsedCompose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+    const compose = clone(parsedCompose);
+    // Resolve host ports here, before the compose file crosses into the guest.
+    // Guest Docker must never depend on inheriting the host Electron environment.
+    for (const service of Object.values(compose.services ?? {}) as any[]) {
+      if (!Array.isArray(service?.ports)) continue;
+      service.ports = service.ports.map((entry: unknown) => typeof entry === 'string'
+        ? entry.replace(/\$\{SULLA_PORT_(\d+):-\d+\}/g, (_match, base) => String(hostPort(Number(base))))
+        : entry);
+    }
 
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
@@ -1068,6 +1298,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       sullaApiToken = await SullaSettingsModel.get('sullaApiToken') || '';
     }
     if (!sullaApiToken) throw new Error('Sulla API token is unavailable while preparing container services');
+    const { chatCompletionsPort } = await import('@pkg/main/chatCompletionsServer');
+    const chatApiPort = await chatCompletionsPort();
     sullaApiToken = escapeForCompose(sullaApiToken);
     const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
@@ -1107,7 +1339,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
-          SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
+          SULLA_ACCOUNTS_PUBLIC_URL:                   loopbackOrigin('http', 3020),
           SULLA_ACCOUNTS_DATABASE_HOST:                'postgres',
           SULLA_ACCOUNTS_DATABASE_PORT:                '5432',
           SULLA_ACCOUNTS_DATABASE_NAME:                'sulla_accounts',
@@ -1117,13 +1349,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE:   '/run/sulla-accounts-source/session.secret',
           SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
         },
-        ports:   ['127.0.0.1:3020:3020'],
+        ports:   [`127.0.0.1:${ hostPort(3020) }:3020`],
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
         mem_limit:    '256m',
         healthcheck: {
-          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
+          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://localhost:3020/readyz'],
           interval: '5s',
           timeout:  '3s',
           retries:  10,
@@ -1179,12 +1411,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_VAULT_AUDIT_SPOOL_DIR: '/var/lib/sulla-vault',
           SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
           NODE_EXTRA_CA_CERTS: '/run/sulla-files-ca/tls.crt',
-          SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
+          SULLA_VAULT_HUMAN_UI_ORIGIN: loopbackOrigin('https', 30135),
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
-        ports: ['127.0.0.1:30135:8787'],
+        ports: [`127.0.0.1:${ hostPort(30135) }:8787`],
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
@@ -1234,12 +1466,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
-        SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
+        SULLA_TOOL_API_URL: `http://host.docker.internal:${ chatApiPort }`,
         SULLA_WORKFLOW_IMAGE: image,
         SULLA_DOCKER_NETWORK: 'sulla_default',
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
-      ports: ['127.0.0.1:30122:8788'],
+      ports: [`127.0.0.1:${ hostPort(30122) }:8788`],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
@@ -1273,7 +1505,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
         SULLA_RELAY_REPLICA_ID: 'desktop-local',
       },
-      ports: ['127.0.0.1:30126:8790'],
+      ports: [`127.0.0.1:${ hostPort(30126) }:8790`],
       restart: 'unless-stopped',
       mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1331,7 +1563,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
-      ports: ['127.0.0.1:30123:3000'],
+      ports: [`127.0.0.1:${ hostPort(30123) }:3000`],
       volumes: [
         ...(vaultIdentities ? [vaultTlsBind(true)] : []),
         filesTlsBind(true),
@@ -1405,7 +1637,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
-      ports: ['127.0.0.1:30124:8792'],
+      ports: [`127.0.0.1:${ hostPort(30124) }:8792`],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         '/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave',
@@ -1619,12 +1851,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const meminfo = await this.execCommand({ capture: true, expectFailure: true }, 'cat', '/proc/meminfo');
       const totalKiB = Number(/^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo)?.[1]);
 
-      if (totalKiB > 0 && totalKiB < 3 * 1024 * 1024) return 3;
+      // About one starting service per GiB of guest memory, 2 to 4.
+      if (totalKiB > 0) return Math.min(4, Math.max(2, Math.floor(totalKiB / (1024 * 1024))));
     } catch {
-      // Unknown size: keep the full parallel start.
+      // Unknown size: assume a small guest.
     }
 
-    return Number.POSITIVE_INFINITY;
+    return 3;
   }
 
   private async applySullaCompose(generation: number): Promise<void> {
@@ -1773,6 +2006,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });
+
+      setSullaOptionalServicesPlanned(orderedOptionalServices.map(entry => entry.service));
       // What must be healthy before each optional service starts (the compose
       // depends_on graph). Every other optional service has no dependency on the
       // rest, so they start together: the vault, which gates the main window, is
@@ -1800,7 +2035,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const reconcileInBackground = async(): Promise<void> => {
         const bootStatus = new Map<string, string>();
 
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // A slow Mac can take a minute or more to bring the vault up; the fast
+        // attempts cover that. After them a slow reconcile keeps going for the
+        // life of this generation, so a service that was late, crashed or never
+        // got created still comes up without restarting the app.
+        for (let attempt = 1; ; attempt++) {
           const runs = new Map<string, Promise<boolean>>();
           const run = (entry: { service: string; container: string }): Promise<boolean> => {
             let started = runs.get(entry.service);
@@ -1829,20 +2068,23 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             }
             await takeStartSlot();
             try {
+              const state = (await this.execCommand(
+                { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
+                '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', container,
+              ).catch(() => '')).trim(); // a fresh install has no container yet
+
               // Files can legitimately spend minutes applying a first-start
               // schema upgrade. Do not re-run compose against a live starter;
               // let it finish, then replace it only if a newer image exists.
+              // Any other service still in its start period is left to finish
+              // too: compose's fallback would recreate it mid-migration.
               if (service === 'sulla_files') {
-                const state = await this.execCommand(
-                  { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
-                  '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', container,
-                );
-                if (!state.trim().startsWith('running')) {
+                if (!state.startsWith('running')) {
                   await startOptionalService(service);
                 } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
                   await startOptionalService(service);
                 }
-              } else {
+              } else if (state !== 'running starting') {
                 await startOptionalService(service);
               }
               await this.waitForDockerServiceHealthy(container, service === 'sulla_files' ? 600 : 20, generation);
@@ -1856,7 +2098,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
 
               bootStatus.set(service, `unhealthy (${ reason })`);
-              console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
+              console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }${ attempt <= OPTIONAL_SERVICE_ATTEMPTS ? `/${ OPTIONAL_SERVICE_ATTEMPTS }` : ', slow reconcile' }); Desktop remains usable: ${ reason }`);
 
               return false;
             } finally {
@@ -1864,26 +2106,65 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             }
           };
 
+          this.assertManagedServicesGeneration(generation);
           await Promise.all(orderedOptionalServices.map(run));
           if (attempt === 1) {
             console.log(`[Sulla] Boot services: postgres=healthy, redis=healthy, ${
               [...bootStatus].map(([service, status]) => `${ service }=${ status }`).join(', ')
             }`);
           }
-          if ([...bootStatus.values()].every(status => status === 'healthy')) return;
-          await new Promise(resolve => setTimeout(resolve, 5_000 * attempt));
+          firstRunTrace('services', `optional services attempt ${ attempt }`, Object.fromEntries(bootStatus));
+          if (attempt === OPTIONAL_SERVICE_ATTEMPTS) settleFirstPass();
+          if (orderedOptionalServices.every(entry => this.#activeOptionalSullaServices.has(entry.service))) return;
+          const delayMs = attempt < OPTIONAL_SERVICE_ATTEMPTS
+            ? Math.min(5_000 * attempt, 30_000)
+            : OPTIONAL_SERVICE_RECONCILE_MS + Math.round(Math.random() * 15_000);
+
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(wake, delayMs);
+
+            function wake() {
+              clearTimeout(timer);
+              resolve();
+            }
+            this.#wakeOptionalReconcile = wake;
+          });
+          this.#wakeOptionalReconcile = undefined;
         }
       };
 
+      // One reconcile loop and one health watch per generation: a retried
+      // reconcile of the same generation must not start a second pair.
+      if (this.#optionalReconcileGeneration === generation) return;
+      this.#optionalReconcileGeneration = generation;
+      let settleFirstPass!: () => void;
+      let reconcileRunning = false;
+      const startReconcile = (): void => {
+        reconcileRunning = true;
+        reconcileInBackground().catch((error) => {
+          if (!(error instanceof ManagedServicesReconciliationCancelled)) {
+            console.warn('[Sulla] Optional service background reconciliation stopped:', error);
+          }
+        }).finally(() => {
+          reconcileRunning = false;
+          settleFirstPass();
+          this.#wakeOptionalReconcile = undefined;
+        });
+      };
+
       // Optional services must never hold the backend STARTED/unlock transition.
-      // Compose health dependencies preserve ordering; bounded retries repair a
-      // cold or transiently broken service after Desktop is already usable.
-      this.#optionalServicesSettled = reconcileInBackground().catch(error => {
-        if (!(error instanceof ManagedServicesReconciliationCancelled)) {
-          console.warn('[Sulla] Optional service background reconciliation stopped:', error);
-        }
+      // Compose health dependencies preserve ordering; the background reconcile
+      // repairs a cold or transiently broken service after Desktop is usable.
+      // Images used later wait for the first pass (see reconcileSullaDockerEnvironment).
+      this.#optionalServicesSettled = new Promise<void>((resolve) => { settleFirstPass = resolve });
+      startReconcile();
+      // A desired service with no container at all (never created, or removed)
+      // is invisible to the unhealthy-container check; hand it back to the reconcile.
+      this.watchManagedContainerHealth(generation, composeCommand, orderedOptionalServices, (missing) => {
+        for (const entry of missing) this.#activeOptionalSullaServices.delete(entry.service);
+        if (this.#wakeOptionalReconcile) this.#wakeOptionalReconcile();
+        else if (!reconcileRunning) startReconcile();
       });
-      this.watchManagedContainerHealth(generation, composeCommand);
     });
   }
 
@@ -1892,8 +2173,15 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    * reports unhealthy (or restart-looping) past its grace period. The Files adapter's stale
    * guest mount is handled by the Files mount manager, not here.
    */
-  private watchManagedContainerHealth(generation: number, composeCommand: string[]): void {
+  private watchManagedContainerHealth(
+    generation: number,
+    composeCommand: string[],
+    desired: ReadonlyArray<{ service: string; container: string }>,
+    onMissing: (missing: Array<{ service: string; container: string }>) => void,
+  ): void {
     this.#containerRecreates.clear();
+    let ticking = false;
+    let lastMissing = '';
     const tick = async(): Promise<void> => {
       this.assertManagedServicesGeneration(generation);
       const listing = await this.execCommand(
@@ -1913,6 +2201,18 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         if (state.length < 3) continue;
         rows.push({ container, service, state: state[0], health: state[1], runningForMs: Date.now() - Date.parse(state[2]) });
       }
+      // Missing, or stopped for good (exited/dead is not restart-looping, so
+      // the unhealthy check below leaves it alone).
+      const present = new Set(rows.filter(row => row.state !== 'exited' && row.state !== 'dead').map(row => row.container));
+      const missing = desired.filter(entry => !present.has(entry.container));
+
+      const missingKey = missing.map(entry => entry.container).join(', ');
+
+      if (missingKey !== lastMissing) {
+        if (missingKey) console.warn(`[Sulla] ${ missingKey } not running; reconciling`);
+        lastMissing = missingKey;
+      }
+      if (missing.length) onMissing(missing);
       for (const action of planUnhealthyRecreates(rows, this.#containerRecreates)) {
         this.#containerRecreates.set(action.container, (this.#containerRecreates.get(action.container) ?? 0) + 1);
         console.warn(`[Sulla] ${ action.container } is ${ action.reason }; recreating it`);
@@ -1920,10 +2220,15 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           .catch(error => console.warn(`[Sulla] Could not recreate ${ action.container }:`, (error as Error).message?.split('\n')[0]));
       }
     };
+    // A failed tick is logged and the next one runs as usual; only the end
+    // of the generation stops the watch. Ticks never overlap.
     const run = (): void => {
+      if (ticking) return;
+      ticking = true;
       tick().catch((error) => {
         if (error instanceof ManagedServicesReconciliationCancelled) clearInterval(timer);
-      });
+        else console.warn('[Sulla] Container health check failed; retrying next minute:', (error as Error)?.message?.split('\n')[0]);
+      }).finally(() => { ticking = false });
     };
     const timer = setInterval(run, 60_000);
 

@@ -575,10 +575,10 @@ export const nativeAdditionalIntegrations: Record<string, Integration> = {
       {
         "key": "base_url",
         "title": "Base URL",
-        "hint": "n8n instance URL (default: http://127.0.0.1:30119)",
+        "hint": "n8n instance URL (default: the local n8n URL)",
         "type": "url",
         "required": false,
-        "placeholder": "http://127.0.0.1:30119"
+        "placeholder": "the local n8n URL"
       }
     ]
   },

@@ -325,11 +325,12 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         sealedLegacyVmk: typeof request.body.sealedLegacyVmk === 'string' ? request.body.sealedLegacyVmk : undefined,
       }));
     });
-    app.get('/v1/desktop/status', (request, response) => {
+    app.get('/v1/desktop/status', async(request, response) => {
       const identity = serviceIdentity(request);
       localAuthority.requireControlIdentity(identity.serviceId, identity.token);
       const status = localAuthority.status();
-      response.json({ ...status, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
+      const setupRequired = !status.unlocked && await localAuthority.isSetupRequired();
+      response.json({ ...status, setup: { required: setupRequired }, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
     });
     app.post('/v1/desktop/lock', async(request, response) => {
       const identity = serviceIdentity(request);
@@ -366,15 +367,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       response.setHeader('Vary', 'Origin');
       next();
     });
-    app.post('/v1/human/session/exchange', (request, response) => {
+    app.post('/v1/human/session/exchange', async(request, response) => {
       const session = localAuthority.exchangeHumanGrant(
         requiredString(request.body.grant, 'grant'), requiredString(request.body.csrf, 'csrf'),
       );
       setHumanCookie(response, session.sessionId, session.expiresAt);
-      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase, targetOrigin: session.browserTarget?.origin });
+      const setupRequired = session.phase === 'pre-unlock' && await localAuthority.isSetupRequired();
+      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase, targetOrigin: session.browserTarget?.origin, setupRequired });
     });
-    app.get('/v1/human/session', (request, response) => {
-      response.json(localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token')));
+    app.get('/v1/human/session', async(request, response) => {
+      const status = localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token'));
+      const setupRequired = status.phase === 'pre-unlock' && await localAuthority.isSetupRequired();
+      response.json({ ...status, setupRequired });
     });
     app.post('/v1/human/unlock', async(request, response) => {
       const result = await localAuthority.unlockHumanSession(
@@ -550,6 +554,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.delete('/v1/broker/sulla-cloud/session', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.clearSullaCloudSession(identity.serviceId, identity.token));
+    });
+    app.post('/v1/broker/sulla-cloud/account-wrap', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.rewrapForAccountPassword(identity.serviceId, identity.token, request.body));
+    });
+    app.post('/v1/broker/sulla-cloud/device-approval-wrap', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.wrapUserKeyForApprovedDevice(identity.serviceId, identity.token, request.body));
+    });
+    app.post('/v1/broker/sulla-cloud/recovery-key/rotate', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.rotateAccountRecoveryKey(identity.serviceId, identity.token));
     });
     app.post('/v1/broker/sulla-cloud/request', async(request, response) => {
       const identity = serviceIdentity(request);

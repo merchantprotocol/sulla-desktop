@@ -75,7 +75,11 @@ import type {
   SullaCloudSessionAdoptRequest,
   SullaCloudDesktopRequest,
   SullaCloudSessionResponse,
+  AccountPasswordRewrapRequest,
+  AccountPasswordRewrapResponse,
+  VaultDeviceApprovalWrapRequest,
 } from './contracts.js';
+import { transportWrap } from './filesCloudEscrow.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
@@ -105,7 +109,7 @@ const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
 const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
   'account_label', 'connection_status', 'connected_at', 'last_sync_at', 'base_url', 'server_url',
-  'gateway_url', 'provider', 'provider_id', 'model', 'llm_access', 'client_id', 'oauth_client_id',
+  'gateway_url', 'provider', 'provider_id', 'model', 'workspace_id', 'llm_access', 'client_id', 'oauth_client_id',
   'expires_at', 'token_type', 'scope',
 ]);
 const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;
@@ -343,6 +347,8 @@ const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/bundle$/, ['GET']],
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
+  [/^\/auth\/password\/device-approval\/requests$/, ['GET']],
+  [/^\/auth\/password\/device-approval\/requests\/[0-9a-f-]{36}\/respond$/, ['POST']],
   [/^\/files-sync\/v1\/collections$/, ['GET']],
   [/^\/files-sync\/v1\/usage$/, ['GET']],
   [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
@@ -1007,6 +1013,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return this.issueHumanSession(session.browserTarget);
   }
 
+  /**
+   * True while no vault user exists yet. The first password submitted to
+   * /v1/human/unlock then creates the vault, so the page asks the person to
+   * create a password (with confirmation) instead of unlocking one.
+   */
+  async isSetupRequired(): Promise<boolean> {
+    const existing = await this.db.query('SELECT 1 FROM users WHERE disabled_at IS NULL LIMIT 1');
+    return !existing.rowCount;
+  }
+
   humanSessionStatus(sessionId: string | undefined, csrf: string | undefined): {
     csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked';
   } {
@@ -1271,6 +1287,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
       await client.query(
+        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
+         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'password_change' FROM users WHERE id=$1`,
+        [keys.userId],
+      );
+      await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
           { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, keys.userId],
@@ -1286,6 +1307,196 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       next.key.fill(0);
     }
     });
+  }
+
+  /**
+   * Move the existing local user-key wrap to the signed-in Cloud account KDF.
+   * The old row is copied first in the same transaction. No item or Files key
+   * is re-encrypted. Only the trusted Desktop approval identity can call this.
+   */
+  async rewrapForAccountPassword(
+    serviceId: string, token: string | undefined, input: AccountPasswordRewrapRequest,
+  ): Promise<AccountPasswordRewrapResponse> {
+    this.requireApprovalIdentity(serviceId, token);
+    const kdf = input?.kdf;
+    const cloudUserId = typeof input?.cloudUserId === 'string' ? input.cloudUserId.trim() : '';
+    if (!cloudUserId || Buffer.byteLength(cloudUserId) > 256) {
+      throw new LocalVaultError('invalid_operation', 400, 'Cloud account is invalid');
+    }
+    if (kdf?.alg !== 'argon2id13' || !/^[A-Za-z0-9_-]{22}$/.test(kdf.salt) ||
+        kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
+      throw new LocalVaultError('invalid_operation', 400, 'Account KDF is unsupported');
+    }
+    const masterKey = Buffer.from(input.masterKey || '', 'base64url');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(input.masterKey || '') || masterKey.byteLength !== 32) {
+      masterKey.fill(0);
+      throw new LocalVaultError('invalid_unlock_material', 400, 'Account master key is invalid');
+    }
+    // Fresh install: create from the account key. If the OS unlock cache was
+    // lost, the same account key can also unlock an existing account-wrapped
+    // vault. It can never replace a vault belonging to another Cloud account.
+    if (!this.keys) {
+      await this.runSecurityOperation(async() => {
+        if (this.keys) return false;
+        if (!await this.isSetupRequired()) {
+          const existing = await this.db.query<{ id: string; kdf: { cloudUserId?: string } }>(
+            'SELECT id,kdf FROM users WHERE disabled_at IS NULL LIMIT 1',
+          );
+          const owner = existing.rows[0]?.kdf?.cloudUserId;
+          if (owner && owner !== cloudUserId) {
+            throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+          }
+          await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+            authority: 'container', version: 1, cloudUserId,
+            password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+          });
+          return false;
+        }
+        await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+          authority: 'container', version: 1, cloudUserId,
+          password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+        });
+        return true;
+      });
+    }
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    let recoveryKey: Buffer | undefined;
+    let recoveryMasterKey: Uint8Array | undefined;
+    try {
+      const current = await this.db.query<{
+        login_hash_salt: Buffer; login_hash_verifier: Buffer;
+        kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
+      }>('SELECT login_hash_salt,login_hash_verifier,kdf FROM users WHERE id=$1', [keys.userId]);
+      const currentOwner = current.rows[0]?.kdf?.cloudUserId;
+      if (currentOwner && currentOwner !== cloudUserId) {
+        throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+      }
+      if (!currentOwner) {
+        const priorCloud = await this.db.query<{ active_account_id: string }>(
+          `SELECT active_account_id FROM local_integration_state
+            WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [keys.userId],
+        );
+        if (priorCloud.rows[0]?.active_account_id && priorCloud.rows[0].active_account_id !== cloudUserId) {
+          throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+        }
+      }
+      const passwordKdf = current.rows[0]?.kdf?.password;
+      const recoveryExists = await this.db.query('SELECT 1 FROM local_vault_recovery WHERE user_id=$1', [keys.userId]);
+      const alreadyWrapped = passwordKdf?.salt === kdf.salt && passwordKdf.parameters?.memoryBytes === kdf.memoryBytes &&
+        passwordKdf.parameters?.operations === kdf.ops &&
+        verifyLoginHash(await deriveLoginHash(masterKey), current.rows[0].login_hash_salt, current.rows[0].login_hash_verifier);
+      if (alreadyWrapped && recoveryExists.rowCount) {
+        if (!currentOwner) {
+          await this.db.query('UPDATE users SET kdf=$1,updated_at=now() WHERE id=$2', [
+            { authority: 'container', version: 1, cloudUserId, password: passwordKdf }, keys.userId,
+          ]);
+        }
+        this.stageCacheUpdate(masterKey);
+        return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
+      }
+      const verifier = makeLoginVerifier(await deriveLoginHash(masterKey));
+      const wrapped = await encryptWithKey(keys.userKey, masterKey, 'sulla:user-key:v1');
+      let recoveryRow: { salt: string; verifierSalt: string; verifier: string; parameters: { memoryBytes: number; operations: number }; wrap: EncryptedEnvelope } | undefined;
+      if (!recoveryExists.rowCount) {
+        recoveryKey = randomBytes(32);
+        const derived = await deriveMasterKey(recoveryKey.toString('base64url'));
+        recoveryMasterKey = derived.key;
+        const recoveryVerifier = makeLoginVerifier(await deriveLoginHash(derived.key));
+        recoveryRow = {
+          salt: derived.salt,
+          verifierSalt: recoveryVerifier.salt.toString('base64url'),
+          verifier: recoveryVerifier.verifier.toString('base64url'),
+          parameters: derived.parameters,
+          wrap: await encryptWithKey(keys.userKey, derived.key, 'sulla:recovery-user-key:v1'),
+        };
+      }
+      await this.runTransaction(async client => {
+        await client.query(
+          `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
+           SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'account_password_migration' FROM users WHERE id=$1`,
+          [keys.userId],
+        );
+        await client.query(
+          `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
+          [verifier.salt, verifier.verifier, wrapped,
+            { authority: 'container', version: 1, cloudUserId, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } }, keys.userId],
+        );
+        if (recoveryRow) {
+          await client.query(
+            `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key) VALUES ($1,$2,$3,$4)`,
+            [keys.userId, JSON.stringify({ kdf: recoveryRow.salt, verifier: recoveryRow.verifierSalt, parameters: recoveryRow.parameters }), recoveryRow.verifier, recoveryRow.wrap],
+          );
+        }
+        this.requireGeneration(generation);
+        await this.auditHumanAction(client, keys.userId, 'account_password_wrap_migrated');
+      });
+      this.stageCacheUpdate(masterKey);
+      return {
+        migrated: true,
+        recoveryCreated: Boolean(recoveryKey),
+        ...(recoveryKey ? { recoveryKey: recoveryKey.toString('base64url') } : {}),
+        cacheMode: 'helper-update-required',
+      };
+    } finally {
+      masterKey.fill(0);
+      recoveryMasterKey?.fill(0);
+      recoveryKey?.fill(0);
+    }
+  }
+
+  /** Build a reset relay envelope only after the native approval prompt returned an explicit tap. */
+  async wrapUserKeyForApprovedDevice(
+    serviceId: string, token: string | undefined, input: VaultDeviceApprovalWrapRequest,
+  ): Promise<{ wrappedUserKey: Awaited<ReturnType<typeof transportWrap>> }> {
+    this.requireApprovalIdentity(serviceId, token);
+    if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault access was not approved');
+    const keys = this.requireKeys();
+    const state = await this.db.query<{ vault_id: string; epoch: number | string }>(
+      'SELECT vault_id,epoch FROM cloud_vault_sync_state WHERE owner_user_id=$1', [keys.userId],
+    );
+    const row = state.rows[0];
+    if (!row || row.vault_id !== input.vaultId || Number(row.epoch) !== input.vaultEpoch) {
+      throw new LocalVaultError('invalid_operation', 409, 'Approval request does not match this vault');
+    }
+    return { wrappedUserKey: await transportWrap(keys.userKey, input.publicKey, input.requestId, input.vaultId, input.vaultEpoch) };
+  }
+
+  /** Replace the account recovery wrap while retaining the previous encrypted wrap as a restore point. */
+  async rotateAccountRecoveryKey(
+    serviceId: string, token: string | undefined,
+  ): Promise<{ recoveryKey: string; replacedExisting: boolean }> {
+    this.requireApprovalIdentity(serviceId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const recoveryKey = randomBytes(32);
+    const recovery = await deriveMasterKey(recoveryKey.toString('base64url'));
+    try {
+      const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
+      const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
+      let replacedExisting = false;
+      await this.runTransaction(async client => {
+        const prior = await client.query(
+          `INSERT INTO local_vault_recovery_history(user_id,recovery_salt,recovery_verifier,encrypted_user_key,reason)
+           SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key,'rotation'
+           FROM local_vault_recovery WHERE user_id=$1 RETURNING id`, [keys.userId],
+        );
+        replacedExisting = Boolean(prior.rowCount);
+        await client.query(
+          `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
+          [keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
+            verifier.verifier.toString('base64url'), wrapped],
+        );
+        this.requireGeneration(generation);
+        await this.auditHumanAction(client, keys.userId, 'account_recovery_key_rotated');
+      });
+      return { recoveryKey: recoveryKey.toString('base64url'), replacedExisting };
+    } finally {
+      recovery.key.fill(0);
+      recoveryKey.fill(0);
+    }
   }
 
   async configureHumanRecovery(
@@ -1343,6 +1554,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
+      await client.query(
+        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
+         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'recovery' FROM users WHERE id=$1`,
+        [row.user_id],
+      );
       await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,

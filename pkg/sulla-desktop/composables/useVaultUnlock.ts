@@ -17,6 +17,7 @@ let statusGeneration = 0;
 ipcRenderer.on('vault:logged-in' as any, () => {
   statusGeneration += 1;
   loggedIn.value = true;
+  vaultSetUp.value = true;
   statusResolved.value = true;
   unlockError.value = '';
 });
@@ -24,19 +25,29 @@ ipcRenderer.on('vault:logged-out' as any, () => {
   statusGeneration += 1;
   loggedIn.value = false;
   statusResolved.value = true;
+  void refreshStatus();
 });
+
+type VaultStatus = { unlocked?: boolean; state?: string; setup?: { required?: boolean } };
+
+function applyStatus(status: VaultStatus): void {
+  loggedIn.value = status.unlocked === true;
+  // A vault that doesn't exist yet has nothing to unlock: after first run it
+  // is created from the Cloud account key in the background.
+  vaultSetUp.value = status.state !== 'migration_required' && status.setup?.required !== true;
+}
 
 async function resolveStatus(generation: number): Promise<boolean> {
   try {
-    const status = await ipcRenderer.invoke('vault:status' as any) as { unlocked?: boolean; state?: string };
+    const status = await ipcRenderer.invoke('vault:status' as any) as VaultStatus;
     if (generation !== statusGeneration) return loggedIn.value;
-    loggedIn.value = status.unlocked === true;
-    vaultSetUp.value = status.state !== 'migration_required';
+    applyStatus(status);
     statusResolved.value = true;
     return loggedIn.value;
-  } catch {
+  } catch (error) {
     if (generation !== statusGeneration) return loggedIn.value;
     loggedIn.value = false;
+    unlockError.value = error instanceof Error ? error.message : 'The vault is unavailable.';
     statusResolved.value = true;
     return false;
   }
@@ -57,7 +68,22 @@ async function tryAutoLogin(): Promise<void> {
   const generation = ++statusGeneration;
 
   statusResolved.value = false;
-  try { await ipcRenderer.invoke('vault:initialize' as any) } catch { /* isolated bootstrap may be unavailable */ }
+  // Ask first: a quick status call settles the common cases (already unlocked,
+  // or no vault yet) without waiting on the Keychain bootstrap helper, which
+  // kept the startup overlay up at 100% after first run.
+  try {
+    const status = await ipcRenderer.invoke('vault:status' as any) as VaultStatus;
+    if (generation !== statusGeneration) return;
+    if (status.unlocked === true || status.setup?.required === true || status.state === 'migration_required') {
+      applyStatus(status);
+      statusResolved.value = true;
+
+      return;
+    }
+  } catch { /* vault still starting; fall through to the bootstrap path */ }
+  try { await ipcRenderer.invoke('vault:initialize' as any) } catch (error) {
+    unlockError.value = error instanceof Error ? error.message : 'The vault could not be unlocked.';
+  }
   await resolveStatus(generation);
 }
 

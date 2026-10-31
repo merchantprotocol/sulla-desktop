@@ -84,6 +84,7 @@ import {
 
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
 import { shouldWakeWorkflowConversation } from '../workflow/workflowContinuation';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 // ============================================================================
 // PLAYBOOK DEBUG LOGGER
@@ -1509,11 +1510,11 @@ export class PlaybookController<TState = any> {
           }
 
           const RUNTIME_URLS: Record<string, string> = {
-            python: 'http://127.0.0.1:30118',
-            shell:  'http://127.0.0.1:30119',
-            node:   'http://127.0.0.1:30120',
+            python: loopbackOrigin('http', 30118),
+            shell:  loopbackOrigin('http', 30119),
+            node:   loopbackOrigin('http', 30120),
           };
-          const SECRETS_HOST_URL = 'http://host.sulla.internal:30121';
+          const SECRETS_HOST_URL = `http://host.sulla.internal:${ hostPort(30121) }`;
 
           // SECURITY: `refs` lives only in this local const + the capability
           // service's in-memory map. It is NEVER passed to saveCheckpoint /

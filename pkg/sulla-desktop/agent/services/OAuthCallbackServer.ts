@@ -150,13 +150,26 @@ export async function startOAuthCallbackServer(
   // 'error' event crashing the process.
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', (err) => {
-      rejectListen(new Error(`OAuth callback server failed to listen on port ${ listenPort }: ${ err.message }`));
+      if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE' && opts.fixedPort) {
+        rejectListen(new Error(`OAuth callback port ${ listenPort } is already in use`));
+      } else {
+        rejectListen(new Error(`OAuth callback server failed to listen on port ${ listenPort }: ${ err.message }`));
+      }
     });
     server.listen(listenPort, '127.0.0.1', () => {
       server.removeAllListeners('error');
       resolveListen();
     });
   });
+
+  // A 'localhost' redirect may resolve to ::1 first, so also accept the
+  // callback on IPv6 loopback. Best effort: a host without IPv6 still has
+  // the 127.0.0.1 listener.
+  const v6Server = opts.useLocalhostHostname ? http.createServer((req, res) => server.emit('request', req, res)) : null;
+  if (v6Server) {
+    v6Server.on('error', (err) => console.warn(`[OAuthCallbackServer] IPv6 loopback listener unavailable: ${ err.message }`));
+    v6Server.listen((server.address() as { port: number }).port, '::1');
+  }
 
   // Post-listen errors surface through the flow promise.
   server.on('error', (err) => {
@@ -177,6 +190,9 @@ export async function startOAuthCallbackServer(
     clearTimeout(timeoutHandle);
     try {
       server.close();
+    } catch { /* already closed */ }
+    try {
+      v6Server?.close();
     } catch { /* already closed */ }
   }
 

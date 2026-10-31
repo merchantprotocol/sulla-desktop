@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: First-run Electron E2E
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Number of complete suite repetitions
+        required: true
+        default: '5'
+      os:
+        description: Runner image (ubuntu-latest or macos-14)
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options: [ubuntu-latest, macos-14]
+      grep:
+        description: Optional Playwright grep expression
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      - 'pkg/sulla-desktop/pages/FirstRun*'
+      - 'pkg/sulla-desktop/main/firstRun/**'
+      - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/*OAuth.ts'
+      - 'background.ts'
+      - 'bootstrapEntry.ts'
+      - 'pkg/sulla-desktop/main/e2eTrace.ts'
+      - 'e2e/first-run/**'
+      - 'scripts/e2e-first-run.mjs'
+      - '.github/workflows/first-run-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  first-run:
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.os || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      REPEAT: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat || '1' }}
+      GREP: ${{ github.event_name == 'workflow_dispatch' && inputs.grep || '' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      # Linux is a supported E2E runner, but the release postinstall intentionally
+      # rejects non-macOS packaging. Install JS dependencies without lifecycle
+      # scripts, then fetch Electron itself; the mock backend needs no native VM.
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version-file: package.json
+      - run: corepack enable yarn
+      - run: yarn install --immutable --ignore-platform --ignore-scripts
+      - run: node node_modules/electron/install.js
+      # --ignore-scripts also skips the postinstall `install-app-deps`, so native
+      # addons have no Electron binary. node-pty ships no Linux prebuild, and the
+      # main bundle imports it at load time (sullaEvents -> claudeOAuth), so the
+      # app dies before any window opens. Build the ones the app loads.
+      - name: Build native modules for Electron
+        run: node node_modules/@electron/rebuild/lib/cli.js --force --only node-pty,better-sqlite3
+      # Electron's Linux setuid sandbox helper must be root-owned with mode 4755,
+      # or every launch aborts before the app starts. Keep the sandbox on.
+      - name: Configure Electron sandbox helper (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: Build unpackaged app
+        shell: bash
+        run: |
+          set -o pipefail
+          yarn build 2>&1 | tee build.log || {
+            detail=$(tail -n 80 build.log | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=Unpackaged app build failed::${detail}"
+            exit 1
+          }
+      - name: Run first-run simulator (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          args=(--repeat "$REPEAT")
+          [[ -n "$GREP" ]] && args+=(--grep "$GREP")
+          xvfb-run --auto-servernum yarn e2e:first-run "${args[@]}" 2>&1 | tee first-run-e2e.log || {
+            detail=$({ head -n 50 first-run-e2e.log | head -c 2400; echo '--- final 50 lines ---'; tail -n 50 first-run-e2e.log | tail -c 2400; } | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=First-run simulator failed::${detail}"
+            exit 1
+          }
+      - name: Run first-run simulator (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          args=(--repeat "$REPEAT")
+          [[ -n "$GREP" ]] && args+=(--grep "$GREP")
+          yarn e2e:first-run "${args[@]}"
+      - name: Upload traces, screenshots, and repeat summary
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: first-run-e2e-${{ runner.os }}-${{ github.run_attempt }}
+          path: test-results/first-run
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: first-run-e2e-logs-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            build.log
+            first-run-e2e.log
+          if-no-files-found: warn
+          retention-days: 14

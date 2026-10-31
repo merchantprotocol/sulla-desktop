@@ -11,7 +11,7 @@ const VAULT_PREFIX = '$VAULT$';
 const isRenderer = typeof process !== 'undefined' && process.type === 'renderer';
 const LOCAL_METADATA_PROPERTIES = new Set([
   'account_label', 'active_account', 'connection_status', 'connected_at',
-  'last_sync_at', 'llm_access', 'server_url', 'base_url', 'provider', 'model',
+  'last_sync_at', 'llm_access', 'server_url', 'base_url', 'provider', 'model', 'workspace_id',
 ]);
 
 function assertLocalMetadataOnly(property: string | undefined): void {

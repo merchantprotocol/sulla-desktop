@@ -34,6 +34,7 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 const log = Logging.background;
 const perf = Logging.perf;
@@ -588,9 +589,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     });
     requireBrokeredContainerAuth(initialTransportContext);
     mark('initialContext');
+    if (initialTransportContext.runtime === 'guest') {
+      // A fresh VM has no codex CLI; install the pinned version before the first turn.
+      const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+      await ensureGuestCli('codex');
+    }
     if (initialTransportContext.runtime === 'guest' && !await ensureCodexAuthFile()) {
+      firstRunTrace('codex', 'credentials resolved', { source: 'none', runtime: initialTransportContext.runtime });
       throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
     }
+    firstRunTrace('codex', 'credentials resolved', { source: initialTransportContext.runtime === 'guest' ? 'auth-file' : 'vault-bridge', runtime: initialTransportContext.runtime });
     const attachmentRefs: ProviderFileRef[] = [];
 
     // Prompt strategy:

@@ -19,6 +19,10 @@ export class OpenAIService extends OpenAICompatibleService {
     for (const v of values) {
       valMap[v.property] = v.value;
     }
+    try {
+      const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+      Object.assign(valMap, getPendingCredential('openai')?.values || {});
+    } catch { /* pending credentials exist only in the main process */ }
 
     return new OpenAIService({
       id:      'openai',

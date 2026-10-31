@@ -6,11 +6,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import sodium from 'libsodium-wrappers-sumo';
+
 import {
   createUserKey,
   createUserKeyPair,
   decryptWithKey,
   decryptItemText,
+  deriveAccountAuthHash,
   deriveMasterKey,
   encryptItem,
   generateKey,
@@ -20,6 +23,29 @@ import {
   unwrapUserKey,
   wrapOrgKeyForMember,
 } from './index.js';
+
+test('account auth derivation matches the shared ACCOUNT-AUTH-V1 known-answer vector', async() => {
+  const master = await deriveMasterKey(
+    'Sulla KAT password · account auth v1',
+    'AAECAwQFBgcICQoLDA0ODw',
+    { memoryBytes: 67_108_864, operations: 3 },
+  );
+  try {
+    await sodium.ready;
+    const fingerprint = sodium.crypto_generichash(
+      32,
+      new TextEncoder().encode('sulla-account-auth-kat-master-key-fingerprint-v1'),
+      master.key,
+    );
+    assert.equal(
+      sodium.to_base64(fingerprint, sodium.base64_variants.URLSAFE_NO_PADDING),
+      'OXIRUUvyWzZ4_U7PKf9Vt3x17RHT6iItB744RnT1nMU',
+    );
+    assert.equal(await deriveAccountAuthHash(master.key), 'ib7ZZX_sM-TmLPJgvs2rUYxS6GG_gCvmF_9Gm_6W108');
+  } finally {
+    master.key.fill(0);
+  }
+});
 
 test('master key wrapping and item encryption round-trip', async() => {
   const master = await deriveMasterKey('correct horse battery staple');
