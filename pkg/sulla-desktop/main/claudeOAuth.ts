@@ -24,6 +24,7 @@ import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrat
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace, scrubText } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -109,8 +110,10 @@ const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t 
 const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            # The host side runs this through a cooked terminal, which turns\n            # Enter (\\r) into \\n; interactive CLIs only submit on \\r.\n            os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 async function ensureClaudeCliInVM(): Promise<void> {
+  firstRunTrace('claude', 'CLI ensure started');
   const { ensureGuestCli } = await import('@pkg/backend/guestClis');
   await ensureGuestCli('claude');
+  firstRunTrace('claude', 'CLI ensure completed', { success: true });
   const script = MOUNT_DEVPTS;
   await new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
@@ -199,6 +202,7 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
   const doResolve = (code: string | null) => {
     if (resolved) return;
     resolved = true;
+    firstRunTrace('claude', 'auth window resolved', { codeReceived: !!code, codeLength: code?.length ?? 0 });
     resolveCode(code);
   };
 
@@ -268,6 +272,7 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
     doResolve(null);
   });
 
+  firstRunTrace('claude', 'auth window opened', { urlLength: url.length });
   console.log(`[ClaudeOAuth] Opening auth window: ${ redactUrl(url) }`);
   window.loadURL(url);
   return { window, codePromise };
@@ -281,6 +286,8 @@ export function initClaudeOAuthEvents(): void {
    */
   ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<OAuthResult> => {
     assertFirstRunOrMainSender(event);
+    const vmRunning = await isVMRunning();
+    firstRunTrace('claude', 'flow started', { firstRun: !!options?.firstRun, vmRunning });
     if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
       if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'Sign-in was closed.', reason: 'user-closed' };
       const endpoint = process.env.SULLA_E2E_OAUTH_URL;
@@ -294,15 +301,20 @@ export function initClaudeOAuthEvents(): void {
     if (activeSession) killActiveSession();
 
     // Bail out early with a clear message if the VM isn't ready.
-    if (!await isVMRunning()) {
+    if (!vmRunning) {
+      firstRunTrace('claude', 'flow resolved', { success: false, reason: 'vm-not-ready' });
       return { error: 'Your private workspace is still starting. Try again in a moment.', reason: 'vm-not-ready' };
     }
 
-    const stage = (text: string) => { try { event.sender.send('claude-oauth:stage' as any, text) } catch { /* window closed */ } };
+    const stage = (text: string) => {
+      firstRunTrace('claude', 'stage', { status: text });
+      try { event.sender.send('claude-oauth:stage' as any, text) } catch { /* window closed */ }
+    };
     stage('Setting up Claude in your private workspace…');
     try {
       await ensureClaudeCliInVM();
     } catch (err) {
+      firstRunTrace('claude', 'CLI ensure completed', { success: false, error: err instanceof Error ? err.message : String(err) });
       console.warn('[ClaudeOAuth] Could not install the Claude CLI in the VM:', err);
       return { error: 'Claude could not be prepared. Check your connection, then try again.', reason: 'cli-missing' };
     }
@@ -320,6 +332,7 @@ export function initClaudeOAuthEvents(): void {
           TERM:      'xterm-256color',
         } as Record<string, string>,
       });
+      firstRunTrace('claude', 'PTY spawned');
 
       const session: OAuthSession = { ptyProcess, stdoutBuffer: '', authWindow: null };
       activeSession = session;
@@ -339,6 +352,7 @@ export function initClaudeOAuthEvents(): void {
         try { ptyProcess.kill() } catch { /* dead */ }
         try { session.authWindow?.close() } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
+        firstRunTrace('claude', 'flow resolving', { success: !!result.token, reason: result.reason, error: result.error });
 
         if (result.token) {
           if (options?.firstRun) {
@@ -361,14 +375,17 @@ export function initClaudeOAuthEvents(): void {
             }
           }
         }
+        firstRunTrace('claude', 'flow resolved', { success: !!result.token, reason: result.reason, error: result.error });
         resolve(result.token ? { success: true } : result);
       };
 
       const timeout = setTimeout(() => {
+        firstRunTrace('claude', 'flow timeout fired', { outputTail: scrubText(session.stdoutBuffer).replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-400) });
         void doResolve({ error: 'Claude sign-in took too long. Try again.', reason: 'timeout' });
       }, 5 * 60 * 1000);
       noUrlTimeout = setTimeout(() => {
         const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-240);
+        firstRunTrace('claude', 'URL timeout fired', { outputTail: tail });
         console.warn(`[ClaudeOAuth] No sign-in URL after 45 seconds. Output tail: ${ tail }`);
         void doResolve({ error: 'Claude did not open a sign-in page. Try again.', reason: 'provider-error' });
       }, 45_000);
@@ -402,6 +419,7 @@ export function initClaudeOAuthEvents(): void {
             clearTimeout(noUrlTimeout);
             urlOpened = true;
             const url = urlMatch[1].replace(/\s+/g, '');
+            firstRunTrace('claude', 'URL detected', { urlLength: url.length });
 
             try {
               event.sender.send('claude-oauth:url', url);
@@ -420,6 +438,7 @@ export function initClaudeOAuthEvents(): void {
                 return;
               }
               console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
+              firstRunTrace('claude', 'code written', { codeLength: code.length });
               try { session.authWindow?.close() } catch { /* closed */ }
               session.authWindow = null;
               try {
@@ -430,6 +449,7 @@ export function initClaudeOAuthEvents(): void {
                 noTokenTimeout = setTimeout(() => {
                   const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-400);
                   console.warn(`[ClaudeOAuth] No token 60 seconds after the code was sent (enterSent=${ enterSent }). Output tail: ${ tail }`);
+                  firstRunTrace('claude', 'token timeout fired', { enterSent, outputTail: tail });
                   void doResolve({ error: 'Claude did not finish signing in. Try again.', reason: 'timeout' });
                 }, 60_000);
                 // Newer CLIs echo the pasted code as plain text, not asterisks,
@@ -438,6 +458,7 @@ export function initClaudeOAuthEvents(): void {
                 setTimeout(() => {
                   if (enterSent || resolved) return;
                   enterSent = true;
+                  firstRunTrace('claude', 'Enter sent', { path: 'timer' });
                   console.log('[ClaudeOAuth] Submitting code');
                   try { ptyProcess.write('\r') } catch (err) { console.warn('[ClaudeOAuth] Failed to send Enter:', err) }
                 }, 400);
@@ -454,6 +475,7 @@ export function initClaudeOAuthEvents(): void {
         // a fixed timeout.
         if (codeSent && !enterSent && /\*{20,}/.test(session.stdoutBuffer)) {
           enterSent = true;
+          firstRunTrace('claude', 'Enter sent', { path: 'echo' });
           console.log('[ClaudeOAuth] Code echoed — sending Enter');
           try {
             ptyProcess.write('\r');
@@ -467,6 +489,7 @@ export function initClaudeOAuthEvents(): void {
         if (tokenMatch) {
           clearTimeout(timeout);
           console.log('[ClaudeOAuth] Token captured');
+          firstRunTrace('claude', 'token captured', { tokenLength: tokenMatch[1].length });
           void doResolve({ token: tokenMatch[1] });
         }
       });
@@ -475,6 +498,7 @@ export function initClaudeOAuthEvents(): void {
         clearTimeout(timeout);
         clearTimeout(noUrlTimeout);
         console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
+        firstRunTrace('claude', 'PTY exited', { exitCode, signal, tokenSeen: FINAL_TOKEN_PATTERN.test(session.stdoutBuffer) });
         if (!resolved) {
           const tokenMatch = FINAL_TOKEN_PATTERN.exec(session.stdoutBuffer);
           if (tokenMatch) {

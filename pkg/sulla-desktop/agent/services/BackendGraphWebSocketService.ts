@@ -26,6 +26,7 @@ import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../to
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -649,6 +650,8 @@ export class BackendGraphWebSocketService {
       const runLocation = effectiveAgentRunLocation(VM_OPERATOR_CHANNELS.has(channelId)
         ? 'vm'
         : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
+      const tracedProvider = String(state.metadata.agent?.provider || '').trim();
+      firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', '')).trim();
@@ -671,6 +674,7 @@ export class BackendGraphWebSocketService {
           state.metadata.waitingForUser = true;
         }
       } else if (err?.name !== 'AbortError') {
+        firstRunTrace('chat', 'chat error surfaced', { message: err?.message || String(err) });
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
         this.emitMessage(channelId, 'assistant_message', {
           content:   `Agent error: ${ err.message || String(err) }`,

@@ -24,6 +24,7 @@ import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 
@@ -159,6 +160,7 @@ export class OAuthService {
     extraScopes: string[] = [],
     persist = true,
   ): Promise<OAuthTokenSet> {
+    firstRunTrace('oauth', 'provider flow started', { integrationId, providerId, accountId, persist });
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
@@ -222,6 +224,7 @@ export class OAuthService {
       const authorizeUrl = this.buildAuthorizeUrl(cfg, effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
 
       if (cfg.openInEmbeddedWindow) {
+        firstRunTrace('oauth', 'auth window opened', { integrationId, providerId, embedded: true });
         // Render the sign-in page inside Sulla Desktop rather than handing off
         // to the host's default browser. Required for providers whose tokens
         // are materialized for an in-VM consumer (e.g. Codex's
@@ -249,6 +252,7 @@ export class OAuthService {
           const code = url.searchParams.get('code');
           if (!code || url.searchParams.get('state') !== state) return false;
           console.log(`${ LOG_PREFIX } Intercepted callback in the auth window`);
+          firstRunTrace('oauth', 'callback intercepted', { integrationId, providerId, source: 'window' });
           deliver({ code });
           return true;
         });
@@ -256,6 +260,7 @@ export class OAuthService {
         codePromise.catch(() => { /* superseded once the window delivers */ });
         codeSource = Promise.race([codePromise, intercepted]);
       } else {
+        firstRunTrace('oauth', 'auth window opened', { integrationId, providerId, embedded: false });
         console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
         await shell.openExternal(authorizeUrl);
       }
@@ -266,6 +271,7 @@ export class OAuthService {
       const { code } = await this.awaitAuthorizationCode(codeSource, authWindow);
       shutdown(); // free the fixed callback port as soon as the code is in hand
       console.log(`${ LOG_PREFIX } Received authorization code`);
+      firstRunTrace('oauth', 'callback received', { integrationId, providerId });
 
       // Exchange code for tokens
       const tokens = normalizeTokenExpiry(
@@ -277,13 +283,17 @@ export class OAuthService {
         tokens.oauth_client_id = effectiveClientId;
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
+      firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId, success: true });
 
       // Codex consumes its OAuth session through its CLI auth file. Materialize
       // it immediately for both first-run memory custody and container-vault
       // flows; waiting for a later chat races the pending-credential flush.
       if (integrationId === 'codex') {
         const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('../util/codexAuthFile');
-        if (!writeCodexAuthFile(tokens) || !await linkCodexHomeIntoVm()) {
+        const written = writeCodexAuthFile(tokens);
+        const linked = written && await linkCodexHomeIntoVm();
+        firstRunTrace('codex', 'auth file prepared', { written, linked });
+        if (!written || !linked) {
           throw new Error('ChatGPT signed in, but its credentials could not be prepared in the Sulla VM');
         }
       }
@@ -292,6 +302,7 @@ export class OAuthService {
         // First run may happen before the vault, Postgres, or Redis exists.
         // Return the token set to the main-process caller for memory-only
         // custody; never run provider persistence hooks on this path.
+        firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'pending' });
         return tokens;
       }
 
@@ -308,6 +319,7 @@ export class OAuthService {
 
       // Persist tokens
       await this.storeTokens(integrationId, accountId, providerId, tokens);
+      firstRunTrace('oauth', 'credentials persisted', { integrationId, providerId });
 
       // Mark integration as connected
       const integrationService = getIntegrationService();
@@ -316,15 +328,18 @@ export class OAuthService {
       // Schedule proactive refresh
       this.scheduleRefresh(integrationId, accountId, providerId, effectiveClientId, effectiveClientSecret, tokens);
 
+      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'persisted' });
       return tokens;
     } catch (err) {
       shutdown();
+      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: false, error: err instanceof Error ? err.message : String(err) });
       throw err;
     } finally {
       // Always tear down the in-app window we opened — on success (after the
       // brief callback "you can close this" page) and on any error/cancel.
       if (authWindow && !authWindow.isDestroyed()) {
         authWindow.destroy();
+        firstRunTrace('oauth', 'auth window closed', { integrationId, providerId });
       }
     }
   }
@@ -455,6 +470,7 @@ export class OAuthService {
         body:       metadata,
         injections: [],
       }));
+      firstRunTrace('oauth', 'token exchange response', { integrationId, providerId: cfg.id, status: result.status, success: result.status >= 200 && result.status < 300 });
       const body = result.body;
       const clientId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).client_id === 'string'
         ? (body as Record<string, string>).client_id
@@ -567,6 +583,7 @@ export class OAuthService {
       headers,
       body:    new URLSearchParams(body).toString(),
     });
+    firstRunTrace('oauth', 'token exchange response', { integrationId, providerId: cfg.id, status: res.status, success: res.ok });
 
     if (!res.ok) {
       const text = await res.text();

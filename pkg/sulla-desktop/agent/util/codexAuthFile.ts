@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 import { app } from 'electron';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 
@@ -216,6 +217,7 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
     });
     await guestExec(['exec', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
     console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
+    firstRunTrace('codex', 'VM auth link completed', { success: true });
     return true;
   } catch (err) {
     if (staged && /^\/tmp\/sulla-codex-auth\.[A-Za-z0-9]+$/.test(staged)) {
@@ -230,6 +232,7 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
       } catch { /* VM may have stopped during cleanup */ }
     }
     console.warn('[codexAuthFile] Could not link ~/.codex into the VM (VM not running?):', err);
+    firstRunTrace('codex', 'VM auth link completed', { success: false, error: err instanceof Error ? err.message : String(err) });
     return false;
   }
 }
@@ -261,14 +264,21 @@ export async function removeCodexAuthFile(): Promise<void> {
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
   migrateLegacyCodexAuth();
-  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) {
-    return linkCodexHomeIntoVm();
+  const exists = fs.existsSync(codexAuthPath());
+  const fresh = exists && isAuthFileFresh();
+  firstRunTrace('codex', 'auth file ensure started', { fileExists: exists, fresh });
+  if (fresh) {
+    const linked = await linkCodexHomeIntoVm();
+    firstRunTrace('codex', 'auth file ensured', { source: 'host-file', linked });
+    return linked;
   }
   try {
     const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
     const pending = getPendingCredential('codex');
     if (pending?.values.access_token && writeCodexAuthFile(pending.values as OAuthTokenSet)) {
-      return linkCodexHomeIntoVm();
+      const linked = await linkCodexHomeIntoVm();
+      firstRunTrace('codex', 'auth file ensured', { source: 'pending', linked });
+      return linked;
     }
 
     const { getOAuthService } = await import('../services/OAuthService');
@@ -288,7 +298,9 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
       try {
         const tokens = await oauthService.ensureFreshTokens('codex', accountId);
         if (writeCodexAuthFile(tokens)) {
-          return linkCodexHomeIntoVm();
+          const linked = await linkCodexHomeIntoVm();
+          firstRunTrace('codex', 'auth file ensured', { source: 'vault', accountId, linked });
+          return linked;
         }
       } catch {
         const stored = await oauthService.getStoredTokens('codex', accountId);

@@ -23,6 +23,7 @@ import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
@@ -167,6 +168,7 @@ class LLMRegistryImpl {
     // of a literal list keeps a model genuinely named e.g. 'codex' on some
     // other provider working.
     const modelOverride = activeModelId && activeModelId !== providerId ? activeModelId : undefined;
+    firstRunTrace('models', 'primary service resolved', { providerId, modelOverride: modelOverride ?? '' });
     return this.getServiceByProvider(providerId, modelOverride);
   }
 
@@ -191,6 +193,7 @@ class LLMRegistryImpl {
         ? await resolveTierToModelId(providerId, secondaryModelId)
         : secondaryModelId)
       : undefined;
+    firstRunTrace('models', 'secondary service resolved', { providerId, modelOverride: modelOverride ?? '' });
     return this.getServiceByProvider(providerId, modelOverride);
   }
 

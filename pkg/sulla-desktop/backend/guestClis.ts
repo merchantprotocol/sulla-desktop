@@ -13,6 +13,7 @@
 import * as childProcess from 'child_process';
 
 import Logging from '@pkg/utils/logging';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
@@ -31,6 +32,7 @@ function install(cli: GuestCli): Promise<void> {
   const pinnedVersion = packageSpec.slice(packageSpec.lastIndexOf('@') + 1);
   const versionCommand = cli === 'claude' ? 'DISABLE_AUTOUPDATER=1 claude --version' : 'codex --version';
   const script = `installed="$(${ versionCommand } 2>/dev/null || true)"; case "$installed" in *${ pinnedVersion }*) exit 0;; esac; nice -n 10 sudo npm install --global --no-fund --no-audit ${ packageSpec } && command -v ${ cli }`;
+  firstRunTrace(cli === 'codex' ? 'codex' : 'claude', 'CLI version check/install started', { pinnedVersion });
 
   return new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
@@ -40,6 +42,7 @@ function install(cli: GuestCli): Promise<void> {
     proc.stderr.on('data', (d) => { output += d.toString() });
     proc.on('close', (code) => {
       clearTimeout(timer);
+      firstRunTrace(cli === 'codex' ? 'codex' : 'claude', 'CLI version check/install completed', { success: code === 0, exitCode: code, outputTail: output.trim().split('\n').slice(-3).join(' ') });
       if (code === 0) resolve();
       else reject(new Error(`npm exited ${ code }: ${ output.trim().split('\n').slice(-3).join(' ') }`));
     });
