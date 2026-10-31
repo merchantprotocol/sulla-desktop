@@ -126,7 +126,6 @@ async function injectTokenIntoVM(token: string): Promise<void> {
  * install has no `claude` for `setup-token`. Install the pinned version
  * (global npm installs land on the persistent data disk) when it's missing.
  */
-const CLAUDE_CLI_PACKAGE = '@anthropic-ai/claude-code@2.1.312';
 
 /**
  * The guest's init does not mount devpts, so the VM has no pseudo-terminals,
@@ -139,7 +138,9 @@ const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t 
 const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            os.write(fd, data)\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 async function ensureClaudeCliInVM(): Promise<void> {
-  const script = `${ MOUNT_DEVPTS }; command -v claude >/dev/null 2>&1 && exit 0; sudo npm install --global --no-fund --no-audit ${ CLAUDE_CLI_PACKAGE } && command -v claude`;
+  const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+  await ensureGuestCli('claude');
+  const script = MOUNT_DEVPTS;
   await new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
     let output = '';

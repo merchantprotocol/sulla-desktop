@@ -389,6 +389,8 @@ mainEvents.on('first-run-backend-booted', async() => {
 // deliberately arrives before the remainder of the container fleet is ready.
 mainEvents.on('first-run-ai-runtime-ready', async() => {
   console.log('[FirstRunCoordinator] first-run-ai-runtime-ready; aiRuntimeReady=true');
+  // Install the provider CLIs (claude, codex) in the VM ahead of first use.
+  void import('@pkg/backend/guestClis').then(({ prepareGuestClis }) => prepareGuestClis());
   await firstRunCoordinator.setCondition('aiRuntimeReady');
 });
 

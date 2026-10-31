@@ -588,6 +588,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     });
     requireBrokeredContainerAuth(initialTransportContext);
     mark('initialContext');
+    if (initialTransportContext.runtime === 'guest') {
+      // A fresh VM has no codex CLI; install the pinned version before the first turn.
+      const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+      await ensureGuestCli('codex');
+    }
     if (initialTransportContext.runtime === 'guest' && !await ensureCodexAuthFile()) {
       throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
     }

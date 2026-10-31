@@ -72,6 +72,14 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
     log.warn(`[codexModelCatalog] ensureCodexAuthFile failed (continuing — a live auth file may still exist): ${ err }`);
   }
 
+  // A fresh VM has no codex CLI; install the pinned version first.
+  try {
+    const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+    await ensureGuestCli('codex');
+  } catch (err) {
+    log.warn(`[codexModelCatalog] codex CLI is not installed in the VM: ${ err }`);
+  }
+
   const command = 'export CODEX_HOME="$HOME/.codex"; codex debug models';
 
   try {
