@@ -5,8 +5,15 @@
 
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { MCPBridge } from '../MCPBridge';
 import type { CloudDeviceChannel } from '../CloudDeviceTransport';
+
+jest.unstable_mockModule('../MCPClient', () => ({ MCPClient: class {} }));
+jest.unstable_mockModule('@pkg/main/cloud/cloudFetch', () => ({ cloudRequest: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/cloud/deviceKey', () => ({ signDeviceMessageExact: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/sullaCloudAuth', () => ({ getCurrentUserId: jest.fn() }));
+
+const { MCPBridge } = await import('../MCPBridge');
 
 describe('MCPBridge Cloud app reconciliation', () => {
   it('adds the manifest account and removes it when the device disappears', async() => {

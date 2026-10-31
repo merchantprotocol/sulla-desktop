@@ -5,7 +5,14 @@
 
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { CloudDeviceTransport, type CloudDeviceChannel } from '../CloudDeviceTransport';
+type CloudDeviceChannel = import('../CloudDeviceTransport').CloudDeviceChannel;
+
+jest.unstable_mockModule('@pkg/main/cloud/cloudFetch', () => ({ cloudRequest: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/cloud/deviceKey', () => ({ signDeviceMessageExact: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: jest.fn() }));
+jest.unstable_mockModule('@pkg/main/sullaCloudAuth', () => ({ getCurrentUserId: jest.fn() }));
+
+const { CloudDeviceTransport } = await import('../CloudDeviceTransport');
 
 function channel(handler?: (envelope: any) => any): CloudDeviceChannel {
   return {
