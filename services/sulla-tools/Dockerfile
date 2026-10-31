@@ -9,9 +9,14 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils/instance.ts ./pkg/sulla-desktop/utils/instance.ts
+# First-run credentials only exist in Electron's main process.  Agent modules
+# also run in this container, so give their guarded lookups an inert authority
+# instead of copying the Electron-only store (and its entire main-process graph).
+COPY services/sulla-tools/src/pendingCredentials.container.ts ./pkg/sulla-desktop/main/firstRun/pendingCredentials.ts
 COPY tsconfig.json ./tsconfig.json
-# Fail the image build if the vault broker's runtime module graph is incomplete.
-RUN ./node_modules/.bin/tsx -e "import('/app/pkg/sulla-desktop/vault-broker/index.ts')"
+# Resolve both the static and guarded dynamic pending-credential imports in the
+# same filesystem layout used by the running image.
+RUN ./node_modules/.bin/tsx -e "Promise.all([import('/app/pkg/sulla-desktop/agent/integrations/select_box/GrokModels.ts'),import('/app/pkg/sulla-desktop/main/firstRun/pendingCredentials.ts')])"
 ENV NODE_ENV=production
 WORKDIR /app/services/sulla-tools
 USER node
