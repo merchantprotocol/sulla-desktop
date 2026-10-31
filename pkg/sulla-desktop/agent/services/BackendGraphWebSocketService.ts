@@ -437,6 +437,19 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
+    const { getModelProviderService } = await import('./ModelProviderService');
+    if (!getModelProviderService().getPrimaryProvider().trim()) {
+      if (channelId === HEARTBEAT_CHANNEL_ID) {
+        console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
+        return;
+      }
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.',
+        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat blocked before launch', { reason: 'no-ai-provider', channelId });
+      return;
+    }
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;

@@ -110,6 +110,9 @@ class LLMRegistryImpl {
    * same provider at different model tiers.
    */
   async getServiceByProvider(providerId: string, modelOverride?: string): Promise<BaseLanguageModel> {
+    if (!providerId.trim()) {
+      throw new Error('No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.');
+    }
     const key = modelOverride ? `provider:${ providerId }:${ modelOverride }` : `provider:${ providerId }`;
     let svc = this.services.get(key);
 

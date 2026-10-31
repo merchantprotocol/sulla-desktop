@@ -446,10 +446,19 @@
       const label = document.createElement('label'); label.className = 'wide';
       label.append(text(field.title, 120) || field.key);
       if (field.required) label.append(Object.assign(document.createElement('span'), { className: 'error', textContent: ' *' }));
-      const input = document.createElement('input'); input.dataset.connectKey = field.key; input.autocomplete = field.type === 'password' ? 'new-password' : 'off';
-      input.type = field.type === 'password' ? 'password' : field.type === 'url' ? 'url' : 'text'; input.placeholder = text(field.placeholder, 200); input.required = Boolean(field.required);
+      const options = Array.isArray(field.options) ? field.options.filter(option => option && typeof option.value === 'string').slice(0, 500) : [];
+      const input = document.createElement(field.type === 'select' && options.length ? 'select' : 'input'); input.dataset.connectKey = field.key;
+      if (input.tagName === 'SELECT') {
+        input.append(Object.assign(document.createElement('option'), { value: '', textContent: text(field.placeholder, 200) || 'Auto' }));
+        for (const option of options) input.append(Object.assign(document.createElement('option'), { value: option.value, textContent: text(option.label, 200) || option.value }));
+      } else {
+        input.autocomplete = field.type === 'password' ? 'new-password' : 'off';
+        input.type = field.type === 'password' ? 'password' : field.type === 'url' ? 'url' : 'text'; input.placeholder = text(field.placeholder, 200);
+      }
+      input.required = Boolean(field.required);
       label.append(input);
       if (field.hint) label.append(Object.assign(document.createElement('span'), { className: 'field-help', textContent: text(field.hint, 400) }));
+      if (field.type === 'select' && !options.length) label.append(Object.assign(document.createElement('span'), { className: 'field-help', textContent: 'Model choices are unavailable right now. Leave this blank to use Auto, or enter a model name.' }));
       fields.append(label);
     }
     const guide = connectSpec.guide || {}; const steps = Array.isArray(guide.steps) ? guide.steps.slice(0, 20) : []; const notes = Array.isArray(guide.notes) ? guide.notes.slice(0, 20) : [];

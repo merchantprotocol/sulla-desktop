@@ -288,9 +288,16 @@ modelSelector.start().then(() => {
 // the registry; otherwise we synthesize a minimal descriptor so the UI
 // still reflects whatever label the backend says is active.
 watch(
-  [modelSelector.activeModelId, modelSelector.activeModelLabel],
-  ([id, label]) => {
-    if (!id) return;
+  [modelSelector.activePrimaryProvider, modelSelector.activeModelId, modelSelector.activeModelLabel],
+  ([providerId, id, label]) => {
+    if (!providerId) {
+      controller.switchModel({ id: '', name: 'Connect an AI', tier: 'hosted', ctx: '' });
+      return;
+    }
+    if (!id) {
+      controller.switchModel({ id: '', name: 'Auto', tier: 'hosted', ctx: '' });
+      return;
+    }
     const known = findModel(id);
     controller.switchModel(known ?? {
       id, name: label || id, tier: 'hosted', ctx: '',

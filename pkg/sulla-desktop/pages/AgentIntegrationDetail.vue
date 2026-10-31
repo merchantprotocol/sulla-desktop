@@ -1195,18 +1195,26 @@ const startEditAccount = async(accountId: string) => {
   }
 };
 
-const openSecureVault = (accountId?: string) => {
+const openSecureVault = async(accountId?: string) => {
   if (!integration.value) return;
   const { name, description, formGuide, installationGuide, properties } = integration.value;
   // A new account opens the vault's guided Connect screen with this integration's own
   // field labels and setup notes. Only the layout crosses over; values stay in the vault.
+  const fields = accountId ? [] : await Promise.all((properties ?? []).filter(p => p.key !== 'llm_access').map(async(p) => {
+    const options = p.type === 'select' && p.selectBoxId
+      ? await integrationService.getSelectOptions(p.selectBoxId, integration.value!.id, 'default', {}).catch(() => [])
+      : [];
+    return {
+      key: p.key, title: p.title, hint: p.hint, type: p.type,
+      required: p.type === 'select' && !options.length ? false : p.required,
+      placeholder: p.placeholder, options,
+    };
+  }));
   const connect = accountId ? undefined : {
     name,
     description,
     formGuide,
-    fields: (properties ?? []).filter(p => p.key !== 'llm_access').map(p => ({
-      key: p.key, title: p.title, hint: p.hint, type: p.type, required: p.required, placeholder: p.placeholder,
-    })),
+    fields,
     guide: installationGuide ? {
       title:       installationGuide.title,
       description: installationGuide.description,

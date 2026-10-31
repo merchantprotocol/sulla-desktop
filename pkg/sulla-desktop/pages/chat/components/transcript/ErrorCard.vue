@@ -23,7 +23,7 @@
 <script setup lang="ts">
 import type { ErrorMessage } from '../../models/Message';
 defineProps<{ msg: ErrorMessage }>();
-defineEmits<{ (e: 'action', kind: 'retry' | 'continue' | 'dismiss'): void }>();
+defineEmits<{ (e: 'action', kind: 'retry' | 'continue' | 'dismiss' | 'connect'): void }>();
 </script>
 
 <style scoped>

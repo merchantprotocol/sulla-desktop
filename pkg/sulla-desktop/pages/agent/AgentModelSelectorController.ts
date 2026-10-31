@@ -15,7 +15,6 @@
 
 import { computed, ref } from 'vue';
 
-import { integrations } from '@pkg/agent/integrations/catalog';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ComputedRef, Ref } from 'vue';
@@ -56,7 +55,7 @@ export class AgentModelSelectorController {
   readonly buttonRef = ref<HTMLElement | null>(null);
 
   /** Currently active primary provider id */
-  readonly activePrimaryProvider = ref<string>('grok');
+  readonly activePrimaryProvider = ref<string>('');
   /** Currently active model id for the active provider */
   readonly activeModelId = ref<string>('');
 
@@ -89,9 +88,7 @@ export class AgentModelSelectorController {
         return model;
       }
 
-      const integration = integrations[provider];
-
-      return integration?.name || provider || 'Select model';
+      return provider ? 'Auto' : 'Connect an AI';
     });
 
     this.isRunningValue = computed(() => this.deps.isRunning.value);

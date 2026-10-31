@@ -22,6 +22,7 @@
 import { app, BrowserWindow } from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { integrations } from '@pkg/agent/integrations/catalog';
 import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -141,12 +142,17 @@ export function initIntegrationOAuthEvents(): void {
 
   ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
     assertFirstRunOrMainSender(event);
-    const pending = pendingIntegrationIds();
+    const aiProviderIds = new Set([
+      'claude-code', 'codex',
+      ...Object.values(integrations).filter(integration => integration.category === 'AI Infrastructure').map(integration => integration.id),
+    ]);
+    const pending = pendingIntegrationIds().filter(id => aiProviderIds.has(id));
     try {
       const service = getIntegrationService();
-      const providerIds = ['claude-code', 'codex', 'grok', 'anthropic', 'openai'];
-      const accounts = await Promise.all(providerIds.map(id => service.getAccounts(id)));
-      return { pending, connected: pending.length > 0 || accounts.flat().some(account => account.connected), loading: false };
+      const providerIds = [...aiProviderIds];
+      const accountResults = await Promise.allSettled(providerIds.map(id => service.getAccounts(id)));
+      const accounts = accountResults.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+      return { pending, connected: pending.length > 0 || accounts.some(account => account.connected), loading: false };
     } catch {
       return { pending, connected: pending.length > 0, loading: true };
     }

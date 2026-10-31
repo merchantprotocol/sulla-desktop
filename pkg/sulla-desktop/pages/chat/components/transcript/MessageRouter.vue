@@ -36,7 +36,7 @@
   <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
   <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
   <TtsIndicator    v-else-if="msg.kind === 'tts'"       :msg="msg" />
-  <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" />
+  <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" @action="onErrorAction" />
   <div v-else />
 </template>
 
@@ -69,6 +69,10 @@ const controller = useChatController();
 function onEdit(): void {
   // Placeholder — a future EditMessageOverlay fires this; wire into
   // controller.editMessage(msg.id, newText) from there.
+}
+
+function onErrorAction(kind: 'retry' | 'continue' | 'dismiss' | 'connect'): void {
+  if (kind === 'connect') window.dispatchEvent(new CustomEvent('sulla:open-ai-connections'));
 }
 void props;
 </script>
