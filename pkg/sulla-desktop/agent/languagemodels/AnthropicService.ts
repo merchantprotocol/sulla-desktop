@@ -321,7 +321,7 @@ export class AnthropicService extends BaseLanguageModel {
   protected buildFetchOptions(body: any, signal?: AbortSignal): RequestInit {
     const headers: Record<string, string> = {
       'Content-Type':      'application/json',
-      'anthropic-version': '2025-01-24',
+      'anthropic-version': '2023-06-01',
     };
 
     if (this.apiKey) {

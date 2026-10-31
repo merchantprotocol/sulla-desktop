@@ -9,7 +9,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 
 /**
  * Alibaba Cloud (DashScope / Model Studio) LLM provider.
- * OpenAI-compatible API at https://coding-intl.dashscope.aliyuncs.com/v1 (Coding Plan)
+ * OpenAI-compatible API at a DashScope regional endpoint.
  * Provides access to MiniMax, Kimi K2.5, Qwen, and other models.
  */
 export class AlibabaService extends OpenAICompatibleService {
@@ -21,10 +21,16 @@ export class AlibabaService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const plan = valMap.plan || 'payg';
+    const region = valMap.region || 'intl';
+    const baseUrl = plan === 'coding'
+      ? (region === 'cn' ? 'https://coding.dashscope.aliyuncs.com/v1' : 'https://coding-intl.dashscope.aliyuncs.com/v1')
+      : ({ intl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', us: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1', cn: 'https://dashscope.aliyuncs.com/compatible-mode/v1' } as Record<string, string>)[region] || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+
     return new AlibabaService({
       id:      'alibaba',
       model:   valMap.model || 'qwen3.5-plus',
-      baseUrl: valMap.base_url || 'https://coding-intl.dashscope.aliyuncs.com/v1',
+      baseUrl,
       apiKey:  valMap.api_key || '',
     });
   }

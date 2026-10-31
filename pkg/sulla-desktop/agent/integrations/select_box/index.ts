@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AlibabaModels } from './AlibabaModels';
+import { alibabaPlans, alibabaRegions, kimiRegions } from './AIProviderOptions';
 import { AnthropicModels } from './AnthropicModels';
 import { ArceeModels } from './ArceeModels';
 import { CohereModels } from './CohereModels';
@@ -26,7 +27,10 @@ registerSelectBoxProvider(new GrokModels());
 registerSelectBoxProvider(new AnthropicModels());
 registerSelectBoxProvider(new OpenAIModels());
 registerSelectBoxProvider(new KimiModels());
+registerSelectBoxProvider(kimiRegions);
 registerSelectBoxProvider(new AlibabaModels());
+registerSelectBoxProvider(alibabaPlans);
+registerSelectBoxProvider(alibabaRegions);
 registerSelectBoxProvider(new NvidiaModels());
 registerSelectBoxProvider(new ArceeModels());
 registerSelectBoxProvider(new CohereModels());
