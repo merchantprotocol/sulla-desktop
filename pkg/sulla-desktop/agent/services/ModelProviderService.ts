@@ -240,7 +240,7 @@ class ModelProviderService {
     if (providerId === 'claude-code') {
       // No hardcoded claude-code model list — read the live catalog from
       // Anthropic's /v1/models using the signed-in account's credentials.
-      // Degrades to Auto + a static list on any failure. See
+      // Degrades to the provider-agnostic Auto sentinel on any failure. See
       // claudeModelCatalog.ts.
       const { listClaudeCodeModels } = await import('../languagemodels/claudeModelCatalog');
       return listClaudeCodeModels();

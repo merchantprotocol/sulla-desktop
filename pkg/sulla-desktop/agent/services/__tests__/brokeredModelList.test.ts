@@ -177,7 +177,7 @@ describe('select-box providers in container-vault mode', () => {
     clearBrokeredModelListCache();
     executeMock.mockReset().mockResolvedValue({ status: 403, headers: {}, body: null });
     const fallback = await new GrokModels().getOptions({ integrationId: 'grok', accountId: 'default', formValues: {} });
-    expect(fallback.map(o => o.value)).toContain('grok-4.5'); // subscription-lane static list, not grok-3
+    expect(fallback).toEqual([]);
   });
 
   it('Grok API-key account uses api.x.ai without grok-cli headers', async() => {
@@ -189,7 +189,7 @@ describe('select-box providers in container-vault mode', () => {
     expect(sent.url).toBe('https://api.x.ai/v1/models');
     expect(sent.injections[0].field).toBe('api_key');
     expect(sent.headers['x-xai-token-auth']).toBeUndefined();
-    expect(fallback.map(o => o.value)).toContain('grok-3');
+    expect(fallback).toEqual([]);
   });
 
   it('OpenAI lists sorted live models; empty on failure (it has no static catalog)', async() => {
@@ -205,7 +205,7 @@ describe('select-box providers in container-vault mode', () => {
 });
 
 describe('getModelsForProvider', () => {
-  it('container mode: anthropic and claude-code use the broker; claude-code falls back to Auto + static', async() => {
+  it('container mode: anthropic and claude-code use the broker; claude-code falls back to Auto only', async() => {
     accounts = [account('anthropic', 'default', { active: true }), account('claude-code', 'oauth', { active: true })];
     executeMock.mockImplementation(async(req: any) => (req.ref.integrationId === 'anthropic'
       ? ok({ data: [{ id: 'claude-live-2', display_name: 'Live 2' }] })
@@ -221,7 +221,7 @@ describe('getModelsForProvider', () => {
     expect(claudeReq.injections).toEqual([{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]);
     expect(claudeReq.headers['anthropic-beta']).toBe('oauth-2025-04-20');
     expect(claude[0].id).toBe('claude-code'); // Auto sentinel
-    expect(claude.length).toBeGreaterThan(1); // static fallback keeps the group non-empty
+    expect(claude).toHaveLength(1);
   });
 
   it('legacy server mode keeps the direct fetch and never calls the broker', async() => {
