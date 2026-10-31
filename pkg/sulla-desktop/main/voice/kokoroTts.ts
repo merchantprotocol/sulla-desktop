@@ -526,7 +526,9 @@ async function pump() {
       try {
         const tts = await getTts();
         const text = job.type === 'warm' ? 'Ready.' : job.text;
-        const audio = await tts.generateAsync({ text: text, sid: job.type === 'warm' ? 2 : job.sid, speed: job.speed || 1 });
+        // Electron forbids external ArrayBuffers (V8 sandbox): without this flag sherpa
+        // fails every synthesis with "TTS settlement failed" / "External buffers are not allowed".
+        const audio = await tts.generateAsync({ text: text, sid: job.type === 'warm' ? 2 : job.sid, speed: job.speed || 1, enableExternalBuffer: false });
         if (job.type === 'warm') {
           process.parentPort.postMessage({ id: job.id, ok: true, samples: new Float32Array(0), sampleRate: audio.sampleRate });
         } else {
