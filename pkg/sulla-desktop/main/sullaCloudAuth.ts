@@ -129,7 +129,7 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
     firstRunTrace('vault', 'creating or re-keying the vault with the Cloud key', { userId });
-    const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(attemptKey).toString('base64url'), kdf });
+    const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(attemptKey).toString('base64url'), cloudUserId: userId, kdf });
     firstRunTrace('vault', 'vault accepted the Cloud key', { recoveryKeyCreated: !!result.recoveryKey });
     // The vault is authoritative now. Publish before optional Keychain/UI work.
     const { onVaultUnlocked } = await import('@pkg/sulla');
@@ -643,12 +643,12 @@ function retryAfterSeconds(res: Response): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-function throttled(result: PasswordAuthResponse) {
+function throttled(result: PasswordAuthResponse, accountExists = true) {
   const wait = result.retryAfter ?? 60;
-  return { ok: false as const, accountExists: true, retryAfter: wait, error: `Too many tries. Wait ${ wait } seconds and try again, or reset your password.` };
+  return { ok: false as const, accountExists, retryAfter: wait, error: `Too many tries. Wait ${ wait } seconds and try again.` };
 }
 
-async function emailLogin(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
+async function emailLoginOnce(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
   const account = knownAccount ?? await prelogin(email);
   const credential = await deriveAccountCredential(password, account.kdf);
   const endpoint = account.authVersion === 1 ? '/auth/upgrade' : '/auth/email/login';
@@ -673,8 +673,17 @@ async function emailLogin(email: string, password: string, knownAccount?: Awaite
   }
 }
 
+/** New accounts use NFC. Existing decomposed passwords still work once, unchanged. */
+async function emailLogin(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
+  const normalized = password.normalize('NFC');
+  const first = await emailLoginOnce(email, normalized, knownAccount);
+  if (first.ok || normalized === password || (first.httpStatus !== 401 && first.httpStatus !== 403)) return first;
+  firstRunTrace('account', 'normalized password did not match; trying the legacy byte form');
+  return emailLoginOnce(email, password, knownAccount);
+}
+
 async function emailRegister(email: string, password: string, name?: string): Promise<PasswordAuthResponse> {
-  const credential = await deriveAccountCredential(password);
+  const credential = await deriveAccountCredential(password.normalize('NFC'));
   try {
     const res = await cloudFetch('/auth/email/register', {
       method:  'POST',
@@ -963,6 +972,18 @@ export function initSullaCloudAuthEvents(): void {
   // The first-run copy stays neutral until email-continue reports accountExists.
   ipcMainProxy.handle('sulla-cloud:account-exists', async() => ({ exists: null }));
   ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => ({ available: true }));
+  ipcMainProxy.handle('sulla-cloud:password-reset-availability' as any, async() => {
+    try {
+      const response = await cloudFetch('/auth/email/reset-password/start', { method: 'OPTIONS', signal: AbortSignal.timeout(5_000) });
+      return { available: response.ok };
+    } catch { return { available: false } }
+  });
+  ipcMainProxy.handle('sulla-cloud:first-run-sign-out' as any, async() => {
+    clearPendingCredential(INTEGRATION_ID);
+    clearPendingCloudMasterKey();
+    firstRunTrace('account', 'pending first-run Cloud sign-in cleared');
+    return { ok: true };
+  });
   ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => unshownRecoveryKey);
   ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { unshownRecoveryKey = undefined });
 
@@ -1161,6 +1182,47 @@ export function initSullaCloudAuthEvents(): void {
     }
   });
 
+  ipcMainProxy.handle('sulla-cloud:password-reset-start' as any, async(_event: unknown, email: string) => {
+    const e = String(email ?? '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
+    try {
+      const response = await cloudFetch('/auth/email/reset-password/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e }),
+      });
+      if (!response.ok) return { ok: false, error: response.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
+      return { ok: true };
+    } catch { return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' } }
+  });
+
+  ipcMainProxy.handle('sulla-cloud:password-reset-complete' as any, async(_event: unknown, email: string, code: string, password: string) => {
+    const e = String(email ?? '').trim().toLowerCase();
+    const c = String(code ?? '').replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(c)) return { ok: false, error: 'Enter the 6-digit code from the email.' };
+    if (!password) return { ok: false, error: 'Enter a password.' };
+    const credential = await deriveAccountCredential(password.normalize('NFC'));
+    try {
+      const response = await cloudFetch('/auth/email/reset-password/complete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: e, code: c, authHash: credential.authHash, kdf: credential.kdf }),
+      });
+      credential.masterKey.fill(0);
+      const body = await response.json().catch(() => ({})) as { error?: string; vaultState?: string };
+      if (!response.ok) {
+        return { ok: false, error: response.status === 400 ? 'That code is wrong or expired.' : response.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
+      }
+      firstRunTrace('account', 'Cloud password reset completed; signing in');
+      const login = await emailLogin(e, password);
+      if (!login.ok || !login.data || !login.masterKey || !login.kdf) return { ok: false, error: 'Password changed. Sign in again to continue.' };
+      const userId = login.data.userId ?? login.data.contractor.id;
+      retainCloudMasterKey(login.masterKey, login.kdf, userId);
+      const signedIn = await completeFirstRunSignIn(login.data);
+      return { ...signedIn, vaultNeedsRecovery: body.vaultState === 'needs_recovery' };
+    } catch {
+      credential.masterKey.fill(0);
+      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' };
+    }
+  });
+
   ipcMainProxy.handle('sulla-cloud:email-code-verify', async(_event: unknown, email: string, code: string, name?: string) => {
     const e = String(email ?? '').trim().toLowerCase();
     const c = String(code ?? '').replace(/\s+/g, '');
@@ -1215,7 +1277,7 @@ export function initSullaCloudAuthEvents(): void {
         accountKdf = created.kdf!;
         isNewUser = true;
       } else if (created.httpStatus === 429) {
-        return { ...throttled(created), status: await buildStatus().catch(() => ({} as any)) };
+        return { ...throttled(created, false), status: await buildStatus().catch(() => ({} as any)) };
       } else if (created.httpStatus === 409) {
         const login = await emailLogin(e, password);
         firstRunTrace('account', 'existing account; sign-in answered', { ok: login.ok, httpStatus: login.httpStatus, error: login.error });
@@ -1233,7 +1295,7 @@ export function initSullaCloudAuthEvents(): void {
         accountKdf = login.kdf!;
         isNewUser = false;
       } else {
-        return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
+        return { ok: false, error: created.httpStatus && created.httpStatus >= 500 ? 'Sulla Cloud had a problem, try again.' : created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

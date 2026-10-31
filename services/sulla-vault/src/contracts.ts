@@ -393,6 +393,8 @@ export interface ConfigureRecoveryRequest {
 export interface AccountPasswordRewrapRequest {
   /** base64url account master key, exactly 32 bytes; accepted only from Desktop approval identity over pinned TLS. */
   masterKey: string;
+  /** Stable Sulla Cloud user id. Binds this local vault to one Cloud account. */
+  cloudUserId: string;
   kdf: { alg: 'argon2id13'; salt: string; memoryBytes: number; ops: number };
 }
 

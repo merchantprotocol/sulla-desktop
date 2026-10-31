@@ -8,6 +8,7 @@ import Electron from 'electron';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 export interface PendingCredential {
@@ -25,6 +26,22 @@ let vaultUnlocked = false;
 let vaultReady = false;
 let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
+
+class PendingSessionExpiredError extends Error {}
+
+function returnToCloudSignIn(): void {
+  const state = getFirstRunState();
+  updateFirstRunState({
+    step: 0,
+    credentialsSaved: false,
+    choices: { ...state.choices, accountLinked: false, accountChoice: undefined },
+  });
+  firstRunTrace('pending', 'pending Cloud session expired; returning to sign-in');
+  for (const window of Electron.BrowserWindow.getAllWindows()) {
+    window.webContents.send('sulla-cloud:first-run-session-expired', { message: 'Sign in again to finish setup.' });
+    window.webContents.reload();
+  }
+}
 
 async function clearModelListCaches(): Promise<void> {
   try {
@@ -117,6 +134,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
         });
+        if (response.status === 401 || response.status === 403) throw new PendingSessionExpiredError('Cloud session expired');
         if (!response.ok) throw new Error(`Cloud session refresh returned ${ response.status }`);
         const tokens = await response.json() as { accessToken?: string; refreshToken?: string };
         if (!tokens.accessToken) throw new Error('Cloud session refresh returned no access token');
@@ -126,6 +144,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
         entry.values.refresh_token = refreshToken;
       }
     } catch (error) {
+      if (error instanceof PendingSessionExpiredError) throw error;
       throw new Error(`Pending Cloud session needs refresh: ${ error instanceof Error ? error.message : String(error) }`);
     }
     const client = getConfiguredApprovalClient();
@@ -175,6 +194,13 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
             void import('@pkg/main/sullaCloudAuth').then(({ signalSullaCloudStartupRestore }) => signalSullaCloudStartupRestore());
           }
         } catch (error) {
+          if (error instanceof PendingSessionExpiredError && entry.integrationId === 'sulla-cloud') {
+            if (pending.get(key) === entry) pending.delete(key);
+            clearValues(entry.values);
+            returnToCloudSignIn();
+            madeProgress = true;
+            continue;
+          }
           firstRunTrace('pending', 'saving sign-in into the vault failed; will retry', { integrationId: entry.integrationId, accountId: entry.accountId, error });
           failed.push(entry.integrationId);
         }

@@ -1319,6 +1319,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   ): Promise<AccountPasswordRewrapResponse> {
     this.requireApprovalIdentity(serviceId, token);
     const kdf = input?.kdf;
+    const cloudUserId = typeof input?.cloudUserId === 'string' ? input.cloudUserId.trim() : '';
+    if (!cloudUserId || Buffer.byteLength(cloudUserId) > 256) {
+      throw new LocalVaultError('invalid_operation', 400, 'Cloud account is invalid');
+    }
     if (kdf?.alg !== 'argon2id13' || !/^[A-Za-z0-9_-]{22}$/.test(kdf.salt) ||
         kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
       throw new LocalVaultError('invalid_operation', 400, 'Account KDF is unsupported');
@@ -1328,24 +1332,32 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       masterKey.fill(0);
       throw new LocalVaultError('invalid_unlock_material', 400, 'Account master key is invalid');
     }
-    // Fresh install: no vault exists yet. Create it from the signed-in Cloud
-    // account key, so the Cloud password is the vault password from the start
-    // and the person is never asked to invent a second one. An existing vault
-    // must already be unlocked; this never replaces one.
+    // Fresh install: create from the account key. If the OS unlock cache was
+    // lost, the same account key can also unlock an existing account-wrapped
+    // vault. It can never replace a vault belonging to another Cloud account.
     if (!this.keys) {
-      const created = await this.runSecurityOperation(async() => {
+      await this.runSecurityOperation(async() => {
         if (this.keys) return false;
-        if (!await this.isSetupRequired()) return null;
+        if (!await this.isSetupRequired()) {
+          const existing = await this.db.query<{ id: string; kdf: { cloudUserId?: string } }>(
+            'SELECT id,kdf FROM users WHERE disabled_at IS NULL LIMIT 1',
+          );
+          const owner = existing.rows[0]?.kdf?.cloudUserId;
+          if (owner && owner !== cloudUserId) {
+            throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+          }
+          await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+            authority: 'container', version: 1, cloudUserId,
+            password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+          });
+          return false;
+        }
         await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
-          authority: 'container', version: 1,
+          authority: 'container', version: 1, cloudUserId,
           password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
         });
         return true;
       });
-      if (created === null) {
-        masterKey.fill(0);
-        throw new LocalVaultError('vault_locked', 423, 'Unlock the vault before moving it to the account password');
-      }
     }
     const keys = this.requireKeys();
     const generation = this.generation;
@@ -1354,14 +1366,32 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     try {
       const current = await this.db.query<{
         login_hash_salt: Buffer; login_hash_verifier: Buffer;
-        kdf: { password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
+        kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
       }>('SELECT login_hash_salt,login_hash_verifier,kdf FROM users WHERE id=$1', [keys.userId]);
+      const currentOwner = current.rows[0]?.kdf?.cloudUserId;
+      if (currentOwner && currentOwner !== cloudUserId) {
+        throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+      }
+      if (!currentOwner) {
+        const priorCloud = await this.db.query<{ active_account_id: string }>(
+          `SELECT active_account_id FROM local_integration_state
+            WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [keys.userId],
+        );
+        if (priorCloud.rows[0]?.active_account_id && priorCloud.rows[0].active_account_id !== cloudUserId) {
+          throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+        }
+      }
       const passwordKdf = current.rows[0]?.kdf?.password;
       const recoveryExists = await this.db.query('SELECT 1 FROM local_vault_recovery WHERE user_id=$1', [keys.userId]);
       const alreadyWrapped = passwordKdf?.salt === kdf.salt && passwordKdf.parameters?.memoryBytes === kdf.memoryBytes &&
         passwordKdf.parameters?.operations === kdf.ops &&
         verifyLoginHash(await deriveLoginHash(masterKey), current.rows[0].login_hash_salt, current.rows[0].login_hash_verifier);
       if (alreadyWrapped && recoveryExists.rowCount) {
+        if (!currentOwner) {
+          await this.db.query('UPDATE users SET kdf=$1,updated_at=now() WHERE id=$2', [
+            { authority: 'container', version: 1, cloudUserId, password: passwordKdf }, keys.userId,
+          ]);
+        }
         this.stageCacheUpdate(masterKey);
         return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
       }
@@ -1390,7 +1420,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         await client.query(
           `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
           [verifier.salt, verifier.verifier, wrapped,
-            { authority: 'container', version: 1, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } }, keys.userId],
+            { authority: 'container', version: 1, cloudUserId, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } }, keys.userId],
         );
         if (recoveryRow) {
           await client.query(
