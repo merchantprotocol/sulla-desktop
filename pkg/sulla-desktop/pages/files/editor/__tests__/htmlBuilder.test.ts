@@ -83,6 +83,26 @@ describe('HTML builder: element to source mapping', () => {
   });
 });
 
+describe('HTML builder: opening state', () => {
+  it('opens every HTML file with editing off so the page renders as designed', () => {
+    localStorage.setItem('sulla.htmlEditor.editing', '1');
+    const host = document.createElement('div');
+
+    document.body.append(host);
+    const editor = builder.mount(host, {
+      source:   '<!doctype html><html><body><button>Designed page</button></body></html>',
+      fileName: 'test.html',
+    });
+
+    expect(host.querySelector('.shb-root')?.classList.contains('preview')).toBe(true);
+    expect((host.querySelector('#ta') as HTMLTextAreaElement).readOnly).toBe(true);
+    expect(host.querySelector('#editLbl')?.textContent).toBe('Editing off');
+    expect(host.querySelector('#editTog')?.classList.contains('on')).toBe(false);
+    editor.destroy();
+    host.remove();
+  });
+});
+
 describe('HTML builder: iframe security policy', () => {
   it('edit and run sandboxes are mutually exclusive', () => {
     expect(core.sandboxFor(false)).toBe('allow-same-origin');
