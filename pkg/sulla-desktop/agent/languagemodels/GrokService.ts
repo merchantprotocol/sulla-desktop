@@ -10,6 +10,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import type { BrokerInjection } from '../../vault-broker';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 /**
  * xAI Grok LLM provider.
@@ -92,6 +93,7 @@ export class GrokService extends OpenAICompatibleService {
         apiKey = pending.values.access_token;
         if (pending.values.model) valMap.model = pending.values.model;
         oauthMode = true;
+        firstRunTrace('grok', 'credentials resolved', { source: 'pending', oauthMode: true });
       }
     } catch { /* pending credentials exist only in the main process */ }
     if (!oauthMode && usesContainerVaultAuthority()) {
@@ -131,6 +133,7 @@ export class GrokService extends OpenAICompatibleService {
     }
 
     const nativeSearch = await SullaSettingsModel.get('grokNativeSearch', true);
+    firstRunTrace('grok', 'credentials resolved', { source: oauthMode ? (apiKey ? 'vault' : 'vault-bridge') : (apiKey ? 'vault-api-key' : 'none'), oauthMode, model });
 
     return new GrokService({
       id:      'grok',

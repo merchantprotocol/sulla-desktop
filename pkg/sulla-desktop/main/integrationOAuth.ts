@@ -23,6 +23,7 @@ import { app, BrowserWindow } from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
@@ -58,6 +59,7 @@ export function initIntegrationOAuthEvents(): void {
       firstRun?:     boolean;
     },
   ): Promise<{ success: boolean; error?: string; reason?: 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error' }> => {
+    firstRunTrace('oauth', 'flow started', { integrationId: payload.integrationId, providerId: payload.providerId, firstRun: !!payload.firstRun });
     if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
       if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'Sign-in was closed.', reason: 'user-closed' };
       const endpoint = process.env.SULLA_E2E_OAUTH_URL;
@@ -100,19 +102,24 @@ export function initIntegrationOAuthEvents(): void {
         queuePendingCredential({
           integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
         });
+        firstRunTrace('oauth', 'credentials queued', { integrationId: payload.integrationId, custody: 'pending' });
         const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
         await getModelProviderService().reconcilePrimaryProvider(false, payload.integrationId);
+        firstRunTrace('oauth', 'provider reconcile called', { integrationId: payload.integrationId });
         if (payload.integrationId === 'codex') {
           const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('@pkg/agent/util/codexAuthFile');
           if (!writeCodexAuthFile(tokens)) throw new Error('ChatGPT sign-in did not return usable credentials');
           // The VM may still be starting during first run. The sign-in is kept;
           // ensureCodexAuthFile() links it into the VM before the first Codex turn.
-          if (!await linkCodexHomeIntoVm().catch(() => false)) console.log(`${ LOG_PREFIX } Codex sign-in saved; it will be linked into the VM once it is ready`);
+          const linked = await linkCodexHomeIntoVm().catch(() => false);
+          firstRunTrace('codex', 'auth file prepared', { written: true, linked });
+          if (!linked) console.log(`${ LOG_PREFIX } Codex sign-in saved; it will be linked into the VM once it is ready`);
         }
       }
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
 
+      firstRunTrace('oauth', 'flow completed', { integrationId: payload.integrationId, success: true, custody: payload.firstRun ? 'pending' : 'persisted' });
       return { success: true };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -127,6 +134,7 @@ export function initIntegrationOAuthEvents(): void {
         : reason === 'timeout' ? 'Sign-in took too long. Try again.'
           : reason === 'offline' ? 'You appear to be offline. Check your connection and try again.'
             : errMsg.replace(/^\[OAuthService\]\s*/, '');
+      firstRunTrace('oauth', 'flow completed', { integrationId: payload?.integrationId, success: false, reason, error });
       return { success: false, error, reason };
     }
   });

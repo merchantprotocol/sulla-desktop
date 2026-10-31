@@ -31,6 +31,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -1236,8 +1237,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         `[${ this.name }:BaseNode] Primary LLM failed ` +
         `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
       );
+      firstRunTrace('chat', 'provider call failed', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, error: lastErrMsg });
 
       if (recovery.retryPrimary) {
+        firstRunTrace('chat', 'provider retry started', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind });
         try {
           throwIfAborted(abortSignal);
           console.warn(
@@ -1275,6 +1278,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             `[${ this.name }:BaseNode] Primary retry failed ` +
             `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
           );
+          firstRunTrace('chat', 'provider retry failed', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, error: lastErrMsg });
         }
       }
 
@@ -1283,6 +1287,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // a different endpoint than chat completion.
       // Only fall back to a backup the owner actually has: no backup set means no fallback.
       const hasBackup = !!(await getSecondaryProviderId().catch(() => ''));
+      firstRunTrace('chat', 'fallback evaluated', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, hasBackup, fallbackAllowed: recovery.fallbackAllowed });
       if (recovery.fallbackAllowed && hasBackup && await SullaSettingsModel.get('fallbackEnabled', true)) {
         try {
           throwIfAborted(abortSignal);
@@ -1294,6 +1299,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             { provider: primaryName, model: primaryId },
             { provider: secondaryName, model: secondaryModel },
           );
+          firstRunTrace('chat', 'fallback route resolved', { secondaryProvider: secondaryName, secondaryModel, sameRoute });
 
           if (sameRoute) {
             console.warn(
@@ -1347,10 +1353,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           if (fallbackRecovery.kind === 'interrupted') throw fallbackErr;
           fallbackErrMsg = redactLLMFailureMessage(fallbackErr);
           console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, fallbackErrMsg);
+          firstRunTrace('chat', 'fallback failed', { recoveryKind: fallbackRecovery.kind, error: fallbackErrMsg });
         }
       }
 
       // Propagate the error so the chat UI can display it to the user
+      firstRunTrace('chat', 'provider call ended', { success: false, provider: primaryName, model: primaryId, error: lastErrMsg, fallbackError: fallbackErrMsg });
       throw new Error(
         `[${ this.name }] LLM provider recovery failed: ${ recovery.userMessage } ` +
         `Tried ${ primaryName }/${ primaryId || '(default)' }` +

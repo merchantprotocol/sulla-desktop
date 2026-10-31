@@ -30,6 +30,7 @@ import { providerSessionStore } from './providerSessionStore';
 import { bindLeaseToProcess, createGuestClaudeAuth, releaseLease } from './guestClaudeBridge';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
@@ -211,11 +212,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const pending = getPendingCredential('claude-code');
       const oauthToken = pending?.values.oauth_token || pending?.values.access_token || '';
       const apiKey = pending?.values.api_key || '';
-      if (oauthToken || apiKey) return { oauthToken, apiKey };
+      if (oauthToken || apiKey) {
+        firstRunTrace('claude', 'credentials resolved', { source: 'pending', hasOAuth: !!oauthToken, hasApiKey: !!apiKey });
+        return { oauthToken, apiKey };
+      }
     } catch { /* pending custody is main-process-only */ }
 
     const bridged = await createGuestClaudeAuth({ conversationId: convId, state });
-    if (bridged) return bridged;
+    if (bridged) {
+      firstRunTrace('claude', 'credentials resolved', { source: 'vault-bridge' });
+      return bridged;
+    }
 
     let oauthToken = '';
     let apiKey = '';
@@ -227,6 +234,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         if (v.property === 'api_key' && v.value) apiKey = v.value;
       }
     } catch (err) {
+      firstRunTrace('claude', 'credential lookup failed', { source: 'vault', error: err instanceof Error ? err.message : String(err) });
       console.warn('[ClaudeCodeService] Vault lookup failed, falling back to SullaSettingsModel:', err);
     }
     if (!oauthToken && !apiKey) {
@@ -234,6 +242,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
       apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
     }
+    firstRunTrace('claude', 'credentials resolved', { source: oauthToken || apiKey ? 'vault-or-settings' : 'none', hasOAuth: !!oauthToken, hasApiKey: !!apiKey });
     return { oauthToken, apiKey };
   }
 

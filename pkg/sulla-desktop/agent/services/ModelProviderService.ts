@@ -23,6 +23,7 @@ import { getSelectBoxProvider } from '../integrations/select_box';
 import { getCliStatus } from '../tools/models/shared';
 
 import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 
 // ── Public types ─────────────────────────────────────────────────
@@ -301,6 +302,7 @@ class ModelProviderService {
 
     // Notify everyone
     await this.broadcastChange();
+    firstRunTrace('models', 'model selected', { providerId, modelId });
 
     return this.getState();
   }
@@ -336,16 +338,20 @@ class ModelProviderService {
     const selectedProvider = explicitlySelectedProvider && connected.has(explicitlySelectedProvider)
       ? explicitlySelectedProvider
       : (!preferPriority && connected.has(this.state.primaryProvider) ? this.state.primaryProvider : candidates.find(id => connected.has(id)));
+    const reason = explicitlySelectedProvider && selectedProvider === explicitlySelectedProvider ? 'explicit'
+      : selectedProvider === this.state.primaryProvider ? 'kept-primary' : selectedProvider ? 'connected-priority' : 'none';
 
     if (selectedProvider) {
       if (selectedProvider !== this.state.primaryProvider) await this.selectModel(selectedProvider, '');
       const fallback = candidates.find(id => connected.has(id) && id !== selectedProvider) || selectedProvider;
       if (!connected.has(this.state.secondaryProvider)) await this.setSecondaryProvider(fallback);
+      firstRunTrace('models', 'providers reconciled', { candidates, connected: [...connected], lookupUnknown, primary: selectedProvider, secondary: this.state.secondaryProvider, reason });
       return this.getState();
     }
 
     // An empty result while the vault is locked or starting is not evidence
     // that the user's saved choice is disconnected. Never erase it.
+    firstRunTrace('models', 'providers reconciled', { candidates, connected: [...connected], lookupUnknown, primary: this.state.primaryProvider, secondary: this.state.secondaryProvider, reason });
     if (lookupUnknown || this.state.primaryProvider) return this.getState();
     return this.getState();
   }
@@ -354,6 +360,7 @@ class ModelProviderService {
     this.state.secondaryProvider = providerId;
     await SullaSettingsModel.set('secondaryProvider', providerId, 'string');
     await this.broadcastChange();
+    firstRunTrace('models', 'secondary provider selected', { providerId });
   }
 
   async setSecondaryModelId(modelId: string): Promise<void> {
@@ -507,6 +514,7 @@ class ModelProviderService {
     } catch {
       this.state.activeModelId = await SullaSettingsModel.get('remoteModel', '');
     }
+    firstRunTrace('models', 'state loaded from DB', { primary: this.state.primaryProvider, model: this.state.activeModelId, secondary: this.state.secondaryProvider, secondaryModel: this.state.secondaryModelId });
   }
 
   private async persistState(providerId: string, modelId: string): Promise<void> {
