@@ -438,7 +438,7 @@ export class LocalVaultApprovalClient {
   constructor(
     endpoint: string,
     private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
-    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(30_000) }),
   ) {
     this.endpoint = assertEndpoint(endpoint);
     if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {

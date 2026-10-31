@@ -52,6 +52,13 @@ function clearValues(values: Record<string, string>): void {
 }
 
 export function queuePendingCredential(entry: PendingCredential): void {
+  if (entry.integrationId === 'sulla-cloud') {
+    for (const [candidateKey, candidate] of pending) {
+      if (candidate.integrationId !== 'sulla-cloud') continue;
+      pending.delete(candidateKey);
+      clearValues(candidate.values);
+    }
+  }
   const key = keyFor(entry);
   const previous = pending.get(key);
   if (previous) clearValues(previous.values);
@@ -63,6 +70,14 @@ export function queuePendingCredential(entry: PendingCredential): void {
   });
   void clearModelListCaches();
   if (vaultUnlocked && vaultReady) scheduleFlush?.();
+}
+
+export function clearPendingCredential(integrationId: string): void {
+  for (const [key, entry] of pending) {
+    if (entry.integrationId !== integrationId) continue;
+    pending.delete(key);
+    clearValues(entry.values);
+  }
 }
 
 export function hasPendingCredential(integrationId: string): boolean {
@@ -89,14 +104,34 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
     return;
   }
   if (usesContainerVaultAuthority() && entry.integrationId === 'sulla-cloud') {
+    let accessToken = entry.values.access_token;
+    let refreshToken = entry.values.refresh_token;
+    try {
+      const payload = JSON.parse(Buffer.from(accessToken.split('.')[1] || '', 'base64url').toString('utf8')) as { exp?: number };
+      if (!payload.exp || payload.exp <= Math.floor(Date.now() / 1_000) + 120) {
+        const response = await fetch('https://sulla-workers.merchantprotocol.workers.dev/auth/refresh', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`Cloud session refresh returned ${ response.status }`);
+        const tokens = await response.json() as { accessToken?: string; refreshToken?: string };
+        if (!tokens.accessToken) throw new Error('Cloud session refresh returned no access token');
+        accessToken = tokens.accessToken;
+        refreshToken = tokens.refreshToken || refreshToken;
+        entry.values.access_token = accessToken;
+        entry.values.refresh_token = refreshToken;
+      }
+    } catch (error) {
+      throw new Error(`Pending Cloud session needs refresh: ${ error instanceof Error ? error.message : String(error) }`);
+    }
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.adoptSullaCloudSession({
       userId:             entry.values.user_id,
       activeContractorId: entry.values.active_contractor_id,
       contractors:        JSON.parse(entry.values.contractors_json || '[]'),
-      accessToken:        entry.values.access_token,
-      refreshToken:       entry.values.refresh_token,
+      accessToken,
+      refreshToken,
     });
     return;
   }
@@ -116,16 +151,28 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
   flushRun = (async() => {
     const flushed: string[] = [];
     const failed: string[] = [];
-    for (const [key, entry] of [...pending.entries()]) {
-      try {
-        await writeEntry(entry);
-        if (pending.get(key) !== entry) continue;
-        pending.delete(key);
-        clearValues(entry.values);
-        flushed.push(entry.integrationId);
-      } catch {
-        failed.push(entry.integrationId);
+    // Keep draining: a refresh or a concurrent sign-in may replace an entry
+    // while an earlier snapshot is being written.
+    while (true) {
+      const snapshot = [...pending.entries()];
+      if (!snapshot.length) break;
+      let madeProgress = false;
+      for (const [key, entry] of snapshot) {
+        try {
+          await writeEntry(entry);
+          if (pending.get(key) !== entry) continue;
+          pending.delete(key);
+          clearValues(entry.values);
+          flushed.push(entry.integrationId);
+          madeProgress = true;
+          if (entry.integrationId === 'sulla-cloud') {
+            void import('@pkg/main/sullaCloudAuth').then(({ signalSullaCloudStartupRestore }) => signalSullaCloudStartupRestore());
+          }
+        } catch {
+          failed.push(entry.integrationId);
+        }
       }
+      if (!madeProgress) break;
     }
     if (flushed.length) await clearModelListCaches();
     return { flushed: [...new Set(flushed)], failed: [...new Set(failed)] };
@@ -166,6 +213,9 @@ export function startPendingCredentialFlush(): void {
     if (name !== 'vault') return;
     vaultReady = true;
     if (vaultUnlocked) schedule();
+  });
+  lifecycle.on('service:stopped', (name: string) => {
+    if (name === 'vault') vaultReady = false;
   });
   if (vaultUnlocked && vaultReady) schedule();
 }

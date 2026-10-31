@@ -178,11 +178,14 @@ async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
 /** Refresh non-secret state only; migration and backup run inside the container. */
 export async function onVaultUnlocked(): Promise<void> {
   try {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    await getVaultKeyService().refreshMasterCache();
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const status = await getDesktopVaultClient().status();
     await publishVaultState(status.unlocked);
   } catch (err) {
     console.warn('[Vault] Container state is unavailable:', (err as Error).message);
+    throw err;
   }
 }
 
@@ -917,7 +920,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const refreshVaultStatusOnce = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
-    const wasUnlocked = client.isUnlocked();
+    const wasUnlocked = getServiceLifecycleManager().isVaultUnlocked();
     let status = await client.status();
     if (status.cacheUpdateRequired && await vaultKey.refreshMasterCache()) status = await client.status();
     if (status.state === 'migration_required') {
@@ -1107,7 +1110,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:initialize', async() => {
-    return vaultKey.initialize();
+    const unlocked = await vaultKey.initialize();
+    if (unlocked) await onVaultUnlocked();
+    return unlocked;
   });
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
