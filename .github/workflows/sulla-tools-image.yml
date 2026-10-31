@@ -45,6 +45,11 @@ jobs:
           docker run -d --name tools --network sulla-tools-smoke \
             -e SULLA_API_TOKEN=0123456789012345678901234567890123456789 \
             sulla-tools-smoke
+          for attempt in $(seq 1 30); do
+            if docker exec tools wget -q -O- http://127.0.0.1:3000/healthz | grep -q '"status":"ok"'; then break; fi
+            test "$(docker inspect --format '{{.State.Running}}' tools)" = true
+            sleep 1
+          done
           for second in $(seq 1 30); do
             test "$(docker inspect --format '{{.State.Running}}' tools)" = true
             docker exec tools wget -q -O- http://127.0.0.1:3000/healthz | grep -q '"status":"ok"'
