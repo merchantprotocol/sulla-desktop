@@ -7,14 +7,16 @@
  * Whether the first chat can start right away: every chat runs in an agent
  * container, which needs the tools service, an unlocked vault, the agent
  * image and (with scanning on) the threat proxy's CA. The first-run
- * Finishing screen shows this as its last line ('first-run:chat-ready-status');
- * it never holds the wizard open. Once the vault unlocks, the slow parts
+ * Finishing screen shows this as its last line ('first-run:chat-ready-status').
+ * Once chat is ready the setup window closes and the chat opens
+ * ('first-run-chat-ready'); it never waits on the remaining background services. Once the vault unlocks, the slow parts
  * (image load, threat proxy) are warmed up in the background.
  */
 
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
@@ -66,6 +68,7 @@ async function refresh(): Promise<ChatReadyStatus> {
     last = status;
     firstRunTrace('chat', status.ready ? 'chat ready' : 'chat not ready yet', { waitingOn: status.waitingOn });
     window.send('first-run:chat-ready-status', status);
+    if (status.ready) mainEvents.emit('first-run-chat-ready');
   }
   if (!status.ready) {
     pollTimer = setTimeout(() => void refresh(), POLL_MS);

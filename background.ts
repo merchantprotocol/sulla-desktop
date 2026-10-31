@@ -426,6 +426,14 @@ mainEvents.on('sulla-managed-services-ready', async() => {
   await firstRunCoordinator.setCondition('deployCompleted');
 });
 
+// Chat ready means setup is done for the user: close the setup window and
+// open the chat now. The remaining background services finish on their own.
+mainEvents.on('first-run-chat-ready', async() => {
+  if (firstRunCoordinator.isConditionMet('deployCompleted')) return;
+  firstRunTrace('wizard', 'chat is ready; not waiting on the other services before closing');
+  await firstRunCoordinator.setCondition('deployCompleted');
+});
+
 // The runtime reports a failed start in plain words. Some failures (a
 // non-fatal BackendError) never reach handleFailure, so show them here too.
 mainEvents.on('sulla-backend-start-failed', (failure) => {
