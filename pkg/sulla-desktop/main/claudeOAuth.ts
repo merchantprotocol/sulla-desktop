@@ -35,10 +35,13 @@ const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
 const console = Logging.background;
 
 // Claude CLI emits the token on its own line after completion.
-const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})(?=\s|$)/;
+// While output is still streaming, a chunk can end mid-token: require the
+// whitespace that follows it. Once the CLI has exited the buffer is complete.
+const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})(?=\s)/;
+const FINAL_TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
 
 // Match the OAuth URL even when the terminal wraps it across lines.
-const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)(?=\s|$)/;
+const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)(?=\s)/;
 
 type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error';
 type OAuthResult = { success?: boolean; error?: string; reason?: OAuthFailureReason };
@@ -326,11 +329,13 @@ export function initClaudeOAuthEvents(): void {
       let enterSent = false;
       let resolved = false;
       let noUrlTimeout: ReturnType<typeof setTimeout>;
+      let noTokenTimeout: ReturnType<typeof setTimeout> | undefined;
 
       const doResolve = async(result: { token?: string; error?: string; reason?: OAuthFailureReason }) => {
         if (resolved) return;
         resolved = true;
         if (noUrlTimeout) clearTimeout(noUrlTimeout);
+        if (noTokenTimeout) clearTimeout(noTokenTimeout);
         try { ptyProcess.kill() } catch { /* dead */ }
         try { session.authWindow?.close() } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
@@ -420,6 +425,13 @@ export function initClaudeOAuthEvents(): void {
               try {
                 ptyProcess.write(code);
                 codeSent = true;
+                // The CLI answers within seconds once the code is submitted.
+                // Don't leave the user on a spinner for the full 5 minutes.
+                noTokenTimeout = setTimeout(() => {
+                  const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-400);
+                  console.warn(`[ClaudeOAuth] No token 60 seconds after the code was sent (enterSent=${ enterSent }). Output tail: ${ tail }`);
+                  void doResolve({ error: 'Claude did not finish signing in. Try again.', reason: 'timeout' });
+                }, 60_000);
                 // Newer CLIs echo the pasted code as plain text, not asterisks,
                 // so the echo check below never fires. Submit shortly after the
                 // write either way; whichever path runs first sends Enter once.
@@ -464,7 +476,7 @@ export function initClaudeOAuthEvents(): void {
         clearTimeout(noUrlTimeout);
         console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
         if (!resolved) {
-          const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
+          const tokenMatch = FINAL_TOKEN_PATTERN.exec(session.stdoutBuffer);
           if (tokenMatch) {
             void doResolve({ token: tokenMatch[1] });
           } else {
