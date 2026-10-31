@@ -34,7 +34,7 @@
       class="frw-notice mt-4"
     >
       <p class="text-sm mb-2">
-        This Mac has a vault from before. Unlock it once with its old password or recovery key to move it to your Sulla password.
+        This Mac already has a vault that uses a different password. Unlock it once with that password or its recovery key, and Sulla moves it to your Sulla password.
       </p>
       <button
         type="button"
@@ -43,18 +43,43 @@
       >
         Unlock old vault
       </button>
+      <button
+        v-if="offerOpenAnyway"
+        type="button"
+        class="px-4 py-2 rounded-md font-medium ml-2"
+        :disabled="opening"
+        @click="continueAnyway"
+      >
+        {{ opening ? 'Opening Sulla…' : 'Open Sulla anyway' }}
+      </button>
     </div>
 
     <div
-      v-else-if="savingStalled"
+      v-else-if="offerOpenAnyway"
       class="frw-notice mt-4"
     >
-      <p class="frw-error text-sm mb-2">
+      <p
+        v-if="backendFailed"
+        class="frw-error text-sm mb-2"
+      >
+        Sulla's private workspace didn't start. Use Try again at the top, or open Sulla now and fix it from there.
+      </p>
+      <p
+        v-else-if="savingStalled"
+        class="frw-error text-sm mb-2"
+      >
         This is taking longer than it should. Still waiting on {{ credentials.waitingOn.join(', ') || 'your vault' }}.
       </p>
+      <p
+        v-else
+        class="text-sm mb-2"
+      >
+        The first setup is still running. That's normal on some Macs. You can open Sulla now and it keeps setting up.
+      </p>
       <button
+        v-if="savingStalled && !backendFailed"
         type="button"
-        class="px-4 py-2 rounded-md font-medium frw-btn-accent"
+        class="px-4 py-2 rounded-md font-medium frw-btn-accent mr-2"
         :disabled="retrying"
         @click="retrySaving"
       >
@@ -62,11 +87,18 @@
       </button>
       <button
         type="button"
-        class="px-4 py-2 rounded-md font-medium ml-2"
+        class="px-4 py-2 rounded-md font-medium"
+        :disabled="opening"
         @click="continueAnyway"
       >
-        Open Sulla anyway
+        {{ opening ? 'Opening Sulla…' : 'Open Sulla anyway' }}
       </button>
+      <p
+        v-if="openFailed"
+        class="frw-error text-sm mt-2"
+      >
+        Sulla couldn't open. Quit and reopen Sulla.
+      </p>
       <p class="text-xs mt-2 opacity-70">
         Sulla keeps saving in the background. If you quit before it finishes, you'll sign in again next time.
       </p>
@@ -99,9 +131,12 @@ const props = defineProps<{
   startupSnapshot?: StartupProgressSnapshot | null;
 }>();
 
-// Saving the sign-ins should take seconds once the vault is up. Past this,
-// say what it's waiting on and offer Try again.
+// Saving the sign-ins should take seconds once the vault service is up. Past
+// this, say what it's waiting on and offer Try again. Before the service is
+// up the VM is still installing, which is slow but not stuck.
 const SAVE_STALL_MS = 3 * 60_000;
+// A first install this long still isn't wrong, but let the owner go on.
+const INSTALL_SLOW_MS = 10 * 60_000;
 const POLL_MS = 2_000;
 
 const progressPercent = computed(() => {
@@ -152,8 +187,16 @@ async function loadAi() {
 const credentials = ref<{ saved: boolean; waitingOn: string[] }>({ saved: false, waitingOn: [] });
 const oldVaultLocked = ref(false);
 const savingStalled = ref(false);
+const installSlow = ref(false);
+const backendFailed = ref(false);
 const retrying = ref(false);
+const opening = ref(false);
+const openFailed = ref(false);
 const mountedAt = Date.now();
+// When the vault service was first seen up: the stall clock starts here.
+let vaultServiceReadyAt: number | undefined;
+// "Open Sulla anyway" must always be reachable when something is wrong.
+const offerOpenAnyway = computed(() => backendFailed.value || savingStalled.value || installSlow.value);
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let polling = false;
 
@@ -164,6 +207,10 @@ async function poll() {
     const status = await ipcRenderer.invoke('first-run:credentials-status' as any).catch(() => null);
 
     if (status) credentials.value = { saved: status.saved === true, waitingOn: Array.isArray(status.waitingOn) ? status.waitingOn : [] };
+    if (status?.vaultServiceReady === true && vaultServiceReadyAt === undefined) {
+      vaultServiceReadyAt = Date.now();
+      traceFirstRun('finishing', 'vault service is up; saving sign-ins can start', { afterMs: vaultServiceReadyAt - mountedAt });
+    }
     if (!credentials.value.saved) {
       const session = await ipcRenderer.invoke('sulla-cloud:first-run-session' as any).catch(() => null);
 
@@ -172,10 +219,15 @@ async function poll() {
       if (locked && !oldVaultLocked.value) traceFirstRun('finishing', 'an older vault on this Mac is locked; asking to unlock it');
       oldVaultLocked.value = locked;
     }
-    const stalled = !credentials.value.saved && Date.now() - mountedAt > SAVE_STALL_MS;
+    const stalled = !credentials.value.saved && vaultServiceReadyAt !== undefined && Date.now() - vaultServiceReadyAt > SAVE_STALL_MS;
 
     if (stalled && !savingStalled.value) traceFirstRun('finishing', 'saving sign-ins is taking over 3 minutes; offering Try again', { waitingOn: credentials.value.waitingOn, oldVaultLocked: oldVaultLocked.value });
     savingStalled.value = stalled;
+    // Still open this long: something is still installing or saving.
+    const slow = Date.now() - mountedAt > INSTALL_SLOW_MS;
+
+    if (slow && !installSlow.value) traceFirstRun('finishing', 'setup is still running after 10 minutes; offering Open Sulla anyway', { saved: credentials.value.saved, vaultServiceReady: vaultServiceReadyAt !== undefined });
+    installSlow.value = slow;
   } finally {
     polling = false;
   }
@@ -196,8 +248,24 @@ async function retrySaving() {
 }
 
 async function continueAnyway() {
-  traceFirstRun('finishing', 'Open Sulla anyway clicked', { waitingOn: credentials.value.waitingOn });
-  await ipcRenderer.invoke('first-run:continue-anyway' as any).catch((err: unknown) => console.warn('[FirstRunWaiting] Could not continue:', err));
+  if (opening.value) return;
+  opening.value = true;
+  openFailed.value = false;
+  traceFirstRun('finishing', 'Open Sulla anyway clicked', { waitingOn: credentials.value.waitingOn, backendFailed: backendFailed.value, savingStalled: savingStalled.value, installSlow: installSlow.value });
+  try {
+    // Main closes this window and opens Sulla; nothing more to do here.
+    await ipcRenderer.invoke('first-run:continue-anyway' as any);
+  } catch (err) {
+    console.warn('[FirstRunWaiting] Could not continue:', err);
+    traceFirstRun('finishing', 'Open Sulla anyway failed', { error: err instanceof Error ? err.message : String(err) });
+    openFailed.value = true;
+    opening.value = false;
+  }
+}
+
+// The workspace failed to start: offer Open Sulla anyway right away.
+function onBackendFailed(_event: unknown, failure: { message: string } | null) {
+  backendFailed.value = !!failure;
 }
 
 async function openVaultUnlock() {
@@ -223,6 +291,8 @@ function onChatReady(_event: unknown, status: { ready?: boolean; waitingOn?: str
 
 onMounted(() => {
   ipcRenderer.on('first-run:chat-ready-status' as any, onChatReady);
+  ipcRenderer.on('first-run:backend-failed' as any, onBackendFailed);
+  ipcRenderer.invoke('first-run:wizard-status' as any).then(status => onBackendFailed(undefined, status?.backendFailure ?? null)).catch(() => undefined);
   ipcRenderer.invoke('first-run:chat-ready-status' as any).then(status => onChatReady(undefined, status)).catch(() => undefined);
   void loadAi();
   void poll();
@@ -231,6 +301,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   ipcRenderer.removeListener('first-run:chat-ready-status' as any, onChatReady);
+  ipcRenderer.removeListener('first-run:backend-failed' as any, onBackendFailed);
   if (pollTimer) clearInterval(pollTimer);
 });
 </script>

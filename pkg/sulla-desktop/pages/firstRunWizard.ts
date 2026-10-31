@@ -17,7 +17,7 @@ export function traceFirstRun(area: string, event: string, details?: Record<stri
  * key that creates the vault live in main's memory until the vault holds them,
  * so a restart loses them. `email` is set when main still knows it.
  */
-export async function firstRunAccountSignedIn(): Promise<{ signedIn: boolean; email?: string }> {
+export async function firstRunAccountSignedIn(options: { waitForVaultMs: number } = { waitForVaultMs: 0 }): Promise<{ signedIn: boolean; email?: string }> {
   const session = await ipcRenderer.invoke('sulla-cloud:first-run-session' as any).catch(() => null);
   const email = typeof session?.email === 'string' && session.email ? session.email : undefined;
 
@@ -26,8 +26,19 @@ export async function firstRunAccountSignedIn(): Promise<{ signedIn: boolean; em
 
     return { signedIn: true, email };
   }
-  // The vault may already have been created and hold the session.
-  const saved = await ipcRenderer.invoke('first-run:account-saved' as any).catch(() => null);
+  // The vault may already have been created and hold the session. After a
+  // relaunch it needs a minute or so to start and unlock, so wait for it
+  // instead of asking for the password again.
+  let saved = await ipcRenderer.invoke('first-run:account-saved' as any).catch(() => null);
+  const deadline = Date.now() + options.waitForVaultMs;
+
+  if (!saved?.saved && saved?.vaultExists && options.waitForVaultMs > 0) {
+    traceFirstRun('account', 'a vault exists but is not open yet; waiting for it', { waitMs: options.waitForVaultMs });
+    while (!saved?.saved && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 2_000));
+      saved = await ipcRenderer.invoke('first-run:account-saved' as any).catch(() => null);
+    }
+  }
 
   traceFirstRun('account', saved?.saved ? 'Cloud sign-in already in the vault' : 'Cloud sign-in is gone; it must be entered again', {
     sessionInMemory: !!session?.sessionInMemory, keyInMemory: !!session?.masterKeyRetained, inVault: saved?.saved === true,

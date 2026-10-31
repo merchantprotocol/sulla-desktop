@@ -11,7 +11,7 @@
         <div class="frw-eyebrow">Sulla can't run on this computer</div>
         <h1 class="frw-title">This computer is too small for Sulla.</h1>
         <p class="frw-lead">
-          Sulla needs at least {{ MIN_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
+          Sulla needs a computer with at least {{ MIN_MEMORY_GB + MIN_HOST_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
           This computer has {{ totalMemoryLabel }} GB of memory and {{ availNumCPUs }} CPUs.
         </p>
         <p class="frw-muted">Nothing has been changed. You can quit safely.</p>
@@ -73,14 +73,17 @@
             <system-preferences
               :memory-in-g-b="settings!.virtualMachine.memoryInGB"
               :number-c-p-us="settings!.virtualMachine.numberCPUs"
-              :avail-memory-in-g-b="availMemoryInGB"
-              :avail-num-c-p-us="availNumCPUs"
-              :reserved-memory-in-g-b="6"
-              :reserved-num-c-p-us="1"
+              :avail-memory-in-g-b="maxMemoryInGB"
+              :avail-num-c-p-us="maxCPUs"
+              :min-memory-in-g-b="sliderMinMemoryInGB"
+              :min-num-c-p-us="sliderMinCPUs"
+              :reserved-memory-in-g-b="0"
+              :reserved-num-c-p-us="0"
               :is-locked-memory="false"
               :is-locked-cpu="false"
               @update:memory="onMemoryChange"
               @update:cpu="onCpuChange"
+              @error="onResourceInputError"
             />
           </rd-fieldset>
 
@@ -196,36 +199,61 @@ const availNumCPUs = computed(() => os.cpus().length);
 // Minimums the AI services need (enforced in handleNext).
 const MIN_MEMORY_GB = 5;
 const MIN_CPUS = 3;
+// macOS needs memory of its own. The VM gets at most the total minus this,
+// and never leaves the Mac less than MIN_HOST_MEMORY_GB.
+const HOST_RESERVE_GB = 4;
+const MIN_HOST_MEMORY_GB = 2;
 const totalMemoryInGB = computed(() => os.totalmem() / 2 ** 30);
 const totalMemoryLabel = computed(() => totalMemoryInGB.value.toFixed(1));
-const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
+const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB + MIN_HOST_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
+// The most Welcome lets the VM take: the Mac keeps memory and one CPU.
+const maxMemoryInGB = computed(() => Math.max(MIN_MEMORY_GB, Math.floor(totalMemoryInGB.value) - HOST_RESERVE_GB));
+const maxCPUs = computed(() => Math.max(MIN_CPUS, availNumCPUs.value - 1));
+// The slider needs min < max; handleNext enforces the real minimums.
+const sliderMinMemoryInGB = computed(() => Math.min(MIN_MEMORY_GB, maxMemoryInGB.value - 1));
+const sliderMinCPUs = computed(() => Math.min(MIN_CPUS, maxCPUs.value - 1));
+// A typed value the slider refused (out of range); handleNext won't go on with it.
+const resourceInputError = ref('');
 
 /**
  * Pick sensible VM resources so nobody has to understand sliders before they
  * see any value: half the machine, clamped to the service minimums and a
  * reasonable ceiling. Existing allocations that already meet the minimums are
- * kept, so re-running setup never shrinks a user's choice.
+ * kept, so re-running setup never shrinks a user's choice, unless it would
+ * starve the Mac itself.
  */
 function applyRecommendedResources() {
   const vm = settings.value.virtualMachine;
 
   if (vm.memoryInGB < MIN_MEMORY_GB) {
-    vm.memoryInGB = Math.min(Math.max(MIN_MEMORY_GB, Math.floor(availMemoryInGB.value / 2)), 16);
+    vm.memoryInGB = Math.min(Math.max(MIN_MEMORY_GB, Math.floor(availMemoryInGB.value / 2)), 16, maxMemoryInGB.value);
   }
   if (vm.numberCPUs < MIN_CPUS) {
-    vm.numberCPUs = Math.min(Math.max(MIN_CPUS, Math.floor(availNumCPUs.value / 2)), 8);
+    vm.numberCPUs = Math.min(Math.max(MIN_CPUS, Math.floor(availNumCPUs.value / 2)), 8, maxCPUs.value);
   }
+  vm.memoryInGB = Math.min(vm.memoryInGB, maxMemoryInGB.value);
+  vm.numberCPUs = Math.min(vm.numberCPUs, maxCPUs.value);
 }
 
 // Show the recommendation immediately; settings-read re-applies it to the loaded values.
 applyRecommendedResources();
 
 const onMemoryChange = (value: number) => {
+  resourceInputError.value = '';
   settings.value.virtualMachine.memoryInGB = value;
 };
 
 const onCpuChange = (value: number) => {
+  resourceInputError.value = '';
   settings.value.virtualMachine.numberCPUs = value;
+};
+
+// The slider refused a typed value. Keep it from going on silently with the
+// last good one while the box shows something else.
+const onResourceInputError = (key: string) => {
+  resourceInputError.value = key === 'cpu'
+    ? `Pick between ${ MIN_CPUS } and ${ maxCPUs.value } CPUs.`
+    : `Pick between ${ MIN_MEMORY_GB } and ${ maxMemoryInGB.value } GB of memory.`;
 };
 
 const onTelemetryChange = async() => {
@@ -234,18 +262,35 @@ const onTelemetryChange = async() => {
   });
 };
 
-const handleNext = async() => {
-  if (computerTooSmall.value || checkingPreflight.value) return;
+/** Show why the chosen VM size can't be used. Returns false when it can't. */
+function checkResources(): boolean {
+  const { memoryInGB, numberCPUs } = settings.value.virtualMachine;
 
-  if (settings.value.virtualMachine.memoryInGB < MIN_MEMORY_GB || settings.value.virtualMachine.numberCPUs < MIN_CPUS) {
+  if (resourceInputError.value) {
+    resourceError.value = resourceInputError.value;
+  } else if (!Number.isInteger(Number(memoryInGB)) || !Number.isInteger(Number(numberCPUs))) {
+    resourceError.value = 'Use whole numbers for memory and CPUs.';
+  } else if (memoryInGB < MIN_MEMORY_GB || numberCPUs < MIN_CPUS) {
     resourceError.value = `Sulla needs at least ${ MIN_MEMORY_GB } GB of memory and ${ MIN_CPUS } CPUs. Use Adjust to raise them.`;
+  } else if (memoryInGB > maxMemoryInGB.value || numberCPUs > maxCPUs.value) {
+    // The Mac itself needs memory and a CPU, or everything slows to a crawl.
+    resourceError.value = `That leaves too little for your Mac. Use at most ${ maxMemoryInGB.value } GB of memory and ${ maxCPUs.value } CPUs.`;
   } else {
     resourceError.value = '';
   }
 
   if (resourceError.value) {
-    return;
+    isOptionsOpen.value = true;
+    traceFirstRun('wizard', 'Get started blocked by the VM size', { memoryInGB, numberCPUs, maxMemoryInGB: maxMemoryInGB.value, maxCPUs: maxCPUs.value });
+
+    return false;
   }
+
+  return true;
+}
+
+const handleNext = async() => {
+  if (computerTooSmall.value || checkingPreflight.value || !checkResources()) return;
 
   checkingPreflight.value = true;
   preflightAttempted.value = true;
@@ -277,7 +322,7 @@ const handleNext = async() => {
 };
 
 const continueWithoutNetworkCheck = async() => {
-  if (checkingPreflight.value) return;
+  if (checkingPreflight.value || !checkResources()) return;
   checkingPreflight.value = true;
   resourceError.value = '';
   traceFirstRun('wizard', 'Continue anyway clicked after the internet check failed');
