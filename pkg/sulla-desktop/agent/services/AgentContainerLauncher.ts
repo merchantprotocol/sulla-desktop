@@ -1318,6 +1318,13 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             authMode = 'api-key';
           }
         }
+        let workspaceId = '';
+        if (provider === 'claude-code' && authMode === 'api-key') {
+          try {
+            const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+            workspaceId = metadata.find(value => value.property === 'workspace_id')?.value.trim() || '';
+          } catch { /* optional non-secret Anthropic workspace metadata */ }
+        }
         const bridgeContext = () => {
           const now = Math.floor(Date.now() / 1000);
           return {
@@ -1348,6 +1355,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           provider,
           accountId,
           authMode,
+          workspaceId,
           models:         pinnedModel ? [pinnedModel] : undefined,
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,

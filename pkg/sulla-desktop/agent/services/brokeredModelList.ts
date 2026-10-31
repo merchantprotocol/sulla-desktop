@@ -160,10 +160,10 @@ export async function listProviderModelsBrokered<T = unknown>(
   const lane = modelListLane(providerId, account.account_id);
   if (!lane) return { body: null, lane: null };
   let workspaceHeaders: Record<string, string> = {};
-  if (providerId === 'anthropic') {
+  if (providerId === 'anthropic' || (providerId === 'claude-code' && account.account_id !== 'oauth')) {
     try {
       const metadata = await getIntegrationService().getMetadataValues(providerId, account.account_id);
-      const workspaceId = metadata.find(value => value.property === 'workspace_id')?.value;
+      const workspaceId = metadata.find(value => value.property === 'workspace_id')?.value.trim();
       if (workspaceId) workspaceHeaders = { 'anthropic-workspace-id': workspaceId };
     } catch { /* optional non-secret workspace metadata */ }
   }
