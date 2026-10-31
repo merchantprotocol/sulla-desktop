@@ -1,13 +1,47 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 name: Publish sulla-files image
 on:
+  pull_request:
+    paths: ['services/sulla-files/**', 'pkg/sulla-desktop/pages/files/**', 'packages/vault-crypto/**', '.github/workflows/sulla-files-image.yml']
   push:
     branches: [main]
     tags: ['v*']
     paths: ['services/sulla-files/**', 'pkg/sulla-desktop/pages/files/**', 'packages/vault-crypto/**', '.github/workflows/sulla-files-image.yml']
 permissions: { contents: read, packages: write }
 jobs:
+  fresh-database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: sulla, POSTGRES_PASSWORD: sulla, POSTGRES_DB: test_sulla_files }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sulla -d test_sulla_files"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm ci --ignore-scripts --prefix packages/vault-crypto
+      - run: npm run build --prefix packages/vault-crypto
+      - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
+      - name: Build Files service
+        run: |
+          set -o pipefail
+          mv postcss.config.cjs /tmp/desktop-postcss.config.cjs
+          npm run build --prefix services/sulla-files 2>&1 | tee /tmp/files-build.log || {
+            message="$(tail -80 /tmp/files-build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')"
+            echo "::error::$message"
+            exit 1
+          }
+      - name: Boot Files twice on an empty database
+        run: node --test services/sulla-files/freshDatabase.pg.integration.test.mjs
+        env:
+          SULLA_FILES_FRESH_DATABASE_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
+          SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
   image:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
