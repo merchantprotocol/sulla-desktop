@@ -24,6 +24,7 @@ export class AnthropicService extends BaseLanguageModel {
   protected declare config: LLMServiceConfig;
   private retryCount = 3;
   private defaultTimeoutMs = 60_000;
+  private workspaceId = '';
 
   override getContextWindow(): number {
     return 200_000;
@@ -49,12 +50,14 @@ export class AnthropicService extends BaseLanguageModel {
       model:   valMap.model || 'claude-sonnet-4-6',
       baseUrl: 'https://api.anthropic.com/v1',
       apiKey:  valMap.api_key || '',
+      workspaceId: valMap.workspace_id || '',
     });
   }
 
-  constructor(config: LLMServiceConfig) {
+  constructor(config: LLMServiceConfig & { workspaceId?: string }) {
     super(config);
     this.config = config;
+    this.workspaceId = config.workspaceId || '';
   }
 
   public setRetryCount(count: number): void {
@@ -324,6 +327,7 @@ export class AnthropicService extends BaseLanguageModel {
     if (this.apiKey) {
       headers['x-api-key'] = this.apiKey;
     }
+    if (this.workspaceId) headers['anthropic-workspace-id'] = this.workspaceId;
 
     // Enable computer use beta when computer use tools are in the request
     const hasComputerUse = body.tools?.some((t: any) =>

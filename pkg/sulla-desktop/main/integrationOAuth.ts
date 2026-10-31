@@ -199,19 +199,24 @@ export function initIntegrationOAuthEvents(): void {
 
   ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(
     event: Electron.IpcMainInvokeEvent,
-    payload: { providerId?: string; apiKey?: string },
+    payload: { providerId?: string; apiKey?: string; workspaceId?: string },
   ): Promise<{ success: boolean; error?: string; models?: string[] }> => {
     assertFirstRunOrMainSender(event);
     const providerId = payload?.providerId as FirstRunApiProviderId;
     const provider = API_KEY_PROVIDERS[providerId];
     const apiKey = typeof payload?.apiKey === 'string' ? payload.apiKey.trim() : '';
     if (!provider || !apiKey) return { success: false, error: 'Enter an API key to connect.' };
+    const workspaceId = typeof payload?.workspaceId === 'string' ? payload.workspaceId.trim() : '';
+    const userLevelAnthropicKey = providerId === 'anthropic' && apiKey.startsWith('sk-ant-usr-');
+    if (userLevelAnthropicKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(workspaceId)) {
+      return { success: false, error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.' };
+    }
 
     firstRunTrace('api-key', 'verification started', { provider: providerId });
     try {
       const response = await fetch(provider.url, {
         method: 'GET',
-        headers: provider.headers(apiKey),
+        headers: { ...provider.headers(apiKey), ...(userLevelAnthropicKey ? { 'anthropic-workspace-id': workspaceId } : {}) },
         signal: AbortSignal.timeout(15_000),
       });
       const text = await response.text();
@@ -222,7 +227,9 @@ export function initIntegrationOAuthEvents(): void {
         if (response.status === 429) error = 'The key works but is rate limited right now; try again shortly.';
         if (providerId === 'anthropic' && response.status === 400 && /workspace/i.test(text)) {
           errorClass = 'anthropic-workspace';
-          error = 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.';
+          error = userLevelAnthropicKey
+            ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
+            : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.';
         }
         firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
         return { success: false, error };
@@ -240,7 +247,7 @@ export function initIntegrationOAuthEvents(): void {
       queuePendingCredential({
         integrationId: providerId,
         accountId: 'default',
-        values: { api_key: apiKey, model },
+        values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
         activate: true,
       });
       const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
