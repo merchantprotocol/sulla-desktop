@@ -396,24 +396,8 @@
                   <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
                 </div>
 
-                <div
-                  v-if="integration.properties && integration.properties.length > 0"
-                  class="mb-6 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4"
-                >
-                  <p class="mb-3 text-sm text-slate-300">
-                    You'll enter these details on a secure vault screen. Desktop and your agents never see the values.
-                  </p>
-                  <button
-                    type="button"
-                    class="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
-                    @click="openSecureVault(editingAccountId || undefined)"
-                  >
-                    {{ editingAccountId ? 'Edit in secure vault' : `Connect ${ integration.name }` }}
-                  </button>
-                </div>
-
                 <!-- Credentials section (account label + properties + connect button) -->
-                <div v-if="(!integration.properties || integration.properties.length === 0) && (integration.authType !== 'oauth' || isEditingAccount)">
+                <div v-if="integration.authType !== 'oauth' || isEditingAccount">
                   <!-- Account Label -->
                   <div
                     class="space-y-2 mb-4"
@@ -446,11 +430,11 @@
 
                   <!-- Configuration Form (credential fields) -->
                   <div
-                    v-if="integration.properties && integration.properties.length > 0"
+                    v-if="visibleProperties.length > 0"
                     class="space-y-4 mb-6"
                   >
                     <div
-                      v-for="property in integration.properties"
+                      v-for="property in visibleProperties"
                       :key="property.key"
                       class="space-y-2"
                     >
@@ -639,6 +623,12 @@
                       {{ isEditingAccount
                         ? 'Update and save credentials for this connected account'
                         : 'Connect your account to start using this integration' }}
+                    </p>
+                    <p
+                      v-if="connectMessage"
+                      class="text-sm text-slate-600 dark:text-slate-300"
+                    >
+                      {{ connectMessage }}
                     </p>
                   </div>
                 </div>
@@ -1028,6 +1018,8 @@ const editingAccountId = ref<string | null>(null);
 const newAccountLabel = ref('');
 const oauthError = ref('');
 const oauthSuccess = ref('');
+const connectMessage = ref('');
+const visibleProperties = computed(() => integration.value?.properties?.filter(property => property.key !== 'llm_access') ?? []);
 
 /** Only accounts that are connected */
 const connectedAccounts = computed(() => accounts.value.filter(a => a.connected));
@@ -1360,7 +1352,7 @@ const validateForm = (): boolean => {
 
   // Validate credential fields (if any exist)
   if (integration.value?.properties) {
-    for (const property of integration.value.properties) {
+    for (const property of visibleProperties.value) {
       const error = validateField(property, formData.value[property.key] || '');
       if (error) {
         errors.value[property.key] = error;
@@ -1535,26 +1527,13 @@ const handleConnect = async() => {
 
   isLoading.value = true;
   try {
-    // Save label for new account
-    await integrationService.setAccountLabel(integration.value.id, targetAccountId, label);
-
-    // Save credential fields
-    const formInputs = Object.entries(formData.value).map(([key, value]) => ({
-      integration_id: integration.value!.id,
-      account_id:     targetAccountId,
-      property:       key,
-      value,
-    }));
-    await integrationService.setFormValues(formInputs);
-
-    // Mark newly created account connected
-    await integrationService.setConnectionStatus(integration.value.id, true, targetAccountId);
-
-    // Set as active if it's the first account for this integration
-    const existingAccounts = await integrationService.getAccounts(integration.value.id);
-    if (existingAccounts.length <= 1) {
-      await integrationService.setActiveAccount(integration.value.id, targetAccountId);
-    }
+    const result = await ipcRenderer.invoke('integration:connect-form', {
+      integrationId: integration.value.id,
+      accountId: targetAccountId,
+      label,
+      values: { ...formData.value, llm_access: formData.value.llm_access || 'autofill' },
+    });
+    if (!result.success) throw new Error(result.error || `Could not connect ${ integration.value.name }.`);
 
     // When embedded in vault flow, return to vault list after save
     if (pageProps.embedded) {
@@ -1563,14 +1542,16 @@ const handleConnect = async() => {
     }
 
     // Reset form for another creation
-    newAccountLabel.value = '';
-    formData.value = {};
+    newAccountLabel.value = 'Default';
+    formData.value = { llm_access: 'autofill' };
+    connectMessage.value = `Connected ${ integration.value.name } successfully.`;
 
     await refreshAccounts();
     integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
     mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
   } catch (error) {
     console.error('Failed to save integration configuration:', error);
+    connectMessage.value = error instanceof Error ? error.message : 'Could not connect this integration. Try again.';
   } finally {
     isLoading.value = false;
   }
@@ -1629,8 +1610,8 @@ onMounted(async() => {
   // Start with a blank form for new account creation
   // Fetch select options for any select fields
   try {
-    formData.value = {};
-    newAccountLabel.value = '';
+    formData.value = { llm_access: 'autofill' };
+    newAccountLabel.value = 'Default';
     fetchAllSelectOptions();
   } catch (error) {
     console.error('Failed to initialize form:', error);

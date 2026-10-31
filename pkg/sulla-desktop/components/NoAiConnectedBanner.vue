@@ -13,38 +13,18 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
-import { integrations } from '@pkg/agent/integrations/catalog';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+const router = useRouter();
 const visible = ref(false);
 const requestedIntegration = ref<string | null>(null);
 let openedGuidedConnect = false;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
-async function openVaultConnect(integrationId: string) {
-  const integration = integrations[integrationId];
-  const fields = await Promise.all((integration?.properties ?? [])
-    .filter(property => property.key !== 'llm_access')
-    .map(async(property) => {
-      let options: { label: string; value: string }[] = [];
-      if (property.type === 'select' && property.selectBoxId) {
-        options = await getIntegrationService().getSelectOptions(property.selectBoxId, integrationId, 'default', {})
-          .catch(() => []);
-      }
-      return {
-        key: property.key, title: property.title, hint: property.hint, type: property.type,
-        required: property.type === 'select' && !options.length ? false : property.required,
-        placeholder: property.placeholder, options,
-      };
-    }));
-  window.dispatchEvent(new CustomEvent('sulla:open-secure-vault', {
-    detail: { integrationId, connect: integration ? {
-      name: integration.name, description: integration.description, formGuide: integration.formGuide, fields,
-    } : undefined },
-  }));
+async function openIntegration(integrationId: string) {
+  await router.push(`/Integrations/${ encodeURIComponent(integrationId) }`);
   ipcRenderer.send('first-run:trace' as any, 'main-window', 'opened deferred API connection', { integrationId });
 }
 
@@ -70,13 +50,13 @@ async function refresh() {
 
   if (visible.value && requestedIntegration.value && !openedGuidedConnect) {
     openedGuidedConnect = true;
-    openVaultConnect(requestedIntegration.value);
+    void openIntegration(requestedIntegration.value);
   }
 }
 
 function openModels() {
-  if (requestedIntegration.value) void openVaultConnect(requestedIntegration.value);
-  else openMainTab('integrations');
+  if (requestedIntegration.value) void openIntegration(requestedIntegration.value);
+  else void router.push('/Integrations');
 }
 function onModelChanged() { void refresh(); }
 function onOpenConnections() { openModels(); }

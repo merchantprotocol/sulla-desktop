@@ -24,10 +24,11 @@ import { app, BrowserWindow } from 'electron';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
-import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { flushPendingCredentials, pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 import * as window from '@pkg/window';
 
 const console = Logging.background;
@@ -251,6 +252,89 @@ export function initIntegrationOAuthEvents(): void {
     return cancelled;
   });
 
+
+  ipcMainProxy.handle('integration:connect-form', async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string }> => {
+    assertFirstRunOrMainSender(event);
+    const payload = (args[0] ?? {}) as { integrationId?: unknown; accountId?: unknown; label?: unknown; values?: unknown };
+    const integrationId = typeof payload.integrationId === 'string' ? payload.integrationId.trim() : '';
+    const accountId = typeof payload.accountId === 'string' ? payload.accountId.trim() : '';
+    const label = typeof payload.label === 'string' ? payload.label.trim() : '';
+    const integration = integrations[integrationId];
+    if (!integration || !/^[a-z0-9][a-z0-9_-]*$/i.test(accountId) || !label) {
+      return { success: false, error: 'Enter an account label and try again.' };
+    }
+
+    const supplied = payload.values && typeof payload.values === 'object' && !Array.isArray(payload.values)
+      ? payload.values as Record<string, unknown>
+      : {};
+    const properties = integration.properties ?? [];
+    const allowed = new Set(properties.map(property => property.key));
+    const values: Record<string, string> = { account_label: label };
+    for (const property of properties) {
+      const raw = supplied[property.key];
+      const value = typeof raw === 'string' ? raw : '';
+      if (property.required && !value.trim()) return { success: false, error: `${ property.title } is required.` };
+      if (value) values[property.key] = value;
+    }
+    for (const key of Object.keys(supplied)) {
+      if (key !== 'llm_access' && !allowed.has(key)) return { success: false, error: 'The connection form contained an unexpected field. Reload it and try again.' };
+    }
+    values.llm_access = 'autofill';
+    if (integrationId === 'anthropic') {
+      const cleaned = cleanApiKey(values.api_key);
+      if (!cleaned.key || cleaned.error) return { success: false, error: cleaned.error || 'Enter an Anthropic API key to connect.' };
+      values.api_key = cleaned.key;
+      const prefixError = keyPrefixError('anthropic', cleaned.key);
+      if (prefixError) return { success: false, error: prefixError };
+      const userLevelKey = cleaned.key.startsWith('sk-ant-usr-');
+      if (userLevelKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(values.workspace_id || '')) {
+        return { success: false, error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.' };
+      }
+      try {
+        const response = await fetch(API_KEY_PROVIDERS.anthropic.url, {
+          headers: { ...API_KEY_PROVIDERS.anthropic.headers(cleaned.key), ...(userLevelKey ? { 'anthropic-workspace-id': values.workspace_id } : {}) },
+          signal: AbortSignal.timeout(15_000),
+        });
+        const text = await response.text();
+        if (!response.ok) {
+          const error = response.status === 400 && /workspace/i.test(text)
+            ? (userLevelKey
+              ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
+              : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.')
+            : apiResponseError('Anthropic', response.status, text);
+          return { success: false, error };
+        }
+      } catch (error) {
+        return { success: false, error: apiFailure(error, 'Anthropic').error };
+      }
+    }
+
+    try {
+      if (usesContainerVaultAuthority()) {
+        queuePendingCredential({ integrationId, accountId, values, activate: true });
+        const flushed = await flushPendingCredentials();
+        if (!flushed.flushed.includes(integrationId)) {
+          return { success: false, error: 'The vault is locked or unavailable. Unlock it, then try again.' };
+        }
+      } else {
+        const service = getIntegrationService();
+        await service.setAccountLabel(integrationId, accountId, label);
+        await service.setFormValues(Object.entries(values)
+          .filter(([property]) => property !== 'account_label')
+          .map(([property, value]) => ({ integration_id: integrationId, account_id: accountId, property, value })));
+        await service.setConnectionStatus(integrationId, true, accountId);
+        const accounts = await service.getAccounts(integrationId);
+        if (accounts.length <= 1) await service.setActiveAccount(integrationId, accountId);
+      }
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`${ LOG_PREFIX } Inline connection failed for ${ integrationId }:`, message);
+      return { success: false, error: /locked/i.test(message)
+        ? 'The vault is locked. Unlock it, then try again.'
+        : `Could not save ${ integration.name }. ${ message.replace(/^Error:\s*/i, '') }` };
+    }
+  });
 
   ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string; models?: string[] }> => {
     const payload = (args[0] ?? {}) as { providerId?: string; apiKey?: string; workspaceId?: string };

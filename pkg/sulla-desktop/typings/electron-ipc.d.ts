@@ -294,6 +294,7 @@ export interface IpcMainInvokeEvents {
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
   'first-run-ai:connect-api-key': (payload: { providerId: 'anthropic' | 'openai' | 'grok'; apiKey: string; workspaceId?: string }) => { success: boolean; error?: string; models?: string[] };
+  'integration:connect-form': (payload: { integrationId: string; accountId: string; label: string; values: Record<string, string> }) => { success: boolean; error?: string };
   /** Whether the first chat can start right away; never blocks closing the wizard. */
   'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
   /** Retry the managed services now (the Repair action). */
