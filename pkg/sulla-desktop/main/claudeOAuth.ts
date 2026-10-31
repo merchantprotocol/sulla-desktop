@@ -45,7 +45,8 @@ const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
 const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
 
 // Claude CLI prints this after a bad code; we could retry but for now we bail.
-const INVALID_CODE_PATTERN = /OAuth error: Invalid code/i;
+// Any OAuth failure from setup-token (wording changes between CLI versions).
+const INVALID_CODE_PATTERN = /OAuth error:/i;
 
 interface OAuthSession {
   ptyProcess:   pty.IPty;
@@ -135,7 +136,7 @@ async function injectTokenIntoVM(token: string): Promise<void> {
  * CLI inside this pseudo-terminal relay (python3 ships in the guest image).
  */
 const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t devpts devpts /dev/pts -o newinstance,ptmxmode=0666,mode=0620,gid=5; }';
-const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            os.write(fd, data)\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
+const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            # The host side runs this through a cooked terminal, which turns\n            # Enter (\\r) into \\n; interactive CLIs only submit on \\r.\n            os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 async function ensureClaudeCliInVM(): Promise<void> {
   const { ensureGuestCli } = await import('@pkg/backend/guestClis');
@@ -424,7 +425,8 @@ export function initClaudeOAuthEvents(): void {
         // Early exit on explicit OAuth error
         if (INVALID_CODE_PATTERN.test(session.stdoutBuffer)) {
           clearTimeout(timeout);
-          doResolve({ error: 'OAuth error: Invalid code. Try again.' });
+          const detail = /OAuth error:\s*([^\n]*)/i.exec(session.stdoutBuffer)?.[1]?.trim();
+          doResolve({ error: `Claude didn't accept the sign-in${ detail ? `: ${ detail }` : '.' } Try again.` });
           return;
         }
 
