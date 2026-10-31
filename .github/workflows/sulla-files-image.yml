@@ -17,9 +17,17 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - run: npm ci --ignore-scripts --prefix packages/vault-crypto
-      - run: npm run build --prefix packages/vault-crypto
+      - name: Build vault crypto
+        run: |
+          npm run build --prefix packages/vault-crypto 2>&1 | tee /tmp/vault-build.log
+          status=${PIPESTATUS[0]}
+          if (( status )); then echo "::error title=Vault crypto build failed::$(tail -20 /tmp/vault-build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"; exit "$status"; fi
       - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
-      - run: npm run build --prefix services/sulla-files
+      - name: Build Files service
+        run: |
+          npm run build --prefix services/sulla-files 2>&1 | tee /tmp/files-build.log
+          status=${PIPESTATUS[0]}
+          if (( status )); then echo "::error title=Files service build failed::$(tail -20 /tmp/files-build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"; exit "$status"; fi
       - run: node --test services/sulla-files/dist/cloudSync/sync.security.test.js
   image:
     if: github.event_name == 'push'
