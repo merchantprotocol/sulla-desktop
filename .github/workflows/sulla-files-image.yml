@@ -26,7 +26,13 @@ jobs:
       - run: npm ci --ignore-scripts --prefix packages/vault-crypto
       - run: npm run build --prefix packages/vault-crypto
       - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
-      - run: npm run build --prefix services/sulla-files
+      - name: Build Files service
+        run: |
+          set -o pipefail
+          npm run build --prefix services/sulla-files 2>&1 | tee /tmp/files-build.log || {
+            tail -40 /tmp/files-build.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
       - name: Boot Files twice on an empty database
         run: node --test services/sulla-files/freshDatabase.pg.integration.test.mjs
         env:
