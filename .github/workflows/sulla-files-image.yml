@@ -29,6 +29,7 @@ jobs:
       - name: Build Files service
         run: |
           set -o pipefail
+          mv postcss.config.cjs /tmp/desktop-postcss.config.cjs
           npm run build --prefix services/sulla-files 2>&1 | tee /tmp/files-build.log || {
             message="$(tail -80 /tmp/files-build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')"
             echo "::error::$message"
