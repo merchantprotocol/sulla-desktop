@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AlibabaModels } from './AlibabaModels';
+import { alibabaPlans, alibabaRegions, kimiRegions } from './AIProviderOptions';
 import { AnthropicModels } from './AnthropicModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
+import { KimiModels } from './KimiModels';
 import { OllamaModels } from './OllamaModels';
 import { OpenAICompatibleModels } from './OpenAICompatibleModels';
 import { OpenAIModels } from './OpenAIModels';
@@ -19,15 +22,19 @@ export { registerSelectBoxProvider, getSelectBoxProvider, getAllSelectBoxProvide
 registerSelectBoxProvider(new GrokModels());
 registerSelectBoxProvider(new AnthropicModels());
 registerSelectBoxProvider(new OpenAIModels());
+// Kimi and Alibaba keep their own region-aware pickers; the rest use live discovery.
+registerSelectBoxProvider(new KimiModels());
+registerSelectBoxProvider(kimiRegions);
+registerSelectBoxProvider(new AlibabaModels());
+registerSelectBoxProvider(alibabaPlans);
+registerSelectBoxProvider(alibabaRegions);
 for (const [selectId, providerId] of [
   ['google_models', 'google'],
   ['groq_models', 'groq'],
   ['mistral_models', 'mistral'],
   ['cerebras_models', 'cerebras'],
   ['together_models', 'together'],
-  ['kimi_models', 'kimi'],
   ['nvidia_models', 'nvidia'],
-  ['alibaba_models', 'alibaba'],
   ['arcee_models', 'arcee'],
   ['cohere_models', 'cohere'],
   ['deepseek_models', 'deepseek'],

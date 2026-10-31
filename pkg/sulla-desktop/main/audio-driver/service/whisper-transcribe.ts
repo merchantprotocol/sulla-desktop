@@ -486,6 +486,24 @@ interface TranscribeOpts {
   onDone?:    () => void;
 }
 
+/** Platform switches shared by every feature that transcribes through this service. */
+function whisperPlatformArgs(): string[] {
+  // The bundled Metal build produces corrupt transcripts on Intel Macs. CPU
+  // inference is both accurate and fast there; Apple silicon keeps Metal.
+  return process.platform === 'darwin' && process.arch === 'x64' ? ['-ng'] : [];
+}
+
+function cleanWhisperTranscript(stdout: string): string {
+  return stdout
+    .replace(/<\|[^|>]*\|>/g, ' ')
+    .replace(/\[_TT_\d+\]/gi, ' ')
+    .replace(/\[BLANK_AUDIO\]/gi, ' ')
+    .replace(/\((?:silence|blank audio|no speech)\)/gi, ' ')
+    .replace(/\[.*?\]/g, ' ') // strip any timestamp artifacts
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Write PCM to a temp WAV file and run whisper-cpp on it. `onDone` always fires on
  * completion (any outcome) so end-of-turn finalization can chain reliably.
@@ -540,7 +558,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
     '-l', language,
     '--no-timestamps',
     '-nt',             // no-timestamps shorthand
-    '--print-special', 'false',
+    ...whisperPlatformArgs(),
     '-t', String(threads),
   ];
 
@@ -567,9 +585,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
 
     whisperWarm = true;
 
-    const text = stdout
-      .replace(/\[.*?\]/g, '')  // strip any timestamp artifacts
-      .trim();
+    const text = cleanWhisperTranscript(stdout);
 
     if (!text || text === '[BLANK_AUDIO]' || text.length < 2) {
       log.debug('WhisperTranscribe', 'Blank/empty transcript — skipping', { channel, text: text || '(empty)' });

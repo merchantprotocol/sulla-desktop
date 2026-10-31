@@ -29,6 +29,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import * as window from '@pkg/window';
+import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
 const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
@@ -157,6 +158,19 @@ function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
  * exclusive — OAuth supersedes a manually-pasted key).
  */
 async function persistTokenToVault(token: string): Promise<void> {
+  if (usesContainerVaultAuthority()) {
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault session service is unavailable');
+    await client.importIntegrationAccount(CLAUDE_INTEGRATION_ID, {
+      accountId: CLAUDE_OAUTH_ACCOUNT_ID,
+      label: 'Claude Code OAuth',
+      values: { oauth_token: token, api_key: '', account_label: 'Claude Code OAuth' },
+      active: true,
+      connected: true,
+    });
+    console.log('[ClaudeOAuth] Token persisted to integration vault');
+    return;
+  }
   const svc = getIntegrationService();
   // Wrap connection-status write in the suppression flag so the Integrations
   // listener in agent/integrations/index.ts doesn't try to spin up a runtime

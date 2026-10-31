@@ -132,6 +132,47 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
     ],
+    bindings: [
+      { integration: 'openai', hosts: ['api.openai.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/(?:chat\/completions|responses)$/ },
+      {
+        integration: 'anthropic', hosts: ['api.anthropic.com'],
+        injections: [
+          { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+          { field: 'workspace_id', target: 'header', name: 'anthropic-workspace-id', scheme: 'raw' },
+        ],
+        pathPattern: /^\/v1\/messages$/,
+      },
+      {
+        integration: 'google', hosts: ['generativelanguage.googleapis.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1beta\/models\/[^/]+:generateContent$/,
+      },
+      { integration: 'grok', hosts: ['api.x.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/(?:chat\/completions|responses)$/ },
+      {
+        integration: 'grok', hosts: ['cli-chat-proxy.grok.com'],
+        injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        injectionSets: [[{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
+        pathPattern: /^\/v1\/responses$/,
+      },
+      { integration: 'kimi', hosts: ['api.moonshot.ai', 'api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'nvidia', hosts: ['integrate.api.nvidia.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      {
+        integration: 'alibaba',
+        hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/(?:compatible-mode\/)?v1\/chat\/completions$/,
+      },
+      { integration: 'groq', hosts: ['api.groq.com'], injections: authHeaders(['api_key']), pathPattern: /^\/openai\/v1\/chat\/completions$/ },
+      { integration: 'mistral', hosts: ['api.mistral.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'cerebras', hosts: ['api.cerebras.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'together', hosts: ['api.together.xyz'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'cohere', hosts: ['api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/compatibility\/v1\/chat\/completions$/ },
+      { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
+      { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/chat\/completions$/ },
+      // A custom endpoint has no globally trusted host. Its item policy is the
+      // authority and is populated from the user-entered HTTPS base URL.
+      { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
+    ],
   },
   'provider.cli': {
     integrations: ['openai', 'codex', 'anthropic', 'claude-code'],
@@ -379,6 +420,12 @@ export function validateOperation(
   if (!allowedHosts?.length || !allowedHosts.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
     throw new Error('destination_denied');
   }
+  // A binding is the product allowlist. Item sites are optional for bound
+  // providers; when present they can only narrow that allowlist, never widen it.
+  if (binding?.hosts && itemPolicy.sites?.length &&
+      !itemPolicy.sites.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
+    throw new Error('destination_denied');
+  }
   const streaming = input.responseType === 'stream' || input.responseType === 'binary-stream';
   if (streaming && !policy.allowStreaming) throw new Error('streaming_denied');
   if (input.responseType === 'binary-stream' && !policy.binaryResponse) throw new Error('binary_denied');
@@ -422,11 +469,11 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   anthropic: ['api.anthropic.com'],
   'claude-code': ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
-  grok:      ['api.x.ai'],
+  grok:      ['api.x.ai', 'cli-chat-proxy.grok.com'],
   elevenlabs: ['api.elevenlabs.io'],
-  kimi:      ['api.moonshot.cn'],
+  kimi:      ['api.moonshot.ai', 'api.moonshot.cn'],
   nvidia:    ['integrate.api.nvidia.com'],
-  alibaba:   ['coding-intl.dashscope.aliyuncs.com'],
+  alibaba:   ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
   groq:      ['api.groq.com'],
   mistral:   ['api.mistral.ai'],
   cerebras:  ['api.cerebras.ai'],

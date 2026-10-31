@@ -18,6 +18,7 @@ import type {
   BrokerVaultItemUpdateRequest,
   BrokerVaultItemWriteResponse,
   BrokerIntegrationCredentialWriteRequest,
+  BrokerIntegrationAccountImportRequest,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
@@ -480,6 +481,34 @@ export class LocalVaultApprovalClient {
           'x-sulla-service-id': identity.serviceId,
         },
         body: JSON.stringify({ accountId, label }),
+      },
+    );
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+  }
+
+  /** Atomically store an account collected by trusted Desktop UI. No secret is returned. */
+  async importIntegrationAccount(
+    integrationId: string,
+    input: BrokerIntegrationAccountImportRequest,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(input.accountId)) {
+      throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
+    }
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(
+      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/desktop-account`,
+      {
+        method: 'PUT',
+        headers: {
+          authorization:        `Bearer ${ identity.serviceToken }`,
+          'content-type':       'application/json',
+          'x-sulla-service-id': identity.serviceId,
+        },
+        body: JSON.stringify(input),
       },
     );
     if (!response.ok) {
