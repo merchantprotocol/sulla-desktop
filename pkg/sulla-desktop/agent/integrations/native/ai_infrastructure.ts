@@ -133,13 +133,13 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     version:     '1.0.0',
     lastUpdated: '2026-10-14',
     developer:   'OpenCode',
-    formGuide:   'Install with npm install -g opencode-ai, then run opencode auth login in the VM. OpenCode also offers free models without a provider login.',
+    formGuide:   'Use your GitHub Copilot plan: install OpenCode, run `opencode`, then `/connect` → GitHub Copilot. OpenCode also offers free models without a provider login.',
     installationGuide: {
       title:       'Connect OpenCode',
       description: 'OpenCode stores provider credentials in its own CLI profile.',
       steps:       [
         { title: 'Install the CLI', content: 'Run: npm install -g opencode-ai' },
-        { title: 'Sign in', content: 'Run: opencode auth login and choose the model provider you use.' },
+        { title: 'Connect a provider', content: 'Run opencode, then /connect. Choose GitHub Copilot to use your Copilot plan.' },
         { title: 'Verify models', content: 'Run: opencode models' },
       ],
     },
@@ -830,22 +830,37 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     developer:   provider.developer,
     formGuide:   provider.keyHelp,
     properties:  [
+      ...(provider.id === 'azure-openai' ? [{ key: 'resource_url', title: 'Resource endpoint URL', hint: 'Azure portal or Foundry → your resource → Keys and Endpoint. Use the HTTPS endpoint ending in openai.azure.com or services.ai.azure.com.', type: 'url' as const, required: true, placeholder: 'https://your-resource.openai.azure.com' }] : []),
+      ...(provider.id === 'lm-studio' || provider.id === 'local-server' ? [{ key: 'base_url', title: 'Base URL', hint: provider.id === 'lm-studio' ? 'LM Studio → Developer → Local Server. Use this computer’s VM gateway URL unless you changed the port.' : 'Use the /v1 URL shown by your local server (llama.cpp, vLLM, LocalAI, or another OpenAI-compatible server).', type: 'url' as const, required: true, placeholder: provider.id === 'lm-studio' ? 'http://host.sulla.internal:1234/v1' : 'http://host.sulla.internal:8000/v1' }] : []),
       ...(provider.regionSelect ? [{
         key: 'region', title: provider.regionSelect.label,
         hint: 'Choose the region where you created this API key.', type: 'select' as const,
         required: true, placeholder: 'Select a region...', selectBoxId: provider.regionSelect.id,
       }] : []),
-      {
+      ...(!('local' in provider && provider.local) ? [{
         key: 'api_key', title: 'API Key', hint: provider.keyHelp, type: 'password' as const,
-        required: true, placeholder: 'Paste your API key',
-      },
+        required: !('keyRequired' in provider) || provider.keyRequired !== false, placeholder: 'Paste your API key',
+      }] : []),
       {
-        key: 'model', title: 'Model', hint: `Models available to your ${ provider.name } account.`, type: 'select' as const,
+        key: 'model', title: provider.id === 'azure-openai' ? 'Deployment / model' : 'Model', hint: provider.id === 'azure-openai' ? 'Use the deployment name you created in Azure AI Foundry.' : `Models available to your ${ provider.name } account.`, type: 'select' as const,
         required: true, placeholder: 'Select a model...', selectBoxId: `${ provider.id }_models`,
-        selectDependsOn: provider.regionSelect ? ['api_key', 'region'] : ['api_key'],
+        selectDependsOn: 'local' in provider && provider.local ? ['base_url'] : provider.id === 'azure-openai' ? ['resource_url', 'api_key'] : provider.regionSelect ? ['api_key', 'region'] : ['api_key'],
       },
     ],
   } satisfies Integration])),
+
+  'vertex-ai': {
+    id: 'vertex-ai', sort: 19, paid: true, beta: true, comingSoon: false, connected: false,
+    name: 'Google Vertex AI Express', description: 'Use a Vertex AI Express API key with Gemini models.', category: 'AI Infrastructure', icon: 'google.svg',
+    version: '1.0.0', lastUpdated: '2026-10-31', developer: 'Google',
+    formGuide: 'Google Cloud console → Vertex AI Studio: choose your project, create an Express mode API key, and use the project ID and region shown there.',
+    properties: [
+      { key: 'project_id', title: 'Project ID', hint: 'Google Cloud console → project selector → copy the Project ID.', type: 'text', required: true, placeholder: 'my-project' },
+      { key: 'region', title: 'Region', hint: 'Vertex AI Studio shows the region for your project, such as us-central1.', type: 'text', required: true, placeholder: 'us-central1' },
+      { key: 'api_key', title: 'API Key', hint: 'Vertex AI Studio → Express mode → API key.', type: 'password', required: true, placeholder: 'AIza...' },
+      { key: 'model', title: 'Model', hint: 'Enter the Gemini publisher model available to your Vertex project.', type: 'text', required: true, placeholder: 'gemini-2.5-flash' },
+    ],
+  },
 
   custom: {
     id:          'custom',

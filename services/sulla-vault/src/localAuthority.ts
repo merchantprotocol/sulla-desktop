@@ -110,7 +110,7 @@ const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
 const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
   'account_label', 'connection_status', 'connected_at', 'last_sync_at', 'base_url', 'server_url',
-  'gateway_url', 'provider', 'provider_id', 'model', 'workspace_id', 'region', 'plan', 'llm_access', 'client_id', 'oauth_client_id',
+  'gateway_url', 'resource_url', 'project_id', 'provider', 'provider_id', 'model', 'workspace_id', 'region', 'plan', 'llm_access', 'client_id', 'oauth_client_id',
   'expires_at', 'token_type', 'scope',
 ]);
 const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;
@@ -140,6 +140,7 @@ export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | u
 
 function safeIntegrationMetadata(
   source: Record<string, unknown>,
+  integrationId = '',
 ): Record<string, string> {
   const secrets = Object.entries(source)
     .filter(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0)
@@ -147,10 +148,10 @@ function safeIntegrationMetadata(
   const output: Record<string, string> = {};
   for (const [name, value] of Object.entries(source)) {
     if (!SAFE_INTEGRATION_METADATA_FIELDS.has(name) || typeof value !== 'string') continue;
-    if (name === 'base_url' || name === 'server_url' || name === 'gateway_url') {
+    if (name === 'base_url' || name === 'server_url' || name === 'gateway_url' || name === 'resource_url') {
       try {
         const parsed = new URL(value);
-        if (parsed.username || parsed.password || parsed.search || parsed.hash || parsed.protocol !== 'https:') continue;
+        if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== 'https:' && !(name === 'base_url' && ['ollama', 'lm-studio', 'local-server'].includes(integrationId) && parsed.protocol === 'http:'))) continue;
         if (name === 'gateway_url') {
           output[name] = parsed.origin;
           continue;
@@ -1885,7 +1886,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       )) as VaultItemPlaintext;
       this.requireGeneration(generation);
       const sourceProperties = plaintext.integration?.properties ?? {};
-      const properties = safeIntegrationMetadata(sourceProperties);
+      const properties = safeIntegrationMetadata(sourceProperties, integrationId);
       const accountId = item.integration_ref.slice(integrationId.length + 1);
       const explicitStatus = properties.connection_status?.toLowerCase();
       const hasCredential = Object.entries(sourceProperties)
@@ -2029,11 +2030,17 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       plaintext.name = label;
     } else {
       const sites = trustedOriginsForIntegration(integrationId);
-      if (integrationId === 'custom' && values.base_url) {
+      if (['custom', 'azure-openai'].includes(integrationId) && (values.base_url || values.resource_url)) {
         try {
-          const baseUrl = new URL(values.base_url);
-          if (baseUrl.protocol === 'https:' && baseUrl.hostname) sites.push(baseUrl.hostname.toLowerCase());
+          const baseUrl = new URL(values.base_url || values.resource_url);
+          const hostname = baseUrl.hostname.toLowerCase();
+          const azureHost = integrationId !== 'azure-openai' || ['.openai.azure.com', '.services.ai.azure.com', '.cognitiveservices.azure.com'].some(suffix => hostname.endsWith(suffix));
+          if (baseUrl.protocol === 'https:' && hostname && azureHost) sites.push(hostname);
         } catch { /* invalid base URLs are rejected when used; never grant a site here */ }
+      }
+      if (integrationId === 'vertex-ai' && values.region) {
+        const region = values.region.toLowerCase();
+        if (/^[a-z]+-[a-z]+\d$/.test(region)) sites.push(`${ region }-aiplatform.googleapis.com`);
       }
       const policy = {
         mode: 'agents' as const, level: 'autofill' as const, agents: [], sites: [...new Set(sites)],

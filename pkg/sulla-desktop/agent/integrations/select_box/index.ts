@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AlibabaModels } from './AlibabaModels';
-import { alibabaPlans, alibabaRegions, kimiRegions, minimaxRegions, zaiRegions } from './AIProviderOptions';
+import { alibabaPlans, alibabaRegions, kimiRegions, bedrockRegions, minimaxRegions, zaiRegions } from './AIProviderOptions';
 import { AnthropicModels } from './AnthropicModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
@@ -30,6 +30,7 @@ registerSelectBoxProvider(alibabaPlans);
 registerSelectBoxProvider(alibabaRegions);
 registerSelectBoxProvider(zaiRegions);
 registerSelectBoxProvider(minimaxRegions);
+registerSelectBoxProvider(bedrockRegions);
 for (const [selectId, providerId] of [
   ['google_models', 'google'],
   ['groq_models', 'groq'],

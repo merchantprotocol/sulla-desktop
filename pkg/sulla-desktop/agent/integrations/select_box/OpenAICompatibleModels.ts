@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { isChatModel, modelDiscoveryService } from '../../languagemodels/ModelDiscoveryService';
+import { openAICompatibleProvider, providerBaseUrl } from '../../languagemodels/openAICompatibleProviders';
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
 
 /** Live model picker shared by OpenAI-compatible API providers. */
@@ -16,10 +17,12 @@ export class OpenAICompatibleModels extends SelectBoxProvider {
   }
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    const definition = openAICompatibleProvider(this.providerId);
+    const baseUrl = definition ? providerBaseUrl(definition, context.formValues) : context.formValues.base_url;
     const models = await modelDiscoveryService.fetchModelsForProvider(
       this.providerId,
       context.formValues.api_key || '',
-      { baseUrl: context.formValues.base_url, region: context.formValues.region },
+      { baseUrl, region: context.formValues.region },
     );
 
     return models.filter(isChatModel).map(model => ({

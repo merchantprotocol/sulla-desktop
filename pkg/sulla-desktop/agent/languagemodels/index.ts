@@ -46,6 +46,7 @@ export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>
   groq:          async() => { const { getGroqService } = await import('./GroqService'); return getGroqService() },
   openai:        async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
   anthropic:     async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
+  'vertex-ai':   async() => { const { getVertexAIService } = await import('./VertexAIService'); return getVertexAIService() },
   google:        async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
   kimi:          async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
   nvidia:        async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
@@ -421,7 +422,7 @@ class LLMRegistryImpl {
   // ============================================================================
 
   async fetchModelsForProvider(providerId: string, apiKey?: string): Promise<ModelInfo[]> {
-    if (usesContainerVaultAuthority() && providerId !== 'ollama') {
+    if (usesContainerVaultAuthority() && !['ollama', 'lm-studio', 'local-server'].includes(providerId)) {
       return modelDiscoveryService.fetchModelsForProvider(providerId);
     }
     let key = apiKey || '';

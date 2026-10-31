@@ -270,7 +270,7 @@ export abstract class BaseLanguageModel {
     // Container authority verifies credentials only while executing an
     // authenticated outbound request. Desktop must never probe by loading a
     // key locally, and it has no caller scope during registry initialization.
-    this.isHealthy = usesContainerVaultAuthority() && this.providerId !== 'ollama'
+    this.isHealthy = usesContainerVaultAuthority() && !['ollama', 'lm-studio', 'local-server'].includes(this.providerId)
       ? !!this.baseUrl
       : await this.healthCheck();
     this.isInitialized = true;
