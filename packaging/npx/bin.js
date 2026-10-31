@@ -24,6 +24,7 @@ const path = require('path');
 const { Readable } = require('stream');
 
 const REPO = 'merchantprotocol/sulla-desktop';
+const RELEASES_BASE = 'https://releases.sulladesktop.com';
 const APP_NAME = 'Sulla Desktop';
 const PKG = require('./package.json');
 const CMD = PKG.name; // `sulla-desktop` today; `sulla` if we get that name.
@@ -94,8 +95,8 @@ Where it installs (no sudo needed):
   Windows  %LOCALAPPDATA%\\Programs\\${ APP_NAME }
 
 A running ${ APP_NAME } is never replaced or closed. Quit it first to update.
-Downloads come from github.com/${ REPO }/releases and are checked against
-the sha256 digest GitHub publishes for each file.`);
+Downloads come from releases.sulladesktop.com and are checked against
+the sha256 digest in the published release manifest.`);
 }
 
 // ─── Platform ───────────────────────────────────────────────
@@ -234,9 +235,39 @@ function isRunning(plat, lay) {
   return r.status === 0 && r.stdout.toLowerCase().includes(`${ APP_NAME }.exe`.toLowerCase());
 }
 
-// ─── GitHub ─────────────────────────────────────────────────
+// ─── Release metadata ───────────────────────────────────────
 
-async function getRelease(tag) {
+async function getRelease(tag, plat) {
+  // macOS release zips moved out of GitHub assets in v1.7.4. The signed
+  // release manifest is now the source of truth for both "latest" and pinned
+  // installs; older/non-mac releases keep the GitHub fallback below.
+  if (plat.os === 'mac') {
+    const manifestUrl = tag
+      ? `${ RELEASES_BASE }/releases/${ encodeURIComponent(tag) }/latest.json`
+      : `${ RELEASES_BASE }/channels/latest/latest.json`;
+    const res = await fetch(manifestUrl, { headers: { 'User-Agent': `${ CMD }-npx/${ PKG.version }` } });
+
+    if (res.ok) {
+      const manifest = await res.json();
+      const assets = Object.values(manifest.files || {}).map(file => ({
+        name:                 file.name,
+        size:                 file.size,
+        browser_download_url: file.url,
+        digest:               `sha256:${ file.sha256 }`,
+      }));
+
+      if (!manifest.tag || !assets.length) {
+        throw new Error(`Release manifest at ${ manifestUrl } is incomplete`);
+      }
+
+      return { tag_name: manifest.tag, assets };
+    }
+    // A pinned pre-R2 release has no versioned manifest; GitHub still owns it.
+    if (!tag || res.status !== 404) {
+      throw new Error(`Release manifest returned ${ res.status } for ${ manifestUrl }`);
+    }
+  }
+
   const url = tag
     ? `https://api.github.com/repos/${ REPO }/releases/tags/${ encodeURIComponent(tag) }`
     : `https://api.github.com/repos/${ REPO }/releases/latest`;
@@ -630,7 +661,7 @@ async function main(argv = process.argv.slice(2)) {
 
   try {
     log(opts.version ? `Looking up release ${ opts.version }…` : 'Checking for the latest release…');
-    release = await getRelease(opts.version);
+    release = await getRelease(opts.version, plat);
   } catch (err) {
     if (lay.existing && !opts.dryRun && !opts.update && !opts.version) {
       warn(`Couldn't check for updates (${ err.message }). Opening the copy you have.`);
