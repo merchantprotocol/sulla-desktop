@@ -1,6 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 name: Publish sulla-tools image
 on:
+  pull_request:
+    paths:
+      - 'services/sulla-tools/**'
+      - 'pkg/sulla-desktop/agent/**'
+      - 'pkg/sulla-desktop/runtime/**'
+      - 'pkg/sulla-desktop/vault-broker/**'
+      - 'pkg/sulla-desktop/utils/instance.ts'
+      - 'contracts/server-split/**'
+      - '.github/workflows/sulla-tools-image.yml'
   push:
     branches: [main]
     tags: ['v*']
@@ -16,7 +25,14 @@ permissions:
   contents: read
   packages: write
 jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and import entrypoint dependencies
+        run: docker build --file services/sulla-tools/Dockerfile --tag sulla-tools-smoke .
   image:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
