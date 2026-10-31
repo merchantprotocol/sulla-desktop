@@ -35,54 +35,125 @@ const console = Logging.background;
 
 const LOG_PREFIX = '[IntegrationOAuth]';
 
-type FirstRunApiProviderId = 'anthropic' | 'openai' | 'grok';
+type ApiKeyProviderId = 'anthropic' | 'openai' | 'grok' | 'google' | 'groq' | 'mistral' | 'cerebras' | 'together'
+  | 'cohere' | 'deepseek' | 'arcee' | 'nvidia' | 'kimi' | 'alibaba' | 'custom';
 
 interface ApiKeyProviderConfig {
   name: string;
-  url: string;
-  headers(apiKey: string): Record<string, string>;
+  verifyUrl(values: Record<string, string>): string;
+  headers(apiKey: string, values: Record<string, string>): Record<string, string>;
+  chatModelFilter(id: string, item?: Record<string, unknown>): boolean;
 }
 
 type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'busy-port' | 'no-access' | 'provider-error';
 
-const API_KEY_PROVIDERS: Record<FirstRunApiProviderId, ApiKeyProviderConfig> = {
+const openAiChatModel = (id: string): boolean => !/(audio|realtime|transcri(?:be|ption)|whisper|tts|speech|image|flux|diffusion|embed|rerank|moderation|guard|search)/i.test(id);
+const bearer = (apiKey: string): Record<string, string> => ({ Authorization: `Bearer ${ apiKey }` });
+const modelsUrl = (baseUrl: string): string => `${ baseUrl.replace(/\/$/, '') }/models`;
+
+function kimiBaseUrl(values: Record<string, string>): string {
+  return values.region === 'china' ? 'https://api.moonshot.cn/v1' : 'https://api.moonshot.ai/v1';
+}
+
+function alibabaBaseUrl(values: Record<string, string>): string {
+  const plan = values.plan || 'payg';
+  const region = values.region || 'intl';
+  if (plan === 'coding') return region === 'cn'
+    ? 'https://coding.dashscope.aliyuncs.com/v1'
+    : 'https://coding-intl.dashscope.aliyuncs.com/v1';
+  if (region === 'us') return 'https://dashscope-us.aliyuncs.com/compatible-mode/v1';
+  if (region === 'cn') return 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  return 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+}
+
+const API_KEY_PROVIDERS: Record<ApiKeyProviderId, ApiKeyProviderConfig> = {
   anthropic: {
     name: 'Anthropic',
-    url: 'https://api.anthropic.com/v1/models',
-    headers: apiKey => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+    verifyUrl: () => 'https://api.anthropic.com/v1/models?limit=1000',
+    headers: (apiKey, values) => ({
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      ...(apiKey.startsWith('sk-ant-usr-') && values.workspace_id ? { 'anthropic-workspace-id': values.workspace_id } : {}),
+    }),
+    chatModelFilter: id => /claude/i.test(id) && !/(embed|moderation)/i.test(id),
   },
   openai: {
-    name: 'OpenAI',
-    url: 'https://api.openai.com/v1/models',
-    headers: apiKey => ({ Authorization: `Bearer ${ apiKey }` }),
+    name: 'OpenAI', verifyUrl: () => 'https://api.openai.com/v1/models', headers: bearer,
+    chatModelFilter: id => /^gpt-|^o\d|^chatgpt-/i.test(id) && openAiChatModel(id),
   },
   grok: {
-    name: 'Grok',
-    url: 'https://api.x.ai/v1/models',
-    headers: apiKey => ({ Authorization: `Bearer ${ apiKey }` }),
+    name: 'Grok', verifyUrl: () => 'https://api.x.ai/v1/models', headers: bearer,
+    chatModelFilter: id => /^grok-/i.test(id) && openAiChatModel(id),
+  },
+  google: {
+    name: 'Google Gemini', verifyUrl: () => 'https://generativelanguage.googleapis.com/v1beta/models',
+    headers: apiKey => ({ 'x-goog-api-key': apiKey }),
+    chatModelFilter: (id, item) => /^gemini-/i.test(id) && (!Array.isArray(item?.supportedGenerationMethods) || item.supportedGenerationMethods.includes('generateContent')),
+  },
+  groq: {
+    name: 'Groq', verifyUrl: () => 'https://api.groq.com/openai/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  mistral: {
+    name: 'Mistral AI', verifyUrl: () => 'https://api.mistral.ai/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  cerebras: {
+    name: 'Cerebras', verifyUrl: () => 'https://api.cerebras.ai/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  together: {
+    name: 'Together AI', verifyUrl: () => 'https://api.together.xyz/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  cohere: {
+    name: 'Cohere', verifyUrl: () => 'https://api.cohere.com/v2/models', headers: bearer,
+    chatModelFilter: (id, item) => !Array.isArray(item?.endpoints) || item.endpoints.some(endpoint => String(endpoint).toLowerCase().includes('chat')),
+  },
+  deepseek: {
+    name: 'DeepSeek', verifyUrl: () => 'https://api.deepseek.com/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  arcee: {
+    name: 'Arcee AI', verifyUrl: () => 'https://api.arcee.ai/api/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  nvidia: {
+    name: 'NVIDIA', verifyUrl: () => 'https://integrate.api.nvidia.com/v1/models', headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  kimi: {
+    name: 'Kimi', verifyUrl: values => modelsUrl(kimiBaseUrl(values)), headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  alibaba: {
+    name: 'Alibaba Cloud', verifyUrl: values => modelsUrl(alibabaBaseUrl(values)), headers: bearer,
+    chatModelFilter: openAiChatModel,
+  },
+  custom: {
+    name: 'Custom provider',
+    verifyUrl: values => modelsUrl(values.base_url || ''),
+    headers: apiKey => apiKey ? bearer(apiKey) : {},
+    chatModelFilter: openAiChatModel,
   },
 };
 
-function modelIds(body: unknown): string[] {
+function modelEntries(body: unknown): { id: string; item: Record<string, unknown> }[] {
   if (!body || typeof body !== 'object') return [];
-  const data = (body as { data?: unknown }).data;
-  if (!Array.isArray(data)) return [];
-  return [...new Set(data.flatMap(item => item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string'
-    ? [(item as { id: string }).id]
-    : []))];
+  const record = body as { data?: unknown; models?: unknown };
+  const data = Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : [];
+  const entries = data.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const object = item as Record<string, unknown>;
+    const rawId = typeof object.id === 'string' ? object.id : typeof object.name === 'string' ? object.name : '';
+    const id = rawId.replace(/^models\//, '');
+    return id ? [{ id, item: object }] : [];
+  });
+  return [...new Map(entries.map(entry => [entry.id, entry])).values()];
 }
 
-function chooseDefaultApiModel(providerId: FirstRunApiProviderId, ids: string[]): string | undefined {
-  const eligible = ids.filter(id => {
-    const lower = id.toLowerCase();
-    if (providerId === 'anthropic') return lower.includes('claude') && (lower.includes('sonnet') || lower.includes('opus'));
-    if (providerId === 'openai') return lower.startsWith('gpt-') && !/(audio|realtime|transcribe|tts|image|embedding|search|instruct)/.test(lower);
-    return lower.startsWith('grok-') && !/(image|embedding)/.test(lower);
-  });
-  const rank = (id: string) => providerId === 'anthropic'
-    ? `${ id.toLowerCase().includes('sonnet') ? '2' : '1' }${ id }`
-    : id;
-  return eligible.sort((a, b) => rank(b).localeCompare(rank(a), undefined, { numeric: true, sensitivity: 'base' }))[0];
+function verifiedChatModels(provider: ApiKeyProviderConfig, body: unknown): string[] {
+  return modelEntries(body).filter(({ id, item }) => provider.chatModelFilter(id, item)).map(({ id }) => id);
 }
 
 function cleanApiKey(value: unknown): { key?: string; error?: string } {
@@ -95,7 +166,7 @@ function cleanApiKey(value: unknown): { key?: string; error?: string } {
   return { key };
 }
 
-function keyPrefixError(providerId: FirstRunApiProviderId, key: string): string | undefined {
+function keyPrefixError(providerId: ApiKeyProviderId, key: string): string | undefined {
   if (key.startsWith('sk-ant-oat')) return 'That is a Claude sign-in token. Use Claude Connect instead.';
   if (providerId === 'anthropic' && !key.startsWith('sk-ant-')) return key.startsWith('sk-') ? 'That looks like an OpenAI key. Use ChatGPT API instead.' : undefined;
   if (providerId === 'openai' && key.startsWith('sk-ant-')) return 'That looks like an Anthropic key. Use Claude API instead.';
@@ -103,7 +174,7 @@ function keyPrefixError(providerId: FirstRunApiProviderId, key: string): string 
   return undefined;
 }
 
-function probeRequest(providerId: FirstRunApiProviderId, model: string): { url: string; body: Record<string, unknown> } {
+function probeRequest(providerId: 'anthropic' | 'openai' | 'grok', model: string): { url: string; body: Record<string, unknown> } {
   if (providerId === 'anthropic') {
     return { url: 'https://api.anthropic.com/v1/messages', body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] } };
   }
@@ -115,11 +186,10 @@ function probeRequest(providerId: FirstRunApiProviderId, model: string): { url: 
 }
 
 function apiResponseError(providerName: string, status: number, text: string): string {
+  if (status === 401 || status === 403) return 'That key was not accepted.';
   if (/(insufficient[_ -]?quota|credit balance|billing|payment required|no credit|exceeded your current quota)/i.test(text)) {
     return 'Your key works, but the account has no credit.';
   }
-  if (status === 401) return 'That key was not accepted. Check it and try again.';
-  if (status === 403) return 'That key cannot use this model. Check its permissions.';
   if (status === 429) return 'The key works but is rate limited right now; try again shortly.';
   return `${ providerName } could not verify that key. Try again.`;
 }
@@ -127,10 +197,85 @@ function apiResponseError(providerName: string, status: number, text: string): s
 function apiFailure(error: unknown, providerName: string): { error: string; errorClass: string } {
   const name = error instanceof Error ? error.name : '';
   if (name === 'TimeoutError' || name === 'AbortError' || error instanceof TypeError) {
-    return { error: `Could not reach ${ providerName }. Check your connection.`, errorClass: 'network' };
+    return { error: `Could not reach ${ providerName }.`, errorClass: 'network' };
   }
-  return { error: `Could not reach ${ providerName }. Check your connection.`, errorClass: 'network' };
+  return { error: `Could not reach ${ providerName }.`, errorClass: 'network' };
 }
+interface ApiKeyVerification {
+  models?: string[];
+  error?: string;
+  errorClass?: string;
+}
+
+async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values: Record<string, string>): Promise<ApiKeyVerification> {
+  const provider = API_KEY_PROVIDERS[providerId];
+  const userLevelAnthropicKey = providerId === 'anthropic' && apiKey.startsWith('sk-ant-usr-');
+  if (userLevelAnthropicKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(values.workspace_id || '')) {
+    return { error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.', errorClass: 'anthropic-workspace' };
+  }
+  let url: string;
+  try {
+    url = provider.verifyUrl(values);
+    // Custom endpoints are user-entered, but they still must be absolute URLs.
+    new URL(url);
+  } catch {
+    return { error: `Could not reach ${ provider.name }. Check the server address.`, errorClass: 'network' };
+  }
+  try {
+    const response = await fetch(url, {
+      headers: provider.headers(apiKey, values),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      if (providerId === 'anthropic' && response.status === 400 && /workspace/i.test(text)) {
+        return {
+          error: userLevelAnthropicKey
+            ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
+            : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.',
+          errorClass: 'anthropic-workspace',
+        };
+      }
+      if ((providerId === 'kimi' || providerId === 'alibaba') && (response.status === 401 || response.status === 403)) {
+        return {
+          error: 'That key belongs to a different region. Pick the region you created it in.',
+          errorClass: 'region-mismatch',
+        };
+      }
+      return { error: apiResponseError(provider.name, response.status, text), errorClass: `http-${ response.status }` };
+    }
+    let body: unknown;
+    try { body = JSON.parse(text); } catch { body = null }
+    const models = verifiedChatModels(provider, body);
+    if (!models.length) return {
+      error: `${ provider.name } accepted the key but returned no supported chat models.`,
+      errorClass: 'no-chat-model',
+    };
+
+    // NVIDIA's model catalog and Alibaba's Coding Plan catalog are public.
+    // A one-token chat probe is therefore required before a key can be saved.
+    if (providerId === 'nvidia' || (providerId === 'alibaba' && (values.plan || 'payg') === 'coding')) {
+      const baseUrl = providerId === 'nvidia' ? 'https://integrate.api.nvidia.com/v1' : alibabaBaseUrl(values);
+      const probeResponse = await fetch(`${ baseUrl }/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...provider.headers(apiKey, values) },
+        body: JSON.stringify({ model: models[0], max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (probeResponse.status === 401 || probeResponse.status === 403) {
+        if (providerId === 'alibaba') return {
+          error: 'That key belongs to a different region. Pick the region you created it in.',
+          errorClass: 'region-mismatch',
+        };
+        return { error: apiResponseError(provider.name, probeResponse.status, await probeResponse.text()), errorClass: `http-${ probeResponse.status }` };
+      }
+    }
+    return { models };
+  } catch (error) {
+    return apiFailure(error, provider.name);
+  }
+}
+
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
@@ -280,33 +425,22 @@ export function initIntegrationOAuthEvents(): void {
       if (key !== 'llm_access' && !allowed.has(key)) return { success: false, error: 'The connection form contained an unexpected field. Reload it and try again.' };
     }
     values.llm_access = 'autofill';
-    if (integrationId === 'anthropic') {
+    const apiProvider = API_KEY_PROVIDERS[integrationId as ApiKeyProviderId];
+    if (apiProvider) {
       const cleaned = cleanApiKey(values.api_key);
-      if (!cleaned.key || cleaned.error) return { success: false, error: cleaned.error || 'Enter an Anthropic API key to connect.' };
-      values.api_key = cleaned.key;
-      const prefixError = keyPrefixError('anthropic', cleaned.key);
-      if (prefixError) return { success: false, error: prefixError };
-      const userLevelKey = cleaned.key.startsWith('sk-ant-usr-');
-      if (userLevelKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(values.workspace_id || '')) {
-        return { success: false, error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.' };
+      const keyOptional = integrationId === 'custom';
+      if (cleaned.error || (!cleaned.key && !keyOptional)) {
+        return { success: false, error: cleaned.error || `Enter a ${ apiProvider.name } API key to connect.` };
       }
-      try {
-        const response = await fetch(API_KEY_PROVIDERS.anthropic.url, {
-          headers: { ...API_KEY_PROVIDERS.anthropic.headers(cleaned.key), ...(userLevelKey ? { 'anthropic-workspace-id': values.workspace_id } : {}) },
-          signal: AbortSignal.timeout(15_000),
-        });
-        const text = await response.text();
-        if (!response.ok) {
-          const error = response.status === 400 && /workspace/i.test(text)
-            ? (userLevelKey
-              ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
-              : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.')
-            : apiResponseError('Anthropic', response.status, text);
-          return { success: false, error };
-        }
-      } catch (error) {
-        return { success: false, error: apiFailure(error, 'Anthropic').error };
+      const apiKey = cleaned.key || '';
+      if (apiKey) {
+        values.api_key = apiKey;
+        const prefixError = keyPrefixError(integrationId as ApiKeyProviderId, apiKey);
+        if (prefixError) return { success: false, error: prefixError };
       }
+      const verification = await verifyApiKey(integrationId as ApiKeyProviderId, apiKey, values);
+      if (verification.error) return { success: false, error: verification.error };
+      if (!values.model && verification.models?.[0]) values.model = verification.models[0];
     }
 
     try {
@@ -339,84 +473,60 @@ export function initIntegrationOAuthEvents(): void {
   ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string; models?: string[] }> => {
     const payload = (args[0] ?? {}) as { providerId?: string; apiKey?: string; workspaceId?: string };
     assertFirstRunOrMainSender(event);
-    const providerId = payload?.providerId as FirstRunApiProviderId;
+    const providerId = payload.providerId as ApiKeyProviderId;
     const provider = API_KEY_PROVIDERS[providerId];
-    const cleaned = cleanApiKey(payload?.apiKey);
+    const cleaned = cleanApiKey(payload.apiKey);
     if (!provider || (!cleaned.key && !cleaned.error)) return { success: false, error: 'Enter an API key to connect.' };
     if (cleaned.error) return { success: false, error: cleaned.error };
     const apiKey = cleaned.key!;
     const prefixError = keyPrefixError(providerId, apiKey);
     if (prefixError) return { success: false, error: prefixError };
-    const workspaceId = typeof payload?.workspaceId === 'string' ? payload.workspaceId.trim() : '';
-    const userLevelAnthropicKey = providerId === 'anthropic' && apiKey.startsWith('sk-ant-usr-');
-    if (userLevelAnthropicKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(workspaceId)) {
-      return { success: false, error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.' };
-    }
+    const workspaceId = typeof payload.workspaceId === 'string' ? payload.workspaceId.trim() : '';
+    const values = { api_key: apiKey, ...(workspaceId ? { workspace_id: workspaceId } : {}) };
 
     firstRunTrace('api-key', 'verification started', { provider: providerId });
-    try {
-      const response = await fetch(provider.url, {
-        method: 'GET',
-        headers: { ...provider.headers(apiKey), ...(userLevelAnthropicKey ? { 'anthropic-workspace-id': workspaceId } : {}) },
-        signal: AbortSignal.timeout(15_000),
-      });
-      const text = await response.text();
-      if (!response.ok) {
-        let errorClass = `http-${ response.status }`;
-        let error = `${ provider.name } could not verify that key. Try again.`;
-        error = apiResponseError(provider.name, response.status, text);
-        if (providerId === 'anthropic' && response.status === 400 && /workspace/i.test(text)) {
-          errorClass = 'anthropic-workspace';
-          error = userLevelAnthropicKey
-            ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
-            : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.';
-        }
-        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
-        return { success: false, error };
-      }
-
-      let body: unknown;
-      try { body = JSON.parse(text); } catch { body = null }
-      const models = modelIds(body);
-      const model = chooseDefaultApiModel(providerId, models);
-      if (!model) {
-        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: 'no-chat-model' });
-        return { success: false, error: `${ provider.name } accepted the key but returned no supported chat models.` };
-      }
-
-      const probe = probeRequest(providerId, model);
-      const probeResponse = await fetch(probe.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...provider.headers(apiKey), ...(userLevelAnthropicKey ? { 'anthropic-workspace-id': workspaceId } : {}) },
-        body: JSON.stringify(probe.body),
-        signal: AbortSignal.timeout(15_000),
-      });
-      const probeText = probeResponse.ok ? '' : await probeResponse.text();
-      // A 400 means the key authenticated and the request shape was refused
-      // (model parameters, limits). Only auth, permission and billing failures
-      // say anything about the key itself.
-      const keyProblem = !probeResponse.ok && (probeResponse.status !== 400 || /(insufficient[_ -]?quota|credit balance|billing|payment required|no credit|exceeded your current quota)/i.test(probeText));
-      if (keyProblem) {
-        const errorClass = `probe-http-${ probeResponse.status }`;
-        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
-        return { success: false, error: apiResponseError(provider.name, probeResponse.status, probeText) };
-      }
-
-      queuePendingCredential({
-        integrationId: providerId,
-        accountId: 'default',
-        values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
-        activate: true,
-      });
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      await getModelProviderService().reconcilePrimaryProvider(false, providerId);
-      firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
-      return { success: true, models };
-    } catch (error) {
-      const failure = apiFailure(error, provider.name);
-      firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: failure.errorClass });
-      return { success: false, error: failure.error };
+    const verification = await verifyApiKey(providerId, apiKey, values);
+    if (verification.error || !verification.models?.length) {
+      firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: verification.errorClass || 'no-chat-model' });
+      return { success: false, error: verification.error || `${ provider.name } accepted the key but returned no supported chat models.` };
     }
+    const models = verification.models;
+    const model = models[0];
+
+    // First run currently offers these three providers. Keep its one-token
+    // capability probe while sharing the same model-list verification table.
+    if (providerId === 'anthropic' || providerId === 'openai' || providerId === 'grok') {
+      try {
+        const probe = probeRequest(providerId, model);
+        const probeResponse = await fetch(probe.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...provider.headers(apiKey, values) },
+          body: JSON.stringify(probe.body),
+          signal: AbortSignal.timeout(15_000),
+        });
+        const probeText = probeResponse.ok ? '' : await probeResponse.text();
+        const keyProblem = !probeResponse.ok && (probeResponse.status !== 400 || /(insufficient[_ -]?quota|credit balance|billing|payment required|no credit|exceeded your current quota)/i.test(probeText));
+        if (keyProblem) {
+          firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: `probe-http-${ probeResponse.status }` });
+          return { success: false, error: apiResponseError(provider.name, probeResponse.status, probeText) };
+        }
+      } catch (error) {
+        const failure = apiFailure(error, provider.name);
+        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: failure.errorClass });
+        return { success: false, error: failure.error };
+      }
+    }
+
+    queuePendingCredential({
+      integrationId: providerId,
+      accountId: 'default',
+      values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
+      activate: true,
+    });
+    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+    await getModelProviderService().reconcilePrimaryProvider(false, providerId);
+    firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
+    return { success: true, models };
   });
 
   ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
