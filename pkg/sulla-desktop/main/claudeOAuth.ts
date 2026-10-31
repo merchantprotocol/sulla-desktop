@@ -327,7 +327,7 @@ export function initClaudeOAuthEvents(): void {
     } catch (err) {
       firstRunTrace('claude', 'CLI ensure completed', { success: false, error: err instanceof Error ? err.message : String(err) });
       console.warn('[ClaudeOAuth] Could not install the Claude CLI in the VM:', err);
-      return { error: 'Claude could not be prepared. Check your connection, then try again.', reason: 'cli-missing' };
+      return { error: 'Claude could not be reached. Check your connection, then try again.', reason: 'offline' };
     }
 
     return await new Promise((resolve) => {
@@ -461,9 +461,8 @@ export function initClaudeOAuthEvents(): void {
                 // The CLI answers within seconds once the code is submitted.
                 // Don't leave the user on a spinner for the full 5 minutes.
                 noTokenTimeout = setTimeout(() => {
-                  const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-400);
-                  console.warn(`[ClaudeOAuth] No token 60 seconds after the code was sent (enterSent=${ enterSent }). Output tail: ${ tail }`);
-                  firstRunTrace('claude', 'token timeout fired', { enterSent, outputTail: tail });
+                  console.warn(`[ClaudeOAuth] No token 60 seconds after the code was sent (enterSent=${ enterSent })`);
+                  firstRunTrace('claude', 'token timeout fired', { enterSent });
                   void doResolve({ error: 'Claude did not finish signing in. Try again.', reason: 'timeout' });
                 }, 60_000);
                 // Newer CLIs echo the pasted code as plain text, not asterisks,
@@ -518,8 +517,7 @@ export function initClaudeOAuthEvents(): void {
           if (tokenMatch) {
             void doResolve({ token: tokenMatch[1] });
           } else {
-            const tail = session.stdoutBuffer.replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-240);
-            console.warn(`[ClaudeOAuth] setup-token output tail: ${ tail }`);
+            console.warn('[ClaudeOAuth] setup-token ended without a token');
             void doResolve({
               error: exitCode === 127
                 ? 'Claude isn\'t installed in the Sulla VM yet. Try again in a moment.'
