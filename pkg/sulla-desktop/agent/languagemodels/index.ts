@@ -24,6 +24,8 @@ import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
 import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
+import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
 
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
@@ -32,7 +34,7 @@ import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 let lastSubconsciousResolutionSig = '';
 
 // Provider factory map — lazy-loaded to avoid circular imports
-const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
+export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
   codex:         async() => { const { getCodexService } = await import('./CodexService'); return getCodexService() },
   opencode:      async() => { const { getOpenCodeService } = await import('./OpenCodeService'); return getOpenCodeService() },
@@ -53,6 +55,7 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   together:      async() => { const { getTogetherService } = await import('./TogetherService'); return getTogetherService() },
   ollama:        async() => { const { getOllamaService } = await import('./OllamaService'); return getOllamaService() },
   custom:        async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map(provider => [provider.id, () => getOpenAICompatibleProviderService(provider.id)])),
 };
 
 // ── Helper: resolve provider from ModelProviderService or fallback ──
