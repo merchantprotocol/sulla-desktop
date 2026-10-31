@@ -85,6 +85,15 @@ export async function providerFetch(
   options: ProviderFetchOptions,
 ): Promise<Response> {
   if (!usesContainerVaultAuthority() || providerId === 'ollama') return fetch(url, init);
+  // During first run the verified key can briefly live only in main-process
+  // memory while the encrypted container vault starts. Use it for the first
+  // chat rather than showing a false disconnected state; the pending entry is
+  // zeroed as soon as the vault accepts it.
+  try {
+    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+    const queued = getPendingCredential(providerId);
+    if (queued?.values.api_key && (!queued.accountId || queued.accountId === ctx?.credential_scope?.account_id)) return fetch(url, init);
+  } catch { /* pending credentials exist only in the main process */ }
   if (!ctx) throw new Error('provider.inference requires a verified execution context');
 
   const scope = ctx.credential_scope;

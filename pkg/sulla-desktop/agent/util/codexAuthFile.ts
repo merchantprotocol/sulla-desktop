@@ -12,13 +12,31 @@ import * as fs from 'fs';
 import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
+import { app } from 'electron';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 
 const CODEX_AUTH_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export function codexHomeDir(): string {
-  return path.join(os.homedir(), '.codex');
+  return path.join(app.getPath('userData'), 'codex-home');
+}
+
+function legacyCodexAuthPath(): string {
+  return path.join(os.homedir(), '.codex', 'auth.json');
+}
+
+function migrateLegacyCodexAuth(): void {
+  if (fs.existsSync(codexAuthPath()) || !fs.existsSync(legacyCodexAuthPath())) return;
+  try {
+    fs.mkdirSync(codexHomeDir(), { recursive: true });
+    fs.copyFileSync(legacyCodexAuthPath(), codexAuthPath(), fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(codexAuthPath(), 0o600);
+    console.log('[codexAuthFile] Migrated legacy Codex sign-in into Sulla-owned storage');
+  } catch (err) {
+    console.warn('[codexAuthFile] Could not migrate legacy Codex sign-in:', err);
+  }
 }
 
 export function codexAuthPath(): string {
@@ -199,6 +217,7 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
     });
     await guestExec(['exec', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
     console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
+    firstRunTrace('codex', 'VM auth link completed', { success: true });
     return true;
   } catch (err) {
     if (staged && /^\/tmp\/sulla-codex-auth\.[A-Za-z0-9]+$/.test(staged)) {
@@ -213,6 +232,7 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
       } catch { /* VM may have stopped during cleanup */ }
     }
     console.warn('[codexAuthFile] Could not link ~/.codex into the VM (VM not running?):', err);
+    firstRunTrace('codex', 'VM auth link completed', { success: false, error: err instanceof Error ? err.message : String(err) });
     return false;
   }
 }
@@ -243,10 +263,24 @@ export async function removeCodexAuthFile(): Promise<void> {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
-  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) {
-    return linkCodexHomeIntoVm();
+  migrateLegacyCodexAuth();
+  const exists = fs.existsSync(codexAuthPath());
+  const fresh = exists && isAuthFileFresh();
+  firstRunTrace('codex', 'auth file ensure started', { fileExists: exists, fresh });
+  if (fresh) {
+    const linked = await linkCodexHomeIntoVm();
+    firstRunTrace('codex', 'auth file ensured', { source: 'host-file', linked });
+    return linked;
   }
   try {
+    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+    const pending = getPendingCredential('codex');
+    if (pending?.values.access_token && writeCodexAuthFile(pending.values as OAuthTokenSet)) {
+      const linked = await linkCodexHomeIntoVm();
+      firstRunTrace('codex', 'auth file ensured', { source: 'pending', linked });
+      return linked;
+    }
+
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
 
@@ -264,7 +298,9 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
       try {
         const tokens = await oauthService.ensureFreshTokens('codex', accountId);
         if (writeCodexAuthFile(tokens)) {
-          return linkCodexHomeIntoVm();
+          const linked = await linkCodexHomeIntoVm();
+          firstRunTrace('codex', 'auth file ensured', { source: 'vault', accountId, linked });
+          return linked;
         }
       } catch {
         const stored = await oauthService.getStoredTokens('codex', accountId);

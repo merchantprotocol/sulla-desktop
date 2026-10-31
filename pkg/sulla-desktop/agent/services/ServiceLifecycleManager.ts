@@ -7,8 +7,13 @@
  * ServiceLifecycleManager — dependency-aware, observable startup/shutdown orchestrator.
  *
  * Services register with a name, dependency list, start() and stop() functions.
- * startAll() topologically sorts by dependency and starts in order.
+ * startAll() starts every service as soon as its dependencies are ready, so
+ * one slow service only delays the services that need it.
  * stopAll() tears down in reverse order with per-service timeouts.
+ *
+ * 'startup:complete' fires when startAll() has tried every service once;
+ * 'all:ready' fires only when every registered service is actually running
+ * (possibly later, after a retry or a vault unlock).
  *
  * Services may also be marked `requiresVault: true`. Those are gated on
  * setVaultUnlocked(): they stay 'waiting-on-unlock' while the vault is
@@ -20,6 +25,7 @@
 
 import { EventEmitter } from 'events';
 
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -77,6 +83,7 @@ export class ServiceLifecycleManager extends EventEmitter {
   private _shuttingDown = false;
   private _stopMode: StopMode = 'full';
   private _allReady = false;
+  private _startupComplete = false;
   private _startOrder: string[] = [];
 
   /**
@@ -128,6 +135,7 @@ export class ServiceLifecycleManager extends EventEmitter {
   async startAll(assertCurrent?: () => void): Promise<void> {
     this._shuttingDown = false;
     this._allReady = false;
+    this._startupComplete = false;
     assertCurrent?.();
     const order = this.topologicalSort();
 
@@ -135,16 +143,42 @@ export class ServiceLifecycleManager extends EventEmitter {
     console.log(`[Lifecycle] Starting services: ${ order.join(' → ') }`);
     this.emitStep('startup:begin', { order: [...order], alreadyStarted: order.filter(n => this.started.has(n)) });
 
-    for (const name of order) {
-      assertCurrent?.();
-      if (this._shuttingDown) break;
-      await this.startService(name);
-      assertCurrent?.();
-    }
+    // Each service starts once its own dependencies have settled; services
+    // that do not depend on each other start together.
+    const attempts = new Map<string, Promise<boolean>>();
+    const attempt = (name: string): Promise<boolean> => {
+      let pending = attempts.get(name);
 
+      if (!pending) {
+        pending = (async() => {
+          await Promise.all((this.services.get(name)?.dependencies ?? []).map(attempt));
+          assertCurrent?.();
+          if (this._shuttingDown) return false;
+
+          return this.startService(name);
+        })();
+        attempts.set(name, pending);
+      }
+
+      return pending;
+    };
+
+    await Promise.all(order.map(attempt));
+    assertCurrent?.();
+
+    this._startupComplete = true;
+    this.emit('startup:complete');
+    console.log(`[Lifecycle] Startup pass complete — ${ this.started.size }/${ order.length } services running`);
+    this.maybeAllReady();
+  }
+
+  /** Emit 'all:ready' once every registered service is running. */
+  private maybeAllReady(): void {
+    if (this._allReady || !this._startupComplete || this._shuttingDown) return;
+    if ([...this.services.keys()].some(name => !this.started.has(name))) return;
     this._allReady = true;
     this.emit('all:ready');
-    console.log(`[Lifecycle] Startup complete — ${ this.started.size }/${ order.length } services running`);
+    console.log('[Lifecycle] All services ready');
   }
 
   /**
@@ -167,6 +201,7 @@ export class ServiceLifecycleManager extends EventEmitter {
         }
         this.transition(svc.name, 'waiting-on-unlock', 'Vault is locked');
       }
+      if (gated.length) this._allReady = false;
 
       return;
     }
@@ -240,6 +275,7 @@ export class ServiceLifecycleManager extends EventEmitter {
         this.transition(name, 'ready');
         this.emitStep('startup:step', { name, status: 'ready', durationMs: Date.now() - t });
         this.emit('service:ready', name);
+        this.maybeAllReady();
         for (const dependent of this.services.values()) {
           if (dependent.dependencies.includes(name) && this.statuses.get(dependent.name)?.status === 'waiting-on-dependency') {
             void this.startService(dependent.name);
@@ -279,6 +315,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     timer.unref?.();
     this.retries.set(name, timer);
     console.log(`[Lifecycle] '${ name }' retry scheduled in ${ delay / 1000 }s`);
+    firstRunTrace('services', `${ name } retry in ${ delay / 1000 }s`);
   }
 
   private cancelRetry(name: string): void {
@@ -302,6 +339,7 @@ export class ServiceLifecycleManager extends EventEmitter {
 
     this.statuses.set(name, next);
     console.log(`[Lifecycle] Status '${ name }': ${ status }${ reason ? ` — ${ reason }` : '' }`);
+    firstRunTrace('services', `${ name } ${ status }`, reason ? { reason, attempts: next.attempts } : { attempts: next.attempts });
     this.emit('service:status', next);
   }
 
@@ -313,6 +351,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     this._shuttingDown = true;
     this._stopMode = mode;
     this._allReady = false;
+    this._startupComplete = false;
     this.emit('shutdown:begin', mode);
 
     for (const timer of this.retries.values()) clearTimeout(timer);
@@ -348,22 +387,32 @@ export class ServiceLifecycleManager extends EventEmitter {
     return this.started.has(name);
   }
 
+  /** Every registered service is running. */
   isAllReady(): boolean {
     return this._allReady && !this._shuttingDown;
   }
 
-  /** Wait for one registered service without allowing callers to hang forever. */
+  /** startAll() has tried every service once; some may still be retrying or waiting on the vault. */
+  isStartupComplete(): boolean {
+    return this._startupComplete && !this._shuttingDown;
+  }
+
+  /**
+   * Wait for one registered service without allowing callers to hang forever.
+   * A service that failed but is retrying, or waits on the vault, may still
+   * start before the timeout; only one whose failure is final rejects early.
+   */
   async waitUntilStarted(name: string, timeoutMs = 15_000): Promise<void> {
     if (this._shuttingDown) throw new Error(`Lifecycle service '${ name }' is unavailable during shutdown`);
     if (this.started.has(name)) return;
-    if (this._allReady && this.services.has(name)) throw new Error(`Lifecycle service '${ name }' failed to start`);
+    if (this.failedForGood(name)) throw new Error(`Lifecycle service '${ name }' failed to start`);
 
     await new Promise<void>((resolve, reject) => {
       const timer: ReturnType<typeof setTimeout> = setTimeout(() => finish(new Error(`Lifecycle service '${ name }' did not become ready within ${ timeoutMs }ms`)), timeoutMs);
       const finish = (error?: Error) => {
         clearTimeout(timer);
         this.off('service:ready', onServiceReady);
-        this.off('all:ready', onAllReady);
+        this.off('startup:complete', onStartupComplete);
         this.off('shutdown:begin', onShutdown);
         this.off('service:status', onServiceStatus);
         if (error) reject(error);
@@ -377,21 +426,28 @@ export class ServiceLifecycleManager extends EventEmitter {
       const onServiceStatus = (status: LifecycleServiceStatus) => {
         if (status.name === name && status.status === 'ready') finish();
       };
-      const onAllReady = () => {
-        if (!this.started.has(name)) finish(new Error(`Lifecycle service '${ name }' failed to start`));
+      const onStartupComplete = () => {
+        if (this.failedForGood(name)) finish(new Error(`Lifecycle service '${ name }' failed to start`));
       };
       const onShutdown = () => finish(new Error(`Lifecycle service '${ name }' became unavailable during shutdown`));
 
       this.on('service:ready', onServiceReady);
-      this.on('all:ready', onAllReady);
+      this.on('startup:complete', onStartupComplete);
       this.on('shutdown:begin', onShutdown);
       this.on('service:status', onServiceStatus);
 
       // Close the gap between the checks above and listener registration.
       if (this.started.has(name)) finish();
       else if (this._shuttingDown) onShutdown();
-      else if (this._allReady && this.services.has(name)) onAllReady();
+      else if (this._startupComplete) onStartupComplete();
     });
+  }
+
+  /** Startup has finished and this service failed with no retry coming. */
+  private failedForGood(name: string): boolean {
+    const svc = this.services.get(name);
+
+    return this._startupComplete && !!svc && svc.retry === false && this.statuses.get(name)?.status === 'failed';
   }
 
   /**

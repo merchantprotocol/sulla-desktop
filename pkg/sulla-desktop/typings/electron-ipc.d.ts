@@ -64,6 +64,8 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
+  'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
   'backend-state-check':   () => string;
   'k8s-restart':           () => void;
   'settings-read':         () => void;
@@ -291,6 +293,13 @@ export interface IpcMainInvokeEvents {
   'first-run-wizard-step':  (step: number) => void;
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
+  'first-run-ai:connect-api-key': (payload: { providerId: 'anthropic' | 'openai' | 'grok'; apiKey: string; workspaceId?: string }) => { success: boolean; error?: string; models?: string[] };
+  /** Whether the first chat can start right away; never blocks closing the wizard. */
+  'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
+  /** Retry the managed services now (the Repair action). */
+  'sulla-runtime:repair-services': () => void;
+  /** Why the last backend start failed, until the next start. */
+  'sulla-runtime:start-failure': () => { reason: string; message: string } | undefined;
   'app-quit':               () => void;
 
   // Accounts owner sessions and authorization URLs remain main-only. These
@@ -389,6 +398,11 @@ export interface IpcMainInvokeEvents {
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
   'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:recovery-key-status': () => { location: string; label: string; checkedAt: string };
+  'sulla-cloud:recovery-key-rotate': () => { recoveryKey: string; storage: unknown; madeAt: string; [key: string]: unknown };
+  'sulla-cloud:recovery-key-copy':   (recoveryKey: string) => void;
+  'sulla-cloud:recovery-key-print':  (recoveryKey: string) => void;
+  'sulla-cloud:recovery-key-save':   (recoveryKey: string) => unknown;
   'sulla-cloud:send-otp':              (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:verify-otp':            (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-login':           (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
@@ -396,9 +410,14 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:apple-sign-in':         (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:logout':                () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:email-code-availability': () => { available: boolean };
+  'sulla-cloud:first-run-session':       () => { sessionInMemory: boolean; masterKeyRetained: boolean; email?: string; oldVaultLocked: boolean };
+  'sulla-cloud:account-exists':          (email: string) => { exists: boolean | null; error?: string };
+  'sulla-cloud:recovery-key-pending':    () => { recoveryKey: string; storage: { location: string; label: string; checkedAt: string }; madeAt: string } | undefined;
+  'sulla-cloud:recovery-key-shown':      () => void;
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
-  'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-settings:wait-for-backends': () => void;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
@@ -1223,7 +1242,10 @@ export interface IpcRendererEvents {
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;
+  /** Pushed when the first-chat readiness changes. */
+  'first-run:chat-ready-status':    (status: import('@pkg/main/chatReadiness').ChatReadyStatus) => void;
   'claude-oauth:url':               (url: string) => void;
+  'claude-oauth:stage':             (text: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
   'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;

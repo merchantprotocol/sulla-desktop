@@ -50,7 +50,7 @@ import { defaultChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/share
 
 // ─── Defaults ─────────────────────────────────────────────────────
 const DEFAULT_MODEL: ModelDescriptor = {
-  id: 'claude-opus-4-7', name: 'opus-4.7', tier: 'hosted', ctx: '1M ctx',
+  id: '', name: 'Connect an AI', tier: 'hosted', ctx: '',
 };
 
 // ─── Controller options ───────────────────────────────────────────

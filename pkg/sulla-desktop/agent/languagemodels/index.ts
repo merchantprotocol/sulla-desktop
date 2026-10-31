@@ -23,6 +23,7 @@ import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
@@ -109,6 +110,9 @@ class LLMRegistryImpl {
    * same provider at different model tiers.
    */
   async getServiceByProvider(providerId: string, modelOverride?: string): Promise<BaseLanguageModel> {
+    if (!providerId.trim()) {
+      throw new Error('No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.');
+    }
     const key = modelOverride ? `provider:${ providerId }:${ modelOverride }` : `provider:${ providerId }`;
     let svc = this.services.get(key);
 
@@ -157,7 +161,7 @@ class LLMRegistryImpl {
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getPrimaryProvider()
-      : await SullaSettingsModel.get('primaryProvider', 'grok');
+      : await SullaSettingsModel.get('primaryProvider', '');
     const activeModelId = mps
       ? mps.getActiveModelId()
       : await SullaSettingsModel.get('activeModelId', '');
@@ -167,7 +171,14 @@ class LLMRegistryImpl {
     // of a literal list keeps a model genuinely named e.g. 'codex' on some
     // other provider working.
     const modelOverride = activeModelId && activeModelId !== providerId ? activeModelId : undefined;
+    firstRunTrace('models', 'primary service resolved', { providerId, modelOverride: modelOverride ?? '' });
     return this.getServiceByProvider(providerId, modelOverride);
+  }
+
+  /** The backup provider the owner chose, or '' when none is set. */
+  async getSecondaryProviderId(): Promise<string> {
+    const mps = tryGetModelProviderService();
+    return mps ? mps.getSecondaryProvider() : await SullaSettingsModel.get('secondaryProvider', '');
   }
 
   /**
@@ -178,13 +189,14 @@ class LLMRegistryImpl {
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getSecondaryProvider()
-      : await SullaSettingsModel.get('secondaryProvider', 'grok');
+      : await SullaSettingsModel.get('secondaryProvider', '');
     const secondaryModelId = mps?.getSecondaryModelId?.() || await SullaSettingsModel.get('secondaryModelId', '');
     const modelOverride = secondaryModelId
       ? (isTierName(secondaryModelId)
         ? await resolveTierToModelId(providerId, secondaryModelId)
         : secondaryModelId)
       : undefined;
+    firstRunTrace('models', 'secondary service resolved', { providerId, modelOverride: modelOverride ?? '' });
     return this.getServiceByProvider(providerId, modelOverride);
   }
 
@@ -200,7 +212,7 @@ class LLMRegistryImpl {
       : await SullaSettingsModel.get('heartbeatProvider', 'default');
 
     const effectiveProvider = heartbeatProvider === 'default'
-      ? (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', 'grok'))
+      ? (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', ''))
       : heartbeatProvider;
 
     const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'fast');
@@ -234,7 +246,7 @@ class LLMRegistryImpl {
 
     const primaryProvider = mps
       ? mps.getPrimaryProvider()
-      : await SullaSettingsModel.get('primaryProvider', 'grok');
+      : await SullaSettingsModel.get('primaryProvider', '');
 
     // 'default' routes to primary; explicit value uses that provider
     const effectiveProvider = (subconsciousProvider && subconsciousProvider !== 'default')
@@ -299,7 +311,7 @@ class LLMRegistryImpl {
       const mps = tryGetModelProviderService();
       const effectiveProvider = provider || (mps
         ? mps.getPrimaryProvider()
-        : await SullaSettingsModel.get('primaryProvider', 'grok'));
+        : await SullaSettingsModel.get('primaryProvider', ''));
 
       const modelOverride = model
         ? (isTierName(model)
@@ -342,7 +354,7 @@ class LLMRegistryImpl {
       // IntegrationService not ready
     }
 
-    return SullaSettingsModel.get('remoteProvider', 'grok');
+    return SullaSettingsModel.get('remoteProvider', '');
   }
 
   async getCurrentModel(): Promise<string> {
@@ -487,6 +499,7 @@ export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
 // Primary / Secondary / Heartbeat provider exports
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
 export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
+export const getSecondaryProviderId = async() => await LLMRegistry.getSecondaryProviderId();
 export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string }) => await LLMRegistry.getAgentOverrideService(agentCfg);
 export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
 export const getSubconsciousService = async() => await LLMRegistry.getSubconsciousLLM();

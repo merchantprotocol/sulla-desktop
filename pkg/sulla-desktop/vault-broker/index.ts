@@ -30,6 +30,7 @@ import type {
   VaultDeviceApprovalWrapRequest,
   RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 export type {
   BrokerApprovalResponse,
@@ -65,7 +66,7 @@ export {
 } from './providerCliBridge';
 
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
-const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
+const DESKTOP_VAULT_ENDPOINT = loopbackOrigin('https', 30135);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // Sulla Cloud relay events carry a <=1 MiB frame as an escaped JSON string.
 const MAX_RELAY_EVENT_LINE_BYTES = 4 * 1024 * 1024;
@@ -437,7 +438,7 @@ export class LocalVaultApprovalClient {
   constructor(
     endpoint: string,
     private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
-    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(30_000) }),
   ) {
     this.endpoint = assertEndpoint(endpoint);
     if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {

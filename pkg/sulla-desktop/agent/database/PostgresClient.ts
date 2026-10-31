@@ -8,6 +8,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { hostPort } from '@pkg/utils/instance';
 
 // Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
 // context slot is shared with Blink, so getStore() can read a Blink object and
@@ -40,7 +41,7 @@ export class PostgresClient {
 
     this.pool = new Pool({
       ...(connectionString ? { connectionString } : {
-        host: '127.0.0.1', port: 30116, user: 'sulla', password, database: 'sulla',
+        host: '127.0.0.1', port: hostPort(30116), user: 'sulla', password, database: 'sulla',
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
@@ -193,7 +194,7 @@ export class PostgresClient {
       try {
         probe = new Pool({
           host:                    '127.0.0.1',
-          port:                    30116,
+          port:                    hostPort(30116),
           user:                    'sulla',
           password,
           database:                'sulla',
@@ -201,7 +202,7 @@ export class PostgresClient {
           connectionTimeoutMillis: 2000,
         });
         await probe.query('SELECT 1');
-        console.log(`[PostgresClient] Host port 30116 reachable (attempt ${ i })`);
+        console.log(`[PostgresClient] Host database port reachable (attempt ${ i })`);
 
         return;
       } catch {

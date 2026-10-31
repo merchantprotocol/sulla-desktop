@@ -18,23 +18,50 @@
         :toggle-theme="toggleTheme"
         :on-stop="stopApp"
         :home-url="'#/FirstRun'"
-      />
-
-      <!-- Step bar: where you are, and what's left -->
-      <nav
-        class="fr-steps"
-        aria-label="Setup progress"
       >
-        <div
-          v-for="(name, index) in stepNames"
-          :key="name"
-          class="fr-step"
-          :class="{ 'is-active': index === currentStep, 'is-done': index < currentStep }"
+        <!-- Step bar: where you are, and what's left -->
+        <nav
+          class="fr-steps"
+          aria-label="Setup progress"
         >
-          <span class="fr-step-n">{{ index < currentStep ? '✓' : index + 1 }}</span>
-          <span class="fr-step-t">{{ name }}</span>
-        </div>
-      </nav>
+          <div
+            v-for="(name, index) in stepNames"
+            :key="name"
+            class="fr-step"
+            :class="{ 'is-active': index === currentStep, 'is-done': index < currentStep }"
+          >
+            <span class="fr-step-n">{{ index < currentStep ? '✓' : index + 1 }}</span>
+            <span class="fr-step-t">{{ name }}</span>
+          </div>
+        </nav>
+      </SimpleHeader>
+
+      <div
+        v-if="backendFailure"
+        class="fr-failure"
+        role="alert"
+      >
+        <span class="fr-failure-text">
+          <strong>{{ backendFailure.message }}</strong>
+          {{ retryNote || 'Try again, or quit and reopen Sulla.' }}
+        </span>
+        <button
+          type="button"
+          class="fr-failure-btn"
+          :disabled="retrying"
+          @click="retryBackend"
+        >
+          {{ retrying ? 'Starting…' : 'Try again' }}
+        </button>
+      </div>
+
+      <div
+        v-if="quitting"
+        class="fr-quitting"
+        role="status"
+      >
+        Quitting…
+      </div>
 
       <div
         v-if="showSetupProgress"
@@ -55,6 +82,7 @@
         id="chat-scroll-container"
         ref="chatScrollContainer"
         class="flex min-h-0 flex-1 overflow-y-auto"
+        :class="{ 'fr-locked': quitting }"
       >
         <div class="fr-stage">
           <div
@@ -62,14 +90,23 @@
             ref="transcriptEl"
             class="fr-card"
           >
+            <p
+              v-if="resuming"
+              class="fr-resuming"
+              role="status"
+            >
+              Picking up where you left off…
+            </p>
             <Transition
+              v-else
               name="fr-pane"
               mode="out-in"
             >
               <component
                 :is="steps[currentStep]"
                 :key="currentStep"
-                :startup-controller="startupController"
+                :step-index="currentStep"
+                :startup-snapshot="startupSnapshot"
                 :show-back="currentStep > 0"
                 @next="next"
                 @back="back"
@@ -83,112 +120,237 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, computed, onMounted } from 'vue';
+import { ref, provide, computed, onMounted, onBeforeUnmount } from 'vue';
 
-import FirstRunFirstAutomation from './FirstRunFirstAutomation.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
 import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWaiting from './FirstRunWaiting.vue';
 import FirstRunWelcome from './FirstRunWelcome.vue';
+import { firstRunAccountSignedIn, traceFirstRun } from './firstRunWizard';
 import SimpleHeader from './agent/SimpleHeader.vue';
-import { StartupProgressController } from './agent/StartupProgressController';
 
 import { useTheme } from '@pkg/composables/useTheme';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 const { isDark, toggleTheme } = useTheme();
 
 const currentStep = ref(0);
-// Guided setup, modeled on the TrueUp wizard: one clear question per screen,
-// ending in the user's first automation. The backend starts after step 0 and
-// installs in the background while the user answers the rest.
+// Guided setup, modeled on the TrueUp wizard: one clear question per screen.
+// The backend starts after step 0 and installs in the background while the
+// user answers the rest.
 // Step indexes are part of the main-process contract: reaching the final
-// "Finishing" screen (index 4) sets the wizardFinished condition in background.ts.
-const stepNames = ['Welcome', 'Account', 'Your AI', 'First automation', 'Finishing'];
-const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunFirstAutomation, FirstRunWaiting];
+// "Finishing" screen (index 3) sets the wizardFinished condition in background.ts.
+const stepNames = ['Welcome', 'Account', 'Your AI', 'Finishing'];
+const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunWaiting];
 
 const settings = ref(defaultSettings);
+const lastStep = steps.length - 1;
+// One step change at a time: a double-click must not skip a screen. Held
+// until the saved step is restored on mount.
+let navigating = true;
 
-const startupController = new StartupProgressController(StartupProgressController.createState());
+const quitting = ref(false);
+// True while mount works out which step to resume at; no step shows meanwhile.
+const resuming = ref(true);
+const backendFailure = ref<{ message: string; detail?: string } | null>(null);
+const retrying = ref(false);
+const retryNote = ref('');
 
+// The header Quit asks main to close the wizard, which shows the same
+// "Setup isn't finished" confirmation as the window's close button.
 const stopApp = async() => {
-  await ipcRenderer.invoke('app-quit');
+  traceFirstRun('wizard', 'Quit clicked', { step: stepNames[currentStep.value] });
+  await ipcRenderer.invoke('first-run:quit' as any);
 };
 
-// Prevent overlay in first-run view
-startupController.state.showOverlay.value = false;
+// The startup hub's snapshot drives every progress bar in setup, the same one
+// the main window's overlay uses. Its percent never goes backwards.
+const startupSnapshot = ref<StartupProgressSnapshot | null>(null);
 
-// Listen to backend progress updates and forward to startupController
-ipcRenderer.on('k8s-progress', (event, progress) => {
-  if (progress && startupController.state) {
-    startupController.state.progressCurrent.value = progress.current || 0;
-    startupController.state.progressMax.value = progress.max || 100;
-    startupController.state.progressDescription.value = progress.description || '';
+function onStartupProgress(_event: unknown, snapshot: StartupProgressSnapshot) {
+  if (snapshot && (!startupSnapshot.value || snapshot.startedAt !== startupSnapshot.value.startedAt || snapshot.percent >= startupSnapshot.value.percent)) {
+    startupSnapshot.value = snapshot;
   }
-});
+}
 
-const showSetupProgress = computed(() => currentStep.value > 0 && currentStep.value < steps.length - 1);
+function onBackendFailed(_event: unknown, failure: { message: string; detail?: string } | null) {
+  backendFailure.value = failure;
+  retryNote.value = '';
+  traceFirstRun('wizard', failure ? 'showing the workspace failure banner' : 'workspace failure banner cleared');
+}
+
+function onQuitting() {
+  quitting.value = true;
+  traceFirstRun('wizard', 'app is quitting; wizard locked', { step: stepNames[currentStep.value] });
+}
+
+async function retryBackend() {
+  if (retrying.value) return;
+  retrying.value = true;
+  traceFirstRun('wizard', 'Try again clicked on the workspace failure banner');
+  try {
+    const result = await ipcRenderer.invoke('first-run:retry-backend' as any);
+
+    if (result?.started) {
+      backendFailure.value = null;
+    } else {
+      retryNote.value = 'Sulla is still trying. Try again in a moment.';
+    }
+  } catch (err) {
+    console.warn('[FirstRun] Could not restart the workspace:', err);
+    retryNote.value = 'That didn\'t work. Quit and reopen Sulla.';
+  } finally {
+    retrying.value = false;
+  }
+}
+
+const showSetupProgress = computed(() => currentStep.value > 0 && currentStep.value < lastStep);
 
 const setupStatusText = computed(() => {
-  const detail = startupController.state.progressDescription.value;
+  const detail = startupSnapshot.value?.stepLabel || startupSnapshot.value?.stageLabel;
 
   return detail ? `Setting up your private workspace in the background · ${ detail }` : 'Setting up your private workspace in the background';
 });
 
 const progressPercent = computed(() => {
-  const percent = (startupController.state.progressCurrent.value / Math.max(startupController.state.progressMax.value, 1)) * 100;
-  console.log('[FirstRun] progressPercent computed:', percent, 'current:', startupController.state.progressCurrent.value, 'max:', startupController.state.progressMax.value);
-  return percent;
+  const percent = Number(startupSnapshot.value?.percent);
+
+  return Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
 });
 
 provide('settings', settings);
 
-onMounted(async() => {
-  const state = await ipcRenderer.invoke('first-run-state:get');
-  let savedStep = state?.step ?? 0;
+// After a relaunch the vault may hold the sign-in but take a while to start.
+const RESUME_VAULT_WAIT_MS = 90_000;
 
-  // Never skip the account screen when its non-secret choice was not saved.
-  // Secret sessions deliberately live only in main-process memory.
-  if (typeof savedStep === 'number' && savedStep > 1) {
-    if (!state?.choices?.accountChoice) {
-      savedStep = 1;
-      await ipcRenderer.invoke('first-run-state:set', { step: savedStep });
-    }
+/**
+ * Tell main which step the wizard is on. Main saves it and sets the
+ * coordinator condition in one call. A failed save never strands the user.
+ */
+async function reportStep(step: number) {
+  try {
+    await ipcRenderer.invoke('first-run-wizard-step', step);
+  } catch (err) {
+    console.warn('[FirstRun] Could not record the step:', err);
   }
-  if (typeof savedStep === 'number' && savedStep >= 0 && savedStep < steps.length) {
-    currentStep.value = savedStep;
-    if (savedStep > 0) startupController.start();
+}
+
+onMounted(async() => {
+  ipcRenderer.on('startup-progress', onStartupProgress);
+  ipcRenderer.on('first-run:backend-failed' as any, onBackendFailed);
+  ipcRenderer.on('first-run:quitting' as any, onQuitting);
+  ipcRenderer.invoke('startup-progress').then(snapshot => onStartupProgress(undefined, snapshot)).catch(() => undefined);
+  ipcRenderer.invoke('first-run:wizard-status' as any).then((status) => {
+    if (status?.backendFailure) backendFailure.value = status.backendFailure;
+  }).catch(() => undefined);
+
+  const state = await ipcRenderer.invoke('first-run-state:get').catch(() => null);
+  const saved = Number.isInteger(state?.step) ? Math.min(Math.max(state.step, 0), lastStep) : 0;
+  let resumeStep = saved;
+
+  // Your AI needs the Cloud sign-in, which lives only in main's memory. After
+  // a restart it's gone, so go back to Account, which asks for the password.
+  if (saved > 1 && saved < lastStep) {
+    const account = state?.choices?.accountChoice ? await firstRunAccountSignedIn({ waitForVaultMs: RESUME_VAULT_WAIT_MS }) : null;
+
+    if (!account?.signedIn) resumeStep = 1;
+  }
+  traceFirstRun('wizard', resumeStep === saved ? `resumed at ${ stepNames[resumeStep] }` : `saved step was ${ stepNames[saved] }; sent back to ${ stepNames[resumeStep] }`, {
+    reason: resumeStep === saved ? undefined : state?.choices?.accountChoice ? 'Cloud sign-in no longer held' : 'no account choice saved',
+  });
+  currentStep.value = resumeStep;
+  resuming.value = false;
+  // Re-sent on every load: a crash between saving Finishing and telling main
+  // must not leave the coordinator waiting.
+  if (resumeStep !== saved || resumeStep === lastStep) await reportStep(resumeStep);
+  navigating = false;
+
+  const autopilot = await ipcRenderer.invoke('first-run-test-autopilot:get' as any).catch(() => '');
+
+  if (autopilot) {
+    void runTestAutopilot(autopilot).catch(async(error) => {
+      console.error(error);
+      await ipcRenderer.invoke('first-run-test-autopilot:failed' as any, error instanceof Error ? error.message : String(error));
+    });
   }
 });
 
-const saveStep = async() => {
-  await ipcRenderer.invoke('first-run-state:set', { step: currentStep.value });
-};
+async function waitForElement<T extends Element>(find: () => T | undefined, description: string): Promise<T> {
+  const deadline = Date.now() + 60_000;
 
-const next = async() => {
-  console.log('[FirstRun] next() called, currentStep before:', currentStep.value);
+  while (Date.now() < deadline) {
+    const element = find();
 
-  currentStep.value += 1;
-  console.log('[FirstRun] currentStep after:', currentStep.value);
-  await saveStep();
-  ipcRenderer.invoke('first-run-wizard-step', currentStep.value);
-  if (currentStep.value === 1) {
-    console.log('[FirstRun] starting controller');
-    startupController.start();
-    await ipcRenderer.invoke('start-backend' as any);
+    if (element) return element;
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
-};
+  throw new Error(`[FirstRunAutopilot] Timed out waiting for ${ description }`);
+}
 
-const back = async() => {
-  console.log('[FirstRun] back() called, currentStep before:', currentStep.value);
-  if (currentStep.value > 0) {
-    currentStep.value -= 1;
-    console.log('[FirstRun] currentStep after:', currentStep.value);
-    await saveStep();
+function buttonWithText(text: string): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === text && !button.disabled);
+}
+
+async function clickButton(text: string) {
+  (await waitForElement(() => buttonWithText(text), `button "${ text }"`)).click();
+}
+
+async function runTestAutopilot(mode: 'mac-only' | 'cloud-fake') {
+  console.log(`[FirstRunAutopilot] Starting ${ mode } renderer click-through`);
+  await clickButton('Get started →');
+  const email = await waitForElement(() => document.querySelector<HTMLInputElement>('#email') || undefined, 'account email');
+
+  email.value = 'first-run-autopilot@example.invalid';
+  email.dispatchEvent(new Event('input', { bubbles: true }));
+  await clickButton('Continue');
+  // Setup always creates or connects a Cloud account; there is no Mac-only path.
+  const password = await waitForElement(() => document.querySelector<HTMLInputElement>('#cloudPassword') || undefined, 'fake Cloud password');
+
+  password.value = 'not-a-real-password';
+  password.dispatchEvent(new Event('input', { bubbles: true }));
+  await clickButton('Create account and continue');
+  await clickButton('Sync everything');
+  await clickButton("I'll do this later");
+  console.log(`[FirstRunAutopilot] Finished ${ mode } renderer click-through`);
+}
+
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('startup-progress', onStartupProgress);
+  ipcRenderer.removeListener('first-run:backend-failed' as any, onBackendFailed);
+  ipcRenderer.removeListener('first-run:quitting' as any, onQuitting);
+});
+
+/** Move to `to`. Ignored when a move is already running or `from` is stale. */
+async function goTo(to: number, from?: number) {
+  if (navigating || quitting.value || (typeof from === 'number' && from !== currentStep.value)) {
+    traceFirstRun('wizard', 'ignored a repeated step change', { from, to, current: currentStep.value });
+
+    return;
   }
-};
+  const target = Math.min(Math.max(to, 0), lastStep);
+
+  if (target === currentStep.value) return;
+  navigating = true;
+  try {
+    await reportStep(target);
+    traceFirstRun('wizard', `left ${ stepNames[currentStep.value] }, entered ${ stepNames[target] }`);
+    currentStep.value = target;
+    // Welcome passed: start (or resize) the workspace. Not awaited, so a slow
+    // start never holds the next screen.
+    if (target === 1) {
+      ipcRenderer.invoke('start-backend' as any).catch((err: unknown) => console.warn('[FirstRun] start-backend failed:', err));
+    }
+  } finally {
+    navigating = false;
+  }
+}
+
+const next = (from?: number) => goTo((typeof from === 'number' ? from : currentStep.value) + 1, from);
+
+const back = (from?: number) => goTo((typeof from === 'number' ? from : currentStep.value) - 1, from);
 
 const commitChanges = async(settings: RecursivePartial<Settings>) => {
   try {
@@ -205,6 +367,8 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 </script>
 <style lang="scss" scoped>
 .page-root {
+  height: 100vh;
+  min-height: 0;
   background: var(--bg-page, var(--body-bg, #f7f8fa));
   color: var(--text-primary, var(--body-text, #0f172a));
 }
@@ -218,13 +382,9 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 .fr-steps {
   display: flex;
   justify-content: center;
-  gap: 6px 22px;
+  gap: 6px 18px;
   flex-wrap: wrap;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--border-default, #e2e8f0);
 }
-
-.dark .fr-steps { border-color: var(--border-default, #262d36); }
 
 .fr-step {
   display: flex;
@@ -296,36 +456,51 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   max-width: 560px;
 }
 
-/* ---- stage + card ---- */
+.fr-resuming {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-muted, #64748b);
+}
+
+/* ---- stage: the step sits directly on the page, centered ---- */
 .fr-stage {
   flex: 1;
+  min-width: 0;
+  min-height: 100%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  align-items: flex-start;
-  padding: 32px 24px 64px;
+  padding: 0 16px;
 }
 
 .fr-card {
   width: 100%;
   max-width: 760px;
-  background: var(--bg-surface, #fff);
-  border: 1px solid var(--border-default, #e2e8f0);
-  border-radius: 18px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 16px 40px -18px rgba(15, 23, 42, .22);
-  padding: 12px 20px 20px;
+  display: flex;
+  flex-direction: column;
 }
 
-.dark .fr-card {
-  background: var(--bg-surface, #161b22);
-  border-color: var(--border-default, #262d36);
-  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, .7);
+.fr-card :deep(> div) {
+  width: 100%;
+  max-width: none;
 }
 
-.fr-card :deep(> div) { max-width: none; }
+/* No scroll box inside a step: if a step is taller than the window, the page
+ * scrolls as a whole. */
+.fr-card :deep(.fr-step-body) {
+  overflow: visible;
+}
+
+@media (max-width: 900px) {
+  .fr-step-t { display: none; }
+}
 
 /* Noir is opt-in: the first-run window uses the saved theme when one exists,
  * while a fresh install keeps useTheme's existing Protocol Dark fallback. */
 .theme-noir .page-root {
+  height: 100vh;
+  min-height: 0;
   --fr-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background:
     radial-gradient(90% 64% at 50% -8%, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 60%),
@@ -336,10 +511,6 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 
 .theme-noir .fr-steps {
   gap: 6px;
-  padding: 13px 22px;
-  border-color: var(--nx-hair);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .48);
-  backdrop-filter: blur(16px);
 }
 
 .theme-noir .fr-step {
@@ -414,20 +585,11 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 }
 
 .theme-noir .fr-stage {
-  align-items: center;
-  padding: 34px 28px 58px;
+  padding: 0 16px;
 }
 
 .theme-noir .fr-card {
   max-width: 820px;
-  padding: 12px 22px 22px;
-  border-color: var(--nx-hair);
-  border-radius: 24px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4.5%, transparent), color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 1.8%, transparent)),
-    color-mix(in srgb, var(--nx-surface) 78%, transparent);
-  box-shadow: inset 0 0 0 .5px var(--nx-hair), 0 30px 80px rgba(0, 0, 0, .48), 0 0 70px color-mix(in srgb, var(--nx-accent) 6%, transparent);
-  backdrop-filter: blur(22px);
 }
 
 .theme-noir .fr-pane-enter-active,
@@ -455,8 +617,38 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   }
 }
 
-/* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .fr-card {
-  box-shadow: inset 0 0 0 .5px var(--nx-hair), 0 30px 80px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 6%, transparent);
+/* ---- backend failure and quitting ---- */
+.fr-failure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 24px;
+  font-size: 13px;
+  color: var(--text-error, #b91c1c);
+  background: var(--bg-error, #fef2f2);
+}
+
+.fr-failure-btn {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  background: var(--accent-primary, #3d7fa0);
+  color: var(--text-on-accent, #fff);
+
+  &:disabled { opacity: .6; cursor: wait; }
+}
+
+.fr-quitting {
+  padding: 8px 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted, #64748b);
+}
+
+.fr-locked {
+  pointer-events: none;
+  opacity: .6;
 }
 </style>

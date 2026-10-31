@@ -15,7 +15,6 @@
 
 import { computed, ref } from 'vue';
 
-import { integrations } from '@pkg/agent/integrations/catalog';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ComputedRef, Ref } from 'vue';
@@ -56,7 +55,7 @@ export class AgentModelSelectorController {
   readonly buttonRef = ref<HTMLElement | null>(null);
 
   /** Currently active primary provider id */
-  readonly activePrimaryProvider = ref<string>('grok');
+  readonly activePrimaryProvider = ref<string>('');
   /** Currently active model id for the active provider */
   readonly activeModelId = ref<string>('');
 
@@ -89,9 +88,7 @@ export class AgentModelSelectorController {
         return model;
       }
 
-      const integration = integrations[provider];
-
-      return integration?.name || provider || 'Select model';
+      return provider ? 'Auto' : 'Connect an AI';
     });
 
     this.isRunningValue = computed(() => this.deps.isRunning.value);
@@ -100,6 +97,7 @@ export class AgentModelSelectorController {
   async start(): Promise<void> {
     document.addEventListener('mousedown', this.handleDocumentClick);
     ipcRenderer.on('model-provider:state-changed', this.handleStateChanged);
+    ipcRenderer.on('vault:logged-in' as any, this.handleVaultUnlocked);
     // Legacy listener for backward compat with windows not yet migrated
     ipcRenderer.on('model-changed', this.handleLegacyModelChanged);
     await this.loadActiveSettings();
@@ -108,6 +106,7 @@ export class AgentModelSelectorController {
   dispose(): void {
     document.removeEventListener('mousedown', this.handleDocumentClick);
     ipcRenderer.removeListener('model-provider:state-changed', this.handleStateChanged);
+    ipcRenderer.removeListener('vault:logged-in' as any, this.handleVaultUnlocked);
     ipcRenderer.removeListener('model-changed', this.handleLegacyModelChanged);
   }
 
@@ -294,6 +293,11 @@ export class AgentModelSelectorController {
     if (this.hasChatSelection) return;
     this.applyState(state);
     this.updateActiveFlags(state.primaryProvider, state.activeModelId);
+    void this.refreshProviderGroups();
+  };
+
+  private readonly handleVaultUnlocked = () => {
+    void this.refreshProviderGroups();
   };
 
   /** Backward-compat listener for legacy model-changed events */

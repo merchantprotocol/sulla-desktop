@@ -38,6 +38,7 @@ export class AnthropicModels extends SelectBoxProvider {
         headers: {
           'x-api-key':         apiKey,
           'anthropic-version': '2023-06-01',
+          ...(context.formValues.workspace_id ? { 'anthropic-workspace-id': context.formValues.workspace_id } : {}),
         },
       });
 

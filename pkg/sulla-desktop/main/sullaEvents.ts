@@ -111,7 +111,7 @@ export function initSullaEvents(): void {
   // Postgres runs inside the Sulla VM and can take a minute+ to come up on a
   // cold boot. These tasks used to fire on a blind 5s timer (workflow
   // recovery) or one unretried initialize() (gateway lobby), die with
-  // ECONNREFUSED 127.0.0.1:30116, and stay dead until the next app restart.
+  // ECONNREFUSED the host database port, and stay dead until the next app restart.
   // Wait behind the shared unbounded DB boot gate, then run both once: a
   // finite deadline here turned a slow cold start into a session-long
   // recovery outage (2026-08-31 boot).

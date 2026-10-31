@@ -17,6 +17,7 @@ import {
   openDocker, openMain, openPreferences, getWindow, openUrlInApp,
 } from '@pkg/window';
 import { openProcessManager } from '@pkg/window/processManager';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.mainmenu;
 
@@ -198,7 +199,7 @@ async function refreshExtensions(): Promise<void> {
     }
 
     const authHeader = `Basic ${ Buffer.from(`${ credentials.user }:${ credentials.password }`).toString('base64') }`;
-    const response = await fetch('http://127.0.0.1:6107/v1/extensions', {
+    const response = await fetch(`${ loopbackOrigin('http', 6107) }/v1/extensions`, {
       headers: { Authorization: authHeader },
     });
 

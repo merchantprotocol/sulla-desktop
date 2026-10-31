@@ -54,6 +54,8 @@ export function useModelSettings() {
   const accounts = reactive<Record<ModelSlot, AccountOption[]>>({ primary: [], secondary: [], subconscious: [] });
   const loading = ref(true);
   const error = ref('');
+  const saved = ref(false);
+  let savedTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let retryAttempt = 0;
 
@@ -95,7 +97,9 @@ export function useModelSettings() {
       return;
     }
     try {
-      accounts[slot] = await ipcRenderer.invoke('model-provider:get-accounts', id) || [];
+      const all = await ipcRenderer.invoke('model-provider:get-accounts', id) || [];
+
+      accounts[slot] = all.filter(account => account.connected === true);
     } catch {
       accounts[slot] = [];
     }
@@ -108,9 +112,9 @@ export function useModelSettings() {
   }
 
   /**
-   * Show connected providers plus whichever provider a slot already uses, so
-   * a select is never blank. An empty list usually means the vault wasn't
-   * unlocked yet, so retry a few times before giving up.
+   * Only expose providers whose integration account is connected. An empty
+   * list usually means the vault wasn't unlocked yet, so retry a few times
+   * before showing the connect-provider empty state.
    */
   async function loadProviders() {
     if (retryTimer) {
@@ -121,19 +125,28 @@ export function useModelSettings() {
 
     try {
       const all = await ipcRenderer.invoke('model-provider:get-providers');
-      const chosen = [state.primaryProvider, state.secondaryProvider, state.subconsciousProvider];
       const list: ProviderOption[] = (Array.isArray(all) ? all : [])
         .map(p => ({ id: p.id, name: p.name, connected: p.connected === true }))
-        .filter(p => p.connected || chosen.includes(p.id));
+        .filter(p => p.connected);
 
-      for (const id of chosen) {
-        if (id && id !== 'default' && !list.some(p => p.id === id)) {
-          list.push({ id, name: id, connected: false });
-        }
-      }
-      list.sort((a, b) => Number(b.connected) - Number(a.connected));
+      list.sort((a, b) => a.name.localeCompare(b.name));
       providers.value = list;
-      suspicious = !list.some(p => p.connected);
+
+      // A stale saved choice must never pull models from a disconnected
+      // provider into Preferences. Point the visible slots at connected
+      // providers; the user's next selection persists through the service.
+      const connectedIds = new Set(list.map(provider => provider.id));
+      const previousSlots = [state.primaryProvider, state.secondaryProvider, state.subconsciousProvider];
+      const firstConnected = list[0]?.id ?? '';
+      if (!connectedIds.has(state.primaryProvider)) state.primaryProvider = firstConnected;
+      if (!connectedIds.has(state.secondaryProvider)) state.secondaryProvider = firstConnected;
+      if (state.subconsciousProvider !== 'default' && !connectedIds.has(state.subconsciousProvider)) {
+        state.subconsciousProvider = 'default';
+      }
+      if (previousSlots.some((provider, index) => provider !== [state.primaryProvider, state.secondaryProvider, state.subconsciousProvider][index])) {
+        await loadSlots();
+      }
+      suspicious = list.length === 0;
     } catch (err) {
       error.value = `Could not load providers: ${ message(err) }`;
       suspicious = true;
@@ -162,12 +175,23 @@ export function useModelSettings() {
     if (primaryChanged) {
       void loadSlots();
     }
+    void loadProviders();
+  }
+
+  function onVaultUnlocked() {
+    loading.value = true;
+    retryAttempt = 0;
+    void Promise.all([loadProviders(), loadSlots()]).finally(() => { loading.value = false });
   }
 
   async function run(work: () => Promise<unknown>) {
     error.value = '';
+    saved.value = false;
     try {
       await work();
+      saved.value = true;
+      if (savedTimer) clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => { saved.value = false }, 2_000);
     } catch (err) {
       error.value = message(err);
     }
@@ -247,6 +271,7 @@ export function useModelSettings() {
 
   onMounted(async() => {
     ipcRenderer.on('model-provider:state-changed', onStateChanged);
+    ipcRenderer.on('vault:logged-in' as any, onVaultUnlocked);
     window.addEventListener('focus', onFocus);
     try {
       applyState(await ipcRenderer.invoke('model-provider:get-state'));
@@ -260,9 +285,13 @@ export function useModelSettings() {
 
   onBeforeUnmount(() => {
     ipcRenderer.removeListener('model-provider:state-changed', onStateChanged);
+    ipcRenderer.removeListener('vault:logged-in' as any, onVaultUnlocked);
     window.removeEventListener('focus', onFocus);
     if (retryTimer) {
       clearTimeout(retryTimer);
+    }
+    if (savedTimer) {
+      clearTimeout(savedTimer);
     }
   });
 
@@ -273,6 +302,7 @@ export function useModelSettings() {
     accounts,
     loading,
     error,
+    saved,
     runsLocally,
     localProvider,
     onlineProvider,

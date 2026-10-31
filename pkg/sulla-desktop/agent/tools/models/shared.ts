@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { REMOTE_PROVIDERS } from '../../../shared/remoteProviders';
 import { integrations } from '../../integrations/catalog';
 import { modelDiscoveryService } from '../../languagemodels/ModelDiscoveryService';
 import { getIntegrationService } from '../../services/IntegrationService';
@@ -125,8 +124,4 @@ export async function getProviderRuntimeStatus(providerId: string): Promise<Prov
     sullaCompatible,
     ready,
   };
-}
-
-export function getStaticModels(providerId: string) {
-  return REMOTE_PROVIDERS.find(provider => provider.id === providerId)?.models ?? [];
 }

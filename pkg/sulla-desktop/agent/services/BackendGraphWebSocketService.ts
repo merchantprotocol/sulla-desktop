@@ -9,7 +9,7 @@
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
-import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
+import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
@@ -26,6 +26,7 @@ import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../to
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -436,6 +437,34 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
+    const { getModelProviderService } = await import('./ModelProviderService');
+    const modelProvider = getModelProviderService();
+    // Before the saved model choice loads (it waits for the vault on a
+    // relaunch), an empty provider is not evidence that no AI is connected.
+    // Give it a minute rather than bouncing the user's first message.
+    for (let waited = 0; !modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID && waited < 60; waited++) {
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+    }
+    if (!modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID) {
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'Sulla is still starting up. Send your message again in a moment.',
+        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat held: model choice not loaded yet', { channelId });
+      return;
+    }
+    if (!modelProvider.isInitialized() || !modelProvider.getPrimaryProvider().trim()) {
+      if (channelId === HEARTBEAT_CHANNEL_ID) {
+        console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
+        return;
+      }
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.',
+        role: 'assistant', kind: 'notice', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat blocked before launch', { reason: 'no-ai-provider', channelId });
+      return;
+    }
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
@@ -649,13 +678,21 @@ export class BackendGraphWebSocketService {
       const runLocation = effectiveAgentRunLocation(VM_OPERATOR_CHANNELS.has(channelId)
         ? 'vm'
         : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
+      const tracedProvider = String(state.metadata.agent?.provider || '').trim();
+      firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', '')).trim();
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(
-          () => this.conversationContainer(channelId, threadId, provider, runState),
+          () => acquireWhenReady(
+            () => this.conversationContainer(channelId, threadId, provider, runState),
+            message => this.emitMessage(channelId, 'assistant_message', {
+              content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
+            }),
+            runAbort?.signal,
+          ),
           lost => this.recoverConversationContainer(channelId, threadId, provider, runState, lost),
           () => graph.execute(runState, startNode),
         );
@@ -672,8 +709,13 @@ export class BackendGraphWebSocketService {
         }
       } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
+        // Launch errors are already written for the user; the detail is in the log.
+        const content = err?.name === 'AgentLaunchError'
+          ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
+          : `Agent error: ${ err.message || String(err) }`;
+        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
         this.emitMessage(channelId, 'assistant_message', {
-          content:   `Agent error: ${ err.message || String(err) }`,
+          content,
           role:      'assistant',
           thread_id: threadId,
         });

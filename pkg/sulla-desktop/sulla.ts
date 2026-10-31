@@ -28,6 +28,7 @@ import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
+import { loopbackOrigin } from '@pkg/utils/instance';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -175,13 +176,22 @@ async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
 }
 
 /** Refresh non-secret state only; migration and backup run inside the container. */
-async function onVaultUnlocked(): Promise<void> {
+export async function onVaultUnlocked(): Promise<void> {
   try {
+    // Caching the key for auto-unlock is best-effort; it must never stop
+    // the unlock from being published.
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      await getVaultKeyService().refreshMasterCache();
+    } catch (err) {
+      console.warn('[Vault] Could not cache the vault key for auto-unlock:', (err as Error).message);
+    }
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const status = await getDesktopVaultClient().status();
     await publishVaultState(status.unlocked);
   } catch (err) {
     console.warn('[Vault] Container state is unavailable:', (err as Error).message);
+    throw err;
   }
 }
 
@@ -319,7 +329,9 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     async() => { await getChatCompletionsServer().stop() },
   );
 
-  lifecycle.registerOnce('local-tool-tunnel', ['chat-server'],
+  // The tunnel authenticates as the vault's principal, so it waits for the
+  // unlock and starts the moment it happens instead of on a backoff timer.
+  lifecycle.registerOnce('local-tool-tunnel', ['chat-server', 'vault'],
     async() => {
       const { startLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
 
@@ -331,6 +343,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
       stopLocalToolTunnel();
     },
+    { requiresVault: true },
   );
 
   // In-process MCP server that Claude Code (running in the Sulla VM) can call
@@ -348,7 +361,13 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
   lifecycle.registerOnce('accounts', [],
     async() => {
       const { getSullaAccountsClient, waitForSullaAccountsService } = await import('@pkg/main/sullaAccountsClient');
+      const { isSullaOptionalServicePlanned } = await import('@pkg/backend/sullaRuntime/state');
 
+      // Nothing waits on accounts, so it starts alongside everything else.
+      // When boot could not set it up this session, say so instead of waiting.
+      if (isSullaOptionalServicePlanned('sulla_accounts') === false) {
+        throw new Error('Local accounts are not running this session');
+      }
       // Boot starts the accounts container after Desktop is usable; wait for it
       // instead of failing and backing off.
       await waitForSullaAccountsService();
@@ -528,7 +547,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
     await getTerminalServer().start();
-    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+    console.log(`[Background] Terminal WebSocket server started on ${ loopbackOrigin('ws', 6108) }`);
   } catch (error) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }
@@ -916,7 +935,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const refreshVaultStatusOnce = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
-    const wasUnlocked = client.isUnlocked();
+    const wasUnlocked = getServiceLifecycleManager().isVaultUnlocked();
     let status = await client.status();
     if (status.cacheUpdateRequired && await vaultKey.refreshMasterCache()) status = await client.status();
     if (status.state === 'migration_required') {
@@ -1106,7 +1125,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   ipcMainProxy.handle('vault:initialize', async() => {
-    return vaultKey.initialize();
+    const unlocked = await vaultKey.initialize();
+    if (unlocked) await onVaultUnlocked();
+    return unlocked;
   });
 
   ipcMainProxy.handle('vault:setup', async(_event: Electron.IpcMainInvokeEvent, data: { masterPassword: string }) => {
@@ -1292,9 +1313,23 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const lm = getServiceLifecycleManager();
 
     event.returnValue = {
-      ready:        lm.isAllReady(),
+      ready:        lm.isStartupComplete(),
       shuttingDown: lm.isShuttingDown(),
     };
+  });
+
+  // ── Runtime: first-chat readiness, Repair, and the last start failure ──
+  const { startChatReadiness } = await import('@pkg/main/chatReadiness');
+  startChatReadiness(ipcMainProxy);
+  ipcMainProxy.handle('sulla-runtime:repair-services', async() => {
+    const { default: mainEvents } = await import('@pkg/main/mainEvents');
+
+    mainEvents.emit('sulla-managed-services-repair');
+  });
+  ipcMainProxy.handle('sulla-runtime:start-failure', async() => {
+    const { sullaRuntimeStartFailure } = await import('@pkg/backend/sullaRuntime/state');
+
+    return sullaRuntimeStartFailure();
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────

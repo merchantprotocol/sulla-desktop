@@ -22,6 +22,10 @@ import { integrations } from '../integrations/catalog';
 import { getSelectBoxProvider } from '../integrations/select_box';
 import { getCliStatus } from '../tools/models/shared';
 
+import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { getServiceLifecycleManager } from './ServiceLifecycleManager';
+
 // ── Public types ─────────────────────────────────────────────────
 
 export interface ModelProviderState {
@@ -67,8 +71,8 @@ type ChangeListener = (state: ModelProviderState) => void;
 
 class ModelProviderService {
   private state: ModelProviderState = {
-    primaryProvider:      'grok',
-    secondaryProvider:    'grok',
+    primaryProvider:      '',
+    secondaryProvider:    '',
     heartbeatProvider:    'default',
     subconsciousProvider: 'claude-code',
     activeModelId:        '',
@@ -81,6 +85,7 @@ class ModelProviderService {
   private initialized = false;
   private ipcRegistered = false;
   private changeListeners: ChangeListener[] = [];
+  private vaultListenerRegistered = false;
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
@@ -106,11 +111,18 @@ class ModelProviderService {
     // IPC with sensible defaults from the initial state object.
     try {
       await this.loadStateFromDB();
+      await this.reconcilePrimaryProvider();
     } catch (err) {
       console.warn('[ModelProviderService] loadStateFromDB failed — using defaults:', err);
     }
 
     this.initialized = true;
+    if (!this.vaultListenerRegistered) {
+      this.vaultListenerRegistered = true;
+      getServiceLifecycleManager().on('vault:state', (unlocked: boolean) => {
+        if (unlocked) void this.reconcilePrimaryProvider();
+      });
+    }
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
 
     // Broadcast to any windows that opened before the service was ready,
@@ -122,6 +134,11 @@ class ModelProviderService {
 
   getState(): ModelProviderState {
     return { ...this.state };
+  }
+
+  /** True once the saved model choice has been loaded. */
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   getPrimaryProvider(): string {
@@ -177,7 +194,7 @@ class ModelProviderService {
     const results = await Promise.allSettled(candidates.map(async(integration) => {
       let connected = false;
       try {
-        connected = await integrationService.isAnyAccountConnected(integration.id);
+        connected = hasPendingCredential(integration.id) || await integrationService.isAnyAccountConnected(integration.id);
       } catch (err) {
         console.warn(`[ModelProviderService] connection check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
       }
@@ -236,7 +253,7 @@ class ModelProviderService {
     if (providerId === 'claude-code') {
       // No hardcoded claude-code model list — read the live catalog from
       // Anthropic's /v1/models using the signed-in account's credentials.
-      // Degrades to Auto + a static list on any failure. See
+      // Degrades to the provider-agnostic Auto sentinel on any failure. See
       // claudeModelCatalog.ts.
       const { listClaudeCodeModels } = await import('../languagemodels/claudeModelCatalog');
       return listClaudeCodeModels();
@@ -290,7 +307,57 @@ class ModelProviderService {
 
     // Notify everyone
     await this.broadcastChange();
+    firstRunTrace('models', 'model selected', { providerId, modelId });
 
+    return this.getState();
+  }
+
+  /**
+   * Pick a usable primary provider from the accounts that actually exist.
+   * During first run credentials may still be waiting in memory for the vault,
+   * so pending credentials count as connected here and in the model picker.
+   */
+  async reconcilePrimaryProvider(preferPriority = false, explicitlySelectedProvider = ''): Promise<ModelProviderState> {
+    const integrationService = getIntegrationService();
+    const priority = ['claude-code', 'codex', 'grok'];
+    const candidates = Object.values(integrations)
+      .filter(i => i.category === 'AI Infrastructure' && !EXCLUDED_PROVIDER_IDS.includes(i.id))
+      .map(i => i.id)
+      .sort((a, b) => {
+        const ai = priority.indexOf(a); const bi = priority.indexOf(b);
+        return (ai < 0 ? priority.length : ai) - (bi < 0 ? priority.length : bi);
+      });
+    const connected = new Set<string>();
+    let lookupUnknown = false;
+
+    for (const providerId of candidates) {
+      if (hasPendingCredential(providerId)) {
+        connected.add(providerId);
+        continue;
+      }
+      try {
+        if (await integrationService.isAnyAccountConnected(providerId)) connected.add(providerId);
+      } catch { lookupUnknown = true }
+    }
+
+    const selectedProvider = explicitlySelectedProvider && connected.has(explicitlySelectedProvider)
+      ? explicitlySelectedProvider
+      : (!preferPriority && connected.has(this.state.primaryProvider) ? this.state.primaryProvider : candidates.find(id => connected.has(id)));
+    const reason = explicitlySelectedProvider && selectedProvider === explicitlySelectedProvider ? 'explicit'
+      : selectedProvider === this.state.primaryProvider ? 'kept-primary' : selectedProvider ? 'connected-priority' : 'none';
+
+    if (selectedProvider) {
+      if (selectedProvider !== this.state.primaryProvider) await this.selectModel(selectedProvider, '');
+      const fallback = candidates.find(id => connected.has(id) && id !== selectedProvider) || selectedProvider;
+      if (!connected.has(this.state.secondaryProvider)) await this.setSecondaryProvider(fallback);
+      firstRunTrace('models', 'providers reconciled', { candidates, connected: [...connected], lookupUnknown, primary: selectedProvider, secondary: this.state.secondaryProvider, reason });
+      return this.getState();
+    }
+
+    // An empty result while the vault is locked or starting is not evidence
+    // that the user's saved choice is disconnected. Never erase it.
+    firstRunTrace('models', 'providers reconciled', { candidates, connected: [...connected], lookupUnknown, primary: this.state.primaryProvider, secondary: this.state.secondaryProvider, reason });
+    if (lookupUnknown || this.state.primaryProvider) return this.getState();
     return this.getState();
   }
 
@@ -298,6 +365,7 @@ class ModelProviderService {
     this.state.secondaryProvider = providerId;
     await SullaSettingsModel.set('secondaryProvider', providerId, 'string');
     await this.broadcastChange();
+    firstRunTrace('models', 'secondary provider selected', { providerId });
   }
 
   async setSecondaryModelId(modelId: string): Promise<void> {
@@ -427,8 +495,8 @@ class ModelProviderService {
   // ── Internal ───────────────────────────────────────────────────
 
   private async loadStateFromDB(): Promise<void> {
-    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
-    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
+    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', '');
+    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', '');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.state.secondaryModelId = await SullaSettingsModel.get('secondaryModelId', '');
@@ -447,10 +515,11 @@ class ModelProviderService {
       const integrationService = getIntegrationService();
       const formValues = await integrationService.getFormValues(this.state.primaryProvider);
       const modelVal = formValues.find(v => v.property === 'model');
-      this.state.activeModelId = modelVal?.value || '';
+      this.state.activeModelId = modelVal?.value || await SullaSettingsModel.get('remoteModel', '');
     } catch {
       this.state.activeModelId = await SullaSettingsModel.get('remoteModel', '');
     }
+    firstRunTrace('models', 'state loaded from DB', { primary: this.state.primaryProvider, model: this.state.activeModelId, secondary: this.state.secondaryProvider, secondaryModel: this.state.secondaryModelId });
   }
 
   private async persistState(providerId: string, modelId: string): Promise<void> {

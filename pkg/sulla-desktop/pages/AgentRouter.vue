@@ -47,6 +47,7 @@
       />
 
       <div class="agent-router-content flex flex-col">
+        <NoAiConnectedBanner />
         <!--
           Non-browser routes use keep-alive normally.
           Hidden when a browser tab is the active route.
@@ -162,6 +163,7 @@ import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
+import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';

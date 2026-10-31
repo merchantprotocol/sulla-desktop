@@ -11,7 +11,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
+import { getAgentOverrideService, getPrimaryService, getSecondaryProviderId, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
@@ -31,6 +31,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -1228,13 +1229,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const primaryId = this.llm.getModel?.() || '';
       let lastErr = err;
       let lastErrMsg = redactLLMFailureMessage(err);
+      // The backup's own failure (e.g. it has no account) must never hide why
+      // the chosen model failed, so it is reported separately.
+      let fallbackErrMsg = '';
       let recovery = initialRecovery;
       console.warn(
         `[${ this.name }:BaseNode] Primary LLM failed ` +
         `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
       );
+      firstRunTrace('chat', 'provider call failed', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, error: lastErrMsg });
 
       if (recovery.retryPrimary) {
+        firstRunTrace('chat', 'provider retry started', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind });
         try {
           throwIfAborted(abortSignal);
           console.warn(
@@ -1272,13 +1278,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             `[${ this.name }:BaseNode] Primary retry failed ` +
             `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
           );
+          firstRunTrace('chat', 'provider retry failed', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, error: lastErrMsg });
         }
       }
 
       // Fallback to secondary provider. Health check failures are logged, but
       // the call is still attempted because provider health probes often test
       // a different endpoint than chat completion.
-      if (recovery.fallbackAllowed && await SullaSettingsModel.get('fallbackEnabled', true)) {
+      // Only fall back to a backup the owner actually has: no backup set means no fallback.
+      const hasBackup = !!(await getSecondaryProviderId().catch(() => ''));
+      firstRunTrace('chat', 'fallback evaluated', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, hasBackup, fallbackAllowed: recovery.fallbackAllowed });
+      if (recovery.fallbackAllowed && hasBackup && await SullaSettingsModel.get('fallbackEnabled', true)) {
         try {
           throwIfAborted(abortSignal);
           const secondary = await getSecondaryService();
@@ -1289,6 +1299,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             { provider: primaryName, model: primaryId },
             { provider: secondaryName, model: secondaryModel },
           );
+          firstRunTrace('chat', 'fallback route resolved', { secondaryProvider: secondaryName, secondaryModel, sameRoute });
 
           if (sameRoute) {
             console.warn(
@@ -1340,18 +1351,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         } catch (fallbackErr) {
           const fallbackRecovery = classifyLLMFailure(fallbackErr);
           if (fallbackRecovery.kind === 'interrupted') throw fallbackErr;
-          lastErr = fallbackErr;
-          lastErrMsg = redactLLMFailureMessage(fallbackErr);
-          console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, lastErrMsg);
+          fallbackErrMsg = redactLLMFailureMessage(fallbackErr);
+          console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, fallbackErrMsg);
+          firstRunTrace('chat', 'fallback failed', { recoveryKind: fallbackRecovery.kind, error: fallbackErrMsg });
         }
       }
 
       // Propagate the error so the chat UI can display it to the user
+      firstRunTrace('chat', 'provider call ended', { success: false, provider: primaryName, model: primaryId, error: lastErrMsg, fallbackError: fallbackErrMsg });
       throw new Error(
         `[${ this.name }] LLM provider recovery failed: ${ recovery.userMessage } ` +
         `Tried ${ primaryName }/${ primaryId || '(default)' }` +
-        `${ recovery.fallbackAllowed ? ' and the configured fallback provider' : '' }. ` +
-        `Last error: ${ redactLLMFailureMessage(lastErr) || lastErrMsg }`,
+        `${ fallbackErrMsg ? ' and your backup model' : '' }. ` +
+        `Error: ${ redactLLMFailureMessage(lastErr) || lastErrMsg }` +
+        `${ fallbackErrMsg ? ` Backup model error: ${ fallbackErrMsg }` : '' }`,
       );
     } finally {
       this.currentNodeRunContext = previousRunContext;
