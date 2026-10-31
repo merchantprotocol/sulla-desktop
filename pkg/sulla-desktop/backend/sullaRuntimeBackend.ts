@@ -103,6 +103,8 @@ function logStartupPhase(phase: string, startedAt: number, details = ''): void {
   console.log(`[startup-phase] ${ new Date().toISOString() } phase=${ phase } elapsedMs=${ Date.now() - startedAt }${ suffix }`);
 }
 
+const OPTIONAL_SERVICE_ATTEMPTS = 8;
+
 /**
  * SullaRuntimeBackend drives the native Sulla runtime: a macOS
  * Virtualization.framework VM booted and controlled through the
@@ -1810,7 +1812,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const reconcileInBackground = async(): Promise<void> => {
         const bootStatus = new Map<string, string>();
 
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // A slow Mac can take a minute or more to bring the vault up; keep
+        // retrying long enough that Files and tools still start behind it.
+        for (let attempt = 1; attempt <= OPTIONAL_SERVICE_ATTEMPTS; attempt++) {
           const runs = new Map<string, Promise<boolean>>();
           const run = (entry: { service: string; container: string }): Promise<boolean> => {
             let started = runs.get(entry.service);
@@ -1846,7 +1850,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                 const state = await this.execCommand(
                   { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
                   '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', container,
-                );
+                ).catch(() => ''); // a fresh install has no container yet
                 if (!state.trim().startsWith('running')) {
                   await startOptionalService(service);
                 } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
@@ -1866,7 +1870,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
 
               bootStatus.set(service, `unhealthy (${ reason })`);
-              console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
+              console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/${ OPTIONAL_SERVICE_ATTEMPTS }); Desktop remains usable: ${ reason }`);
 
               return false;
             } finally {
@@ -1881,7 +1885,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             }`);
           }
           if ([...bootStatus.values()].every(status => status === 'healthy')) return;
-          await new Promise(resolve => setTimeout(resolve, 5_000 * attempt));
+          await new Promise(resolve => setTimeout(resolve, Math.min(5_000 * attempt, 30_000)));
         }
       };
 
