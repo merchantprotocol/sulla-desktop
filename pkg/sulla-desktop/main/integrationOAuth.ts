@@ -273,7 +273,7 @@ export function initIntegrationOAuthEvents(): void {
     for (const property of properties) {
       const raw = supplied[property.key];
       const value = typeof raw === 'string' ? raw : '';
-      if (property.required && !value.trim()) return { success: false, error: `${ property.title } is required.` };
+      if (property.required && property.type !== 'select' && !value.trim()) return { success: false, error: `${ property.title } is required.` };
       if (value) values[property.key] = value;
     }
     for (const key of Object.keys(supplied)) {

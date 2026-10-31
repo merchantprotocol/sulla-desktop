@@ -1125,10 +1125,7 @@ const refreshAccounts = async() => {
 };
 
 const startAddAccount = () => {
-  if (integration.value?.properties?.length) {
-    openSecureVault();
-    return;
-  }
+  // New connections always use this screen's own form; never the vault editor.
   isAddingAccount.value = true;
   isEditingAccount.value = false;
   editingAccountId.value = null;
@@ -1353,6 +1350,8 @@ const validateForm = (): boolean => {
   // Validate credential fields (if any exist)
   if (integration.value?.properties) {
     for (const property of visibleProperties.value) {
+      // A model list that could not load must not block connecting; Sulla picks a default.
+      if (property.type === 'select' && !(selectOptions.value[property.key]?.length)) continue;
       const error = validateField(property, formData.value[property.key] || '');
       if (error) {
         errors.value[property.key] = error;
