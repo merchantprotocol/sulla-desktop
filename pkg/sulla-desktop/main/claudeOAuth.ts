@@ -11,14 +11,10 @@
  * the authorization code, feeds it back to the CLI, and captures the
  * long-lived OAuth token when Claude CLI prints it.
  *
- * After a token is captured, writes it to /etc/claude-env in the VM
- * so Claude Code can pick it up immediately without a VM restart.
+ * First-run tokens remain in main-process memory until the vault is ready.
  */
 
 import * as childProcess from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 
 import { app, BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
@@ -39,10 +35,16 @@ const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
 const console = Logging.background;
 
 // Claude CLI emits the token on its own line after completion.
-const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
+// While output is still streaming, a chunk can end mid-token: require the
+// whitespace that follows it. Once the CLI has exited the buffer is complete.
+const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})(?=\s)/;
+const FINAL_TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
 
 // Match the OAuth URL even when the terminal wraps it across lines.
-const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
+const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)(?=\s)/;
+
+type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error';
+type OAuthResult = { success?: boolean; error?: string; reason?: OAuthFailureReason };
 
 // Claude CLI prints this after a bad code; we could retry but for now we bail.
 // Any OAuth failure from setup-token (wording changes between CLI versions).
@@ -89,38 +91,6 @@ async function isVMRunning(): Promise<boolean> {
   return isSullaRuntimeActive();
 }
 
-/**
- * Write the OAuth token into the running VM's /etc/claude-env so that
- * Claude Code can pick it up without a VM restart.
- */
-async function injectTokenIntoVM(token: string): Promise<void> {
-  const runtimePath = paths.sullaRuntime;
-  const env = { ...process.env, };
-
-  // Write the token to a temp file on the host, copy into VM, then move to /etc.
-  const tmpPath = path.join(os.tmpdir(), `sulla-claude-env-${ Date.now() }`);
-  await fs.promises.writeFile(tmpPath, `CLAUDE_CODE_OAUTH_TOKEN=${ token }\n`, { mode: 0o600 });
-
-  const run = (args: string[]) => new Promise<void>((resolve, reject) => {
-    const proc = childProcess.spawn(runtimePath, args, { env });
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString() });
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`sulla-runtime ${ args.join(' ') } exited ${ code }: ${ stderr }`));
-    });
-    proc.on('error', reject);
-  });
-
-  try {
-    await run(['copy', tmpPath, 'guest:/tmp/claude-env']);
-    await run(['exec', '--', 'sudo', 'mv', '/tmp/claude-env', '/etc/claude-env']);
-    await run(['exec', '--', 'sudo', 'chmod', '600', '/etc/claude-env']);
-    console.log('[ClaudeOAuth] Token injected into VM at /etc/claude-env');
-  } finally {
-    fs.promises.unlink(tmpPath).catch(() => { /* ignore */ });
-  }
-}
 
 /**
  * The guest image ships Node and npm but not the Claude CLI, so a fresh
@@ -145,30 +115,16 @@ async function ensureClaudeCliInVM(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
     let output = '';
-    const timer = setTimeout(() => { try { proc.kill() } catch { /* dead */ } reject(new Error('installing the Claude CLI timed out after 5 minutes')) }, 5 * 60 * 1000);
+    const timer = setTimeout(() => { try { proc.kill() } catch { /* dead */ } reject(new Error('mounting the VM pseudo-terminal timed out after 30 seconds')) }, 30_000);
     proc.stdout.on('data', (d) => { output += d.toString() });
     proc.stderr.on('data', (d) => { output += d.toString() });
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`npm exited ${ code }: ${ output.trim().split('\n').slice(-3).join(' ') }`));
+      else reject(new Error(`mounting the VM pseudo-terminal exited ${ code }: ${ output.trim().split('\n').slice(-3).join(' ') }`));
     });
     proc.on('error', (err) => { clearTimeout(timer); reject(err) });
   });
-}
-
-async function injectTokenIntoVMWhenReady(token: string): Promise<void> {
-  for (;;) {
-    if (await isVMRunning()) {
-      try {
-        await injectTokenIntoVM(token);
-        return;
-      } catch (error) {
-        console.warn('[ClaudeOAuth] VM token injection is not ready yet:', (error as Error).message);
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 2_000));
-  }
 }
 
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
@@ -187,13 +143,12 @@ function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
  * exclusive — OAuth supersedes a manually-pasted key).
  */
 async function persistTokenToVault(token: string): Promise<void> {
-  try {
-    const svc = getIntegrationService();
-    // Wrap connection-status write in the suppression flag so the Integrations
-    // listener in agent/integrations/index.ts doesn't try to spin up a runtime
-    // client for claude-code (there is no IntegrationRegistry factory for it —
-    // credentials are consumed directly by ClaudeCodeService).
-    await withSuppressedConnectionStatus(async() => {
+  const svc = getIntegrationService();
+  // Wrap connection-status write in the suppression flag so the Integrations
+  // listener in agent/integrations/index.ts doesn't try to spin up a runtime
+  // client for claude-code (there is no IntegrationRegistry factory for it —
+  // credentials are consumed directly by ClaudeCodeService).
+  await withSuppressedConnectionStatus(async() => {
       await svc.setMultipleValues([
         {
           integration_id: CLAUDE_INTEGRATION_ID,
@@ -216,11 +171,8 @@ async function persistTokenToVault(token: string): Promise<void> {
       ]);
       await svc.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
       await svc.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
-    });
-    console.log('[ClaudeOAuth] Token persisted to integration vault');
-  } catch (err) {
-    console.warn('[ClaudeOAuth] Failed to persist token to integration vault:', err);
-  }
+  });
+  console.log('[ClaudeOAuth] Token persisted to integration vault');
 }
 
 // claude.ai's login session cookie.
@@ -327,14 +279,14 @@ export function initClaudeOAuthEvents(): void {
   /**
    * Start the OAuth flow. Returns the captured token, or an error message.
    */
-  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<{ success?: boolean; token?: string; error?: string }> => {
+  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<OAuthResult> => {
     assertFirstRunOrMainSender(event);
     if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
-      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'The sign-in window was closed' };
+      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'Sign-in was closed.', reason: 'user-closed' };
       const endpoint = process.env.SULLA_E2E_OAUTH_URL;
-      if (!endpoint) return { success: false, error: 'Missing fake OAuth endpoint' };
+      if (!endpoint) return { success: false, error: 'Sign-in is unavailable.', reason: 'provider-error' };
       const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: CLAUDE_INTEGRATION_ID }) });
-      if (!response.ok) return { success: false, error: `Fake OAuth returned ${ response.status }` };
+      if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
       queuePendingCredential({ integrationId: CLAUDE_INTEGRATION_ID, accountId: CLAUDE_OAUTH_ACCOUNT_ID, values: tokens, activate: true });
       return { success: true };
@@ -343,7 +295,7 @@ export function initClaudeOAuthEvents(): void {
 
     // Bail out early with a clear message if the VM isn't ready.
     if (!await isVMRunning()) {
-      return { error: 'The Sulla VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
+      return { error: 'Your private workspace is still starting. Try again in a moment.', reason: 'vm-not-ready' };
     }
 
     const stage = (text: string) => { try { event.sender.send('claude-oauth:stage' as any, text) } catch { /* window closed */ } };
@@ -352,7 +304,7 @@ export function initClaudeOAuthEvents(): void {
       await ensureClaudeCliInVM();
     } catch (err) {
       console.warn('[ClaudeOAuth] Could not install the Claude CLI in the VM:', err);
-      return { error: `Couldn't install Claude in the Sulla VM (${ (err as Error).message }). Check your internet connection, then try again.` };
+      return { error: 'Claude could not be prepared. Check your connection, then try again.', reason: 'cli-missing' };
     }
 
     return await new Promise((resolve) => {
@@ -360,7 +312,7 @@ export function initClaudeOAuthEvents(): void {
 
       const ptyProcess = pty.spawn(runtimePath, ['exec', '--', 'python3', '-c', GUEST_PTY_RELAY, 'claude', 'setup-token'], {
         name: 'xterm-256color',
-        cols: 120,
+        cols: 1000,
         rows: 30,
         env:  {
           ...process.env,
@@ -376,16 +328,19 @@ export function initClaudeOAuthEvents(): void {
       let codeSent = false;
       let enterSent = false;
       let resolved = false;
+      let noUrlTimeout: ReturnType<typeof setTimeout>;
+      let noTokenTimeout: ReturnType<typeof setTimeout> | undefined;
 
-      const doResolve = (result: { token?: string; error?: string }) => {
+      const doResolve = async(result: { token?: string; error?: string; reason?: OAuthFailureReason }) => {
         if (resolved) return;
         resolved = true;
+        if (noUrlTimeout) clearTimeout(noUrlTimeout);
+        if (noTokenTimeout) clearTimeout(noTokenTimeout);
         try { ptyProcess.kill() } catch { /* dead */ }
         try { session.authWindow?.close() } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
 
         if (result.token) {
-          void injectTokenIntoVMWhenReady(result.token);
           if (options?.firstRun) {
             // First run has no durable secret store. Keep the token in main
             // memory until lane 1b's vault-ready hook flushes it.
@@ -395,18 +350,28 @@ export function initClaudeOAuthEvents(): void {
               values: { oauth_token: result.token, api_key: '', account_label: 'Claude Code OAuth' },
               activate: true,
             });
+            const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+            await getModelProviderService().reconcilePrimaryProvider(false, CLAUDE_INTEGRATION_ID);
           } else {
-            persistTokenToVault(result.token).catch((err) => {
-              console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
-            });
+            try {
+              await persistTokenToVault(result.token);
+            } catch {
+              resolve({ success: false, error: 'Claude signed in, but the sign-in could not be saved.', reason: 'provider-error' });
+              return;
+            }
           }
         }
-        resolve(options?.firstRun && result.token ? { success: true } : result);
+        resolve(result.token ? { success: true } : result);
       };
 
       const timeout = setTimeout(() => {
-        doResolve({ error: 'OAuth flow timed out after 5 minutes' });
+        void doResolve({ error: 'Claude sign-in took too long. Try again.', reason: 'timeout' });
       }, 5 * 60 * 1000);
+      noUrlTimeout = setTimeout(() => {
+        const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-240);
+        console.warn(`[ClaudeOAuth] No sign-in URL after 45 seconds. Output tail: ${ tail }`);
+        void doResolve({ error: 'Claude did not open a sign-in page. Try again.', reason: 'provider-error' });
+      }, 45_000);
 
       console.log('[ClaudeOAuth] Starting OAuth flow');
       stage('Starting Claude sign-in…');
@@ -426,7 +391,7 @@ export function initClaudeOAuthEvents(): void {
         if (INVALID_CODE_PATTERN.test(session.stdoutBuffer)) {
           clearTimeout(timeout);
           const detail = /OAuth error:\s*([^\n]*)/i.exec(session.stdoutBuffer)?.[1]?.trim();
-          doResolve({ error: `Claude didn't accept the sign-in${ detail ? `: ${ detail }` : '.' } Try again.` });
+          void doResolve({ error: `Claude didn't accept the sign-in${ detail ? `: ${ detail }` : '.' } Try again.`, reason: 'provider-error' });
           return;
         }
 
@@ -434,6 +399,7 @@ export function initClaudeOAuthEvents(): void {
         if (!urlOpened) {
           const urlMatch = URL_PATTERN.exec(session.stdoutBuffer);
           if (urlMatch) {
+            clearTimeout(noUrlTimeout);
             urlOpened = true;
             const url = urlMatch[1].replace(/\s+/g, '');
 
@@ -450,7 +416,7 @@ export function initClaudeOAuthEvents(): void {
                 // Don't leave `claude setup-token` waiting in the VM forever.
                 console.log('[ClaudeOAuth] Auth window closed without a code');
                 clearTimeout(timeout);
-                doResolve({ error: 'The sign-in window closed before Claude sent back a code. Try again.' });
+                void doResolve({ error: 'Sign-in was closed.', reason: 'user-closed' });
                 return;
               }
               console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
@@ -459,6 +425,13 @@ export function initClaudeOAuthEvents(): void {
               try {
                 ptyProcess.write(code);
                 codeSent = true;
+                // The CLI answers within seconds once the code is submitted.
+                // Don't leave the user on a spinner for the full 5 minutes.
+                noTokenTimeout = setTimeout(() => {
+                  const tail = session.stdoutBuffer.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]').replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-400);
+                  console.warn(`[ClaudeOAuth] No token 60 seconds after the code was sent (enterSent=${ enterSent }). Output tail: ${ tail }`);
+                  void doResolve({ error: 'Claude did not finish signing in. Try again.', reason: 'timeout' });
+                }, 60_000);
                 // Newer CLIs echo the pasted code as plain text, not asterisks,
                 // so the echo check below never fires. Submit shortly after the
                 // write either way; whichever path runs first sends Enter once.
@@ -494,24 +467,26 @@ export function initClaudeOAuthEvents(): void {
         if (tokenMatch) {
           clearTimeout(timeout);
           console.log('[ClaudeOAuth] Token captured');
-          doResolve({ token: tokenMatch[1] });
+          void doResolve({ token: tokenMatch[1] });
         }
       });
 
       ptyProcess.onExit(({ exitCode, signal }) => {
         clearTimeout(timeout);
+        clearTimeout(noUrlTimeout);
         console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
         if (!resolved) {
-          const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
+          const tokenMatch = FINAL_TOKEN_PATTERN.exec(session.stdoutBuffer);
           if (tokenMatch) {
-            doResolve({ token: tokenMatch[1] });
+            void doResolve({ token: tokenMatch[1] });
           } else {
             const tail = session.stdoutBuffer.replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-240);
             console.warn(`[ClaudeOAuth] setup-token output tail: ${ tail }`);
-            doResolve({
+            void doResolve({
               error: exitCode === 127
                 ? 'Claude isn\'t installed in the Sulla VM yet. Try again in a moment.'
-                : `Claude setup-token exited without producing a token (code=${ exitCode })${ tail ? `: ${ tail }` : '' }`,
+                : 'Claude sign-in ended before it finished. Try again.',
+              reason: exitCode === 127 ? 'cli-missing' : 'provider-error',
             });
           }
         }

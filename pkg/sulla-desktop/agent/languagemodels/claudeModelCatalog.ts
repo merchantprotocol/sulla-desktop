@@ -36,7 +36,7 @@ export interface ClaudeCatalogModel {
 /** "Auto" = omit --model so the claude CLI uses its configured default. */
 const AUTO_SENTINEL: ClaudeCatalogModel = {
   id:          'claude-code',
-  name:        'Auto (CLI default)',
+  name:        'Auto (Claude picks)',
   description: 'Let Claude Code choose the best model automatically',
 };
 

@@ -651,7 +651,7 @@ export class BackendGraphWebSocketService {
         : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', '')).trim();
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(

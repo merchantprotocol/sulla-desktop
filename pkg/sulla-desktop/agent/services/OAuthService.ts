@@ -278,6 +278,16 @@ export class OAuthService {
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
 
+      // Codex consumes its OAuth session through its CLI auth file. Materialize
+      // it immediately for both first-run memory custody and container-vault
+      // flows; waiting for a later chat races the pending-credential flush.
+      if (integrationId === 'codex') {
+        const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('../util/codexAuthFile');
+        if (!writeCodexAuthFile(tokens) || !await linkCodexHomeIntoVm()) {
+          throw new Error('ChatGPT signed in, but its credentials could not be prepared in the Sulla VM');
+        }
+      }
+
       if (!persist) {
         // First run may happen before the vault, Postgres, or Redis exists.
         // Return the token set to the main-process caller for memory-only

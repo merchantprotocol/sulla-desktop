@@ -26,7 +26,7 @@ async function applyOnce(): Promise<boolean> {
   // vault. Choose from those plus durable integration accounts, never from a
   // hardcoded provider that the user did not connect.
   const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-  await getModelProviderService().reconcilePrimaryProvider(true);
+  await getModelProviderService().reconcilePrimaryProvider();
   // Compatibility only. Durable first-run completion is owned by first-run-state.json.
   await SullaSettingsModel.set('sullaPassword', 'vault-protected', 'string');
   await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');

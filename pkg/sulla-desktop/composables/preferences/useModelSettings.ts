@@ -175,6 +175,13 @@ export function useModelSettings() {
     if (primaryChanged) {
       void loadSlots();
     }
+    void loadProviders();
+  }
+
+  function onVaultUnlocked() {
+    loading.value = true;
+    retryAttempt = 0;
+    void Promise.all([loadProviders(), loadSlots()]).finally(() => { loading.value = false });
   }
 
   async function run(work: () => Promise<unknown>) {
@@ -264,6 +271,7 @@ export function useModelSettings() {
 
   onMounted(async() => {
     ipcRenderer.on('model-provider:state-changed', onStateChanged);
+    ipcRenderer.on('vault:logged-in' as any, onVaultUnlocked);
     window.addEventListener('focus', onFocus);
     try {
       applyState(await ipcRenderer.invoke('model-provider:get-state'));
@@ -277,6 +285,7 @@ export function useModelSettings() {
 
   onBeforeUnmount(() => {
     ipcRenderer.removeListener('model-provider:state-changed', onStateChanged);
+    ipcRenderer.removeListener('vault:logged-in' as any, onVaultUnlocked);
     window.removeEventListener('focus', onFocus);
     if (retryTimer) {
       clearTimeout(retryTimer);
