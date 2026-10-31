@@ -16,7 +16,7 @@ describe('MCPBridge Cloud app reconciliation', () => {
       getManifest: async() => ({ appSlug: 'ai-visibility-lab', tools: [{ name: 'list_projects' }] }),
       identity:    async() => ({ userId: 'user-1', deviceId: 'desktop-1' }),
       sign:        (_parts, ts) => ({ ts, signature: 'signed' }),
-      rpc:         jest.fn<any>(async() => { throw new Error('This Cloud app device is offline. Start it and try again.') }),
+      rpc:         jest.fn(async() => { throw new Error('This Cloud app device is offline. Start it and try again.') }),
     };
     const bridge = new MCPBridge(channel);
 

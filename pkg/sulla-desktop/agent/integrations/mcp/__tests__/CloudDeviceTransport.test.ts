@@ -9,11 +9,11 @@ import { CloudDeviceTransport, type CloudDeviceChannel } from '../CloudDeviceTra
 
 function channel(handler?: (envelope: any) => any): CloudDeviceChannel {
   return {
-    listDevices:  jest.fn<any>(),
-    getManifest:  jest.fn<any>(),
-    identity:     jest.fn<any>(async() => ({ userId: 'user-1', deviceId: 'desktop-1' })),
-    sign:         jest.fn<any>((_parts: unknown, ts: number) => ({ ts, signature: 'signed-by-desktop-1' })),
-    rpc:          jest.fn<any>(async(_deviceId: string, envelope: any) => handler?.(envelope)),
+    listDevices:  jest.fn() as any,
+    getManifest:  jest.fn() as any,
+    identity:     jest.fn(async() => ({ userId: 'user-1', deviceId: 'desktop-1' })),
+    sign:         jest.fn((_parts: (string | number)[], ts: number) => ({ ts, signature: 'signed-by-desktop-1' })),
+    rpc:          jest.fn(async(_deviceId: string, envelope: any) => handler?.(envelope)),
   };
 }
 
