@@ -36,7 +36,7 @@ import type { reqMessageId } from '@pkg/window';
 function describeReason(reasonId: reqMessageId): string {
   switch (reasonId) {
   case 'macOS-release':
-    return 'Requires macOS version 10.15 or newer';
+    return 'Sulla needs macOS 13 (Ventura) or newer';
   case 'linux-nested':
     return 'Nested virtualization not enabled on this host';
   }

@@ -40,7 +40,7 @@ func (s *stateStore) record(e event, state string) {
 		s.units[*e.Unit] = state
 		s.events["unit:"+*e.Unit] = e
 	}
-	if e.Name == "docker-ready" || e.Name == "shutting-down" {
+	if e.Name == "docker-ready" || e.Name == "shutting-down" || e.Name == "data-disk-failed" {
 		s.events[e.Name] = e
 	}
 }
@@ -53,6 +53,9 @@ func (s *stateStore) replay() []event {
 		if e, ok := s.events["unit:"+name]; ok {
 			out = append(out, e)
 		}
+	}
+	if e, ok := s.events["data-disk-failed"]; ok {
+		out = append(out, e)
 	}
 	if e, ok := s.events["docker-ready"]; ok {
 		out = append(out, e)

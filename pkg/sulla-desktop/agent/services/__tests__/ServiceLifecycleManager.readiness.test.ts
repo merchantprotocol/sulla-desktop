@@ -82,10 +82,10 @@ describe('ServiceLifecycleManager.waitUntilStarted', () => {
     await starting;
   });
 
-  it('rejects promptly when startup completes without the requested service', async() => {
+  it('rejects promptly when startup completes and the requested service failed for good', async() => {
     const lifecycle = new ServiceLifecycleManager();
 
-    lifecycle.register('vault', [], async() => { throw new Error('synthetic startup failure') }, async() => {});
+    lifecycle.register('vault', [], async() => { throw new Error('synthetic startup failure') }, async() => {}, { retry: false });
     await lifecycle.startAll();
 
     await expect(lifecycle.waitUntilStarted('vault', 1_000)).rejects.toThrow("Lifecycle service 'vault' failed to start");

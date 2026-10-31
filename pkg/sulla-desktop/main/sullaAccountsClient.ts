@@ -261,8 +261,9 @@ function normalizeConnectionInput(value:AccountsConnectionInput):AccountsConnect
 }
 
 /**
- * Resolves once the accounts container answers HTTP (any status), or after the
- * timeout so a container that never starts still reaches the normal retry path.
+ * Resolves once the accounts container answers HTTP (any status). Throws after
+ * the timeout, so a container that never starts shows as failed and reaches
+ * the normal retry path.
  */
 export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -273,6 +274,7 @@ export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<v
     if (reachable) return;
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
+  throw new Error(`The accounts service did not answer within ${ Math.round(timeoutMs / 1000) }s`);
 }
 
 export class SullaAccountsClient {

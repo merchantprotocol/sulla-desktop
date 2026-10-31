@@ -5,6 +5,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 import cors from 'cors';
@@ -23,9 +24,52 @@ import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken
 import paths from '@pkg/utils/paths';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
-import { loopbackOrigin } from '@pkg/utils/instance';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
+import { describePortOwner } from '@pkg/utils/portOwner';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
+/** Tried in order when another Mac app already listens on the chat API port. */
+const CHAT_COMPLETIONS_FALLBACK_PORTS = [30140, 30141, 30142, 30143, 30144];
+
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+
+    probe.once('error', () => resolve(false));
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+  });
+}
+
+let chosenPort: Promise<number> | undefined;
+
+/**
+ * The Mac port the chat API listens on, chosen once per launch: 3000 (with
+ * the instance offset), or a spare port when another app holds it. The guest
+ * learns it from /etc/sulla-env and chat-api-token.json.
+ */
+export function chatCompletionsPort(): Promise<number> {
+  chosenPort ??= (async() => {
+    const preferred = hostPort(CHAT_COMPLETIONS_PORT);
+
+    if (await portIsFree(preferred)) return preferred;
+    const owner = await describePortOwner(preferred);
+
+    for (const base of CHAT_COMPLETIONS_FALLBACK_PORTS) {
+      const port = hostPort(base);
+
+      if (await portIsFree(port)) {
+        console.warn(`[ChatCompletionsAPI] Port ${ preferred } is used by ${ owner || 'another app' }; using ${ port }`);
+
+        return port;
+      }
+    }
+    console.warn(`[ChatCompletionsAPI] Port ${ preferred } is used by ${ owner || 'another app' } and no spare port is free`);
+
+    return preferred;
+  })();
+
+  return chosenPort;
+}
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
 
@@ -197,7 +241,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  CHAT_COMPLETIONS_PORT,
+      port:  await chatCompletionsPort(),
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -1027,7 +1071,7 @@ export class ChatCompletionsServer {
         version: 4,
         usage:   {
           call_method: 'POST',
-          call_url:    'http://host.docker.internal:3000/v1/tools/{accountId}/{slug}/{endpoint}/call',
+          call_url:    `http://host.docker.internal:${ await chatCompletionsPort() }/v1/tools/{accountId}/{slug}/{endpoint}/call`,
           call_body:   '{"action": "upsert", "param_name": "value"}',
           notes:       'Each entry has a unique accountId + slug. Use them directly in the call URL. Send the inputSchema parameters as the JSON body — flat, no wrapper needed.',
         },
@@ -1875,12 +1919,16 @@ export class ChatCompletionsServer {
     }
   }
 
-  async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
+  async start(requestedPort?: number): Promise<void> {
     await this.loadApiToken();
+    const port = requestedPort ?? await chatCompletionsPort();
+
+    // Loopback only: the guest reaches it through the runtime's forwarder,
+    // which dials 127.0.0.1 on the Mac.
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(port, '0.0.0.0', () => {
-          console.log(`[ChatCompletionsAPI] Server listening on http://0.0.0.0:${ port }`);
+        this.server = this.app.listen(port, '127.0.0.1', () => {
+          console.log(`[ChatCompletionsAPI] Server listening on http://127.0.0.1:${ port }`);
           console.log(`[ChatCompletionsAPI] Health check: http://localhost:${ port }/health`);
           console.log(`[ChatCompletionsAPI] Chat completions: http://localhost:${ port }/chat/completions`);
           resolve();

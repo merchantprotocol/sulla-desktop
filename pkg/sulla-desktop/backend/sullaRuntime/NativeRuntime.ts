@@ -15,7 +15,15 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.sullaRuntime;
 
-const DEFAULT_READY_TIMEOUT_MS = 60_000;
+/**
+ * Docker-ready is bounded by progress, not one fixed timer: each boot line
+ * (hello, event) restarts the quiet window, and the whole boot is capped. The
+ * guest says nothing until it has mounted (and possibly repaired) its data
+ * disk, and the host keeps trying to reach it for five minutes, so the first
+ * line may take as long as the cap.
+ */
+const DEFAULT_READY_TIMEOUT_MS = 5 * 60_000;
+const QUIET_TIMEOUT_MS = 120_000;
 const STOP_TIMEOUT_MS = 70_000;
 // Darwin 23 is macOS 14, the first release that can save and restore a VM.
 // The host accepts only sulla.<name>=<value> with this value alphabet.
@@ -35,6 +43,7 @@ export interface SullaRuntimeStartOptions {
   shares:          SullaRuntimeShare[];
   /** From guestUserFor(); the guest creates this account . */
   guestUser?:      { name: string; uid: number };
+  /** Overall cap on reaching Docker-ready. */
   readyTimeoutMs?: number;
   /** Boot milestones, in milliseconds since spawn: hello, restored, docker-ready and agent events. */
   onMilestone?:    (name: string, elapsedMs: number) => void;
@@ -50,8 +59,11 @@ export function guestUserFor(username: string, uid: number): { name: string; uid
   return KERNEL_ARG_VALUE.test(username) && Number.isSafeInteger(uid) && uid >= 0 ? { name: username, uid } : undefined;
 }
 
+/** Why the VM did not reach Docker-ready; 'data-disk' is not worth retrying. */
+export type SullaRuntimeStartFailure = 'spawn' | 'exited' | 'timeout' | 'data-disk' | 'orphan';
+
 export class SullaRuntimeStartError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly reason: SullaRuntimeStartFailure = 'exited') {
     super(message);
     this.name = 'SullaRuntimeStartError';
   }
@@ -117,34 +129,54 @@ export class NativeRuntime {
     process.once('exit', this.#killOnExit);
     readline.createInterface({ input: child.stderr! }).on('line', line => console.warn(`[sulla-runtime] ${ line }`));
 
+    const timeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    let capTimer: NodeJS.Timeout | undefined;
+    let quietTimer: NodeJS.Timeout | undefined;
+    let lastMilestone = 'spawn';
     const ready = new Promise<void>((resolve, reject) => {
+      const armQuietTimer = () => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(() => reject(new SullaRuntimeStartError(
+          `Docker was not ready: no progress for ${ QUIET_TIMEOUT_MS / 1000 }s after ${ lastMilestone }`, 'timeout')), QUIET_TIMEOUT_MS);
+      };
+
+      capTimer = setTimeout(() => reject(new SullaRuntimeStartError(
+        `Docker was not ready after ${ timeoutMs / 1000 }s (last step: ${ lastMilestone })`, 'timeout')), timeoutMs);
       readline.createInterface({ input: child.stdout! }).on('line', (line) => {
         const [kind, ...rest] = line.trim().split(/\s+/);
         const name = kind === 'event' ? `event:${ rest[0] }` : kind;
 
         if (!name) return;
+        lastMilestone = name;
         options.onMilestone?.(name, Date.now() - spawnedAt);
         if (kind === 'docker-ready' || kind === 'restored') {
           dockerReady = true;
           resolve();
+
+          return;
         }
+        // The guest refuses to start Docker without its data disk (it would
+        // run on RAM and lose everything); the reason is in the guest log.
+        if (name === 'event:data-disk-failed') {
+          reject(new SullaRuntimeStartError('Sulla\'s disk could not be mounted', 'data-disk'));
+
+          return;
+        }
+        // Before hello only the overall cap applies (see DEFAULT_READY_TIMEOUT_MS).
+        if (kind === 'hello' || kind === 'event') armQuietTimer();
       });
-      child.once('error', error => reject(new SullaRuntimeStartError(`could not start ${ this.artifacts.binary }: ${ error.message }`)));
+      child.once('error', error => reject(new SullaRuntimeStartError(`could not start ${ this.artifacts.binary }: ${ error.message }`, 'spawn')));
       child.once('exit', (code, signal) => reject(new SullaRuntimeStartError(`the runtime exited before Docker was ready (${ signal ?? `code ${ code }` })`)));
-    });
-    const timeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new SullaRuntimeStartError(`Docker was not ready after ${ timeoutMs / 1000 }s`)), timeoutMs);
     });
 
     try {
-      await Promise.race([ready, timeout]);
+      await ready;
     } catch (error) {
       await this.stop().catch(stopError => console.error('[sulla-runtime] stop after a failed start failed:', stopError));
       throw error;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(capTimer);
+      clearTimeout(quietTimer);
     }
   }
 
@@ -213,7 +245,7 @@ export class NativeRuntime {
       await new Promise(resolve => setTimeout(resolve, 1_000));
       if (!await this.status()) return;
     }
-    throw new SullaRuntimeStartError('a runtime from an earlier session did not stop');
+    throw new SullaRuntimeStartError('a runtime from an earlier session did not stop', 'orphan');
   }
 
   #release() {

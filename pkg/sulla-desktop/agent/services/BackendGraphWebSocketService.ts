@@ -9,7 +9,7 @@
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
-import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
+import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
@@ -658,7 +658,13 @@ export class BackendGraphWebSocketService {
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(
-          () => this.conversationContainer(channelId, threadId, provider, runState),
+          () => acquireWhenReady(
+            () => this.conversationContainer(channelId, threadId, provider, runState),
+            message => this.emitMessage(channelId, 'assistant_message', {
+              content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
+            }),
+            runAbort?.signal,
+          ),
           lost => this.recoverConversationContainer(channelId, threadId, provider, runState, lost),
           () => graph.execute(runState, startNode),
         );
@@ -674,10 +680,14 @@ export class BackendGraphWebSocketService {
           state.metadata.waitingForUser = true;
         }
       } else if (err?.name !== 'AbortError') {
-        firstRunTrace('chat', 'chat error surfaced', { message: err?.message || String(err) });
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
+        // Launch errors are already written for the user; the detail is in the log.
+        const content = err?.name === 'AgentLaunchError'
+          ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
+          : `Agent error: ${ err.message || String(err) }`;
+        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
         this.emitMessage(channelId, 'assistant_message', {
-          content:   `Agent error: ${ err.message || String(err) }`,
+          content,
           role:      'assistant',
           thread_id: threadId,
         });
