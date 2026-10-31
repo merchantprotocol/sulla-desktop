@@ -1161,6 +1161,7 @@
   flex: none;
   padding: 12px 10px 60px 14px;
   text-align: right;
+  white-space: pre;
   color: #bcc5d0;
   font: 12.5px/20px var(--mono);
   user-select: none
@@ -1287,6 +1288,10 @@
   font-family: inherit;
   color: var(--tx);
   width: 118px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   outline: none;
   padding: 4px 6px;
   border-radius: 6px
@@ -1298,6 +1303,15 @@
 
 .shb-wb-name:focus {
   background: var(--acs)
+}
+
+.shb-wb-name-static {
+  display: inline-block;
+  width: auto;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .shb-wb-name-static:hover {
