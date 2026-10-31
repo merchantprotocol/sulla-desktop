@@ -438,7 +438,22 @@ export class BackendGraphWebSocketService {
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
     const { getModelProviderService } = await import('./ModelProviderService');
-    if (!getModelProviderService().getPrimaryProvider().trim()) {
+    const modelProvider = getModelProviderService();
+    // Before the saved model choice loads (it waits for the vault on a
+    // relaunch), an empty provider is not evidence that no AI is connected.
+    // Give it a minute rather than bouncing the user's first message.
+    for (let waited = 0; !modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID && waited < 60; waited++) {
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+    }
+    if (!modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID) {
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'Sulla is still starting up. Send your message again in a moment.',
+        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat held: model choice not loaded yet', { channelId });
+      return;
+    }
+    if (!modelProvider.isInitialized() || !modelProvider.getPrimaryProvider().trim()) {
       if (channelId === HEARTBEAT_CHANNEL_ID) {
         console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
         return;
