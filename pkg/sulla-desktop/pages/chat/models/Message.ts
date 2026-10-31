@@ -252,7 +252,7 @@ export interface ErrorMessage extends MessageBase {
   kind:    'error';
   text:    string;
   detail?: string;
-  action?: { label: string; kind: 'retry' | 'continue' | 'dismiss' };
+  action?: { label: string; kind: 'retry' | 'continue' | 'dismiss' | 'connect' };
 }
 
 // ─── HTML reply ───────────────────────────────────────────────────

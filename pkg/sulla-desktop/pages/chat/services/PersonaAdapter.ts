@@ -305,6 +305,18 @@ export class PersonaAdapter {
 
   // ─── Intents dispatched by the controller ──────────────────────────
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
+    const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
+      .catch(() => ({ connected: false, loading: true }));
+    if (!aiStatus.loading && !aiStatus.connected) {
+      this.controller.appendMessage({
+        id:        asMessageId(`no-ai-${ Date.now() }`),
+        kind:      'error',
+        text:      'Connect an AI model to start chatting',
+        action:    { label: 'Connect', kind: 'connect' },
+        createdAt: Date.now(),
+      });
+      return;
+    }
     this.ci.query.value = text;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)

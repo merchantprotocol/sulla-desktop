@@ -136,6 +136,11 @@ class ModelProviderService {
     return { ...this.state };
   }
 
+  /** True once the saved model choice has been loaded. */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
   getPrimaryProvider(): string {
     return this.state.primaryProvider;
   }
