@@ -90,7 +90,15 @@
             ref="transcriptEl"
             class="fr-card"
           >
+            <p
+              v-if="resuming"
+              class="fr-resuming"
+              role="status"
+            >
+              Picking up where you left off…
+            </p>
             <Transition
+              v-else
               name="fr-pane"
               mode="out-in"
             >
@@ -145,6 +153,8 @@ const lastStep = steps.length - 1;
 let navigating = true;
 
 const quitting = ref(false);
+// True while mount works out which step to resume at; no step shows meanwhile.
+const resuming = ref(true);
 const backendFailure = ref<{ message: string; detail?: string } | null>(null);
 const retrying = ref(false);
 const retryNote = ref('');
@@ -213,6 +223,9 @@ const progressPercent = computed(() => {
 
 provide('settings', settings);
 
+// After a relaunch the vault may hold the sign-in but take a while to start.
+const RESUME_VAULT_WAIT_MS = 90_000;
+
 /**
  * Tell main which step the wizard is on. Main saves it and sets the
  * coordinator condition in one call. A failed save never strands the user.
@@ -241,7 +254,7 @@ onMounted(async() => {
   // Your AI needs the Cloud sign-in, which lives only in main's memory. After
   // a restart it's gone, so go back to Account, which asks for the password.
   if (saved > 1 && saved < lastStep) {
-    const account = state?.choices?.accountChoice ? await firstRunAccountSignedIn() : null;
+    const account = state?.choices?.accountChoice ? await firstRunAccountSignedIn({ waitForVaultMs: RESUME_VAULT_WAIT_MS }) : null;
 
     if (!account?.signedIn) resumeStep = 1;
   }
@@ -249,6 +262,7 @@ onMounted(async() => {
     reason: resumeStep === saved ? undefined : state?.choices?.accountChoice ? 'Cloud sign-in no longer held' : 'no account choice saved',
   });
   currentStep.value = resumeStep;
+  resuming.value = false;
   // Re-sent on every load: a crash between saving Finishing and telling main
   // must not leave the coordinator waiting.
   if (resumeStep !== saved || resumeStep === lastStep) await reportStep(resumeStep);
@@ -324,8 +338,10 @@ async function goTo(to: number, from?: number) {
     await reportStep(target);
     traceFirstRun('wizard', `left ${ stepNames[currentStep.value] }, entered ${ stepNames[target] }`);
     currentStep.value = target;
+    // Welcome passed: start (or resize) the workspace. Not awaited, so a slow
+    // start never holds the next screen.
     if (target === 1) {
-      await ipcRenderer.invoke('start-backend' as any).catch((err: unknown) => console.warn('[FirstRun] start-backend failed:', err));
+      ipcRenderer.invoke('start-backend' as any).catch((err: unknown) => console.warn('[FirstRun] start-backend failed:', err));
     }
   } finally {
     navigating = false;
@@ -438,6 +454,12 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 560px;
+}
+
+.fr-resuming {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-muted, #64748b);
 }
 
 /* ---- stage: the step sits directly on the page, centered ---- */

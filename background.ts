@@ -164,6 +164,11 @@ let firstRunCredentialsWatch: ReturnType<typeof setInterval> | undefined;
 // Last backend start failure while the wizard is open. The wizard shows it
 // with Try again instead of a native error window.
 let firstRunBackendFailure: { message: string; detail?: string } | null = null;
+// What failed, kept so the main window can show it with Retry if the user
+// opens Sulla anyway from the wizard.
+let firstRunBackendFailurePayload: unknown;
+// The runtime's own plain reason for the last failed start (disk full, etc.).
+let firstRunLastStartFailure: { reason: string; message: string } | undefined;
 let gone = false; // when true indicates app is shutting down
 let shuttingDown = false; // re-entrancy guard for before-quit handler
 let backendStarted = false;
@@ -415,9 +420,21 @@ mainEvents.on('sulla-managed-services-ready', async() => {
     firstRunTrace('wizard', 'services ready after a failure; clearing the banner');
     // A later attempt worked: clear the wizard's failure banner.
     firstRunBackendFailure = null;
+    firstRunBackendFailurePayload = undefined;
     window.getWindow('first-run')?.webContents.send('first-run:backend-failed', null);
   }
   await firstRunCoordinator.setCondition('deployCompleted');
+});
+
+// The runtime reports a failed start in plain words. Some failures (a
+// non-fatal BackendError) never reach handleFailure, so show them here too.
+mainEvents.on('sulla-backend-start-failed', (failure) => {
+  // Keep the specific disk-space reason over the generic "engine stopped"
+  // that the same failed start reports right after it.
+  if (failure.reason === 'disk-space' || firstRunLastStartFailure?.reason !== 'disk-space') {
+    firstRunLastStartFailure = failure;
+  }
+  showFirstRunBackendFailure(new Error(failure.message), failure.message);
 });
 
 // A failed start must not leave the boot screen up: open the app degraded.
@@ -676,17 +693,25 @@ Electron.app.whenReady().then(async() => {
     }
 
 
-    console.log(`[startup-perf] calling startBackend at ${ Date.now() }`);
-    let backendT = Date.now();
+    if (firstRunWaitsForWelcome()) {
+      // Fresh install: Welcome checks memory, CPUs and disk and lets the user
+      // pick the VM size. Start nothing until it passes ('start-backend'), so
+      // a too-small Mac never gets a VM and the first boot uses the chosen size.
+      console.log('[FirstRun] Fresh install; the workspace starts after Welcome');
+      firstRunTrace('wizard', 'fresh install: waiting for Welcome before starting the workspace');
+    } else {
+      console.log(`[startup-perf] calling startBackend at ${ Date.now() }`);
+      let backendT = Date.now();
 
-    await startBackend();
-    console.log(`[startup-perf] first startBackend: ${ Date.now() - backendT }ms`);
-
-    if (!backendStarted) {
-      backendT = Date.now();
       await startBackend();
-      console.log(`[startup-perf] second startBackend: ${ Date.now() - backendT }ms`);
-      backendStarted = true;
+      console.log(`[startup-perf] first startBackend: ${ Date.now() - backendT }ms`);
+
+      if (!backendStarted) {
+        backendT = Date.now();
+        await startBackend();
+        console.log(`[startup-perf] second startBackend: ${ Date.now() - backendT }ms`);
+        backendStarted = true;
+      }
     }
 
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
@@ -791,6 +816,18 @@ async function initUI() {
     // Closing the wizard while a quit is in progress must not open main.
     if (gone || shuttingDown) return;
     if (!cfg.application.startInBackground) window.openMain();
+    // Opened anyway after a failed start: show what failed with Retry, now
+    // over the main window instead of the wizard.
+    if (firstRunBackendFailure) {
+      const failure = firstRunBackendFailure;
+
+      firstRunBackendFailure = null;
+      firstRunTrace('wizard', 'wizard closed with the workspace failed; showing the error with Retry in main');
+      handleFailure(firstRunBackendFailurePayload ?? new Error(failure.detail || failure.message)).catch((err: any) => {
+        console.error('[FirstRun] Could not show the workspace failure in main:', err);
+      });
+      firstRunBackendFailurePayload = undefined;
+    }
   }).catch((error) => {
     console.error('[FirstRun] Could not open onboarding:', error);
     e2eTrace(`first-run dialog failed: ${ error?.stack || error }`);
@@ -870,6 +907,20 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
   await ensure('sullaApiToken', () => SullaSettingsModel.generateEncryptionKey(48));
 }
 
+/**
+ * Whether launch must leave the backend stopped until Welcome passes: the
+ * wizard is open on Welcome and setup never got past it. doFirstRunDialog has
+ * already settled the state file (initUI runs it first).
+ */
+function firstRunWaitsForWelcome(): boolean {
+  if (noModalDialogs) return false;
+  // E2E runs without a real backend start from the wizard ('start-backend').
+  if (!(Electron.app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') return false;
+  const state = getFirstRunState();
+
+  return state.onboardingComplete !== true && state.step === 0;
+}
+
 async function doFirstRunDialog() {
   const { state, status } = readFirstRunStateFile();
   let { onboardingComplete } = state;
@@ -883,10 +934,7 @@ async function doFirstRunDialog() {
     // first-run-state.json existed. Only a vault that was actually created,
     // or the legacy "credentials saved" flag, proves the latter. settings.json
     // and the per-boot vault identity/control files do not.
-    const vaultCreated = [
-      path.join(paths.appHome, 'vault-v2-key.enc'),
-      path.join(paths.sullaConfig, 'vault-key.enc'),
-    ].some(candidate => fs.existsSync(candidate));
+    const vaultCreated = firstRunVaultExists();
     let credentialsWereSaved = false;
 
     try {
@@ -1090,6 +1138,7 @@ async function startBackend() {
 
     return;
   }
+  firstRunLastStartFailure = undefined;
   try {
     launchedVmResources = {
       memoryInGB: cfg.virtualMachine.memoryInGB,
@@ -1206,6 +1255,14 @@ Electron.app.on('before-quit', async(event) => {
   }
   if (shuttingDown) {
     console.log('[Shutdown] before-quit: shutdown already in progress, suppressing duplicate');
+    event.preventDefault();
+
+    return;
+  }
+  // Quitting on Finishing drops sign-ins held only in memory: the wizard
+  // asks first and quits again itself if the owner confirms.
+  if (!isRestarting && window.holdQuitForFirstRun()) {
+    console.log('[Shutdown] before-quit: held while the first-run wizard asks to confirm');
     event.preventDefault();
 
     return;
@@ -1437,9 +1494,12 @@ ipcMainProxy.handle('start-backend' as any, async() => {
     window.send('first-run-ai:ready');
     return;
   }
+  // Never await the boot here: the first one takes minutes, and the wizard
+  // must keep moving while it runs. startBackend reports its own failures.
   if (!backendStarted) {
-    await startBackend();
     backendStarted = true;
+    firstRunTrace('wizard', 'starting the workspace', { memoryInGB: cfg.virtualMachine.memoryInGB, numberCPUs: cfg.virtualMachine.numberCPUs });
+    void startBackend().catch(err => console.error('[FirstRun] Could not start the workspace:', err));
 
     return;
   }
@@ -1452,10 +1512,14 @@ ipcMainProxy.handle('start-backend' as any, async() => {
   if (resourcesChanged) {
     const context = { interactive: false };
 
+    // A restart in the middle of the first install (image download, disk
+    // creation) is unsafe; wait until the current start settles.
     if (backendIsBusy()) {
+      firstRunTrace('wizard', 'VM size changed while the workspace is starting; restarting once it settles');
       pendingRestartContext = context;
     } else {
-      await doK8sReset('fullRestart', context);
+      firstRunTrace('wizard', 'VM size changed; restarting the workspace');
+      void doK8sReset('fullRestart', context).catch(err => console.error('[FirstRun] Could not restart the workspace:', err));
     }
   }
 });
@@ -1621,17 +1685,23 @@ ipcMainProxy.handle('first-run-wizard-step' as any, async(event: Electron.IpcMai
   // saved-sign-in flag as it is.
   if (firstRunCoordinator.isConditionMet('wizardFinished')) return getFirstRunState();
 
-  // Reaching Finishing means every user-driven screen is complete. AI may be
-  // connected now or deferred; either way the wizard must not recur. The
-  // sign-ins are still only in memory, so remember that until the vault has
-  // them: a relaunch before then asks for the password again.
-  const state = updateFirstRunState({ onboardingComplete: true, step: target, credentialsSaved: false });
+  return await markFirstRunWizardFinished();
+});
+
+/**
+ * Reaching Finishing means every user-driven screen is complete. AI may be
+ * connected now or deferred; either way the wizard must not recur. The
+ * sign-ins are still only in memory, so remember that until the vault has
+ * them: a relaunch before then asks for the password again.
+ */
+async function markFirstRunWizardFinished() {
+  const state = updateFirstRunState({ onboardingComplete: true, step: FIRST_RUN_LAST_STEP, credentialsSaved: false });
 
   watchFirstRunCredentialsSaved();
   await firstRunCoordinator.setCondition('wizardFinished');
 
   return state;
-});
+}
 
 // Plain names for what Finishing is still saving.
 const FIRST_RUN_PENDING_LABELS: Record<string, string> = {
@@ -1641,16 +1711,30 @@ const FIRST_RUN_PENDING_LABELS: Record<string, string> = {
   grok:          'Grok',
 };
 
-/** Whether the vault is unlocked and holds every sign-in made during setup. */
-async function firstRunCredentialsStatus(): Promise<{ saved: boolean; waitingOn: string[] }> {
+/**
+ * Whether the vault is unlocked and holds every sign-in made during setup.
+ * `vaultServiceReady` says the vault service is up, so saving can start:
+ * Finishing only calls it stuck from then on, not while the VM installs.
+ */
+async function firstRunCredentialsStatus(): Promise<{ saved: boolean; waitingOn: string[]; vaultServiceReady: boolean }> {
   const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
   const { pendingIntegrationIds } = await import('@pkg/main/firstRun/pendingCredentials');
+  const lifecycle = getServiceLifecycleManager();
   const waitingOn: string[] = [];
+  const vaultServiceReady = lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
 
-  if (!getServiceLifecycleManager().isVaultUnlocked()) waitingOn.push('your vault');
+  if (!lifecycle.isVaultUnlocked()) waitingOn.push('your vault');
   for (const id of pendingIntegrationIds()) waitingOn.push(FIRST_RUN_PENDING_LABELS[id] || id);
 
-  return { saved: waitingOn.length === 0, waitingOn };
+  return { saved: waitingOn.length === 0, waitingOn, vaultServiceReady };
+}
+
+/** A vault was created on this Mac (same files doFirstRunDialog checks). */
+function firstRunVaultExists(): boolean {
+  return [
+    path.join(paths.appHome, 'vault-v2-key.enc'),
+    path.join(paths.sullaConfig, 'vault-key.enc'),
+  ].some(candidate => fs.existsSync(candidate));
 }
 
 /**
@@ -1706,15 +1790,22 @@ ipcMainProxy.handle('first-run:retry-credentials' as any, async(event: Electron.
 
 // After a reload, the Cloud sign-in may already be in the vault rather than
 // in memory. The account step uses this to avoid asking for it again.
-// Saving a sign-in has stalled and the owner chose to go on. Open the app;
-// the sign-ins stay in memory and keep retrying in the background. The state
-// file still says they are unsaved, so a relaunch before they land asks for
-// the password again instead of opening an app with no account.
+// Setup is slow, stalled or failed and the owner chose to go on. Open the
+// app now: it has its own startup screen, and a failed start shows there
+// with Retry. The sign-ins stay in memory and keep retrying in the
+// background. The state file still says they are unsaved, so a relaunch
+// before they land asks for the password again instead of opening an app
+// with no account.
 ipcMainProxy.handle('first-run:continue-anyway' as any, async(event: Electron.IpcMainInvokeEvent) => {
   requireFirstRunStateSender(event);
-  const { waitingOn } = await firstRunCredentialsStatus();
-  firstRunTrace('wizard', 'Open Sulla anyway: closing while sign-ins are still unsaved', { waitingOn });
+  const { waitingOn } = await firstRunCredentialsStatus().catch(() => ({ waitingOn: ['unknown'] }));
+  firstRunTrace('wizard', 'Open Sulla anyway: closing the wizard before setup finished', {
+    waitingOn, deployCompleted: firstRunCoordinator.isConditionMet('deployCompleted'), backendFailed: !!firstRunBackendFailure, backendState: k8smanager.state,
+  });
+  // Every condition the close gate needs, so this always closes the wizard.
+  if (!firstRunCoordinator.isConditionMet('wizardFinished')) await markFirstRunWizardFinished();
   await firstRunCoordinator.setCondition('credentialsSaved');
+  await firstRunCoordinator.setCondition('deployCompleted');
 });
 
 ipcMainProxy.handle('first-run:account-saved' as any, async(event: Electron.IpcMainInvokeEvent) => {
@@ -1724,10 +1815,13 @@ ipcMainProxy.handle('first-run:account-saved' as any, async(event: Electron.IpcM
 
   const unlocked = getServiceLifecycleManager().isVaultUnlocked();
   const saved = unlocked && await isCloudSignedIn().catch(() => false);
+  // A vault on disk may still be starting after a relaunch; the wizard waits
+  // for it before asking for the password again.
+  const vaultExists = firstRunVaultExists();
 
-  firstRunTrace('wizard', 'checked whether the vault holds the Cloud sign-in', { vaultUnlocked: unlocked, saved });
+  firstRunTrace('wizard', 'checked whether the vault holds the Cloud sign-in', { vaultUnlocked: unlocked, saved, vaultExists });
 
-  return { saved };
+  return { saved, vaultExists };
 });
 
 ipcMainProxy.handle('first-run:wizard-status' as any, (event: Electron.IpcMainInvokeEvent) => {
@@ -1752,6 +1846,9 @@ ipcMainProxy.handle('first-run:retry-backend' as any, (event: Electron.IpcMainIn
   firstRunTrace('wizard', 'Try again: restarting the workspace', { backendState: k8smanager.state });
   if (k8smanager.state === State.STARTING) return { started: false };
   firstRunBackendFailure = null;
+  firstRunBackendFailurePayload = undefined;
+  // Every wizard screen that shows the failure clears it now.
+  window.getWindow('first-run')?.webContents.send('first-run:backend-failed', null);
   setImmediate(() => {
     void startBackend();
   });
@@ -2290,6 +2387,29 @@ function showErrorDialog(title: string, message: string, fatal?: boolean) {
   }
 }
 
+/**
+ * While the wizard is open, show a failed start there with Try again instead
+ * of a native error window. Returns false when there is no open wizard.
+ */
+function showFirstRunBackendFailure(payload: any, plainDetail?: string): boolean {
+  const firstRunWindow = window.getWindow('first-run');
+
+  if (shuttingDown || gone || firstRunDialogComplete || !firstRunWindow || firstRunWindow.isDestroyed()) return false;
+  console.error('[FirstRun] Backend failed to start during setup:', payload);
+  const detail = plainDetail || (payload instanceof Error ? payload.message : typeof payload?.message === 'string' ? payload.message : '');
+  const diskFull = firstRunLastStartFailure?.reason === 'disk-space' || /ENOSPC|no space left/i.test(detail);
+  const message = diskFull
+    ? (firstRunLastStartFailure?.reason === 'disk-space' ? firstRunLastStartFailure.message : 'Your Mac ran out of disk space. Free up at least 10 GB, then try again.')
+    : 'Sulla\'s private workspace didn\'t start.';
+
+  firstRunBackendFailure = { message, detail: diskFull ? undefined : detail || undefined };
+  firstRunBackendFailurePayload = payload;
+  firstRunTrace('wizard', 'workspace failed to start; showing Try again in the wizard', { error: detail, diskFull, backendState: k8smanager.state });
+  firstRunWindow.webContents.send('first-run:backend-failed', firstRunBackendFailure);
+
+  return true;
+}
+
 async function handleFailure(payload: any) {
   if (shuttingDown || gone) {
     return;
@@ -2298,18 +2418,7 @@ async function handleFailure(payload: any) {
   // First launch boots in parallel with onboarding. While the wizard is open,
   // a start failure shows there with Try again instead of a native error
   // window, and the wizard stays open rather than handing off to a broken app.
-  const firstRunWindow = window.getWindow('first-run');
-
-  if (!firstRunDialogComplete && firstRunWindow && !firstRunWindow.isDestroyed()) {
-    console.error('[FirstRun] Backend failed to start during setup:', payload);
-    const detail = payload instanceof Error ? payload.message : typeof payload?.message === 'string' ? payload.message : '';
-
-    firstRunBackendFailure = { message: 'Sulla\'s private workspace didn\'t start.', detail: detail || undefined };
-    firstRunTrace('wizard', 'workspace failed to start; showing Try again in the wizard', { error: detail, backendState: k8smanager.state });
-    firstRunWindow.webContents.send('first-run:backend-failed', firstRunBackendFailure);
-
-    return;
-  }
+  if (showFirstRunBackendFailure(payload)) return;
 
   // No wizard window (yet): keep the old behaviour of opening the app degraded.
   if (!firstRunDialogComplete && k8smanager.state === State.STARTING) {
