@@ -110,6 +110,15 @@
         >
           {{ checkingPreflight ? 'Checking this computer…' : preflightAttempted ? 'Retry →' : 'Get started →' }}
         </button>
+        <button
+          v-if="networkCheckFailed"
+          type="button"
+          class="frw-link"
+          :disabled="checkingPreflight"
+          @click="continueWithoutNetworkCheck"
+        >
+          Continue anyway
+        </button>
         <span class="frw-trust">You choose what syncs on the next screens and can change it later.</span>
       </div>
       </template>
@@ -123,6 +132,8 @@ import os from 'os';
 import { ipcRenderer } from 'electron';
 import { ref, computed, inject, onMounted, Ref } from 'vue';
 
+import { traceFirstRun } from './firstRunWizard';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import SystemPreferences from '@pkg/components/SystemPreferences.vue';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
@@ -133,12 +144,13 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;
 const emit = defineEmits<{
-  next: [];
-  back: [];
+  next: [from?: number];
+  back: [from?: number];
 }>();
 
 const props = defineProps<{
   showBack?: boolean;
+  stepIndex?: number;
 }>();
 
 // Reactive ref for telemetry
@@ -151,6 +163,9 @@ const isOptionsOpen = ref(false);
 const resourceError = ref('');
 const checkingPreflight = ref(false);
 const preflightAttempted = ref(false);
+// Only the internet check failed. The account step tests the connection for
+// real, so the user may go on.
+const networkCheckFailed = ref(false);
 
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
@@ -234,24 +249,42 @@ const handleNext = async() => {
 
   checkingPreflight.value = true;
   preflightAttempted.value = true;
+  networkCheckFailed.value = false;
+  traceFirstRun('wizard', 'Get started clicked', { memoryInGB: settings.value.virtualMachine.memoryInGB, numberCPUs: settings.value.virtualMachine.numberCPUs });
   try {
     const preflight = await ipcRenderer.invoke('first-run-preflight');
 
+    traceFirstRun('wizard', preflight?.ok ? 'preflight passed' : 'preflight stopped setup', { kind: preflight?.kind, canContinue: preflight?.canContinue });
     if (!preflight?.ok) {
       resourceError.value = preflight?.message || 'Sulla could not check this computer. Retry to check again.';
+      networkCheckFailed.value = preflight?.kind === 'network' && preflight?.canContinue === true;
+      checkingPreflight.value = false;
 
       return;
     }
   } catch (err) {
     console.warn('[FirstRunResources] Preflight failed:', err);
+    traceFirstRun('wizard', 'preflight call failed', { error: err instanceof Error ? err.message : String(err) });
     resourceError.value = 'Sulla could not check disk space and internet access. Retry to check again.';
+    checkingPreflight.value = false;
 
     return;
-  } finally {
-    checkingPreflight.value = false;
   }
 
-  // Save the VM resources
+  // Stays busy until the next screen replaces this one, so a second click
+  // can't skip a step.
+  await saveResourcesAndContinue();
+};
+
+const continueWithoutNetworkCheck = async() => {
+  if (checkingPreflight.value) return;
+  checkingPreflight.value = true;
+  resourceError.value = '';
+  traceFirstRun('wizard', 'Continue anyway clicked after the internet check failed');
+  await saveResourcesAndContinue();
+};
+
+const saveResourcesAndContinue = async() => {
   await commitChanges({
     virtualMachine: {
       memoryInGB: (settings.value as any).virtualMachine.memoryInGB,
@@ -259,7 +292,7 @@ const handleNext = async() => {
     },
   });
 
-  emit('next');
+  emit('next', props.stepIndex);
 };
 </script>
 
@@ -568,6 +601,17 @@ input:hover, select:hover {
 .frw-trust {
   font-size: 13px;
   color: var(--text-muted, #64748b);
+}
+
+.frw-link {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-primary, #3d7fa0);
+  background: none;
+  border: none;
+  cursor: pointer;
+
+  &:disabled { opacity: .5; cursor: wait; }
 }
 
 .theme-noir .frw {

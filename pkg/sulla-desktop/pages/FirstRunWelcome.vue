@@ -8,7 +8,7 @@
   <div class="max-w-lg mx-0 p-6">
     <form v-if="step === 'account'" class="fr-account-step" @submit.prevent="handleAccountSubmit">
       <div class="fr-step-body">
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Create your Sulla account</h2>
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Create or connect your Sulla account</h2>
       <p class="mb-6 secondary-text">This is the one account you use for Desktop, Mobile, and Sulla Cloud.</p>
       <rd-fieldset legend-text="About you" class="mb-6 heading-text">
         <div class="mb-4">
@@ -25,20 +25,27 @@
         <label class="flex items-center"><input v-model="sullaSubscribeToUpdates" type="checkbox" class="mr-2"><span class="text-sm label-text">Email me product updates and new automation ideas</span></label>
       </rd-fieldset>
       </div>
-      <div class="flex items-center justify-end mt-5 fr-account-actions">
-        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary">Continue</button>
+      <div class="flex items-center justify-end gap-4 mt-5 fr-account-actions">
+        <button v-if="showBack" type="button" class="link-btn" :disabled="accountChecking" @click="emit('back', stepIndex)">Back</button>
+        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': accountChecking }" :disabled="accountChecking">{{ accountChecking ? 'Checking…' : 'Continue' }}</button>
       </div>
     </form>
 
     <form v-if="step === 'cloud'" class="fr-account-step" @submit.prevent="handleCloudSubmit">
       <div class="fr-step-body">
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">{{ cloudAccountExists ? 'Sign in to Sulla Cloud' : 'Choose your account password' }}</h2>
-      <p class="mb-6 secondary-text"><template v-if="cloudAccountExists"><strong>{{ sullaEmail }}</strong> already has an account. Enter its password to connect this Mac.</template><template v-else>This password signs you in on Desktop, Mobile, and Cloud. You'll create your isolated local vault after setup.</template></p>
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">{{ cloudHeading }}</h2>
+      <p class="mb-6 secondary-text">
+        <template v-if="passwordForVault">You're signed in as <strong>{{ sullaEmail }}</strong>. Sulla also uses this password to lock your vault on this Mac.</template>
+        <template v-else-if="signInAgain">Sulla needs it once more to finish setting up this Mac for <strong>{{ sullaEmail }}</strong>.</template>
+        <template v-else-if="accountExists === true"><strong>{{ sullaEmail }}</strong> already has an account. Enter its password to connect this Mac.</template>
+        <template v-else-if="accountExists === false">You're creating an account for <strong>{{ sullaEmail }}</strong>. This password signs you in on Desktop, Mobile, and Cloud, and protects your vault.</template>
+        <template v-else>Signing in as <strong>{{ sullaEmail }}</strong>. New here? Choose a password. Already have an account? Use its password.</template>
+      </p>
       <div class="mb-4">
         <label for="cloudPassword" class="block text-sm font-medium mb-1 label-text">Account password</label>
-        <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="Your password">
+        <input id="cloudPassword" v-model="cloudPassword" type="password" :autocomplete="accountExists === false ? 'new-password' : 'current-password'" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="Your password">
         <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
-        <button v-if="cloudAccountExists && emailRecoveryAvailable" type="button" class="link-btn mt-2" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
+        <button v-if="accountExists === true && emailRecoveryAvailable && !cloudCodeSent && !passwordForVault" type="button" class="link-btn mt-2" :disabled="cloudSubmitting" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
       </div>
       <div v-if="cloudCodeSent" class="mb-4">
         <label for="cloudCode" class="block text-sm font-medium mb-1 label-text">Email code</label>
@@ -46,8 +53,9 @@
         <button type="button" class="link-btn mt-2" :disabled="cloudSubmitting" @click="verifyRecoveryCode">Verify code and continue</button>
       </div>
       </div>
-      <div class="flex items-center justify-end mt-5 fr-account-actions">
-        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }" :disabled="cloudSubmitting">{{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Create account and continue') }}</button>
+      <div class="flex items-center justify-end gap-4 mt-5 fr-account-actions">
+        <button type="button" class="link-btn" :disabled="cloudSubmitting" @click="useDifferentEmail">Use a different email</button>
+        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudBusy }" :disabled="cloudBusy">{{ cloudSubmitLabel }}</button>
       </div>
     </form>
 
@@ -59,7 +67,7 @@
       </div>
       <div class="frs-actions fr-account-actions">
         <button type="button" class="px-8 py-3 rounded-md transition-colors font-semibold hover:opacity-90 btn-primary frs-sync-all" :disabled="syncSubmitting" @click="handleSyncChoices(true)">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Sync everything') }}</button>
-        <button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway</button>
+        <button v-if="syncError" type="button" class="link-btn" :disabled="syncSubmitting" @click="continueAnyway">Continue anyway</button>
         <p class="text-xs secondary-text frs-note">You can turn individual things off later in Settings.</p>
       </div>
     </div>
@@ -68,20 +76,30 @@
 
 <script setup lang="ts">
 import { ipcRenderer } from 'electron';
-import { onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+
+import { firstRunAccountSignedIn, traceFirstRun } from './firstRunWizard';
 
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 
-const emit = defineEmits<{ next: []; back: [] }>();
-defineProps<{ showBack?: boolean }>();
+const emit = defineEmits<{ next: [from?: number]; back: [from?: number] }>();
+const props = defineProps<{ showBack?: boolean; stepIndex?: number }>();
 const step = ref<'account' | 'cloud' | 'sync'>('account');
 const cloudPassword = ref('');
 const cloudError = ref('');
 const cloudSubmitting = ref(false);
-const cloudAccountExists = ref(false);
+// true: the email has an account; false: it doesn't; null: we couldn't tell.
+const accountExists = ref<boolean | null>(null);
+// Setup was interrupted after sign-in; the session only lived in memory.
+const signInAgain = ref(false);
+// Signed in with an email code. The vault still needs the password.
+const passwordForVault = ref(false);
+const accountChecking = ref(false);
 const emailRecoveryAvailable = ref(false);
 const cloudCode = ref('');
 const cloudCodeSent = ref(false);
+const retrySeconds = ref(0);
+let retryTimer: ReturnType<typeof setInterval> | undefined;
 let cloudAttempt = 0;
 const sullaEmail = ref('');
 const primaryUserName = ref('');
@@ -89,6 +107,7 @@ const sullaSubscribeToUpdates = ref(true);
 const emailError = ref('');
 const syncError = ref('');
 const syncSubmitting = ref(false);
+let savedCloudPreferences = false;
 const syncCategories = ref([
   { key: 'conversations', label: 'Conversations', description: 'continue chats on your other devices', enabled: true },
   { key: 'files', label: 'Files', description: 'make your Sulla Files available everywhere', enabled: true },
@@ -105,6 +124,24 @@ const syncCategories = ref([
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let testAutopilot = '';
 
+const cloudHeading = computed(() => {
+  if (passwordForVault.value) return 'Enter your Sulla password once more';
+  if (signInAgain.value) return 'Enter your password again';
+  if (accountExists.value === true) return 'Sign in to Sulla Cloud';
+  if (accountExists.value === false) return 'Choose your account password';
+
+  return 'Enter your Sulla password';
+});
+const cloudBusy = computed(() => cloudSubmitting.value || retrySeconds.value > 0);
+const cloudSubmitLabel = computed(() => {
+  if (cloudSubmitting.value) return 'Connecting…';
+  if (retrySeconds.value > 0) return `Try again in ${ retrySeconds.value }s`;
+  if (signInAgain.value || accountExists.value === true) return 'Sign in and continue';
+  if (accountExists.value === false) return 'Create account and continue';
+
+  return 'Continue';
+});
+
 function validateEmail() {
   const email = sullaEmail.value.trim();
   emailError.value = !email ? 'Email is required.' : !emailRegex.test(email) ? 'Please enter a valid email address.' : '';
@@ -113,62 +150,180 @@ function validateEmail() {
 
 onMounted(async() => {
   testAutopilot = await ipcRenderer.invoke('first-run-test-autopilot:get' as any).catch(() => '');
-  const state = await ipcRenderer.invoke('first-run-state:get');
+  const state = await ipcRenderer.invoke('first-run-state:get').catch(() => null);
   const choices = state?.choices ?? {};
   sullaEmail.value = typeof choices.sullaEmail === 'string' ? choices.sullaEmail : '';
   primaryUserName.value = typeof choices.primaryUserName === 'string' ? choices.primaryUserName : '';
   sullaSubscribeToUpdates.value = choices.sullaSubscribeToUpdates !== false;
+  savedCloudPreferences = !!choices.cloudPreferences && typeof choices.cloudPreferences === 'object';
+
+  // Already signed in earlier. The session lives only in main-process memory,
+  // so ask main whether it is still there before skipping ahead.
+  if (choices.accountChoice === 'cloud') {
+    const account = await firstRunAccountSignedIn();
+
+    traceFirstRun('account', account.signedIn ? 'already signed in; showing sync' : 'asking for the password again', { hasEmail: !!(account.email || sullaEmail.value) });
+    if (account.signedIn) {
+      step.value = 'sync';
+    } else {
+      if (account.email) sullaEmail.value = account.email;
+      signInAgain.value = !!sullaEmail.value;
+      accountExists.value = signInAgain.value ? true : null;
+      step.value = signInAgain.value ? 'cloud' : 'account';
+      if (signInAgain.value) void refreshRecoveryAvailability();
+    }
+  }
 });
 
+onBeforeUnmount(() => { if (retryTimer) clearInterval(retryTimer) });
+
+/** Ask Cloud whether the email has an account. null means we couldn't tell. */
+async function lookupAccount(email: string): Promise<boolean | null> {
+  try {
+    const res = await Promise.race([
+      ipcRenderer.invoke('sulla-cloud:account-exists' as any, email),
+      new Promise(resolve => setTimeout(() => resolve(null), 10_000)),
+    ]) as { exists?: boolean | null } | null;
+
+    return typeof res?.exists === 'boolean' ? res.exists : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Never throws: a failed check just hides the email-code option. */
+async function refreshRecoveryAvailability() {
+  try {
+    const availability = await ipcRenderer.invoke('sulla-cloud:email-code-availability');
+    emailRecoveryAvailable.value = availability?.available === true;
+  } catch {
+    emailRecoveryAvailable.value = false;
+  }
+}
+
+function startRetryCountdown(seconds: number) {
+  if (retryTimer) clearInterval(retryTimer);
+  retrySeconds.value = Math.max(1, Math.ceil(seconds));
+  retryTimer = setInterval(() => {
+    retrySeconds.value -= 1;
+    if (retrySeconds.value <= 0) {
+      retrySeconds.value = 0;
+      if (retryTimer) clearInterval(retryTimer);
+      retryTimer = undefined;
+    }
+  }, 1_000);
+}
+
 async function handleAccountSubmit() {
-  if (!validateEmail()) return;
-  await saveChoices({ primaryUserName: primaryUserName.value.trim(), sullaEmail: sullaEmail.value.trim(), sullaSubscribeToUpdates: sullaSubscribeToUpdates.value });
-  step.value = 'cloud';
+  if (accountChecking.value || !validateEmail()) return;
+  accountChecking.value = true;
+  traceFirstRun('account', 'email submitted', { emailDomain: sullaEmail.value.trim().split('@')[1] });
+  try {
+    const email = sullaEmail.value.trim();
+    try {
+      await saveChoices({ primaryUserName: primaryUserName.value.trim(), sullaEmail: email, sullaSubscribeToUpdates: sullaSubscribeToUpdates.value });
+    } catch (err) {
+      console.warn('[FirstRunWelcome] Could not save account details:', err);
+    }
+    // Test autopilots must not query production Cloud.
+    accountExists.value = testAutopilot ? false : await lookupAccount(email);
+    emailRecoveryAvailable.value = false;
+    if (accountExists.value === true) void refreshRecoveryAvailability();
+    step.value = 'cloud';
+  } finally {
+    accountChecking.value = false;
+  }
+}
+
+function useDifferentEmail() {
+  if (cloudSubmitting.value) return;
+  traceFirstRun('account', 'Use a different email clicked');
+  cloudAttempt++;
+  cloudPassword.value = '';
+  cloudError.value = '';
+  cloudCode.value = '';
+  cloudCodeSent.value = false;
+  accountExists.value = null;
+  emailRecoveryAvailable.value = false;
+  signInAgain.value = false;
+  passwordForVault.value = false;
+  step.value = 'account';
+}
+
+async function afterSignIn() {
+  cloudPassword.value = ''; cloudCode.value = '';
+  try {
+    await saveChoices({ accountLinked: true, accountChoice: 'cloud', sullaEmail: sullaEmail.value.trim() });
+  } catch (err) {
+    console.warn('[FirstRunWelcome] Could not save account choice:', err);
+  }
+  // Signing in again after a restart: the sync choice was already made.
+  if (signInAgain.value && savedCloudPreferences) {
+    syncSubmitting.value = true;
+    await finishSetup(true);
+    return;
+  }
+  step.value = 'sync';
 }
 
 async function handleCloudSubmit() {
+  if (cloudBusy.value) return;
   if (!cloudPassword.value) { cloudError.value = 'Enter a password.'; return; }
   const attempt = ++cloudAttempt;
   cloudSubmitting.value = true; cloudError.value = '';
+  traceFirstRun('account', 'password submitted', { signInAgain: signInAgain.value, afterEmailCode: passwordForVault.value });
   try {
     const res = testAutopilot === 'cloud-fake'
       ? await ipcRenderer.invoke('first-run-test-autopilot:cloud-fake' as any)
       : await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
     if (attempt !== cloudAttempt) return;
-    if (!res.ok) {
-      cloudAccountExists.value = !!res.accountExists;
-      if (cloudAccountExists.value) {
-        const availability = await ipcRenderer.invoke('sulla-cloud:email-code-availability');
-        emailRecoveryAvailable.value = availability?.available === true;
+    traceFirstRun('account', res?.ok ? 'signed in' : 'sign-in failed', { error: res?.error, accountExists: res?.accountExists, retryAfter: res?.retryAfterSeconds ?? res?.retryAfter });
+    if (!res?.ok) {
+      // Show the real error first; the email-code check must never replace it.
+      cloudError.value = res?.error || 'Could not connect to Sulla Cloud.';
+      const retryAfter = Number(res?.retryAfterSeconds ?? res?.retryAfter);
+      if (Number.isFinite(retryAfter) && retryAfter > 0) startRetryCountdown(retryAfter);
+      if (res?.accountExists) {
+        accountExists.value = true;
+        void refreshRecoveryAvailability();
       }
-      cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return;
+      return;
     }
-    cloudPassword.value = '';
-    await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
-    step.value = 'sync';
-  } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
+    await afterSignIn();
+  } catch (err) {
+    traceFirstRun('account', 'sign-in call failed', { error: err instanceof Error ? err.message : String(err) });
+    if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';
+  }
   finally { if (attempt === cloudAttempt) cloudSubmitting.value = false; }
 }
 
 async function sendRecoveryCode() {
+  if (cloudSubmitting.value) return;
   cloudSubmitting.value = true; cloudError.value = '';
   try {
     const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', sullaEmail.value.trim());
-    if (!res.ok) { cloudError.value = res.error || 'Could not send a sign-in code.'; return; }
+    traceFirstRun('account', res?.ok ? 'email code sent' : 'email code not sent', { error: res?.error });
+    if (!res?.ok) { cloudError.value = res?.error || 'Could not send a sign-in code.'; return; }
     cloudCodeSent.value = true;
   } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
   finally { cloudSubmitting.value = false; }
 }
 
 async function verifyRecoveryCode() {
+  if (cloudSubmitting.value) return;
   if (!/^\d{6}$/.test(cloudCode.value.trim())) { cloudError.value = 'Enter the 6-digit code from the email.'; return; }
   cloudSubmitting.value = true; cloudError.value = '';
   try {
     const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', sullaEmail.value.trim(), cloudCode.value.trim(), primaryUserName.value.trim() || undefined);
-    if (!res.ok) { cloudError.value = res.error || 'That code could not be verified.'; return; }
-    cloudPassword.value = ''; cloudCode.value = '';
-    await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
-    step.value = 'sync';
+    traceFirstRun('account', res?.ok ? 'email code accepted' : 'email code rejected', { error: res?.error, needsVaultKey: res?.needsPassword === true });
+    if (!res?.ok) { cloudError.value = res?.error || 'That code could not be verified.'; return; }
+    if (res?.needsPassword) {
+      // The vault is made from the account password, so ask for it once.
+      cloudCodeSent.value = false; cloudCode.value = '';
+      passwordForVault.value = true;
+      return;
+    }
+    await afterSignIn();
   } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
   finally { cloudSubmitting.value = false; }
 }
@@ -179,8 +334,10 @@ async function saveChoices(patch: Record<string, unknown>) {
 }
 
 async function handleSyncChoices(syncAll: boolean) {
+  if (syncSubmitting.value) return;
   syncSubmitting.value = true;
   syncError.value = '';
+  traceFirstRun('account', 'sync choice made', { syncAll });
   // One choice: everything syncs, or nothing does. Individual categories stay
   // adjustable later in Settings.
   const patch: Record<string, boolean> = { enabled: syncAll };
@@ -192,15 +349,30 @@ async function handleSyncChoices(syncAll: boolean) {
     syncSubmitting.value = false;
     return;
   }
-  syncSubmitting.value = false;
+  // Stays busy until the next screen replaces this one.
   await finishSetup(true);
 }
 
+async function continueAnyway() {
+  if (syncSubmitting.value) return;
+  traceFirstRun('account', 'Continue anyway clicked after the sync choice failed to save');
+  syncSubmitting.value = true;
+  await finishSetup(true);
+}
+
+/** Always moves on: a failed save here must not trap the user on this screen. */
 async function finishSetup(allowMarketing: boolean) {
-  await saveChoices({ sullaSubscribeToUpdates: allowMarketing && sullaSubscribeToUpdates.value });
-  sessionStorage.setItem('sulla-startup-splash-seen', 'true');
-  await ipcRenderer.invoke('start-sulla-custom-env');
-  emit('next');
+  try {
+    await saveChoices({ sullaSubscribeToUpdates: allowMarketing && sullaSubscribeToUpdates.value });
+  } catch (err) {
+    console.warn('[FirstRunWelcome] Could not save update preference:', err);
+  }
+  try {
+    await ipcRenderer.invoke('start-sulla-custom-env');
+  } catch (err) {
+    console.warn('[FirstRunWelcome] Could not signal account step:', err);
+  }
+  emit('next', props.stepIndex);
 }
 </script>
 
