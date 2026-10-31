@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Custom OpenAI-compatible LLM provider.
@@ -20,9 +21,12 @@ export class CustomService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('custom', valMap.api_key, valMap.base_url);
+    if (!model) throw new Error('The custom endpoint returned no chat models; reconnect it and choose a model');
+
     return new CustomService({
       id:      'custom',
-      model:   valMap.model || '',
+      model,
       baseUrl: valMap.base_url || '',
       apiKey:  valMap.api_key || '',
     });

@@ -6,15 +6,11 @@
 import { AlibabaModels } from './AlibabaModels';
 import { alibabaPlans, alibabaRegions, kimiRegions } from './AIProviderOptions';
 import { AnthropicModels } from './AnthropicModels';
-import { ArceeModels } from './ArceeModels';
-import { CohereModels } from './CohereModels';
-import { CustomModels } from './CustomModels';
-import { DeepSeekModels } from './DeepSeekModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
 import { KimiModels } from './KimiModels';
-import { NvidiaModels } from './NvidiaModels';
 import { OllamaModels } from './OllamaModels';
+import { OpenAICompatibleModels } from './OpenAICompatibleModels';
 import { OpenAIModels } from './OpenAIModels';
 import { VaultLlmAccess } from './VaultLlmAccess';
 import { registerSelectBoxProvider } from './registry';
@@ -26,16 +22,26 @@ export { registerSelectBoxProvider, getSelectBoxProvider, getAllSelectBoxProvide
 registerSelectBoxProvider(new GrokModels());
 registerSelectBoxProvider(new AnthropicModels());
 registerSelectBoxProvider(new OpenAIModels());
+// Kimi and Alibaba keep their own region-aware pickers; the rest use live discovery.
 registerSelectBoxProvider(new KimiModels());
 registerSelectBoxProvider(kimiRegions);
 registerSelectBoxProvider(new AlibabaModels());
 registerSelectBoxProvider(alibabaPlans);
 registerSelectBoxProvider(alibabaRegions);
-registerSelectBoxProvider(new NvidiaModels());
-registerSelectBoxProvider(new ArceeModels());
-registerSelectBoxProvider(new CohereModels());
-registerSelectBoxProvider(new DeepSeekModels());
-registerSelectBoxProvider(new CustomModels());
+for (const [selectId, providerId] of [
+  ['google_models', 'google'],
+  ['groq_models', 'groq'],
+  ['mistral_models', 'mistral'],
+  ['cerebras_models', 'cerebras'],
+  ['together_models', 'together'],
+  ['nvidia_models', 'nvidia'],
+  ['arcee_models', 'arcee'],
+  ['cohere_models', 'cohere'],
+  ['deepseek_models', 'deepseek'],
+  ['custom_models', 'custom'],
+] as const) {
+  registerSelectBoxProvider(new OpenAICompatibleModels(selectId, providerId));
+}
 registerSelectBoxProvider(new OllamaModels());
 registerSelectBoxProvider(new ElevenLabsVoices());
 registerSelectBoxProvider(new VaultLlmAccess());

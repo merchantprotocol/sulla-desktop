@@ -94,7 +94,7 @@ export class ModelDiscoveryService {
     google: {
       baseUrl:        'https://generativelanguage.googleapis.com/v1beta',
       modelsEndpoint: '/models',
-      authHeader:     'Authorization',
+      authHeader:     'x-goog-api-key',
       parseResponse:  (data) => data.models?.map((model: any) => ({
         id:           model.name.replace('models/', ''),
         name:         model.displayName || model.name,
@@ -337,15 +337,31 @@ export class ModelDiscoveryService {
         { id: 'trinity-mini', name: 'Trinity Mini', provider: 'arcee', description: 'Fast, efficient model - tool use, quick tasks' },
       ],
     },
+
+    custom: {
+      baseUrl:        '',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'custom',
+      })) || [],
+    },
   };
 
   /**
    * Fetch available models for a specific provider
    */
-  async fetchModelsForProvider(providerId: string, apiKey = ''): Promise<ModelInfo[]> {
-    const containerAuthority = usesContainerVaultAuthority() && providerId !== 'ollama';
+  async fetchModelsForProvider(providerId: string, apiKey = '', options: { baseUrl?: string } = {}): Promise<ModelInfo[]> {
+    // A key supplied by the Connect form is intentionally used for a direct
+    // verification request. Saved accounts have no renderer-visible key and
+    // therefore take the brokered provider.discovery lane below.
+    const containerAuthority = usesContainerVaultAuthority() && providerId !== 'ollama' && !apiKey;
     const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
-    const cacheKey = containerAuthority ? `${ providerId }-${ runtime!.accountId }` : `${ providerId }-${ apiKey.slice(-8) }`;
+    const cacheKey = containerAuthority
+      ? `${ providerId }-${ runtime!.accountId }`
+      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }`;
     const cached = this.cache.get(cacheKey);
 
     // Return cached results if still valid
@@ -364,9 +380,11 @@ export class ModelDiscoveryService {
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
+      const baseUrl = (options.baseUrl || runtime?.values.base_url || provider.baseUrl).replace(/\/+$/, '');
+      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint
-        : `${ provider.baseUrl }${ provider.modelsEndpoint }`;
+        : `${ baseUrl }${ provider.modelsEndpoint }`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent':   'Sulla-Desktop/1.0',
@@ -403,15 +421,18 @@ export class ModelDiscoveryService {
       const executionContext = containerAuthority
         ? await issueServiceProviderExecutionContext('model-discovery', providerId, runtime!.accountId)
         : undefined;
-      const response = await providerFetch(providerId, url, {
+      const requestInit: RequestInit = {
         method: 'GET',
         headers,
         signal: AbortSignal.timeout(10000), // 10 second timeout
-      }, executionContext, {
-        streaming: false,
-        operation: 'provider.discovery',
-        injections,
-      });
+      };
+      const response = containerAuthority
+        ? await providerFetch(providerId, url, requestInit, executionContext, {
+          streaming: false,
+          operation: 'provider.discovery',
+          injections,
+        })
+        : await fetch(url, requestInit);
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -518,4 +539,20 @@ export class ModelDiscoveryService {
 }
 
 export const modelDiscoveryService = new ModelDiscoveryService();
+
+const NON_CHAT_MODEL = /(?:^|[-_/])(embed|embedding|rerank|moderation|transcri|whisper|tts|image|vision-only)(?:$|[-_/])/i;
+
+export function isChatModel(model: ModelInfo): boolean {
+  if (NON_CHAT_MODEL.test(model.id)) return false;
+  if (model.capabilities?.length) {
+    return model.capabilities.some(capability => /generateContent|chat|text|completion/i.test(capability));
+  }
+  return true;
+}
+
+/** Resolve a usable chat model without ever manufacturing an empty/default id. */
+export async function resolveFirstChatModel(providerId: string, apiKey = '', baseUrl?: string): Promise<string> {
+  const models = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey, { baseUrl });
+  return models.find(isChatModel)?.id || '';
+}
 export type { ModelInfo };

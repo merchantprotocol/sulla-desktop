@@ -6,6 +6,7 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig } from './BaseLanguageModel';
 import { providerFetch } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Google Gemini LLM provider.
@@ -37,9 +38,12 @@ export class GoogleService extends BaseLanguageModel {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('google', valMap.api_key);
+    if (!model) throw new Error('Google returned no chat models; reconnect the account and choose a model');
+
     return new GoogleService({
       id:      'google',
-      model:   valMap.model || 'gemini-2.0-flash',
+      model,
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKey:  valMap.api_key || '',
     });

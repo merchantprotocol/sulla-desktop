@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Mistral AI — includes free-tier Codestral for coding tasks.
@@ -20,9 +21,12 @@ export class MistralService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('mistral', valMap.api_key);
+    if (!model) throw new Error('Mistral returned no chat models; reconnect the account and choose a model');
+
     return new MistralService({
       id:      'mistral',
-      model:   valMap.model || '',
+      model,
       baseUrl: 'https://api.mistral.ai/v1',
       apiKey:  valMap.api_key || '',
     });

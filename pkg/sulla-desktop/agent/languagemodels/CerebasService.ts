@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Cerebras inference platform — very fast free-tier LLM inference.
@@ -20,9 +21,12 @@ export class CerebasService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('cerebras', valMap.api_key);
+    if (!model) throw new Error('Cerebras returned no chat models; reconnect the account and choose a model');
+
     return new CerebasService({
       id:      'cerebras',
-      model:   valMap.model || '',
+      model,
       baseUrl: 'https://api.cerebras.ai/v1',
       apiKey:  valMap.api_key || '',
     });
