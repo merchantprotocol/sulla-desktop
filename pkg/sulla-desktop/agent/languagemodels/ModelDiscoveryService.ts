@@ -16,6 +16,7 @@ import {
   loadProviderRuntimeConfig,
   providerFetch,
 } from './providerBroker';
+import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 
 import type { BrokerInjection } from '../../vault-broker';
@@ -387,7 +388,7 @@ export class ModelDiscoveryService {
         if (!workspaceId) {
           try {
             const values = await getIntegrationService().getFormValues('anthropic');
-            workspaceId = values.find(value => value.property === 'workspace_id')?.value || '';
+            workspaceId = values.find((value: { property: string; value: string }) => value.property === 'workspace_id')?.value || '';
             const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
             workspaceId = getPendingCredential('anthropic')?.values.workspace_id || workspaceId;
           } catch { /* optional workspace metadata */ }
