@@ -17,6 +17,7 @@ let statusGeneration = 0;
 ipcRenderer.on('vault:logged-in' as any, () => {
   statusGeneration += 1;
   loggedIn.value = true;
+  vaultSetUp.value = true;
   statusResolved.value = true;
   unlockError.value = '';
 });
@@ -24,6 +25,7 @@ ipcRenderer.on('vault:logged-out' as any, () => {
   statusGeneration += 1;
   loggedIn.value = false;
   statusResolved.value = true;
+  void refreshStatus();
 });
 
 type VaultStatus = { unlocked?: boolean; state?: string; setup?: { required?: boolean } };
@@ -42,9 +44,10 @@ async function resolveStatus(generation: number): Promise<boolean> {
     applyStatus(status);
     statusResolved.value = true;
     return loggedIn.value;
-  } catch {
+  } catch (error) {
     if (generation !== statusGeneration) return loggedIn.value;
     loggedIn.value = false;
+    unlockError.value = error instanceof Error ? error.message : 'The vault is unavailable.';
     statusResolved.value = true;
     return false;
   }
@@ -78,7 +81,9 @@ async function tryAutoLogin(): Promise<void> {
       return;
     }
   } catch { /* vault still starting; fall through to the bootstrap path */ }
-  try { await ipcRenderer.invoke('vault:initialize' as any) } catch { /* isolated bootstrap may be unavailable */ }
+  try { await ipcRenderer.invoke('vault:initialize' as any) } catch (error) {
+    unlockError.value = error instanceof Error ? error.message : 'The vault could not be unlocked.';
+  }
   await resolveStatus(generation);
 }
 

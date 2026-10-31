@@ -34,7 +34,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
 import { getFirstRunState } from '@pkg/main/firstRun/firstRunState';
-import { getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
+import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
@@ -49,6 +49,20 @@ const console = Logging.background;
 
 const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const INTEGRATION_ID = 'sulla-cloud';
+
+async function cloudFetch(path: string, init: RequestInit, retry = false): Promise<Response> {
+  const attempts = retry ? 2 : 1;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fetch(`${ API_BASE }${ path }`, { ...init, signal: AbortSignal.timeout(20_000) });
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError;
+}
 
 interface AccountKdf {
   alg:         'argon2id13';
@@ -68,6 +82,7 @@ let pendingCloudAccountKdf: AccountKdf | undefined;
 let pendingCloudUserId: string | undefined;
 let quitCleanupInstalled = false;
 let accountWrapFlushHookInstalled = false;
+let unshownRecoveryKey: { recoveryKey: string; storage: ReturnType<typeof recoveryKeyStorageStatus>; madeAt: string } | undefined;
 
 function zeroPendingCloudMasterKey(): void {
   pendingCloudMasterKey?.fill(0);
@@ -103,26 +118,34 @@ function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string):
 
 async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ recoveryKey?: string }> {
   const kdf = pendingCloudAccountKdf;
-  const key = takePendingCloudMasterKey();
-  pendingCloudAccountKdf = undefined;
-  pendingCloudUserId = undefined;
+  const key = pendingCloudMasterKey;
   if (!key || !kdf || !userId || !usesContainerVaultAuthority()) {
-    key?.fill(0);
     return {};
   }
+  const attemptKey = Uint8Array.from(key);
   try {
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
-    const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(key).toString('base64url'), kdf });
+    const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(attemptKey).toString('base64url'), kdf });
+    // The vault is authoritative now. Publish before optional Keychain/UI work.
+    const { onVaultUnlocked } = await import('@pkg/sulla');
+    await onVaultUnlocked();
+    zeroPendingCloudMasterKey();
     if (result.recoveryKey) {
-      const storage = await saveRecoveryKeyToMacKeychain(userId, result.recoveryKey);
+      let storage = recoveryKeyStorageStatus();
+      try {
+        storage = await saveRecoveryKeyToMacKeychain(userId, result.recoveryKey);
+      } catch (error) {
+        console.warn('[SullaCloudAuth] Recovery key was created but Keychain save failed:', error instanceof Error ? error.message : String(error));
+      }
+      unshownRecoveryKey = { recoveryKey: result.recoveryKey, storage, madeAt: new Date().toISOString() };
       for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send('sulla-cloud:recovery-key-created', { recoveryKey: result.recoveryKey, storage, madeAt: new Date().toISOString() });
+        window.webContents.send('sulla-cloud:recovery-key-created', unshownRecoveryKey);
       }
     }
     return { recoveryKey: result.recoveryKey };
   } finally {
-    key.fill(0);
+    attemptKey.fill(0);
   }
 }
 
@@ -208,6 +231,11 @@ const SIGN_IN_AGAIN = 'Sign in to Sulla Cloud again.';
 let startupAdoptionComplete = false;
 let startupAdoptionPromise: Promise<void> | null = null;
 let startupAdoptionError: string | undefined;
+let wakeStartupRestore: (() => void) | undefined;
+
+export function signalSullaCloudStartupRestore(): void {
+  wakeStartupRestore?.();
+}
 
 function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
   if (error instanceof VaultBrokerError) {
@@ -354,7 +382,14 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
     await ensureLegacySessionAdopted();
     metadata = await broker.integrationMetadata(INTEGRATION_ID);
   } catch (err) {
-    throw new VaultNotReadyError(`vault not ready: ${ (err as Error)?.message || err }`);
+    const message = (err as Error)?.message || String(err);
+    const code = (err as any)?.code ?? (err as any)?.cause?.code;
+    if (err instanceof VaultBrokerError && (err.code === 'vault_locked' || err.status === 423) ||
+        ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(code) ||
+        /locked|unavailable|timeout|timed out|not ready|connection/i.test(message)) {
+      throw new VaultNotReadyError(`vault not ready: ${ message }`);
+    }
+    throw err;
   }
   const accountId = activeConnectedAccountId(metadata);
   // A first-run sign-in held in memory is written into the vault right after
@@ -403,11 +438,11 @@ async function ensureLegacySessionAdopted(): Promise<void> {
 
     let refreshed: Response;
     try {
-      refreshed = await fetch(`${ API_BASE }/auth/refresh`, {
+      refreshed = await cloudFetch('/auth/refresh', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ refreshToken }),
-      });
+      }, true);
     } catch (error) {
       throw new VaultNotReadyError(`cloud refresh unavailable: ${ (error as Error)?.message || error }`);
     }
@@ -490,7 +525,13 @@ function findActiveContractor(session: SessionIdentity): CloudContractor | null 
 }
 
 async function buildStatus(lastError?: string): Promise<AuthStatus> {
-  const session = await loadSessionIdentity();
+  let session: SessionIdentity | null = null;
+  try {
+    session = await loadSessionIdentity();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ...signedOutStatus(lastError ?? startupAdoptionError ?? message), ...( /lock/i.test(message) ? { vaultLocked: true } : { vaultMissing: true }) } as AuthStatus;
+  }
   if (!session) {
     return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError: lastError ?? startupAdoptionError };
   }
@@ -509,7 +550,7 @@ async function buildStatus(lastError?: string): Promise<AuthStatus> {
 // ── Server calls ────────────────────────────────────────────
 
 async function sendOtp(phone: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${ API_BASE }/auth/otp/send`, {
+  const res = await cloudFetch('/auth/otp/send', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ phone }),
@@ -547,7 +588,7 @@ function responseToSession(data: VerifyResponse): CloudSession {
 }
 
 async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
-  const res = await fetch(`${ API_BASE }/auth/otp/verify`, {
+  const res = await cloudFetch('/auth/otp/verify', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ phone, code }),
@@ -561,14 +602,14 @@ async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; er
 }
 
 async function prelogin(email: string): Promise<{ kdf: AccountKdf; authVersion: 1 | 2 }> {
-  const res = await fetch(`${ API_BASE }/auth/prelogin`, {
+  const res = await cloudFetch('/auth/prelogin', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ email }),
-  });
+  }, true);
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error || `HTTP ${ res.status }`);
+    throw new Error(`${ res.status }: ${ body.error || 'Sulla Cloud request failed' }`);
   }
   const data = await res.json() as { kdf?: unknown; authVersion?: unknown };
   if (data.authVersion !== 1 && data.authVersion !== 2) throw new Error('Sulla Cloud returned an unsupported authentication version.');
@@ -596,15 +637,15 @@ function throttled(result: PasswordAuthResponse) {
   return { ok: false as const, accountExists: true, retryAfter: wait, error: `Too many tries. Wait ${ wait } seconds and try again, or reset your password.` };
 }
 
-async function emailLogin(email: string, password: string): Promise<PasswordAuthResponse> {
-  const account = await prelogin(email);
+async function emailLogin(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
+  const account = knownAccount ?? await prelogin(email);
   const credential = await deriveAccountCredential(password, account.kdf);
   const endpoint = account.authVersion === 1 ? '/auth/upgrade' : '/auth/email/login';
   const body = account.authVersion === 1
     ? { email, password, authHash: credential.authHash, kdf: credential.kdf }
     : { email, authHash: credential.authHash };
   try {
-    const res = await fetch(`${ API_BASE }${ endpoint }`, {
+    const res = await cloudFetch(endpoint, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
@@ -624,7 +665,7 @@ async function emailLogin(email: string, password: string): Promise<PasswordAuth
 async function emailRegister(email: string, password: string, name?: string): Promise<PasswordAuthResponse> {
   const credential = await deriveAccountCredential(password);
   try {
-    const res = await fetch(`${ API_BASE }/auth/email/register`, {
+    const res = await cloudFetch('/auth/email/register', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
@@ -649,7 +690,7 @@ async function emailRegister(email: string, password: string, name?: string): Pr
 
 /** Passwordless: email a 6-digit code that signs in or creates the account. */
 async function emailCodeStart(email: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${ API_BASE }/auth/email-code/start`, {
+  const res = await cloudFetch('/auth/email-code/start', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ email }),
@@ -660,7 +701,7 @@ async function emailCodeStart(email: string): Promise<{ ok: boolean; error?: str
 }
 
 async function emailCodeVerify(email: string, code: string, name?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse & { isNewUser?: boolean } }> {
-  const res = await fetch(`${ API_BASE }/auth/email-code/verify`, {
+  const res = await cloudFetch('/auth/email-code/verify', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ email, code, name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
@@ -673,7 +714,7 @@ async function emailCodeVerify(email: string, code: string, name?: string): Prom
 }
 
 async function appleSignIn(identityToken: string, fullName?: string, email?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
-  const res = await fetch(`${ API_BASE }/auth/apple`, {
+  const res = await cloudFetch('/auth/apple', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ identityToken, fullName, email }),
@@ -733,11 +774,11 @@ async function refreshAccessToken(): Promise<string> {
   if (!session?.tokens.refreshToken) return '';
 
   try {
-    const res = await fetch(`${ API_BASE }/auth/refresh`, {
+    const res = await cloudFetch('/auth/refresh', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ refreshToken: session.tokens.refreshToken }),
-    });
+    }, true);
     if (!res.ok) {
       warnRefreshFailure(`[sullaCloudAuth] Refresh failed: HTTP ${ res.status }`);
       return '';
@@ -834,6 +875,8 @@ export function initSullaCloudAuthEvents(): void {
     accountWrapFlushHookInstalled = true;
     const lifecycle = getServiceLifecycleManager();
     let flushing = false;
+    let wrapRetryMs = 2_000;
+    let wrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
     const flushWhenReady = () => {
       if (flushing || !pendingCloudMasterKey || !getFirstRunState().onboardingComplete ||
           !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) return;
@@ -850,15 +893,19 @@ export function initSullaCloudAuthEvents(): void {
         }
         await flushAccountPasswordWrap();
         if (creating) {
-          // The vault now exists and is unlocked. Publish it like any other
-          // unlock so unlock-gated services start and the sign-ins first run
-          // held in memory move into the vault.
-          const { onVaultUnlocked } = await import('@pkg/sulla');
-          await onVaultUnlocked();
           console.log('[SullaCloudAuth] Vault created from the Cloud account password and unlocked');
         }
+        wrapRetryMs = 2_000;
       })().catch(error => {
-        console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
+        console.error('[SullaCloudAuth] Account-password vault migration failed; retrying:', error instanceof Error ? error.message : String(error));
+        if (!wrapRetryTimer) {
+          wrapRetryTimer = setTimeout(() => {
+            wrapRetryTimer = undefined;
+            flushWhenReady();
+          }, wrapRetryMs);
+          wrapRetryTimer.unref?.();
+          wrapRetryMs = Math.min(wrapRetryMs * 2, 60_000);
+        }
       }).finally(() => { flushing = false });
     };
     lifecycle.on('vault:state', flushWhenReady);
@@ -867,6 +914,29 @@ export function initSullaCloudAuthEvents(): void {
     retry.unref?.();
   }
   const ipcMainProxy = getIpcMainProxy(console);
+
+  ipcMainProxy.handle('sulla-cloud:first-run-session', async() => {
+    let oldVaultLocked = false;
+    try {
+      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+      const status = await getDesktopVaultClient().status();
+      oldVaultLocked = status.setup?.required === false && !status.unlocked;
+    } catch { /* the vault may not be running yet */ }
+    const queued = getPendingCredential(INTEGRATION_ID);
+    return {
+      sessionInMemory: !!queued,
+      masterKeyRetained: !!pendingCloudMasterKey,
+      email: queued?.values.email || queued?.values.contractors_json && JSON.parse(queued.values.contractors_json || '[]')[0]?.email || undefined,
+      oldVaultLocked,
+    };
+  });
+  // Sulla Cloud deliberately does not reveal whether an email has an account
+  // (prelogin returns a decoy KDF for unknown emails), so this cannot tell.
+  // The first-run copy stays neutral until email-continue reports accountExists.
+  ipcMainProxy.handle('sulla-cloud:account-exists', async() => ({ exists: null }));
+  ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => ({ available: true }));
+  ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => unshownRecoveryKey);
+  ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { unshownRecoveryKey = undefined });
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
     return buildStatus();
@@ -993,7 +1063,10 @@ export function initSullaCloudAuthEvents(): void {
     const deadline = Date.now() + 120_000;
     for (let delay = 2_000; ; delay = Math.min(delay * 2, 15_000)) {
       try {
-        return await completeSignIn(data);
+        const result = await completeSignIn(data);
+        if (result.ok) return result;
+        if (Date.now() + delay > deadline) return { ...result, error: notReadyError };
+        await new Promise(resolve => setTimeout(resolve, delay));
       } catch (err) {
         if (Date.now() + delay > deadline) {
           console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', err);
@@ -1011,6 +1084,9 @@ export function initSullaCloudAuthEvents(): void {
       !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   };
 
+  const completeSignInForCurrentState = (data: VerifyResponse, notReadyError: string) =>
+    shouldKeepSessionInMemory() ? completeFirstRunSignIn(data) : completeSignInWhenReady(data, notReadyError);
+
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
     const normalizedPhone = phone.trim();
     const normalizedCode = code.trim();
@@ -1026,7 +1102,7 @@ export function initSullaCloudAuthEvents(): void {
     if (!result.ok || !result.data) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
-    return completeSignIn(result.data);
+    return completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
   });
 
   ipcMainProxy.handle('sulla-cloud:email-login', async(_event: unknown, email: string, password: string): Promise<AuthResult> => {
@@ -1039,8 +1115,9 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     retainCloudMasterKey(result.masterKey, result.kdf!, (result.data.userId ?? result.data.contractor.id));
-    const signedIn = await completeSignIn(result.data);
-    if (signedIn.ok) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
+    const inMemory = shouldKeepSessionInMemory();
+    const signedIn = await completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
+    if (signedIn.ok && !inMemory) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
       console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
     });
     return signedIn;
@@ -1074,8 +1151,9 @@ export function initSullaCloudAuthEvents(): void {
     // The code is spent and the tokens are in hand. On first run the VM's
     // Postgres may still be booting, so keep trying to persist the session
     // instead of forcing the user to request a new code.
-    const signedIn = await completeSignInWhenReady(result.data, 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.');
-    return { ...signedIn, isNewUser: !!result.data.isNewUser };
+    const firstRun = shouldKeepSessionInMemory();
+    const signedIn = await completeSignInForCurrentState(result.data, 'Your email is verified, but Sulla is still starting up. Wait a minute, then send a new code.');
+    return { ...signedIn, isNewUser: !!result.data.isNewUser, needsPassword: firstRun };
   });
 
   /**
@@ -1097,6 +1175,9 @@ export function initSullaCloudAuthEvents(): void {
     let accountKdf: AccountKdf;
     let isNewUser: boolean;
     try {
+      // /auth/prelogin answers every email with a KDF (real or decoy) so it
+      // cannot reveal whether an account exists. Register first; only a 409
+      // means the account exists and the password should sign in.
       const created = await emailRegister(e, password, name?.trim() || undefined);
       if (created.ok && created.data) {
         data = created.data;
@@ -1109,7 +1190,12 @@ export function initSullaCloudAuthEvents(): void {
         const login = await emailLogin(e, password);
         if (login.httpStatus === 429) return { ...throttled(login), status: await buildStatus().catch(() => ({} as any)) };
         if (!login.ok || !login.data) {
-          return { ok: false, accountExists: true, error: 'This email already has a Sulla Cloud account, and that password doesn\'t match it.', status: await buildStatus().catch(() => ({} as any)) };
+          const error = login.httpStatus === 401 || login.httpStatus === 403
+            ? 'That password is not correct.'
+            : login.httpStatus && login.httpStatus >= 500
+              ? 'Sulla Cloud had a problem, try again.'
+              : login.error || 'Sulla needs an update to sign in.';
+          return { ok: false, accountExists: true, error, status: await buildStatus().catch(() => ({} as any)) };
         }
         data = login.data;
         masterKey = login.masterKey!;
@@ -1118,8 +1204,12 @@ export function initSullaCloudAuthEvents(): void {
       } else {
         return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
       }
-    } catch {
-      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const friendly = /unsupported|kdf|version/i.test(message)
+        ? 'Sulla needs an update to sign in.'
+        : /\b5\d\d\b/.test(message) ? 'Sulla Cloud had a problem, try again.' : 'Could not reach Sulla Cloud. Check your connection and try again.';
+      return { ok: false, error: friendly, status: await buildStatus().catch(() => ({} as any)) };
     }
     retainCloudMasterKey(masterKey!, accountKdf!, (data.userId ?? data.contractor.id));
     const signedIn = shouldKeepSessionInMemory()
@@ -1141,8 +1231,9 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     retainCloudMasterKey(result.masterKey, result.kdf!, (result.data.userId ?? result.data.contractor.id));
-    const signedIn = await completeSignIn(result.data);
-    if (signedIn.ok) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
+    const inMemory = shouldKeepSessionInMemory();
+    const signedIn = await completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
+    if (signedIn.ok && !inMemory) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
       console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
     });
     return signedIn;
@@ -1156,7 +1247,7 @@ export function initSullaCloudAuthEvents(): void {
     if (!result.ok || !result.data) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
-    return completeSignIn(result.data);
+    return completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
   });
 
   /**
@@ -1204,7 +1295,7 @@ export function initSullaCloudAuthEvents(): void {
         refreshToken: sulla.refreshToken,
         contractor:   sulla.contractor as CloudContractor,
       };
-      return completeSignIn(verifyLike);
+      return completeSignInForCurrentState(verifyLike, 'Sulla is still starting up. Wait a minute, then try again.');
     } catch (err: any) {
       const msg = err?.message === 'user_cancelled'
         ? 'Sign-in cancelled.'
@@ -1219,6 +1310,7 @@ export function initSullaCloudAuthEvents(): void {
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
     clearPendingCloudMasterKey();
+    clearPendingCredential(INTEGRATION_ID);
     try {
       await clearSession();
     } catch (err) {
@@ -1282,6 +1374,7 @@ export function initSullaCloudAuthEvents(): void {
     wakeRestore?.();
     wakeRestore = undefined;
   };
+  wakeStartupRestore = signalRestore;
   const onVaultState = (unlocked: boolean) => { if (unlocked) signalRestore() };
   const onServiceReady = (name: string) => { if (name === 'vault') signalRestore() };
 
@@ -1316,6 +1409,7 @@ export function initSullaCloudAuthEvents(): void {
             await startCloudServices();
           } catch (err) {
             console.warn('[SullaCloudAuth] Failed to start cloud services on restore:', err);
+            throw new VaultNotReadyError(`cloud services unavailable: ${ (err as Error)?.message || err }`);
           }
           console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
         } else {
@@ -1328,6 +1422,7 @@ export function initSullaCloudAuthEvents(): void {
         const giveUp = !(err instanceof VaultNotReadyError) && (Date.now() - startedAt) >= RETRY_GIVEUP_MS;
         if (!isTransient(err) || giveUp) {
           console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
+          startupAdoptionError = `Sulla Cloud restore stopped: ${ (err as Error)?.message || err }`;
           return;
         }
         console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms or on vault readiness`);
@@ -1350,6 +1445,7 @@ export function initSullaCloudAuthEvents(): void {
       }
     }
   })().finally(() => {
+    if (wakeStartupRestore === signalRestore) wakeStartupRestore = undefined;
     lifecycle.off('vault:state', onVaultState);
     lifecycle.off('service:ready', onServiceReady);
   });
