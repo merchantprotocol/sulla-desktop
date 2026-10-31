@@ -3,17 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AlibabaModels } from './AlibabaModels';
 import { AnthropicModels } from './AnthropicModels';
-import { ArceeModels } from './ArceeModels';
-import { CohereModels } from './CohereModels';
-import { CustomModels } from './CustomModels';
-import { DeepSeekModels } from './DeepSeekModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
-import { KimiModels } from './KimiModels';
-import { NvidiaModels } from './NvidiaModels';
 import { OllamaModels } from './OllamaModels';
+import { OpenAICompatibleModels } from './OpenAICompatibleModels';
 import { OpenAIModels } from './OpenAIModels';
 import { VaultLlmAccess } from './VaultLlmAccess';
 import { registerSelectBoxProvider } from './registry';
@@ -25,13 +19,22 @@ export { registerSelectBoxProvider, getSelectBoxProvider, getAllSelectBoxProvide
 registerSelectBoxProvider(new GrokModels());
 registerSelectBoxProvider(new AnthropicModels());
 registerSelectBoxProvider(new OpenAIModels());
-registerSelectBoxProvider(new KimiModels());
-registerSelectBoxProvider(new AlibabaModels());
-registerSelectBoxProvider(new NvidiaModels());
-registerSelectBoxProvider(new ArceeModels());
-registerSelectBoxProvider(new CohereModels());
-registerSelectBoxProvider(new DeepSeekModels());
-registerSelectBoxProvider(new CustomModels());
+for (const [selectId, providerId] of [
+  ['google_models', 'google'],
+  ['groq_models', 'groq'],
+  ['mistral_models', 'mistral'],
+  ['cerebras_models', 'cerebras'],
+  ['together_models', 'together'],
+  ['kimi_models', 'kimi'],
+  ['nvidia_models', 'nvidia'],
+  ['alibaba_models', 'alibaba'],
+  ['arcee_models', 'arcee'],
+  ['cohere_models', 'cohere'],
+  ['deepseek_models', 'deepseek'],
+  ['custom_models', 'custom'],
+] as const) {
+  registerSelectBoxProvider(new OpenAICompatibleModels(selectId, providerId));
+}
 registerSelectBoxProvider(new OllamaModels());
 registerSelectBoxProvider(new ElevenLabsVoices());
 registerSelectBoxProvider(new VaultLlmAccess());

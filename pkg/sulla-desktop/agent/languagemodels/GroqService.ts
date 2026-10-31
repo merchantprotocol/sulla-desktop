@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Groq inference platform — fast free-tier LLM inference.
@@ -20,9 +21,12 @@ export class GroqService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('groq', valMap.api_key);
+    if (!model) throw new Error('Groq returned no chat models; reconnect the account and choose a model');
+
     return new GroqService({
       id:      'groq',
-      model:   valMap.model || '',
+      model,
       baseUrl: 'https://api.groq.com/openai/v1',
       apiKey:  valMap.api_key || '',
     });
