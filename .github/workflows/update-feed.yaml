@@ -158,3 +158,46 @@ jobs:
         node scripts/release/publish-to-releases.mjs feed/channel/latest.json channels/latest/latest.json --cache-control no-cache
         node scripts/release/publish-to-releases.mjs feed/channel/latest-mac.yml channels/latest/latest-mac.yml --cache-control no-cache
         echo "Promoted ${TAG}: ${RELEASES_BASE_URL%/}/channels/latest/latest-mac.yml"
+    - name: Verify the live feed and downloaded zips
+      run: |
+        set -euo pipefail
+        base="${RELEASES_BASE_URL%/}"
+        curl -fsSL --retry 5 --retry-all-errors -H 'Cache-Control: no-cache' \
+          -o feed/live.json "$base/channels/latest/latest.json?verify=${GITHUB_RUN_ID}"
+        curl -fsSL --retry 5 --retry-all-errors -H 'Cache-Control: no-cache' \
+          -o feed/live.yml "$base/channels/latest/latest-mac.yml?verify=${GITHUB_RUN_ID}"
+        TAG="$TAG" node - <<'NODE'
+        const fs = require('fs');
+        const manifest = JSON.parse(fs.readFileSync('feed/live.json', 'utf8'));
+        const feed = fs.readFileSync('feed/live.yml', 'utf8');
+        if (manifest.tag !== process.env.TAG || manifest.version !== process.env.TAG.replace(/^v/, '')) {
+          throw new Error(`Live manifest is ${manifest.tag}/${manifest.version}, expected ${process.env.TAG}`);
+        }
+        for (const file of Object.values(manifest.files || {})) {
+          if (!feed.includes(file.url) || !feed.includes(file.sha512)) {
+            throw new Error(`Live feed does not contain ${file.name} with its sha512`);
+          }
+        }
+        NODE
+        # Prove the bytes behind every advertised URL match the advertised
+        # sha512; HEAD/size alone cannot catch a stale or corrupt object.
+        node - <<'NODE'
+        const crypto = require('crypto');
+        const fs = require('fs');
+        const { Readable } = require('stream');
+        const manifest = JSON.parse(fs.readFileSync('feed/live.json', 'utf8'));
+        (async () => {
+          for (const file of Object.values(manifest.files)) {
+            const response = await fetch(file.url, { headers: { 'Cache-Control': 'no-cache' } });
+            if (!response.ok || !response.body) throw new Error(`${file.url} returned ${response.status}`);
+            const hash = crypto.createHash('sha512');
+            let size = 0;
+            for await (const chunk of Readable.fromWeb(response.body)) { hash.update(chunk); size += chunk.length; }
+            const digest = hash.digest('base64');
+            if (size !== file.size || digest !== file.sha512) {
+              throw new Error(`${file.name}: got ${size}/${digest}, expected ${file.size}/${file.sha512}`);
+            }
+            console.log(`verified ${file.name}: ${size} bytes, sha512 ${digest}`);
+          }
+        })().catch(error => { console.error(error); process.exit(1); });
+        NODE
