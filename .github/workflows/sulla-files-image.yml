@@ -18,7 +18,7 @@ jobs:
         with: { node-version: '22' }
       - run: npm ci --ignore-scripts --prefix packages/vault-crypto
       - run: npm run build --prefix packages/vault-crypto
-      - run: npm ci --ignore-scripts --prefix services/sulla-files
+      - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
       - run: npm run build --prefix services/sulla-files
       - run: node --test services/sulla-files/dist/cloudSync/sync.security.test.js
   image:
