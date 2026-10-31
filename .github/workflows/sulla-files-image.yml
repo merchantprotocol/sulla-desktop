@@ -30,7 +30,8 @@ jobs:
         run: |
           set -o pipefail
           npm run build --prefix services/sulla-files 2>&1 | tee /tmp/files-build.log || {
-            tail -40 /tmp/files-build.log | while IFS= read -r line; do echo "::error::$line"; done
+            message="$(tail -80 /tmp/files-build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')"
+            echo "::error::$message"
             exit 1
           }
       - name: Boot Files twice on an empty database
