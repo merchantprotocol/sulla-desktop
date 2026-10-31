@@ -92,6 +92,7 @@ const PURPOSE_TAGS = {
   'key-rotate':    'sulla-key-rotate-v1',
   'vault-sync-v3': 'sulla-vault-sync-v3',
   'files-sync-v1': 'sulla-files-sync-v1',
+  'device-tools-rpc-v1': 'sulla-device-tools-rpc-v1',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;
@@ -101,6 +102,11 @@ export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]
     if (String(p).includes('\n')) throw new Error('message parts must not contain newlines');
   }
   return [PURPOSE_TAGS[purpose], ...parts.map(String)].join('\n');
+}
+
+/** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
+export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
+  return crypto.sign(null, Buffer.from(deviceMessage(purpose, parts)), load().key).toString('base64');
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */

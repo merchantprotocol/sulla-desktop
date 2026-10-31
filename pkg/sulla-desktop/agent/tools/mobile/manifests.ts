@@ -16,11 +16,11 @@ import type { ToolManifest } from '../registry';
 export const mobileToolManifests: ToolManifest[] = [
   {
     name:        'list_devices',
-    description: 'List every desktop and mobile device registered to the account, annotated with online/offline status. A device is "online" when it has hit the worker within the last 2 minutes (heartbeat or any authenticated call). Useful for checking whether the Sulla Mobile app is reachable before routing something to it. Optionally filter with { online_only: true } or { device_type: "mobile" | "desktop" }.',
+    description: 'List every desktop, mobile and paired app device registered to the account, annotated with online/offline status. A device is "online" when it has hit the worker within the last 2 minutes (heartbeat or an authenticated call). Optionally filter by device type.',
     category:    'mobile',
     schemaDef:   {
       online_only: { type: 'boolean', optional: true, description: 'If true, only return devices seen in the last 2 minutes.' },
-      device_type: { type: 'enum',    optional: true, enum: ['desktop', 'mobile'], description: 'Filter to desktop or mobile devices only.' },
+      device_type: { type: 'enum',    optional: true, enum: ['desktop', 'mobile', 'app'], description: 'Filter to desktop, mobile or app devices only.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./list_devices'),

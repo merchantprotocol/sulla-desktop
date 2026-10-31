@@ -7,7 +7,7 @@ import { BaseTool, ToolResponse } from '../base';
 import { getMobileApiClient } from './MobileApiClient';
 
 /**
- * List every device (desktop + mobile) registered to the authenticated
+ * List every device (desktop + mobile + app) registered to the authenticated
  * contractor, annotated with online/offline. A device is "online" when
  * the worker saw a heartbeat (or any authenticated call carrying the
  * X-Device-Id header) within the last 2 minutes.
