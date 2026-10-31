@@ -228,6 +228,14 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         placeholder: 'sk-ant-...',
       },
       {
+        key:         'workspace_id',
+        title:       'Workspace ID',
+        hint:        'Required for Anthropic user-level keys (sk-ant-usr-…). Find it in the Anthropic console under Settings, Workspaces.',
+        type:        'text',
+        required:    false,
+        placeholder: 'wrkspc_…',
+      },
+      {
         key:             'model',
         title:           'Model',
         hint:            'Select a Claude model to use for completions.',

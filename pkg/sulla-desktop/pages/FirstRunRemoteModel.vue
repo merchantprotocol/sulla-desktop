@@ -14,8 +14,21 @@
       </div>
     </div>
     <div v-if="showApiChoices && !hasConnection" class="frm-api">
-      <p class="frm-notice">Choose a provider now. You'll paste your key in your vault right after setup.</p>
-      <button v-for="provider in providers" :key="provider.id" type="button" class="frm-api-choice" :disabled="advancing" @click="chooseApiProvider(provider.id)">Use {{ provider.name }} API</button>
+      <p class="frm-notice">Your key is checked now and stored only in your encrypted vault.</p>
+      <div v-for="provider in providers" :key="provider.id" class="frm-api-row">
+        <button type="button" class="frm-api-choice" :disabled="apiBusy" @click="selectApiProvider(provider.id)">Use {{ apiProviderName(provider.id) }} API</button>
+        <div v-if="selectedApiProvider === provider.id" class="frm-api-fields">
+          <div class="frm-api-input">
+            <input v-model="apiKey" type="password" :placeholder="apiPlaceholder(provider.id)" :aria-label="`${ apiProviderName(provider.id) } API key`" :disabled="apiBusy" autocomplete="off" spellcheck="false" @keyup.enter="connectApiKey(provider.id)">
+            <button type="button" class="frm-connect" :disabled="apiBusy || !apiKey.trim() || needsWorkspaceId && !workspaceId.trim()" @click="connectApiKey(provider.id)"><span v-if="apiBusy" class="frm-spinner" aria-hidden="true" />{{ apiBusy ? 'Checking…' : 'Connect' }}</button>
+          </div>
+          <label v-if="needsWorkspaceId" class="frm-workspace">
+            <span>Workspace ID</span>
+            <input v-model="workspaceId" type="text" placeholder="wrkspc_…" :disabled="apiBusy" autocomplete="off" spellcheck="false">
+            <small>Find it in the Anthropic console under Settings, Workspaces</small>
+          </label>
+        </div>
+      </div>
     </div>
     </div>
     <div class="frm-actions">
@@ -39,6 +52,11 @@ const providers = FIRST_RUN_AI_PROVIDERS;
 const connectionState = reactive<Record<FirstRunAiProviderId, ConnectState>>({ 'claude-code': 'idle', codex: 'idle', grok: 'idle' });
 const showApiChoices = ref(false); const notice = ref(''); const noticeKind = ref<'info' | 'error'>('info');
 const advancing = ref(false);
+const selectedApiProvider = ref<FirstRunAiProviderId | null>(null);
+const apiKey = ref('');
+const workspaceId = ref('');
+const needsWorkspaceId = computed(() => selectedApiProvider.value === 'claude-code' && apiKey.value.trim().startsWith('sk-ant-usr-'));
+const apiBusy = ref(false);
 let disposed = false; let claudeWaitTimer: ReturnType<typeof setTimeout> | undefined;
 // Each Connect click is one attempt. Cancel or a new click retires the old
 // one, so its late result can't change the screen.
@@ -145,28 +163,61 @@ onMounted(async() => {
     const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any);
     const pending: string[] = Array.isArray(status?.pending) ? status.pending : [];
     for (const provider of providers) {
-      if (pending.includes(provider.id) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
+      const integrationId = apiIntegrationId(provider.id);
+      if ((pending.includes(provider.id) || pending.includes(integrationId)) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
     }
     if (pending.length) traceFirstRun('ai', 'showing sign-ins main already holds', { pending });
   } catch { /* nothing to restore */ }
 });
 onBeforeUnmount(() => ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage));
 function advance() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', 'Continue clicked', { connected: providers.filter(p => connectionState[p.id] === 'connected').map(p => p.id) }); emit('next', props.stepIndex); }
-async function doLater() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', "I'll do this later clicked"); emit('next', props.stepIndex); }
-async function chooseApiProvider(id: FirstRunAiProviderId) {
+async function doLater() {
   if (advancing.value) return;
   advancing.value = true;
-  const integrationId = id === 'claude-code' ? 'anthropic' : id === 'codex' ? 'openai' : 'grok';
-  traceFirstRun('ai', 'API choice clicked', { provider: integrationId });
-  try {
+  traceFirstRun('ai', "I'll do this later clicked", { apiProvider: selectedApiProvider.value ? apiIntegrationId(selectedApiProvider.value) : undefined });
+  if (selectedApiProvider.value && apiKey.value.trim()) apiKey.value = '';
+  if (selectedApiProvider.value) {
     const current = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => ({ choices: {} }));
-    await ipcRenderer.invoke('first-run-state:set' as any, { choices: { ...(current?.choices || {}), aiApiProvider: integrationId } });
-  } catch (err) {
-    console.warn('[FirstRunRemoteModel] Could not save the API choice:', err);
+    await ipcRenderer.invoke('first-run-state:set' as any, { choices: { ...(current?.choices || {}), aiApiProvider: apiIntegrationId(selectedApiProvider.value) } }).catch(() => undefined);
   }
-  noticeKind.value = 'info';
-  notice.value = `We'll open ${ providerName(id) } in your vault right after setup.`;
   emit('next', props.stepIndex);
+}
+function apiIntegrationId(id: FirstRunAiProviderId): 'anthropic' | 'openai' | 'grok' { return id === 'claude-code' ? 'anthropic' : id === 'codex' ? 'openai' : 'grok'; }
+function apiProviderName(id: FirstRunAiProviderId) { return id === 'claude-code' ? 'Claude' : id === 'codex' ? 'ChatGPT' : 'Grok'; }
+function apiPlaceholder(id: FirstRunAiProviderId) { return id === 'claude-code' ? 'sk-ant-api03-…' : id === 'codex' ? 'sk-…' : 'xai-…'; }
+function selectApiProvider(id: FirstRunAiProviderId) {
+  if (apiBusy.value) return;
+  selectedApiProvider.value = id;
+  apiKey.value = '';
+  workspaceId.value = '';
+  notice.value = '';
+}
+async function connectApiKey(id: FirstRunAiProviderId) {
+  const key = apiKey.value.trim();
+  if (!key || apiBusy.value || advancing.value) return;
+  const integrationId = apiIntegrationId(id);
+  apiBusy.value = true;
+  noticeKind.value = 'info'; notice.value = `Checking your ${ apiProviderName(id) } API key…`;
+  traceFirstRun('ai', 'API key connect clicked', { provider: integrationId });
+  try {
+    const result = await ipcRenderer.invoke('first-run-ai:connect-api-key' as any, { providerId: integrationId, apiKey: key, workspaceId: workspaceId.value.trim() });
+    if (!result?.success) {
+      noticeKind.value = 'error'; notice.value = result?.error || 'That key could not be connected. Try again.';
+      return;
+    }
+    apiKey.value = '';
+    workspaceId.value = '';
+    const current = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => ({ choices: {} }));
+    const choices = { ...(current?.choices || {}) };
+    delete choices.aiApiProvider;
+    await ipcRenderer.invoke('first-run-state:set' as any, { choices }).catch(() => undefined);
+    await markConnected(id);
+    notice.value = `${ apiProviderName(id) } API key connected.`;
+  } catch {
+    noticeKind.value = 'error'; notice.value = `Could not reach ${ apiProviderName(id) }. Check your connection.`;
+  } finally {
+    apiBusy.value = false;
+  }
 }
 onBeforeUnmount(() => {
   disposed = true;
@@ -177,6 +228,6 @@ onBeforeUnmount(() => {
 </script>
 <style lang="scss" scoped>
 .frm-page{display:flex;flex-direction:column;height:100%;min-height:0}.fr-step-body{min-height:0;overflow-y:auto}
-.frm-page{color:var(--text-primary)}.frm-heading{font-family:"Playfair Display",Georgia,serif;font-size:34px;line-height:1.08}.frm-subtext,.frm-option-plan{color:var(--text-muted)}.frm-options,.frm-api{display:flex;flex-direction:column;gap:9px}.frm-option{display:flex;align-items:center;gap:13px;min-height:66px;padding:12px 14px;border:1px solid var(--border-default);border-radius:14px;background:var(--bg-input)}.frm-option-icon{width:30px;height:30px}.frm-option-text{display:flex;flex:1;flex-direction:column;gap:2px}.frm-option-name{font-weight:650}.frm-option-plan{font-size:13px}.frm-connect,.frm-api-choice{padding:8px 15px;border-radius:9px;background:var(--accent-primary);color:var(--text-on-accent);font-weight:650}.frm-cancel{padding:8px 12px;border-radius:9px;color:var(--text-muted);font-weight:600}.frm-connect.is-connected{background:var(--bg-surface-hover);color:var(--text-secondary)}button:disabled{cursor:wait;opacity:.65}.frm-notice{margin-bottom:12px;padding:11px 13px;border:1px solid var(--border-default);border-radius:10px;color:var(--text-secondary);background:var(--bg-surface-alt);font-size:13px;line-height:1.45}.frm-notice.is-error{border-color:var(--border-error);color:var(--text-error);background:var(--bg-error)}.frm-api-row{display:flex;flex-direction:column;gap:6px;font-weight:600}.frm-api-input{display:flex;gap:8px}.frm-api-input input{min-width:0;flex:1;padding:9px 11px;border:1px solid var(--border-default);border-radius:9px;background:var(--bg-input);color:var(--text-primary);font-weight:400}.frm-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:20px}.frm-actions button{padding:9px 14px;border-radius:9px;font-weight:600}.frm-btn-accent{background:var(--accent-primary);color:var(--text-on-accent)}.frm-btn-secondary{background:var(--bg-surface-hover);color:var(--text-primary)}.frm-btn-later{color:var(--text-muted)}.theme-noir .frm-option{border-color:transparent;background:rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2)/.4);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--nx-accent-2) 12%,transparent)}.theme-noir .frm-connect,.theme-noir .frm-api-choice,.theme-noir .frm-btn-accent{background:var(--nx-accent);color:var(--nx-ink)}
+.frm-page{color:var(--text-primary)}.frm-heading{font-family:"Playfair Display",Georgia,serif;font-size:34px;line-height:1.08}.frm-subtext,.frm-option-plan{color:var(--text-muted)}.frm-options,.frm-api{display:flex;flex-direction:column;gap:9px}.frm-option{display:flex;align-items:center;gap:13px;min-height:66px;padding:12px 14px;border:1px solid var(--border-default);border-radius:14px;background:var(--bg-input)}.frm-option-icon{width:30px;height:30px}.frm-option-text{display:flex;flex:1;flex-direction:column;gap:2px}.frm-option-name{font-weight:650}.frm-option-plan{font-size:13px}.frm-connect,.frm-api-choice{padding:8px 15px;border-radius:9px;background:var(--accent-primary);color:var(--text-on-accent);font-weight:650}.frm-cancel{padding:8px 12px;border-radius:9px;color:var(--text-muted);font-weight:600}.frm-connect.is-connected{background:var(--bg-surface-hover);color:var(--text-secondary)}button:disabled{cursor:wait;opacity:.65}.frm-notice{margin-bottom:12px;padding:11px 13px;border:1px solid var(--border-default);border-radius:10px;color:var(--text-secondary);background:var(--bg-surface-alt);font-size:13px;line-height:1.45}.frm-notice.is-error{border-color:var(--border-error);color:var(--text-error);background:var(--bg-error)}.frm-api-row,.frm-api-fields{display:flex;flex-direction:column;gap:6px;font-weight:600}.frm-api-input{display:flex;gap:8px}.frm-api-input input{min-width:0;flex:1;padding:9px 11px;border:1px solid var(--border-default);border-radius:9px;background:var(--bg-input);color:var(--text-primary);font-weight:400}.frm-workspace{display:flex;flex-direction:column;gap:4px;color:var(--text-secondary);font-size:13px}.frm-workspace input{padding:9px 11px;border:1px solid var(--border-default);border-radius:9px;background:var(--bg-input);color:var(--text-primary);font-weight:400}.frm-workspace small{color:var(--text-muted);font-weight:400}.frm-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:20px}.frm-actions button{padding:9px 14px;border-radius:9px;font-weight:600}.frm-btn-accent{background:var(--accent-primary);color:var(--text-on-accent)}.frm-btn-secondary{background:var(--bg-surface-hover);color:var(--text-primary)}.frm-btn-later{color:var(--text-muted)}.theme-noir .frm-option{border-color:transparent;background:rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2)/.4);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--nx-accent-2) 12%,transparent)}.theme-noir .frm-connect,.theme-noir .frm-api-choice,.theme-noir .frm-btn-accent{background:var(--nx-accent);color:var(--nx-ink)}
 .frm-spinner{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-1px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:frm-spin .8s linear infinite}@keyframes frm-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion: reduce){.frm-spinner{animation-duration:2s}}
 </style>

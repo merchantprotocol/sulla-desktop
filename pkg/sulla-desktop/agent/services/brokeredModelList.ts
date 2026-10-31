@@ -159,12 +159,20 @@ export async function listProviderModelsBrokered<T = unknown>(
   if (!account) return { body: null, lane: null };
   const lane = modelListLane(providerId, account.account_id);
   if (!lane) return { body: null, lane: null };
+  let workspaceHeaders: Record<string, string> = {};
+  if (providerId === 'anthropic') {
+    try {
+      const metadata = await getIntegrationService().getMetadataValues(providerId, account.account_id);
+      const workspaceId = metadata.find(value => value.property === 'workspace_id')?.value;
+      if (workspaceId) workspaceHeaders = { 'anthropic-workspace-id': workspaceId };
+    } catch { /* optional non-secret workspace metadata */ }
+  }
   const body = await fetchBrokeredModelList<T>({
     providerId,
     accountId:  account.account_id,
     url:        lane.url,
     injections: lane.injections,
-    headers:    { ...(lane.headers ?? {}), ...(extraHeaders?.(lane) ?? {}) },
+    headers:    { ...(lane.headers ?? {}), ...workspaceHeaders, ...(extraHeaders?.(lane) ?? {}) },
   });
   return { body, lane };
 }

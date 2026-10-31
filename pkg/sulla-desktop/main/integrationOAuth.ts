@@ -32,6 +32,62 @@ import * as window from '@pkg/window';
 const console = Logging.background;
 
 const LOG_PREFIX = '[IntegrationOAuth]';
+
+type FirstRunApiProviderId = 'anthropic' | 'openai' | 'grok';
+
+interface ApiKeyProviderConfig {
+  name: string;
+  url: string;
+  headers(apiKey: string): Record<string, string>;
+}
+
+const API_KEY_PROVIDERS: Record<FirstRunApiProviderId, ApiKeyProviderConfig> = {
+  anthropic: {
+    name: 'Anthropic',
+    url: 'https://api.anthropic.com/v1/models',
+    headers: apiKey => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+  },
+  openai: {
+    name: 'OpenAI',
+    url: 'https://api.openai.com/v1/models',
+    headers: apiKey => ({ Authorization: `Bearer ${ apiKey }` }),
+  },
+  grok: {
+    name: 'Grok',
+    url: 'https://api.x.ai/v1/models',
+    headers: apiKey => ({ Authorization: `Bearer ${ apiKey }` }),
+  },
+};
+
+function modelIds(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return [];
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  return [...new Set(data.flatMap(item => item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string'
+    ? [(item as { id: string }).id]
+    : []))];
+}
+
+function chooseDefaultApiModel(providerId: FirstRunApiProviderId, ids: string[]): string | undefined {
+  const eligible = ids.filter(id => {
+    const lower = id.toLowerCase();
+    if (providerId === 'anthropic') return lower.includes('claude') && (lower.includes('sonnet') || lower.includes('opus'));
+    if (providerId === 'openai') return lower.startsWith('gpt-') && !/(audio|realtime|transcribe|tts|image|embedding|search|instruct)/.test(lower);
+    return lower.startsWith('grok-') && !/(image|embedding)/.test(lower);
+  });
+  const rank = (id: string) => providerId === 'anthropic'
+    ? `${ id.toLowerCase().includes('sonnet') ? '2' : '1' }${ id }`
+    : id;
+  return eligible.sort((a, b) => rank(b).localeCompare(rank(a), undefined, { numeric: true, sensitivity: 'base' }))[0];
+}
+
+function apiFailure(error: unknown, providerName: string): { error: string; errorClass: string } {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'TimeoutError' || name === 'AbortError' || error instanceof TypeError) {
+    return { error: `Could not reach ${ providerName }. Check your connection.`, errorClass: 'network' };
+  }
+  return { error: `Could not reach ${ providerName }. Check your connection.`, errorClass: 'network' };
+}
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
@@ -137,6 +193,71 @@ export function initIntegrationOAuthEvents(): void {
             : errMsg.replace(/^\[OAuthService\]\s*/, '');
       firstRunTrace('oauth', 'flow completed', { integrationId: payload?.integrationId, success: false, reason, error });
       return { success: false, error, reason };
+    }
+  });
+
+
+  ipcMainProxy.handle('first-run-ai:connect-api-key' as any, async(
+    event: Electron.IpcMainInvokeEvent,
+    payload: { providerId?: string; apiKey?: string; workspaceId?: string },
+  ): Promise<{ success: boolean; error?: string; models?: string[] }> => {
+    assertFirstRunOrMainSender(event);
+    const providerId = payload?.providerId as FirstRunApiProviderId;
+    const provider = API_KEY_PROVIDERS[providerId];
+    const apiKey = typeof payload?.apiKey === 'string' ? payload.apiKey.trim() : '';
+    if (!provider || !apiKey) return { success: false, error: 'Enter an API key to connect.' };
+    const workspaceId = typeof payload?.workspaceId === 'string' ? payload.workspaceId.trim() : '';
+    const userLevelAnthropicKey = providerId === 'anthropic' && apiKey.startsWith('sk-ant-usr-');
+    if (userLevelAnthropicKey && !/^wrkspc_[A-Za-z0-9_-]+$/.test(workspaceId)) {
+      return { success: false, error: 'Enter the Workspace ID from Anthropic Settings, Workspaces.' };
+    }
+
+    firstRunTrace('api-key', 'verification started', { provider: providerId });
+    try {
+      const response = await fetch(provider.url, {
+        method: 'GET',
+        headers: { ...provider.headers(apiKey), ...(userLevelAnthropicKey ? { 'anthropic-workspace-id': workspaceId } : {}) },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        let errorClass = `http-${ response.status }`;
+        let error = `${ provider.name } could not verify that key. Try again.`;
+        if (response.status === 401 || response.status === 403) error = 'That key was not accepted. Check it and try again.';
+        if (response.status === 429) error = 'The key works but is rate limited right now; try again shortly.';
+        if (providerId === 'anthropic' && response.status === 400 && /workspace/i.test(text)) {
+          errorClass = 'anthropic-workspace';
+          error = userLevelAnthropicKey
+            ? 'That Workspace ID was not accepted. Find it in the Anthropic console under Settings, Workspaces.'
+            : 'This key is not tied to an Anthropic workspace. Create a workspace API key (it starts with sk-ant-api03-) in the Anthropic console.';
+        }
+        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
+        return { success: false, error };
+      }
+
+      let body: unknown;
+      try { body = JSON.parse(text); } catch { body = null }
+      const models = modelIds(body);
+      const model = chooseDefaultApiModel(providerId, models);
+      if (!model) {
+        firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: 'no-chat-model' });
+        return { success: false, error: `${ provider.name } accepted the key but returned no supported chat models.` };
+      }
+
+      queuePendingCredential({
+        integrationId: providerId,
+        accountId: 'default',
+        values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
+        activate: true,
+      });
+      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+      await getModelProviderService().reconcilePrimaryProvider(false, providerId);
+      firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
+      return { success: true, models };
+    } catch (error) {
+      const failure = apiFailure(error, provider.name);
+      firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass: failure.errorClass });
+      return { success: false, error: failure.error };
     }
   });
 

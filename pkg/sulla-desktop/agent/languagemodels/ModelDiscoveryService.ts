@@ -383,6 +383,16 @@ export class ModelDiscoveryService {
       // Add required headers for specific providers
       if (providerId === 'anthropic') {
         headers['anthropic-version'] = '2023-06-01';
+        let workspaceId = runtime?.values.workspace_id || '';
+        if (!workspaceId) {
+          try {
+            const values = await getIntegrationService().getFormValues('anthropic');
+            workspaceId = values.find(value => value.property === 'workspace_id')?.value || '';
+            const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+            workspaceId = getPendingCredential('anthropic')?.values.workspace_id || workspaceId;
+          } catch { /* optional workspace metadata */ }
+        }
+        if (workspaceId) headers['anthropic-workspace-id'] = workspaceId;
       }
 
       const injections: BrokerInjection[] = provider.authHeader === 'Authorization'

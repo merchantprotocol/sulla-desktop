@@ -94,6 +94,10 @@ export class GrokService extends OpenAICompatibleService {
         if (pending.values.model) valMap.model = pending.values.model;
         oauthMode = true;
         firstRunTrace('grok', 'credentials resolved', { source: 'pending', oauthMode: true });
+      } else if (pending?.values.api_key) {
+        apiKey = pending.values.api_key;
+        if (pending.values.model) valMap.model = pending.values.model;
+        firstRunTrace('grok', 'credentials resolved', { source: 'pending', oauthMode: false });
       }
     } catch { /* pending credentials exist only in the main process */ }
     if (!oauthMode && usesContainerVaultAuthority()) {
