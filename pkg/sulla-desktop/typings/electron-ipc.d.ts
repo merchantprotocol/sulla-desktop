@@ -64,6 +64,8 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
+  'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
   'backend-state-check':   () => string;
   'k8s-restart':           () => void;
   'settings-read':         () => void;

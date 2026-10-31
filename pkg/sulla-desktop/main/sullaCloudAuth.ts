@@ -34,6 +34,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
 import { getFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/main/firstRun/firstRunTrace';
 import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -106,6 +107,7 @@ export function clearPendingCloudMasterKey(): void {
 }
 
 function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string): void {
+  firstRunTrace('vault', 'vault key derived from the Cloud password and held in memory', { userId });
   zeroPendingCloudMasterKey();
   pendingCloudMasterKey = key;
   pendingCloudAccountKdf = kdf;
@@ -126,7 +128,9 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
   try {
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
+    firstRunTrace('vault', 'creating or re-keying the vault with the Cloud key', { userId });
     const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(attemptKey).toString('base64url'), kdf });
+    firstRunTrace('vault', 'vault accepted the Cloud key', { recoveryKeyCreated: !!result.recoveryKey });
     // The vault is authoritative now. Publish before optional Keychain/UI work.
     const { onVaultUnlocked } = await import('@pkg/sulla');
     await onVaultUnlocked();
@@ -869,6 +873,7 @@ export async function getCurrentUserId(): Promise<string> {
 // ── IPC handlers ───────────────────────────────────────────
 
 export function initSullaCloudAuthEvents(): void {
+  initFirstRunTraceEvents();
   applyFirstRunChoicesWhenReady();
   startPendingCredentialFlush();
   if (!accountWrapFlushHookInstalled) {
@@ -877,7 +882,14 @@ export function initSullaCloudAuthEvents(): void {
     let flushing = false;
     let wrapRetryMs = 2_000;
     let wrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastWait = '';
+    const traceWait = (reason: string) => {
+      if (reason === lastWait) return;
+      lastWait = reason;
+      firstRunTrace('vault', `vault creation waiting: ${ reason }`);
+    };
     const flushWhenReady = () => {
+      if (pendingCloudMasterKey && !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) traceWait('vault service not ready yet');
       // Create the vault as soon as its service is up, even mid-setup: the key
       // exists from the Account step, and waiting only widens the window
       // where a quit loses it. Sign-ins held in memory flush right after.
@@ -891,16 +903,22 @@ export function initSullaCloudAuthEvents(): void {
         if (!lifecycle.isVaultUnlocked()) {
           const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
           const status = await getDesktopVaultClient().status();
-          if (!status.setup?.required) return;
+          if (!status.setup?.required) {
+            traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
+            return;
+          }
           creating = true;
         }
+        firstRunTrace('vault', creating ? 'no vault yet; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
         await flushAccountPasswordWrap();
+        firstRunTrace('vault', creating ? 'vault created and unlocked' : 'vault now uses the Cloud password');
         if (creating) {
           console.log('[SullaCloudAuth] Vault created from the Cloud account password and unlocked');
         }
         wrapRetryMs = 2_000;
       })().catch(error => {
         console.error('[SullaCloudAuth] Account-password vault migration failed; retrying:', error instanceof Error ? error.message : String(error));
+        firstRunTrace('vault', 'vault creation failed; will retry', { error, retryInMs: wrapRetryMs });
         if (!wrapRetryTimer) {
           wrapRetryTimer = setTimeout(() => {
             wrapRetryTimer = undefined;
@@ -1181,7 +1199,9 @@ export function initSullaCloudAuthEvents(): void {
       // /auth/prelogin answers every email with a KDF (real or decoy) so it
       // cannot reveal whether an account exists. Register first; only a 409
       // means the account exists and the password should sign in.
+      firstRunTrace('account', 'Cloud account submit', { emailDomain: e.split('@')[1], inMemory: shouldKeepSessionInMemory() });
       const created = await emailRegister(e, password, name?.trim() || undefined);
+      firstRunTrace('account', 'register answered', { ok: created.ok, httpStatus: created.httpStatus, error: created.error });
       if (created.ok && created.data) {
         data = created.data;
         masterKey = created.masterKey!;
@@ -1191,6 +1211,7 @@ export function initSullaCloudAuthEvents(): void {
         return { ...throttled(created), status: await buildStatus().catch(() => ({} as any)) };
       } else if (created.httpStatus === 409) {
         const login = await emailLogin(e, password);
+        firstRunTrace('account', 'existing account; sign-in answered', { ok: login.ok, httpStatus: login.httpStatus, error: login.error });
         if (login.httpStatus === 429) return { ...throttled(login), status: await buildStatus().catch(() => ({} as any)) };
         if (!login.ok || !login.data) {
           const error = login.httpStatus === 401 || login.httpStatus === 403
@@ -1209,6 +1230,7 @@ export function initSullaCloudAuthEvents(): void {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      firstRunTrace('account', 'Cloud account request threw', { error: message });
       const friendly = /unsupported|kdf|version/i.test(message)
         ? 'Sulla needs an update to sign in.'
         : /\b5\d\d\b/.test(message) ? 'Sulla Cloud had a problem, try again.' : 'Could not reach Sulla Cloud. Check your connection and try again.';
@@ -1221,6 +1243,7 @@ export function initSullaCloudAuthEvents(): void {
     if (signedIn.ok && !shouldKeepSessionInMemory()) await flushAccountPasswordWrap((data.userId ?? data.contractor.id)).catch(error => {
       console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
     });
+    firstRunTrace('account', 'Cloud sign-in finished', { ok: signedIn.ok, isNewUser, heldInMemory: shouldKeepSessionInMemory(), error: signedIn.error });
     return { ...signedIn, isNewUser };
   });
 
@@ -1415,8 +1438,10 @@ export function initSullaCloudAuthEvents(): void {
             throw new VaultNotReadyError(`cloud services unavailable: ${ (err as Error)?.message || err }`);
           }
           console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
+          firstRunTrace('account', 'startup restore: Cloud session found in the vault', { userId: session.userId });
         } else {
           console.log('[SullaCloudAuth] Startup restore: no signed-in session');
+          firstRunTrace('account', 'startup restore: no Cloud session in the vault');
         }
         // Success (either a session was restored or none exists) — stop retrying.
         return;
@@ -1425,6 +1450,7 @@ export function initSullaCloudAuthEvents(): void {
         const giveUp = !(err instanceof VaultNotReadyError) && (Date.now() - startedAt) >= RETRY_GIVEUP_MS;
         if (!isTransient(err) || giveUp) {
           console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
+          firstRunTrace('account', 'startup restore gave up', { error: err });
           startupAdoptionError = `Sulla Cloud restore stopped: ${ (err as Error)?.message || err }`;
           return;
         }
