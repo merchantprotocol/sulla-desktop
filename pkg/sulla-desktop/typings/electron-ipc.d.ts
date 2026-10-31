@@ -1245,6 +1245,7 @@ export interface IpcRendererEvents {
   /** Pushed when the first-chat readiness changes. */
   'first-run:chat-ready-status':    (status: import('@pkg/main/chatReadiness').ChatReadyStatus) => void;
   'claude-oauth:url':               (url: string) => void;
+  'sulla-cloud:other-device-signin-code': (payload: { requestId: string; code: string; expiresAt: string; requestingDeviceId: string; requestingDeviceName: string }) => void;
   'claude-oauth:stage':             (text: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
