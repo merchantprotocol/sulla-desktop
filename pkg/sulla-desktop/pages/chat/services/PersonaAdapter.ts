@@ -36,7 +36,7 @@ import type {
 import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, NoticeMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
 import type { ChatArtifactChangedEvent, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
@@ -308,13 +308,22 @@ export class PersonaAdapter {
     const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
     if (!aiStatus.loading && !aiStatus.connected) {
+      const createdAt = Date.now();
       this.controller.appendMessage({
-        id:        asMessageId(`no-ai-${ Date.now() }`),
-        kind:      'error',
+        id:        asMessageId(`no-ai-user-${ createdAt }`),
+        kind:      'user',
+        text:      text.trim() || '(attached)',
+        attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
+        createdAt,
+      });
+      this.controller.appendMessage({
+        id:        asMessageId(`no-ai-notice-${ createdAt }`),
+        kind:      'notice',
         text:      'Connect an AI model to start chatting',
         action:    { label: 'Connect', kind: 'connect' },
-        createdAt: Date.now(),
+        createdAt: createdAt + 1,
       });
+      this.controller.persistThread();
       return;
     }
     this.ci.query.value = text;
@@ -883,6 +892,11 @@ export class PersonaAdapter {
 
     // Speak messages are audio-only — skip in transcript.
     if (b.kind === 'speak') return null;
+
+    // Neutral informational notice (for example, no AI connected).
+    if (b.kind === 'notice') {
+      return { id, kind: 'notice', createdAt, text: b.content ?? '', action: { label: 'Connect', kind: 'connect' } } satisfies NoticeMessage;
+    }
 
     // Error
     if (b.role === 'error' || b.kind === 'error') {

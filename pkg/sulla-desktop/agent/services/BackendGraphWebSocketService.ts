@@ -460,7 +460,7 @@ export class BackendGraphWebSocketService {
       }
       this.emitMessage(channelId, 'assistant_message', {
         content: 'No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.',
-        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
+        role: 'assistant', kind: 'notice', thread_id: threadIdFromMsg,
       });
       firstRunTrace('chat', 'chat blocked before launch', { reason: 'no-ai-provider', channelId });
       return;
