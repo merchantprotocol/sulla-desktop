@@ -17,8 +17,8 @@
  *
  * The model (~350 MB) is downloaded once on first use from the pinned
  * sherpa-onnx GitHub release, sha256-verified, and extracted under
- * ~/.sulla/cache/voice-models/. Until it is ready, callers get
- * KokoroNotReadyError and that text is not spoken (no system-voice fallback).
+ * ~/.sulla/cache/voice-models/. Until it is ready, the renderer speaks with
+ * the system voice while the model download continues in the background.
  */
 
 import { execFile } from 'child_process';
@@ -72,8 +72,8 @@ export function kokoroVoiceFor(key: string | null | undefined): KokoroVoice {
 const MODEL = {
   archive:  'kokoro-multi-lang-v1_0',
   url:      'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2',
-  bytes:    349_906_910,
-  sha256:   'c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298',
+  bytes:    349_886_476,
+  sha256:   '60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4',
   required: ['model.onnx', 'voices.bin', 'tokens.txt', 'lexicon-us-en.txt', 'espeak-ng-data'],
 };
 
