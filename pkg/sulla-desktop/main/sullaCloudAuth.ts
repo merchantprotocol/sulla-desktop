@@ -878,7 +878,10 @@ export function initSullaCloudAuthEvents(): void {
     let wrapRetryMs = 2_000;
     let wrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
     const flushWhenReady = () => {
-      if (flushing || !pendingCloudMasterKey || !getFirstRunState().onboardingComplete ||
+      // Create the vault as soon as its service is up, even mid-setup: the key
+      // exists from the Account step, and waiting only widens the window
+      // where a quit loses it. Sign-ins held in memory flush right after.
+      if (flushing || !pendingCloudMasterKey ||
           !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) return;
       flushing = true;
       void (async() => {
