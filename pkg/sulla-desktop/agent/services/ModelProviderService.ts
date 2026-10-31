@@ -21,9 +21,9 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
 import { getSelectBoxProvider } from '../integrations/select_box';
 import { getCliStatus } from '../tools/models/shared';
-import { GROK_SUBSCRIPTION_DEFAULT_MODEL } from '../languagemodels/GrokService';
 
 import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ type ChangeListener = (state: ModelProviderState) => void;
 class ModelProviderService {
   private state: ModelProviderState = {
     primaryProvider:      '',
-    secondaryProvider:    'grok',
+    secondaryProvider:    '',
     heartbeatProvider:    'default',
     subconsciousProvider: 'claude-code',
     activeModelId:        '',
@@ -84,6 +84,7 @@ class ModelProviderService {
   private initialized = false;
   private ipcRegistered = false;
   private changeListeners: ChangeListener[] = [];
+  private vaultListenerRegistered = false;
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
@@ -115,6 +116,12 @@ class ModelProviderService {
     }
 
     this.initialized = true;
+    if (!this.vaultListenerRegistered) {
+      this.vaultListenerRegistered = true;
+      getServiceLifecycleManager().on('vault:state', (unlocked: boolean) => {
+        if (unlocked) void this.reconcilePrimaryProvider();
+      });
+    }
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
 
     // Broadcast to any windows that opened before the service was ready,
@@ -303,34 +310,43 @@ class ModelProviderService {
    * During first run credentials may still be waiting in memory for the vault,
    * so pending credentials count as connected here and in the model picker.
    */
-  async reconcilePrimaryProvider(preferPriority = false): Promise<ModelProviderState> {
+  async reconcilePrimaryProvider(preferPriority = false, explicitlySelectedProvider = ''): Promise<ModelProviderState> {
     const integrationService = getIntegrationService();
-    const priority = [
-      { providerId: 'claude-code', modelId: 'claude-code' },
-      { providerId: 'codex', modelId: 'codex' },
-      { providerId: 'grok', modelId: GROK_SUBSCRIPTION_DEFAULT_MODEL },
-    ];
+    const priority = ['claude-code', 'codex', 'grok'];
+    const candidates = Object.values(integrations)
+      .filter(i => i.category === 'AI Infrastructure' && !EXCLUDED_PROVIDER_IDS.includes(i.id))
+      .map(i => i.id)
+      .sort((a, b) => {
+        const ai = priority.indexOf(a); const bi = priority.indexOf(b);
+        return (ai < 0 ? priority.length : ai) - (bi < 0 ? priority.length : bi);
+      });
     const connected = new Set<string>();
+    let lookupUnknown = false;
 
-    for (const { providerId } of priority) {
+    for (const providerId of candidates) {
       if (hasPendingCredential(providerId)) {
         connected.add(providerId);
         continue;
       }
       try {
         if (await integrationService.isAnyAccountConnected(providerId)) connected.add(providerId);
-      } catch { /* the integration database may still be starting */ }
+      } catch { lookupUnknown = true }
     }
 
-    if (!preferPriority && connected.has(this.state.primaryProvider)) return this.getState();
+    const selectedProvider = explicitlySelectedProvider && connected.has(explicitlySelectedProvider)
+      ? explicitlySelectedProvider
+      : (!preferPriority && connected.has(this.state.primaryProvider) ? this.state.primaryProvider : candidates.find(id => connected.has(id)));
 
-    const selected = priority.find(({ providerId }) => connected.has(providerId));
-    if (selected) return this.selectModel(selected.providerId, selected.modelId);
+    if (selectedProvider) {
+      if (selectedProvider !== this.state.primaryProvider) await this.selectModel(selectedProvider, '');
+      const fallback = candidates.find(id => connected.has(id) && id !== selectedProvider) || selectedProvider;
+      if (!connected.has(this.state.secondaryProvider)) await this.setSecondaryProvider(fallback);
+      return this.getState();
+    }
 
-    this.state.primaryProvider = '';
-    this.state.activeModelId = '';
-    await this.persistState('', '');
-    await this.broadcastChange();
+    // An empty result while the vault is locked or starting is not evidence
+    // that the user's saved choice is disconnected. Never erase it.
+    if (lookupUnknown || this.state.primaryProvider) return this.getState();
     return this.getState();
   }
 
@@ -468,7 +484,7 @@ class ModelProviderService {
 
   private async loadStateFromDB(): Promise<void> {
     this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', '');
-    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
+    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', '');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.state.secondaryModelId = await SullaSettingsModel.get('secondaryModelId', '');

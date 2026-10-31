@@ -425,6 +425,17 @@ export class IntegrationService {
         console.warn('[IntegrationService] Could not clear model-list caches:', err);
       }
     }
+
+    const { integrations } = await import('../integrations/catalog');
+    const integration = integrations[integrationId];
+    if (integration?.category === 'AI Infrastructure') {
+      try {
+        const { getModelProviderService } = await import('./ModelProviderService');
+        await getModelProviderService().reconcilePrimaryProvider(false, connected ? integrationId : '');
+      } catch (err) {
+        console.warn('[IntegrationService] Could not reconcile model provider:', err);
+      }
+    }
   }
 
   async getConnectionStatus(integrationId: string, accountId?: string): Promise<IntegrationConnectionStatus> {

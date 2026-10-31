@@ -27,7 +27,10 @@ export type GuestCli = keyof typeof GUEST_CLI_PACKAGES;
 const inflight = new Map<GuestCli, Promise<void>>();
 
 function install(cli: GuestCli): Promise<void> {
-  const script = `command -v ${ cli } >/dev/null 2>&1 && exit 0; sudo npm install --global --no-fund --no-audit ${ GUEST_CLI_PACKAGES[cli] } && command -v ${ cli }`;
+  const packageSpec = GUEST_CLI_PACKAGES[cli];
+  const pinnedVersion = packageSpec.slice(packageSpec.lastIndexOf('@') + 1);
+  const versionCommand = cli === 'claude' ? 'DISABLE_AUTOUPDATER=1 claude --version' : 'codex --version';
+  const script = `installed="$(${ versionCommand } 2>/dev/null || true)"; case "$installed" in *${ pinnedVersion }*) exit 0;; esac; nice -n 10 sudo npm install --global --no-fund --no-audit ${ packageSpec } && command -v ${ cli }`;
 
   return new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
@@ -48,10 +51,7 @@ function install(cli: GuestCli): Promise<void> {
 export function ensureGuestCli(cli: GuestCli): Promise<void> {
   let run = inflight.get(cli);
   if (!run) {
-    run = install(cli).catch((err) => {
-      inflight.delete(cli);
-      throw err;
-    });
+    run = install(cli).finally(() => inflight.delete(cli));
     inflight.set(cli, run);
   }
   return run;
@@ -59,10 +59,12 @@ export function ensureGuestCli(cli: GuestCli): Promise<void> {
 
 /** Install every provider CLI in the background once the VM is up. */
 export function prepareGuestClis(): void {
-  for (const cli of Object.keys(GUEST_CLI_PACKAGES) as GuestCli[]) {
-    void ensureGuestCli(cli).then(
+  void (async() => {
+    for (const cli of Object.keys(GUEST_CLI_PACKAGES) as GuestCli[]) {
+      await ensureGuestCli(cli).then(
       () => log.log(`[guestClis] ${ cli } is ready in the VM`),
       err => log.warn(`[guestClis] ${ cli } is not installed yet: ${ err instanceof Error ? err.message : String(err) }`),
-    );
-  }
+      );
+    }
+  })();
 }

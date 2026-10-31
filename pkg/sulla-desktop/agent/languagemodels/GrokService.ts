@@ -41,9 +41,6 @@ export const GROK_SUBSCRIPTION_BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
 export const GROK_CLI_VERSION = '1.0.13';
 export const GROK_CLI_USER_AGENT = `grok-pager/${ GROK_CLI_VERSION } grok-shell/${ GROK_CLI_VERSION } (macos; aarch64)`;
 
-/** Default model on the subscription lane (500k context, Responses backend). */
-export const GROK_SUBSCRIPTION_DEFAULT_MODEL = 'grok-4.5';
-
 /** xAI server-side search tools. These execute remotely and never enter Sulla's ToolExecutor. */
 export const GROK_NATIVE_SEARCH_TOOLS = [
   { type: 'x_search' },
@@ -88,14 +85,23 @@ export class GrokService extends OpenAICompatibleService {
     let accountId = await integrationService.getActiveAccountId('grok');
     let apiKey = valMap.api_key || '';
     let oauthMode = false;
-    if (usesContainerVaultAuthority()) {
+    try {
+      const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+      const pending = getPendingCredential('grok');
+      if (pending?.values.access_token) {
+        apiKey = pending.values.access_token;
+        if (pending.values.model) valMap.model = pending.values.model;
+        oauthMode = true;
+      }
+    } catch { /* pending credentials exist only in the main process */ }
+    if (!oauthMode && usesContainerVaultAuthority()) {
       const oauthAccount = (await integrationService.getAccounts('grok'))
         .find(account => account.account_id === 'oauth' && account.connected);
       if (oauthAccount) {
         accountId = oauthAccount.account_id;
         oauthMode = true;
       }
-    } else {
+    } else if (!oauthMode) {
       try {
         apiKey = await integrationService.getOAuthAccessToken('grok', 'oauth');
         accountId = 'oauth';
@@ -107,12 +113,20 @@ export class GrokService extends OpenAICompatibleService {
     if (oauthMode) {
       // The proxy only serves the subscription catalog. A model saved while
       // on the metered lane (grok-2/grok-3 families) would 404/403 there —
-      // coerce to the subscription default instead of failing every call.
+      // choose the first model returned by the live subscription catalog.
       if (!model || /^grok-[23]/.test(model)) {
-        if (model) {
-          console.log(`[GrokService] Model "${ model }" is not on the subscription lane — using ${ GROK_SUBSCRIPTION_DEFAULT_MODEL }`);
+        let body: { data?: { id?: string }[] } | null = null;
+        if (apiKey) {
+          const response = await fetch(`${ GROK_SUBSCRIPTION_BASE_URL }/models`, {
+            headers: { Authorization: `Bearer ${ apiKey }`, ...grokCliHeaders() },
+          });
+          body = response.ok ? await response.json() as { data?: { id?: string }[] } : null;
+        } else if (usesContainerVaultAuthority()) {
+          const { listProviderModelsBrokered } = await import('../services/brokeredModelList');
+          body = (await listProviderModelsBrokered<{ data?: { id?: string }[] }>('grok', accountId, () => grokCliHeaders())).body;
         }
-        model = GROK_SUBSCRIPTION_DEFAULT_MODEL;
+        model = body?.data?.find(item => typeof item.id === 'string' && item.id)?.id || '';
+        if (!model) throw new Error('Grok did not return an available model');
       }
     }
 

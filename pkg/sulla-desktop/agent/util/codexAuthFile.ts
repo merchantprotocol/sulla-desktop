@@ -12,13 +12,30 @@ import * as fs from 'fs';
 import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
+import { app } from 'electron';
 
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 
 const CODEX_AUTH_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export function codexHomeDir(): string {
-  return path.join(os.homedir(), '.codex');
+  return path.join(app.getPath('userData'), 'codex-home');
+}
+
+function legacyCodexAuthPath(): string {
+  return path.join(os.homedir(), '.codex', 'auth.json');
+}
+
+function migrateLegacyCodexAuth(): void {
+  if (fs.existsSync(codexAuthPath()) || !fs.existsSync(legacyCodexAuthPath())) return;
+  try {
+    fs.mkdirSync(codexHomeDir(), { recursive: true });
+    fs.copyFileSync(legacyCodexAuthPath(), codexAuthPath(), fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(codexAuthPath(), 0o600);
+    console.log('[codexAuthFile] Migrated legacy Codex sign-in into Sulla-owned storage');
+  } catch (err) {
+    console.warn('[codexAuthFile] Could not migrate legacy Codex sign-in:', err);
+  }
 }
 
 export function codexAuthPath(): string {
@@ -243,6 +260,7 @@ export async function removeCodexAuthFile(): Promise<void> {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
+  migrateLegacyCodexAuth();
   if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) {
     return linkCodexHomeIntoVm();
   }

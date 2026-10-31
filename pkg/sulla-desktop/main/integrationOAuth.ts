@@ -57,13 +57,13 @@ export function initIntegrationOAuthEvents(): void {
       extraScopes?:  string[];
       firstRun?:     boolean;
     },
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; error?: string; reason?: 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error' }> => {
     if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
-      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'The sign-in window was closed' };
+      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'Sign-in was closed.', reason: 'user-closed' };
       const endpoint = process.env.SULLA_E2E_OAUTH_URL;
-      if (!endpoint) return { success: false, error: 'Missing fake OAuth endpoint' };
+      if (!endpoint) return { success: false, error: 'Sign-in is unavailable.', reason: 'provider-error' };
       const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: payload.integrationId }) });
-      if (!response.ok) return { success: false, error: `Fake OAuth returned ${ response.status }` };
+      if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
       queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
       return { success: true };
@@ -87,9 +87,26 @@ export function initIntegrationOAuthEvents(): void {
           .filter(([, value]) => value !== undefined && value !== null)
           .map(([key, value]) => [key, typeof value === 'string' ? value : String(value)]));
         values.provider_id = payload.providerId;
+        if (payload.integrationId === 'grok') {
+          const { GROK_SUBSCRIPTION_BASE_URL, grokCliHeaders } = await import('@pkg/agent/languagemodels/GrokService');
+          const response = await fetch(`${ GROK_SUBSCRIPTION_BASE_URL }/models`, {
+            headers: { Authorization: `Bearer ${ values.access_token }`, ...grokCliHeaders() },
+          });
+          const body = response.ok ? await response.json() as { data?: { id?: string }[] } : null;
+          const model = body?.data?.find(item => typeof item.id === 'string' && item.id)?.id;
+          if (!model) throw new Error('Grok signed in, but the account could not access any models');
+          values.model = model;
+        }
         queuePendingCredential({
           integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
         });
+        const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+        await getModelProviderService().reconcilePrimaryProvider(false, payload.integrationId);
+        if (payload.integrationId === 'codex') {
+          const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('@pkg/agent/util/codexAuthFile');
+          if (!writeCodexAuthFile(tokens)) throw new Error('ChatGPT sign-in did not return usable credentials');
+          if (!await linkCodexHomeIntoVm()) throw new Error('ChatGPT signed in, but the Sulla VM is not ready yet');
+        }
       }
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
@@ -99,7 +116,16 @@ export function initIntegrationOAuthEvents(): void {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`${ LOG_PREFIX } OAuth failed for ${ payload?.integrationId }:`, errMsg);
 
-      return { success: false, error: errMsg };
+      const lower = errMsg.toLowerCase();
+      const reason = lower.includes('window closed') || lower.includes('cancel') ? 'user-closed'
+        : lower.includes('timed out') || lower.includes('timeout') ? 'timeout'
+          : lower.includes('offline') || lower.includes('network') || lower.includes('fetch') ? 'offline'
+            : lower.includes('vm') && lower.includes('ready') ? 'vm-not-ready' : 'provider-error';
+      const error = reason === 'user-closed' ? 'Sign-in was closed.'
+        : reason === 'timeout' ? 'Sign-in took too long. Try again.'
+          : reason === 'offline' ? 'You appear to be offline. Check your connection and try again.'
+            : errMsg.replace(/^\[OAuthService\]\s*/, '');
+      return { success: false, error, reason };
     }
   });
 

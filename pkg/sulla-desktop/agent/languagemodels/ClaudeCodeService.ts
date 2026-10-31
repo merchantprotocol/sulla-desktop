@@ -203,6 +203,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
     convId: string,
     state?: BaseThreadState,
   ): Promise<{ oauthToken: string; apiKey: string; baseUrl?: string; lease?: ProviderCliBridgeLease }> {
+    // During first run the vault may not exist yet. Pending credentials remain
+    // main-process memory only and are passed straight to this one guest
+    // process, exactly like the legacy non-broker path; nothing is written.
+    try {
+      const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+      const pending = getPendingCredential('claude-code');
+      const oauthToken = pending?.values.oauth_token || pending?.values.access_token || '';
+      const apiKey = pending?.values.api_key || '';
+      if (oauthToken || apiKey) return { oauthToken, apiKey };
+    } catch { /* pending custody is main-process-only */ }
+
     const bridged = await createGuestClaudeAuth({ conversationId: convId, state });
     if (bridged) return bridged;
 
