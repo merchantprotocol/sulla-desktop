@@ -63,7 +63,7 @@ export interface ProviderModelInfo {
 }
 
 // ── Excluded from the model selector dropdown ────────────────────
-const EXCLUDED_PROVIDER_IDS = ['activepieces', 'composio', 'mcp', 'enterprise-gateway'];
+const EXCLUDED_PROVIDER_IDS = ['activepieces', 'composio', 'mcp', 'enterprise_gateway'];
 
 // ── Service ──────────────────────────────────────────────────────
 
