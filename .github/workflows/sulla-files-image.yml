@@ -22,9 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - run: npm ci --ignore-scripts
-      - run: npm run build --workspace @sulla/files-service
+        with: { node-version: 24 }
+      - run: npm ci --ignore-scripts --prefix packages/vault-crypto
+      - run: npm run build --prefix packages/vault-crypto
+      - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
+      - run: npm run build --prefix services/sulla-files
       - name: Boot Files twice on an empty database
         run: node --test services/sulla-files/dist/freshDatabase.pg.integration.test.js
         env:
