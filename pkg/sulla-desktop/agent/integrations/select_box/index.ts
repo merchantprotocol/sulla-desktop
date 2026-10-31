@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AlibabaModels } from './AlibabaModels';
-import { alibabaPlans, alibabaRegions, kimiRegions } from './AIProviderOptions';
+import { alibabaPlans, alibabaRegions, kimiRegions, minimaxRegions, zaiRegions } from './AIProviderOptions';
 import { AnthropicModels } from './AnthropicModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
@@ -28,6 +28,8 @@ registerSelectBoxProvider(kimiRegions);
 registerSelectBoxProvider(new AlibabaModels());
 registerSelectBoxProvider(alibabaPlans);
 registerSelectBoxProvider(alibabaRegions);
+registerSelectBoxProvider(zaiRegions);
+registerSelectBoxProvider(minimaxRegions);
 for (const [selectId, providerId] of [
   ['google_models', 'google'],
   ['groq_models', 'groq'],
@@ -39,6 +41,16 @@ for (const [selectId, providerId] of [
   ['cohere_models', 'cohere'],
   ['deepseek_models', 'deepseek'],
   ['custom_models', 'custom'],
+  ['openrouter_models', 'openrouter'],
+  ['fireworks_models', 'fireworks'],
+  ['perplexity_models', 'perplexity'],
+  ['zai_models', 'zai'],
+  ['minimax_models', 'minimax'],
+  ['huggingface_models', 'huggingface'],
+  ['github-models_models', 'github-models'],
+  ['deepinfra_models', 'deepinfra'],
+  ['sambanova_models', 'sambanova'],
+  ['ollama-cloud_models', 'ollama-cloud'],
 ] as const) {
   registerSelectBoxProvider(new OpenAICompatibleModels(selectId, providerId));
 }

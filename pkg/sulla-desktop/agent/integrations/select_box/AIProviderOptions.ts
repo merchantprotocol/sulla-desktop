@@ -28,3 +28,14 @@ export const alibabaRegions = new StaticOptions('alibaba_regions', [
   { value: 'us', label: 'US' },
   { value: 'cn', label: 'China' },
 ]);
+
+export const zaiRegions = new StaticOptions('zai_regions', [
+  { value: 'international', label: 'International' },
+  { value: 'china', label: 'China' },
+  { value: 'coding', label: 'GLM Coding Plan' },
+]);
+
+export const minimaxRegions = new StaticOptions('minimax_regions', [
+  { value: 'international', label: 'International' },
+  { value: 'china', label: 'China' },
+]);

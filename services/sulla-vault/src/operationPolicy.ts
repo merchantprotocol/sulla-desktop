@@ -52,6 +52,27 @@ export function brokerTransferLimits(operation: string): { request: number; resp
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
   names.flatMap(name => ['Bearer', 'raw'].map(scheme => ({ field, target: 'header' as const, name, scheme: scheme as 'Bearer' | 'raw' }))));
 
+
+const OPENAI_COMPATIBLE_PROVIDER_BINDINGS = [
+  { integration: 'openrouter', hosts: ['openrouter.ai'], inference: /^\/api\/v1\/chat\/completions$/, discovery: /^\/api\/v1\/models$/ },
+  { integration: 'fireworks', hosts: ['api.fireworks.ai'], inference: /^\/inference\/v1\/chat\/completions$/, discovery: /^\/inference\/v1\/models$/ },
+  { integration: 'perplexity', hosts: ['api.perplexity.ai'], inference: /^\/chat\/completions$/, discovery: /^\/models$/ },
+  { integration: 'zai', hosts: ['api.z.ai', 'open.bigmodel.cn'], inference: /^\/api\/(?:coding\/)?paas\/v4\/chat\/completions$/, discovery: /^\/api\/(?:coding\/)?paas\/v4\/models$/ },
+  { integration: 'minimax', hosts: ['api.minimax.io', 'api.minimaxi.com'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'huggingface', hosts: ['router.huggingface.co'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'github-models', hosts: ['models.github.ai'], inference: /^\/inference\/chat\/completions$/, discovery: /^\/catalog\/models$/ },
+  { integration: 'deepinfra', hosts: ['api.deepinfra.com'], inference: /^\/v1\/openai\/chat\/completions$/, discovery: /^\/v1\/openai\/models$/ },
+  { integration: 'sambanova', hosts: ['api.sambanova.ai'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'ollama-cloud', hosts: ['ollama.com'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/api\/tags$/ },
+] as const;
+
+const openAICompatibleInferenceBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
+  integration: provider.integration, hosts: [...provider.hosts], injections: authHeaders(['api_key']), pathPattern: provider.inference,
+}));
+const openAICompatibleDiscoveryBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
+  integration: provider.integration, hosts: [...provider.hosts], injections: authHeaders(['api_key']), pathPattern: provider.discovery,
+}));
+
 export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationPolicy>> = {
   ...CALLER_OPERATION_POLICIES,
   'github.api': {
@@ -122,7 +143,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     injections: [],
   },
   'provider.inference': {
-    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
     requireItemSites: true,
     methods: ['POST'],
     allowStreaming: true,
@@ -169,6 +190,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'cohere', hosts: ['api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/compatibility\/v1\/chat\/completions$/ },
       { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
       { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/chat\/completions$/ },
+      ...openAICompatibleInferenceBindings,
       // A custom endpoint has no globally trusted host. Its item policy is the
       // authority and is populated from the user-entered HTTPS base URL.
       { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
@@ -221,7 +243,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     ],
   },
   'provider.discovery': {
-    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
     requireItemSites: true,
     methods: ['GET'],
     injections: [],
@@ -240,6 +262,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'cohere', hosts: ['api.cohere.com', 'api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v2\/models$/ },
       { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/models$/ },
       { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/models$/ },
+      ...openAICompatibleDiscoveryBindings,
       { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|v1beta)\/models$/ },
     ],
   },
@@ -493,6 +516,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   cohere:    ['api.cohere.ai', 'api.cohere.com'],
   deepseek:  ['api.deepseek.com'],
   arcee:     ['api.arcee.ai'],
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => [provider.integration, [...provider.hosts]])),
   enterprise_gateway: [],
 };
 

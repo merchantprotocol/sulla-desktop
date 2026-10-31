@@ -30,6 +30,7 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl, type OpenAICompatibleProviderId } from '@pkg/agent/languagemodels/openAICompatibleProviders';
 import * as window from '@pkg/window';
 
 const console = Logging.background;
@@ -37,13 +38,18 @@ const console = Logging.background;
 const LOG_PREFIX = '[IntegrationOAuth]';
 
 type ApiKeyProviderId = 'anthropic' | 'openai' | 'grok' | 'google' | 'groq' | 'mistral' | 'cerebras' | 'together'
-  | 'cohere' | 'deepseek' | 'arcee' | 'nvidia' | 'kimi' | 'alibaba' | 'custom';
+  | 'cohere' | 'deepseek' | 'arcee' | 'nvidia' | 'kimi' | 'alibaba' | 'custom' | OpenAICompatibleProviderId;
 
 interface ApiKeyProviderConfig {
   name: string;
   verifyUrl(values: Record<string, string>): string;
   headers(apiKey: string, values: Record<string, string>): Record<string, string>;
   chatModelFilter(id: string, item?: Record<string, unknown>): boolean;
+  method?: 'GET' | 'POST';
+  body?: Record<string, unknown>;
+  modelsUrl?: (values: Record<string, string>) => string;
+  staticModels?: string[];
+  probeFirstModel?: boolean;
 }
 
 type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'busy-port' | 'no-access' | 'provider-error';
@@ -124,14 +130,35 @@ const API_KEY_PROVIDERS: Record<ApiKeyProviderId, ApiKeyProviderConfig> = {
   },
 };
 
+for (const definition of OPENAI_COMPATIBLE_PROVIDERS) {
+  const baseUrl = (values: Record<string, string>) => providerBaseUrl(definition, values);
+  const modelsEndpoint = (values: Record<string, string>) => definition.modelsUrl
+    ? (definition.modelsUrl.startsWith('http') ? definition.modelsUrl : `${ baseUrl(values) }${ definition.modelsUrl }`)
+    : '';
+  const special = definition.id === 'openrouter'
+    ? { verifyUrl: () => 'https://openrouter.ai/api/v1/key', modelsUrl: modelsEndpoint }
+    : definition.id === 'github-models'
+      ? { verifyUrl: () => 'https://api.github.com/user', modelsUrl: modelsEndpoint }
+      : definition.id === 'perplexity'
+      ? { verifyUrl: () => 'https://api.perplexity.ai/chat/completions', method: 'POST' as const, body: { model: 'sonar', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] } }
+      : { verifyUrl: modelsEndpoint, ...(definition.id === 'huggingface' || definition.id === 'sambanova' || definition.id === 'ollama-cloud' ? { probeFirstModel: true } : {}) };
+  API_KEY_PROVIDERS[definition.id] = {
+    name: definition.name,
+    headers: apiKey => ({ ...bearer(apiKey), ...(definition.extraHeaders || {}) }),
+    chatModelFilter: id => definition.defaultModelFilter.test(id),
+    staticModels: definition.staticModels ? [...definition.staticModels] : undefined,
+    ...special,
+  };
+}
+
 function modelEntries(body: unknown): { id: string; item: Record<string, unknown> }[] {
   if (!body || typeof body !== 'object') return [];
   const record = body as { data?: unknown; models?: unknown };
-  const data = Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : [];
+  const data = Array.isArray(body) ? body : Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : [];
   const entries = data.flatMap(item => {
     if (!item || typeof item !== 'object') return [];
     const object = item as Record<string, unknown>;
-    const rawId = typeof object.id === 'string' ? object.id : typeof object.name === 'string' ? object.name : '';
+    const rawId = typeof object.id === 'string' ? object.id : typeof object.name === 'string' ? object.name : typeof object.model === 'string' ? object.model : '';
     const id = rawId.replace(/^models\//, '');
     return id ? [{ id, item: object }] : [];
   });
@@ -209,7 +236,9 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
   }
   try {
     const response = await fetch(url, {
-      headers: provider.headers(apiKey, values),
+      method: provider.method || 'GET',
+      headers: { ...(provider.method === 'POST' ? { 'content-type': 'application/json' } : {}), ...provider.headers(apiKey, values) },
+      ...(provider.body ? { body: JSON.stringify(provider.body) } : {}),
       signal: AbortSignal.timeout(15_000),
     });
     const text = await response.text();
@@ -222,7 +251,7 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
           errorClass: 'anthropic-workspace',
         };
       }
-      if ((providerId === 'kimi' || providerId === 'alibaba') && (response.status === 401 || response.status === 403)) {
+      if ((providerId === 'kimi' || providerId === 'alibaba' || providerId === 'zai' || providerId === 'minimax') && (response.status === 401 || response.status === 403)) {
         return {
           error: 'That key belongs to a different region. Pick the region you created it in.',
           errorClass: 'region-mismatch',
@@ -232,7 +261,12 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
     }
     let body: unknown;
     try { body = JSON.parse(text); } catch { body = null }
-    const models = verifiedChatModels(provider, body);
+    let models = verifiedChatModels(provider, body);
+    if (!models.length && provider.modelsUrl) {
+      const modelsResponse = await fetch(provider.modelsUrl(values), { headers: provider.headers(apiKey, values), signal: AbortSignal.timeout(15_000) });
+      if (modelsResponse.ok) models = verifiedChatModels(provider, await modelsResponse.json());
+    }
+    if (!models.length && provider.staticModels) models = [...provider.staticModels];
     if (!models.length) return {
       error: `${ provider.name } accepted the key but returned no supported chat models.`,
       errorClass: 'no-chat-model',
@@ -240,8 +274,9 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
 
     // NVIDIA's model catalog and Alibaba's Coding Plan catalog are public.
     // A one-token chat probe is therefore required before a key can be saved.
-    if (providerId === 'nvidia' || (providerId === 'alibaba' && (values.plan || 'payg') === 'coding')) {
-      const baseUrl = providerId === 'nvidia' ? 'https://integrate.api.nvidia.com/v1' : alibabaBaseUrl(values);
+    if (provider.probeFirstModel || providerId === 'nvidia' || (providerId === 'alibaba' && (values.plan || 'payg') === 'coding')) {
+      const definition = OPENAI_COMPATIBLE_PROVIDERS.find(item => item.id === providerId);
+      const baseUrl = definition ? providerBaseUrl(definition, values) : providerId === 'nvidia' ? 'https://integrate.api.nvidia.com/v1' : alibabaBaseUrl(values);
       const probeResponse = await fetch(`${ baseUrl }/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...provider.headers(apiKey, values) },

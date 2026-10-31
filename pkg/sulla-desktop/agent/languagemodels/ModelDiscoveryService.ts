@@ -18,6 +18,7 @@ import {
 } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
+import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl } from './openAICompatibleProviders';
 import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
 
 import type { BrokerInjection } from '../../vault-broker';
@@ -339,6 +340,20 @@ export class ModelDiscoveryService {
       ],
     },
 
+    ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map(definition => [definition.id, {
+      baseUrl: providerBaseUrl(definition, {}),
+      modelsEndpoint: definition.modelsUrl.startsWith('http') ? definition.modelsUrl : definition.modelsUrl,
+      authHeader: 'Authorization',
+      parseResponse: (data: any) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+        return list.map((model: any) => {
+          const id = String(model.id || model.name || model.model || '');
+          return { id, name: model.name || model.display_name || id, provider: definition.id, description: model.description };
+        }).filter((model: ModelInfo) => model.id && definition.defaultModelFilter.test(model.id));
+      },
+      ...(definition.staticModels ? { staticModels: definition.staticModels.map(id => ({ id, name: id, provider: definition.id })) } : {}),
+    }])),
+
     custom: {
       baseUrl:        '',
       modelsEndpoint: '/models',
@@ -354,7 +369,7 @@ export class ModelDiscoveryService {
   /**
    * Fetch available models for a specific provider
    */
-  async fetchModelsForProvider(providerId: string, apiKey = '', options: { baseUrl?: string } = {}): Promise<ModelInfo[]> {
+  async fetchModelsForProvider(providerId: string, apiKey = '', options: { baseUrl?: string; region?: string } = {}): Promise<ModelInfo[]> {
     // A key supplied by the Connect form is intentionally used for a direct
     // verification request. Saved accounts have no renderer-visible key and
     // therefore take the brokered provider.discovery lane below.
@@ -362,7 +377,7 @@ export class ModelDiscoveryService {
     const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
     const cacheKey = containerAuthority
       ? `${ providerId }-${ runtime!.accountId }`
-      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }`;
+      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }-${ options.region || '' }`;
     const cached = this.cache.get(cacheKey);
 
     // Return cached results if still valid
@@ -374,6 +389,7 @@ export class ModelDiscoveryService {
     if (!provider) {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
+    if (!provider.modelsEndpoint) return provider.staticModels ?? [];
 
     // Always attempt live discovery first for every provider so newly released
     // models appear automatically. Any `staticModels` array is treated purely as
@@ -381,12 +397,16 @@ export class ModelDiscoveryService {
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
-      const providerBaseUrl = providerId === 'kimi'
-        ? kimiBaseUrl(runtime?.values ?? {})
-        : providerId === 'alibaba'
-          ? alibabaBaseUrl(runtime?.values ?? {})
-          : provider.baseUrl;
-      const baseUrl = (options.baseUrl || runtime?.values.base_url || providerBaseUrl).replace(/\/+$/, '');
+      const tableDefinition = OPENAI_COMPATIBLE_PROVIDERS.find(item => item.id === providerId);
+      const savedValues = { ...(runtime?.values || {}), ...(options.region ? { region: options.region } : {}) };
+      const configuredBaseUrl = tableDefinition
+        ? providerBaseUrl(tableDefinition, savedValues)
+        : providerId === 'kimi'
+          ? kimiBaseUrl(savedValues)
+          : providerId === 'alibaba'
+            ? alibabaBaseUrl(savedValues)
+            : provider.baseUrl;
+      const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
       if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint

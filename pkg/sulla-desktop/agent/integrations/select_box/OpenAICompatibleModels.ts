@@ -19,7 +19,7 @@ export class OpenAICompatibleModels extends SelectBoxProvider {
     const models = await modelDiscoveryService.fetchModelsForProvider(
       this.providerId,
       context.formValues.api_key || '',
-      { baseUrl: context.formValues.base_url },
+      { baseUrl: context.formValues.base_url, region: context.formValues.region },
     );
 
     return models.filter(isChatModel).map(model => ({

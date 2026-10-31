@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Integration } from '../types';
+import { OPENAI_COMPATIBLE_PROVIDERS } from '../../languagemodels/openAICompatibleProviders';
 
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   mcp: {
@@ -811,6 +812,40 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
       },
     ],
   },
+
+
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((provider, index) => [provider.id, {
+    id:          provider.id,
+    sort:        20 + index,
+    paid:        true,
+    beta:        false,
+    comingSoon:  false,
+    name:        provider.name,
+    description: `Connect ${ provider.name } for OpenAI-compatible chat and live model discovery.`,
+    category:    'AI Infrastructure',
+    icon:        'custom.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-10-31',
+    developer:   provider.developer,
+    formGuide:   provider.keyHelp,
+    properties:  [
+      ...(provider.regionSelect ? [{
+        key: 'region', title: provider.regionSelect.label,
+        hint: 'Choose the region where you created this API key.', type: 'select' as const,
+        required: true, placeholder: 'Select a region...', selectBoxId: provider.regionSelect.id,
+      }] : []),
+      {
+        key: 'api_key', title: 'API Key', hint: provider.keyHelp, type: 'password' as const,
+        required: true, placeholder: 'Paste your API key',
+      },
+      {
+        key: 'model', title: 'Model', hint: `Models available to your ${ provider.name } account.`, type: 'select' as const,
+        required: true, placeholder: 'Select a model...', selectBoxId: `${ provider.id }_models`,
+        selectDependsOn: provider.regionSelect ? ['api_key', 'region'] : ['api_key'],
+      },
+    ],
+  } satisfies Integration])),
 
   custom: {
     id:          'custom',
