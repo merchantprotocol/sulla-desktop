@@ -1,13 +1,26 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 name: Publish sulla-files image
 on:
+  pull_request:
+    paths: ['services/sulla-files/**', 'pkg/sulla-desktop/pages/files/**', 'packages/vault-crypto/**', '.github/workflows/sulla-files-image.yml']
   push:
     branches: [main]
     tags: ['v*']
     paths: ['services/sulla-files/**', 'pkg/sulla-desktop/pages/files/**', 'packages/vault-crypto/**', '.github/workflows/sulla-files-image.yml']
 permissions: { contents: read, packages: write }
 jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
+      - run: npm run build --prefix services/sulla-files
+      - run: node --test services/sulla-files/dist/cloudSync/sync.security.test.js
   image:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
