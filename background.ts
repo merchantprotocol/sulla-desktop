@@ -988,8 +988,8 @@ async function checkPrerequisites() {
     break;
   }
   case 'darwin': {
-    // Required: macOS-10.15(Darwin-19) or newer
-    if (semver.gt('10.15.0', getMacOsVersion())) {
+    // Required: macOS 13 or newer (the Sulla runtime needs Virtualization.framework from 13).
+    if (semver.gt('13.0.0', getMacOsVersion())) {
       messageId = 'macOS-release';
     }
     break;

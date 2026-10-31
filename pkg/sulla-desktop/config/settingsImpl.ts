@@ -176,9 +176,11 @@ function finishConfiguringSettings(cfg: Settings, deploymentProfiles: Deployment
 export function getDefaultMemory() {
   if (os.platform() === 'darwin' || os.platform() === 'linux') {
     const totalMemoryInGB = os.totalmem() / 2 ** 30;
+    const quarter = Math.round(totalMemoryInGB / 4.0);
 
-    // 25% of available ram up to a maximum of 6gb
-    return Math.min(6, Math.round(totalMemoryInGB / 4.0));
+    // 25% of the Mac's memory, at most 6 GB. The services plus a first agent
+    // need about 3 GB, so a Mac with 8 GB or more gives at least that.
+    return Math.min(6, totalMemoryInGB >= 7.5 ? Math.max(3, quarter) : quarter);
   } else {
     return 2;
   }
