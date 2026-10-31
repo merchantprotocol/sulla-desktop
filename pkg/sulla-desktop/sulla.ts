@@ -178,8 +178,14 @@ async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
 /** Refresh non-secret state only; migration and backup run inside the container. */
 export async function onVaultUnlocked(): Promise<void> {
   try {
-    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-    await getVaultKeyService().refreshMasterCache();
+    // Caching the key for auto-unlock is best-effort; it must never stop
+    // the unlock from being published.
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      await getVaultKeyService().refreshMasterCache();
+    } catch (err) {
+      console.warn('[Vault] Could not cache the vault key for auto-unlock:', (err as Error).message);
+    }
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const status = await getDesktopVaultClient().status();
     await publishVaultState(status.unlocked);

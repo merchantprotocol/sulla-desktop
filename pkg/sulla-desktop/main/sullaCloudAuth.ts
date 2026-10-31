@@ -930,16 +930,10 @@ export function initSullaCloudAuthEvents(): void {
       oldVaultLocked,
     };
   });
-  ipcMainProxy.handle('sulla-cloud:account-exists', async(_event: unknown, email: string) => {
-    try {
-      await prelogin(String(email ?? '').trim().toLowerCase());
-      return { exists: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/404|not found|no account/i.test(message)) return { exists: false };
-      return { exists: null, error: message };
-    }
-  });
+  // Sulla Cloud deliberately does not reveal whether an email has an account
+  // (prelogin returns a decoy KDF for unknown emails), so this cannot tell.
+  // The first-run copy stays neutral until email-continue reports accountExists.
+  ipcMainProxy.handle('sulla-cloud:account-exists', async() => ({ exists: null }));
   ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => ({ available: true }));
   ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => unshownRecoveryKey);
   ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { unshownRecoveryKey = undefined });
@@ -1181,15 +1175,10 @@ export function initSullaCloudAuthEvents(): void {
     let accountKdf: AccountKdf;
     let isNewUser: boolean;
     try {
-      let existing: Awaited<ReturnType<typeof prelogin>> | undefined;
-      try {
-        existing = await prelogin(e);
-      } catch (error) {
-        if (!/^404\b/.test(error instanceof Error ? error.message : String(error))) throw error;
-      }
-      const created = existing
-        ? { ok: false, httpStatus: 409 } satisfies PasswordAuthResponse
-        : await emailRegister(e, password, name?.trim() || undefined);
+      // /auth/prelogin answers every email with a KDF (real or decoy) so it
+      // cannot reveal whether an account exists. Register first; only a 409
+      // means the account exists and the password should sign in.
+      const created = await emailRegister(e, password, name?.trim() || undefined);
       if (created.ok && created.data) {
         data = created.data;
         masterKey = created.masterKey!;
@@ -1198,7 +1187,7 @@ export function initSullaCloudAuthEvents(): void {
       } else if (created.httpStatus === 429) {
         return { ...throttled(created), status: await buildStatus().catch(() => ({} as any)) };
       } else if (created.httpStatus === 409) {
-        const login = await emailLogin(e, password, existing);
+        const login = await emailLogin(e, password);
         if (login.httpStatus === 429) return { ...throttled(login), status: await buildStatus().catch(() => ({} as any)) };
         if (!login.ok || !login.data) {
           const error = login.httpStatus === 401 || login.httpStatus === 403
