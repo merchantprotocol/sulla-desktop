@@ -293,6 +293,12 @@ export interface IpcMainInvokeEvents {
   'first-run-wizard-step':  (step: number) => void;
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
+  /** Whether the first chat can start right away; never blocks closing the wizard. */
+  'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
+  /** Retry the managed services now (the Repair action). */
+  'sulla-runtime:repair-services': () => void;
+  /** Why the last backend start failed, until the next start. */
+  'sulla-runtime:start-failure': () => { reason: string; message: string } | undefined;
   'app-quit':               () => void;
 
   // Accounts owner sessions and authorization URLs remain main-only. These
@@ -1235,6 +1241,8 @@ export interface IpcRendererEvents {
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;
+  /** Pushed when the first-chat readiness changes. */
+  'first-run:chat-ready-status':    (status: import('@pkg/main/chatReadiness').ChatReadyStatus) => void;
   'claude-oauth:url':               (url: string) => void;
   'claude-oauth:stage':             (text: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;

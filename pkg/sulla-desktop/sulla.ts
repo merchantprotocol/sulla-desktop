@@ -329,7 +329,9 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     async() => { await getChatCompletionsServer().stop() },
   );
 
-  lifecycle.registerOnce('local-tool-tunnel', ['chat-server'],
+  // The tunnel authenticates as the vault's principal, so it waits for the
+  // unlock and starts the moment it happens instead of on a backoff timer.
+  lifecycle.registerOnce('local-tool-tunnel', ['chat-server', 'vault'],
     async() => {
       const { startLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
 
@@ -341,6 +343,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
       stopLocalToolTunnel();
     },
+    { requiresVault: true },
   );
 
   // In-process MCP server that Claude Code (running in the Sulla VM) can call
@@ -358,7 +361,13 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
   lifecycle.registerOnce('accounts', [],
     async() => {
       const { getSullaAccountsClient, waitForSullaAccountsService } = await import('@pkg/main/sullaAccountsClient');
+      const { isSullaOptionalServicePlanned } = await import('@pkg/backend/sullaRuntime/state');
 
+      // Nothing waits on accounts, so it starts alongside everything else.
+      // When boot could not set it up this session, say so instead of waiting.
+      if (isSullaOptionalServicePlanned('sulla_accounts') === false) {
+        throw new Error('Local accounts are not running this session');
+      }
       // Boot starts the accounts container after Desktop is usable; wait for it
       // instead of failing and backing off.
       await waitForSullaAccountsService();
@@ -1304,9 +1313,23 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const lm = getServiceLifecycleManager();
 
     event.returnValue = {
-      ready:        lm.isAllReady(),
+      ready:        lm.isStartupComplete(),
       shuttingDown: lm.isShuttingDown(),
     };
+  });
+
+  // ── Runtime: first-chat readiness, Repair, and the last start failure ──
+  const { startChatReadiness } = await import('@pkg/main/chatReadiness');
+  startChatReadiness(ipcMainProxy);
+  ipcMainProxy.handle('sulla-runtime:repair-services', async() => {
+    const { default: mainEvents } = await import('@pkg/main/mainEvents');
+
+    mainEvents.emit('sulla-managed-services-repair');
+  });
+  ipcMainProxy.handle('sulla-runtime:start-failure', async() => {
+    const { sullaRuntimeStartFailure } = await import('@pkg/backend/sullaRuntime/state');
+
+    return sullaRuntimeStartFailure();
   });
 
   // ── Vault: export & import ─────────────────────────────────────────────────
