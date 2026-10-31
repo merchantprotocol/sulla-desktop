@@ -60,6 +60,16 @@
       >
         {{ retrying ? 'Trying…' : 'Try again' }}
       </button>
+      <button
+        type="button"
+        class="px-4 py-2 rounded-md font-medium ml-2"
+        @click="continueAnyway"
+      >
+        Open Sulla anyway
+      </button>
+      <p class="text-xs mt-2 opacity-70">
+        Sulla keeps saving in the background. If you quit before it finishes, you'll sign in again next time.
+      </p>
     </div>
 
     <div class="frw-progress mt-6">
@@ -177,6 +187,11 @@ async function retrySaving() {
     retrying.value = false;
   }
   await poll();
+}
+
+async function continueAnyway() {
+  traceFirstRun('finishing', 'Open Sulla anyway clicked', { waitingOn: credentials.value.waitingOn });
+  await ipcRenderer.invoke('first-run:continue-anyway' as any).catch((err: unknown) => console.warn('[FirstRunWaiting] Could not continue:', err));
 }
 
 async function openVaultUnlock() {

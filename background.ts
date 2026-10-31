@@ -1706,6 +1706,17 @@ ipcMainProxy.handle('first-run:retry-credentials' as any, async(event: Electron.
 
 // After a reload, the Cloud sign-in may already be in the vault rather than
 // in memory. The account step uses this to avoid asking for it again.
+// Saving a sign-in has stalled and the owner chose to go on. Open the app;
+// the sign-ins stay in memory and keep retrying in the background. The state
+// file still says they are unsaved, so a relaunch before they land asks for
+// the password again instead of opening an app with no account.
+ipcMainProxy.handle('first-run:continue-anyway' as any, async(event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  const { waitingOn } = await firstRunCredentialsStatus();
+  firstRunTrace('wizard', 'Open Sulla anyway: closing while sign-ins are still unsaved', { waitingOn });
+  await firstRunCoordinator.setCondition('credentialsSaved');
+});
+
 ipcMainProxy.handle('first-run:account-saved' as any, async(event: Electron.IpcMainInvokeEvent) => {
   requireFirstRunStateSender(event);
   const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
