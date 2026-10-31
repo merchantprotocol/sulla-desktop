@@ -7,7 +7,7 @@ on:
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'
-      - 'pkg/sulla-desktop/utils/instance.ts'
+      - 'pkg/sulla-desktop/utils/**'
       - 'contracts/server-split/**'
       - '.github/workflows/sulla-tools-image.yml'
   push:
@@ -18,7 +18,7 @@ on:
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'
-      - 'pkg/sulla-desktop/utils/instance.ts'
+      - 'pkg/sulla-desktop/utils/**'
       - 'contracts/server-split/**'
       - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-tools-image.yml'

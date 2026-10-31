@@ -8,7 +8,7 @@ COPY packages/runtime-protocol/src ./packages/runtime-protocol/src
 COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
-COPY pkg/sulla-desktop/utils/instance.ts ./pkg/sulla-desktop/utils/instance.ts
+COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
 # First-run credentials only exist in Electron's main process.  Agent modules
 # also run in this container, so give their guarded lookups an inert authority
 # instead of copying the Electron-only store (and its entire main-process graph).
