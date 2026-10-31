@@ -410,6 +410,21 @@ export class IntegrationService {
       property:       'last_sync_at',
       value:          new Date().toISOString(),
     });
+
+    if (connected) {
+      try {
+        const [{ clearBrokeredModelListCache }, { clearCodexModelCatalogCache }, { clearClaudeModelCatalogCache }] = await Promise.all([
+          import('./brokeredModelList'),
+          import('../languagemodels/codexModelCatalog'),
+          import('../languagemodels/claudeModelCatalog'),
+        ]);
+        clearBrokeredModelListCache();
+        clearCodexModelCatalogCache();
+        clearClaudeModelCatalogCache();
+      } catch (err) {
+        console.warn('[IntegrationService] Could not clear model-list caches:', err);
+      }
+    }
   }
 
   async getConnectionStatus(integrationId: string, accountId?: string): Promise<IntegrationConnectionStatus> {

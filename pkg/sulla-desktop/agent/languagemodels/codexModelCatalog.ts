@@ -42,6 +42,10 @@ const AUTO_SENTINEL: CodexCatalogModel = {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: { at: number; models: CodexCatalogModel[] } | null = null;
 
+export function clearCodexModelCatalogCache(): void {
+  cache = null;
+}
+
 interface RawCodexModel {
   slug?:         string;
   display_name?: string;

@@ -10,8 +10,8 @@
 // they send a `provider.models` broker request: the vault attaches the
 // selected account's credential at the outbound hop (exact host/path/header
 // policy in services/sulla-vault/src/operationPolicy.ts) and returns only the
-// provider's response. Callers keep their static fallback lists; every
-// failure here resolves to `null`, never throws, and never logs a credential.
+// provider's response. Every failure here resolves to `null`, never throws,
+// and never logs a credential; callers expose no stale hardcoded substitute.
 
 import crypto from 'node:crypto';
 
@@ -43,7 +43,7 @@ const inflight = new Map<string, Promise<unknown>>();
  * Pick the account whose credential lists the models: the caller's preferred
  * account if connected, else the active account if connected, else any
  * connected account. Metadata only — never reads a credential. Returns null
- * when nothing is connected (callers then show their static list).
+ * when nothing is connected (callers then show no provider models).
  */
 export async function resolveModelListAccount(
   providerId: string,
@@ -115,7 +115,7 @@ export async function fetchBrokeredModelList<T = unknown>(request: BrokeredModel
     } catch (error) {
       const code = (error as { code?: string })?.code;
       const reason = code ?? (error instanceof Error ? error.message : 'unknown');
-      console.warn(`[brokeredModelList] ${ request.providerId } model list unavailable (${ String(reason).slice(0, 80) }); using fallback`);
+      console.warn(`[brokeredModelList] ${ request.providerId } model list unavailable (${ String(reason).slice(0, 80) }); returning no models`);
       cache.set(key, { at: Date.now(), ttl: FAILURE_TTL_MS, body: null });
       return null;
     } finally {
@@ -137,7 +137,7 @@ export { modelListLane, type ModelListLane };
 /**
  * Resolve the account + lane and fetch the model list. `lane` in the result
  * is set whenever an account was resolved, even if the fetch failed, so
- * callers can pick the right static fallback.
+ * callers can report which live lane failed.
  */
 export async function listProviderModelsBrokered<T = unknown>(
   providerId: string,

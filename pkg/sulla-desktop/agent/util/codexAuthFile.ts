@@ -247,6 +247,12 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     return linkCodexHomeIntoVm();
   }
   try {
+    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+    const pending = getPendingCredential('codex');
+    if (pending?.values.access_token && writeCodexAuthFile(pending.values as OAuthTokenSet)) {
+      return linkCodexHomeIntoVm();
+    }
+
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
 

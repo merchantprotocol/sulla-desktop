@@ -25,6 +25,21 @@ let vaultReady = false;
 let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
 
+async function clearModelListCaches(): Promise<void> {
+  try {
+    const [{ clearBrokeredModelListCache }, { clearCodexModelCatalogCache }, { clearClaudeModelCatalogCache }] = await Promise.all([
+      import('@pkg/agent/services/brokeredModelList'),
+      import('@pkg/agent/languagemodels/codexModelCatalog'),
+      import('@pkg/agent/languagemodels/claudeModelCatalog'),
+    ]);
+    clearBrokeredModelListCache();
+    clearCodexModelCatalogCache();
+    clearClaudeModelCatalogCache();
+  } catch (err) {
+    console.warn('[pendingCredentials] Could not clear model-list caches:', err);
+  }
+}
+
 function keyFor(entry: Pick<PendingCredential, 'integrationId' | 'accountId'>): string {
   return `${ entry.integrationId }\0${ entry.accountId }`;
 }
@@ -46,6 +61,7 @@ export function queuePendingCredential(entry: PendingCredential): void {
     values:        { ...entry.values },
     activate:      entry.activate,
   });
+  void clearModelListCaches();
   if (vaultUnlocked && vaultReady) scheduleFlush?.();
 }
 
@@ -111,6 +127,7 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
         failed.push(entry.integrationId);
       }
     }
+    if (flushed.length) await clearModelListCaches();
     return { flushed: [...new Set(flushed)], failed: [...new Set(failed)] };
   })().finally(() => { flushRun = undefined });
   return flushRun;

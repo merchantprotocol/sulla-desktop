@@ -6,6 +6,10 @@
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
 import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { listProviderModelsBrokered } from '../../services/brokeredModelList';
+import { getPendingCredential } from '../../../main/firstRun/pendingCredentials';
+import Logging from '@pkg/utils/logging';
+
+const log = Logging.background;
 
 interface GrokModelsBody { data?: { id: string; name?: string; description?: string }[] }
 
@@ -20,6 +24,9 @@ export class GrokModels extends SelectBoxProvider {
   readonly id = 'grok_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    const pendingToken = getPendingCredential('grok')?.values.access_token;
+    if (pendingToken) return this.getPendingOAuthOptions(pendingToken);
+
     if (usesContainerVaultAuthority()) return this.getBrokeredOptions(context);
 
     const apiKey = context.formValues.api_key;
@@ -38,7 +45,8 @@ export class GrokModels extends SelectBoxProvider {
 
     const bearer = apiKey || oauthToken;
     if (!bearer) {
-      return this.getStaticModels(false);
+      log.warn('[GrokModels] No credential is available for live model discovery');
+      return [];
     }
 
     try {
@@ -53,7 +61,8 @@ export class GrokModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
-        return this.getStaticModels(!!oauthToken);
+        log.warn(`[GrokModels] Live model request returned ${ response.status }`);
+        return [];
       }
 
       const body = await response.json() as { data?: { id: string; name?: string; description?: string }[] };
@@ -65,17 +74,37 @@ export class GrokModels extends SelectBoxProvider {
           description: m.description,
         }));
       }
-    } catch {
-      // Fall back to static list
+    } catch (err) {
+      log.warn(`[GrokModels] Live model request failed: ${ err }`);
     }
 
-    return this.getStaticModels(!!oauthToken);
+    log.warn('[GrokModels] Live model request returned no models');
+    return [];
+  }
+
+  private async getPendingOAuthOptions(accessToken: string): Promise<SelectOption[]> {
+    try {
+      const { GROK_SUBSCRIPTION_BASE_URL, grokCliHeaders } = await import('../../languagemodels/GrokService');
+      const response = await fetch(`${ GROK_SUBSCRIPTION_BASE_URL }/models`, {
+        headers: { Authorization: `Bearer ${ accessToken }`, ...grokCliHeaders() },
+      });
+      if (!response.ok) {
+        log.warn(`[GrokModels] Pending-credential model request returned ${ response.status }`);
+        return [];
+      }
+      const models = parseGrokModels(await response.json() as GrokModelsBody);
+      if (!models.length) log.warn('[GrokModels] Pending-credential model request returned no models');
+      return models;
+    } catch (err) {
+      log.warn(`[GrokModels] Pending-credential model request failed: ${ err }`);
+      return [];
+    }
   }
 
   /**
    * Container vault: the app holds no Grok credential, so list the catalog
    * through the vault broker on the account's own lane (OAuth → subscription
-   * proxy, API key → api.x.ai). Any failure keeps the lane's static list.
+   * proxy, API key → api.x.ai). A failed live request returns no models.
    */
   private async getBrokeredOptions(context: SelectBoxContext): Promise<SelectOption[]> {
     const { grokCliHeaders } = await import('../../languagemodels/GrokService');
@@ -85,25 +114,8 @@ export class GrokModels extends SelectBoxProvider {
       // The proxy 426s requests without grok-cli identification headers.
       candidate => (candidate.oauth ? grokCliHeaders() : {}),
     );
-    const oauthMode = lane?.oauth ?? false;
     const live = parseGrokModels(body);
-    return live.length > 0 ? live : this.getStaticModels(oauthMode);
-  }
-
-  private getStaticModels(oauthMode: boolean): SelectOption[] {
-    if (oauthMode) {
-      // Subscription-lane catalog observed 2026-07; the live fetch above is
-      // authoritative, this is only an offline fallback.
-      return [
-        { value: 'grok-4.5', label: 'Grok 4.5', description: 'Frontier model, 500k context' },
-        { value: 'grok-composer-2.5-fast', label: 'Composer 2.5', description: 'Fast coding model, 200k context' },
-      ];
-    }
-
-    return [
-      { value: 'grok-3', label: 'Grok 3', description: 'Latest flagship model' },
-      { value: 'grok-3-mini', label: 'Grok 3 Mini', description: 'Lightweight reasoning model' },
-      { value: 'grok-2', label: 'Grok 2', description: 'Previous generation flagship' },
-    ];
+    if (!live.length) log.warn(`[GrokModels] Brokered live model request returned no models${ lane ? ` for the ${ lane.oauth ? 'subscription' : 'metered' } lane` : '' }`);
+    return live;
   }
 }
