@@ -130,7 +130,13 @@ async function loadAi() {
     const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any);
     const pending: string[] = Array.isArray(status?.pending) ? status.pending : [];
 
-    connectedNames.value = FIRST_RUN_AI_PROVIDERS.filter(p => pending.includes(p.id)).map(p => p.name);
+    const oauthNames = FIRST_RUN_AI_PROVIDERS.filter(p => pending.includes(p.id)).map(p => p.name);
+    const apiNames = [
+      pending.includes('anthropic') ? 'Anthropic API key' : '',
+      pending.includes('openai') ? 'OpenAI API key' : '',
+      pending.includes('grok') && !oauthNames.includes('Grok') ? 'Grok API key' : '',
+    ].filter(Boolean);
+    connectedNames.value = [...oauthNames, ...apiNames];
     anyConnected.value = status?.connected === true;
   } catch { /* shown as not connected */ }
   try {

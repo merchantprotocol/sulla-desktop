@@ -293,6 +293,7 @@ export interface IpcMainInvokeEvents {
   'first-run-wizard-step':  (step: number) => void;
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
+  'first-run-ai:connect-api-key': (payload: { providerId: 'anthropic' | 'openai' | 'grok'; apiKey: string }) => { success: boolean; error?: string; models?: string[] };
   /** Whether the first chat can start right away; never blocks closing the wizard. */
   'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
   /** Retry the managed services now (the Repair action). */

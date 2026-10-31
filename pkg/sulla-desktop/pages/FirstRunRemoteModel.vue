@@ -14,8 +14,14 @@
       </div>
     </div>
     <div v-if="showApiChoices && !hasConnection" class="frm-api">
-      <p class="frm-notice">Choose a provider now. You'll paste your key in your vault right after setup.</p>
-      <button v-for="provider in providers" :key="provider.id" type="button" class="frm-api-choice" :disabled="advancing" @click="chooseApiProvider(provider.id)">Use {{ provider.name }} API</button>
+      <p class="frm-notice">Your key is checked now and stored only in your encrypted vault.</p>
+      <div v-for="provider in providers" :key="provider.id" class="frm-api-row">
+        <button type="button" class="frm-api-choice" :disabled="apiBusy" @click="selectApiProvider(provider.id)">Use {{ apiProviderName(provider.id) }} API</button>
+        <div v-if="selectedApiProvider === provider.id" class="frm-api-input">
+          <input v-model="apiKey" type="password" :placeholder="apiPlaceholder(provider.id)" :aria-label="`${ apiProviderName(provider.id) } API key`" :disabled="apiBusy" autocomplete="off" spellcheck="false" @keyup.enter="connectApiKey(provider.id)">
+          <button type="button" class="frm-connect" :disabled="apiBusy || !apiKey.trim()" @click="connectApiKey(provider.id)"><span v-if="apiBusy" class="frm-spinner" aria-hidden="true" />{{ apiBusy ? 'Checking…' : 'Connect' }}</button>
+        </div>
+      </div>
     </div>
     </div>
     <div class="frm-actions">
@@ -39,6 +45,9 @@ const providers = FIRST_RUN_AI_PROVIDERS;
 const connectionState = reactive<Record<FirstRunAiProviderId, ConnectState>>({ 'claude-code': 'idle', codex: 'idle', grok: 'idle' });
 const showApiChoices = ref(false); const notice = ref(''); const noticeKind = ref<'info' | 'error'>('info');
 const advancing = ref(false);
+const selectedApiProvider = ref<FirstRunAiProviderId | null>(null);
+const apiKey = ref('');
+const apiBusy = ref(false);
 let disposed = false; let claudeWaitTimer: ReturnType<typeof setTimeout> | undefined;
 // Each Connect click is one attempt. Cancel or a new click retires the old
 // one, so its late result can't change the screen.
@@ -145,28 +154,59 @@ onMounted(async() => {
     const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any);
     const pending: string[] = Array.isArray(status?.pending) ? status.pending : [];
     for (const provider of providers) {
-      if (pending.includes(provider.id) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
+      const integrationId = apiIntegrationId(provider.id);
+      if ((pending.includes(provider.id) || pending.includes(integrationId)) && connectionState[provider.id] === 'idle') connectionState[provider.id] = 'connected';
     }
     if (pending.length) traceFirstRun('ai', 'showing sign-ins main already holds', { pending });
   } catch { /* nothing to restore */ }
 });
 onBeforeUnmount(() => ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage));
 function advance() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', 'Continue clicked', { connected: providers.filter(p => connectionState[p.id] === 'connected').map(p => p.id) }); emit('next', props.stepIndex); }
-async function doLater() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', "I'll do this later clicked"); emit('next', props.stepIndex); }
-async function chooseApiProvider(id: FirstRunAiProviderId) {
+async function doLater() {
   if (advancing.value) return;
   advancing.value = true;
-  const integrationId = id === 'claude-code' ? 'anthropic' : id === 'codex' ? 'openai' : 'grok';
-  traceFirstRun('ai', 'API choice clicked', { provider: integrationId });
-  try {
+  traceFirstRun('ai', "I'll do this later clicked", { apiProvider: selectedApiProvider.value ? apiIntegrationId(selectedApiProvider.value) : undefined });
+  if (selectedApiProvider.value && apiKey.value.trim()) apiKey.value = '';
+  if (selectedApiProvider.value) {
     const current = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => ({ choices: {} }));
-    await ipcRenderer.invoke('first-run-state:set' as any, { choices: { ...(current?.choices || {}), aiApiProvider: integrationId } });
-  } catch (err) {
-    console.warn('[FirstRunRemoteModel] Could not save the API choice:', err);
+    await ipcRenderer.invoke('first-run-state:set' as any, { choices: { ...(current?.choices || {}), aiApiProvider: apiIntegrationId(selectedApiProvider.value) } }).catch(() => undefined);
   }
-  noticeKind.value = 'info';
-  notice.value = `We'll open ${ providerName(id) } in your vault right after setup.`;
   emit('next', props.stepIndex);
+}
+function apiIntegrationId(id: FirstRunAiProviderId): 'anthropic' | 'openai' | 'grok' { return id === 'claude-code' ? 'anthropic' : id === 'codex' ? 'openai' : 'grok'; }
+function apiProviderName(id: FirstRunAiProviderId) { return id === 'claude-code' ? 'Claude' : id === 'codex' ? 'ChatGPT' : 'Grok'; }
+function apiPlaceholder(id: FirstRunAiProviderId) { return id === 'claude-code' ? 'sk-ant-api03-…' : id === 'codex' ? 'sk-…' : 'xai-…'; }
+function selectApiProvider(id: FirstRunAiProviderId) {
+  if (apiBusy.value) return;
+  selectedApiProvider.value = id;
+  apiKey.value = '';
+  notice.value = '';
+}
+async function connectApiKey(id: FirstRunAiProviderId) {
+  const key = apiKey.value.trim();
+  if (!key || apiBusy.value || advancing.value) return;
+  const integrationId = apiIntegrationId(id);
+  apiBusy.value = true;
+  noticeKind.value = 'info'; notice.value = `Checking your ${ apiProviderName(id) } API key…`;
+  traceFirstRun('ai', 'API key connect clicked', { provider: integrationId });
+  try {
+    const result = await ipcRenderer.invoke('first-run-ai:connect-api-key' as any, { providerId: integrationId, apiKey: key });
+    if (!result?.success) {
+      noticeKind.value = 'error'; notice.value = result?.error || 'That key could not be connected. Try again.';
+      return;
+    }
+    apiKey.value = '';
+    const current = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => ({ choices: {} }));
+    const choices = { ...(current?.choices || {}) };
+    delete choices.aiApiProvider;
+    await ipcRenderer.invoke('first-run-state:set' as any, { choices }).catch(() => undefined);
+    await markConnected(id);
+    notice.value = `${ apiProviderName(id) } API key connected.`;
+  } catch {
+    noticeKind.value = 'error'; notice.value = `Could not reach ${ apiProviderName(id) }. Check your connection.`;
+  } finally {
+    apiBusy.value = false;
+  }
 }
 onBeforeUnmount(() => {
   disposed = true;

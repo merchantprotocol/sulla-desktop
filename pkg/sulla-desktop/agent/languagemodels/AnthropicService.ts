@@ -39,6 +39,10 @@ export class AnthropicService extends BaseLanguageModel {
     for (const v of values) {
       valMap[v.property] = v.value;
     }
+    try {
+      const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+      Object.assign(valMap, getPendingCredential('anthropic')?.values || {});
+    } catch { /* pending credentials exist only in the main process */ }
 
     return new AnthropicService({
       id:      'anthropic',
