@@ -14,10 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22' }
-      - run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-files
-      - run: npm run build --prefix services/sulla-files
+      - uses: ./.github/actions/yarn-install
+      - run: yarn workspace @sulla/files-service build
       - run: node --test services/sulla-files/dist/cloudSync/sync.security.test.js
   image:
     if: github.event_name == 'push'
