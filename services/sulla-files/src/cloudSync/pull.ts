@@ -193,7 +193,12 @@ export class CloudPuller {
       });
       forked = true;
     }
-    const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, manifest);
+    // Cloud briefly emitted one authenticated zero-byte chunk for empty files. It carries no
+    // content, so canonicalize that legacy shape before materialization rather than downloading it.
+    const materializedManifest = manifest.size === 0 && manifest.chunks.length === 1 && manifest.chunks[0][1] === 0
+      ? { ...manifest, chunks: [] }
+      : manifest;
+    const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, materializedManifest);
     await this.repository.applyRemoteVersion({
       collectionId: state.collectionId,
       remote,

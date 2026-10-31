@@ -10,7 +10,7 @@ import test from 'node:test';
 import { sealManifest, signHead, stateHash, type ManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import { CloudPuller, type ApplyRemoteInput, type ForkLocalInput, type LocalFileState, type PullRepository } from './pull.js';
 import { commitStateHash } from './push.js';
-import type { RemoteVersion } from './validation.js';
+import { parseManifestPlain, type RemoteVersion } from './validation.js';
 
 const COLLECTION = '0b6f0c32-4d1e-4c8a-9a59-2f9f6d1e0a11';
 const DEVICE = 'laptop';
@@ -221,4 +221,46 @@ test('commit stateHash has one entry per file: the committed version replaces on
     await commitStateHash(heads, { fileId: c, versionId: cNew, deleted: false }),
     await stateHash([...heads, { fileId: c, versionId: cNew, deleted: false }]),
   );
+});
+
+
+test('legacy singleton zero-byte chunk parses and applies as a canonical empty file', async() => {
+  const root = new Uint8Array(randomBytes(32));
+  const fileId = randomUUID(), versionId = randomUUID();
+  const legacyChunkId = 'a'.repeat(64);
+  const manifest = parseManifestPlain({
+    v: 1, path: 'empty.txt', mime: 'text/plain', size: 0, mtime: NOW.toISOString(),
+    sha256: createHash('sha256').update(Buffer.alloc(0)).digest('hex'),
+    chunks: [[legacyChunkId, 0]], deleted: false, parentVersionId: null,
+  });
+  const remote = {
+    fileId, versionId, parentVersionId: null, deleted: false, seq: 1, deviceId: 'cloud', createdAt: NOW.toISOString(),
+    manifest: await sealManifest(root, COLLECTION, 1, fileId, versionId, manifest), chunkIds: [legacyChunkId],
+  };
+  const repository = new MemoryRepository();
+  const head = await signHead(root, {
+    collectionId: COLLECTION, keyVersion: 1, seq: 1, prevMac: '',
+    stateHash: await stateHash([{ fileId, versionId, deleted: false }]),
+  });
+  const seen:ManifestPlain[] = [];
+  const content = {
+    async materialize(_collectionId:string, _keyVersion:number, _root:Uint8Array, opened:ManifestPlain) {
+      seen.push(opened);
+      return { chunkIds: [], chunks: [] };
+    },
+  };
+  const api = { changes: async() => ({ versions: [remote], head }) };
+  const result = await new CloudPuller(api, repository, content, DEVICE, () => NOW)
+    .pull({ collectionId: COLLECTION, keyVersion: 1, lastSeq: 0, head: null }, root);
+
+  assert.equal(result.applied, 1);
+  assert.deepEqual(seen[0].chunks, [], 'legacy zero-byte chunk is not downloaded');
+  assert.deepEqual(repository.versions.get(versionId)?.chunks, []);
+});
+
+test('a zero-byte chunk remains invalid when the manifest declares non-empty content', () => {
+  assert.throws(() => parseManifestPlain({
+    v: 1, path: 'not-empty.txt', mime: 'text/plain', size: 1, mtime: NOW.toISOString(),
+    sha256: 'b'.repeat(64), chunks: [['a'.repeat(64), 0]], deleted: false, parentVersionId: null,
+  }), /chunk size invalid/);
 });
