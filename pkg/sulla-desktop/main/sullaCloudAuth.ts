@@ -1172,7 +1172,8 @@ export function initSullaCloudAuthEvents(): void {
     return signedIn;
   });
 
-  ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, email: string) => {
+  ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, ...args: unknown[]) => {
+    const [email] = args as [string];
     const e = String(email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
     try {
@@ -1182,7 +1183,8 @@ export function initSullaCloudAuthEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('sulla-cloud:password-reset-start' as any, async(_event: unknown, email: string) => {
+  ipcMainProxy.handle('sulla-cloud:password-reset-start' as any, async(_event: unknown, ...args: unknown[]) => {
+    const [email] = args as [string];
     const e = String(email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
     try {
@@ -1194,7 +1196,8 @@ export function initSullaCloudAuthEvents(): void {
     } catch { return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' } }
   });
 
-  ipcMainProxy.handle('sulla-cloud:password-reset-complete' as any, async(_event: unknown, email: string, code: string, password: string) => {
+  ipcMainProxy.handle('sulla-cloud:password-reset-complete' as any, async(_event: unknown, ...args: unknown[]) => {
+    const [email, code, password] = args as [string, string, string];
     const e = String(email ?? '').trim().toLowerCase();
     const c = String(code ?? '').replace(/\s+/g, '');
     if (!/^\d{6}$/.test(c)) return { ok: false, error: 'Enter the 6-digit code from the email.' };
