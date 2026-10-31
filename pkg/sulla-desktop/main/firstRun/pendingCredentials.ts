@@ -7,6 +7,7 @@ import Electron from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 export interface PendingCredential {
@@ -52,6 +53,9 @@ function clearValues(values: Record<string, string>): void {
 }
 
 export function queuePendingCredential(entry: PendingCredential): void {
+  firstRunTrace('pending', 'sign-in held in memory until the vault is ready', {
+    integrationId: entry.integrationId, accountId: entry.accountId, fields: Object.keys(entry.values), vaultUnlocked, vaultReady,
+  });
   if (entry.integrationId === 'sulla-cloud') {
     for (const [candidateKey, candidate] of pending) {
       if (candidate.integrationId !== 'sulla-cloud') continue;
@@ -159,7 +163,9 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
       let madeProgress = false;
       for (const [key, entry] of snapshot) {
         try {
+          firstRunTrace('pending', 'saving sign-in into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           await writeEntry(entry);
+          firstRunTrace('pending', 'sign-in saved into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           if (pending.get(key) !== entry) continue;
           pending.delete(key);
           clearValues(entry.values);
@@ -168,7 +174,8 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
           if (entry.integrationId === 'sulla-cloud') {
             void import('@pkg/main/sullaCloudAuth').then(({ signalSullaCloudStartupRestore }) => signalSullaCloudStartupRestore());
           }
-        } catch {
+        } catch (error) {
+          firstRunTrace('pending', 'saving sign-in into the vault failed; will retry', { integrationId: entry.integrationId, accountId: entry.accountId, error });
           failed.push(entry.integrationId);
         }
       }
@@ -203,6 +210,7 @@ export function startPendingCredentialFlush(): void {
   scheduleFlush = schedule;
   lifecycle.on('vault:state', (unlocked: boolean) => {
     vaultUnlocked = unlocked;
+    firstRunTrace('vault', unlocked ? 'vault unlocked (published)' : 'vault locked (published)', { pending: [...pending.values()].map(e => e.integrationId) });
     if (!unlocked && retryTimer) {
       clearTimeout(retryTimer);
       retryTimer = undefined;
@@ -212,6 +220,7 @@ export function startPendingCredentialFlush(): void {
   lifecycle.on('service:ready', (name: string) => {
     if (name !== 'vault') return;
     vaultReady = true;
+    firstRunTrace('vault', 'vault service ready', { vaultUnlocked, pending: [...pending.values()].map(e => e.integrationId) });
     if (vaultUnlocked) schedule();
   });
   lifecycle.on('service:stopped', (name: string) => {
