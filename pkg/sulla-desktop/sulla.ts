@@ -176,7 +176,7 @@ async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
 }
 
 /** Refresh non-secret state only; migration and backup run inside the container. */
-async function onVaultUnlocked(): Promise<void> {
+export async function onVaultUnlocked(): Promise<void> {
   try {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const status = await getDesktopVaultClient().status();

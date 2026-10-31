@@ -836,12 +836,22 @@ export function initSullaCloudAuthEvents(): void {
       void (async() => {
         // An unlocked vault moves to the account password; a vault that does
         // not exist yet (fresh install) is created from the account key.
+        let creating = false;
         if (!lifecycle.isVaultUnlocked()) {
           const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
           const status = await getDesktopVaultClient().status();
           if (!status.setup?.required) return;
+          creating = true;
         }
         await flushAccountPasswordWrap();
+        if (creating) {
+          // The vault now exists and is unlocked. Publish it like any other
+          // unlock so unlock-gated services start and the sign-ins first run
+          // held in memory move into the vault.
+          const { onVaultUnlocked } = await import('@pkg/sulla');
+          await onVaultUnlocked();
+          console.log('[SullaCloudAuth] Vault created from the Cloud account password and unlocked');
+        }
       })().catch(error => {
         console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
       }).finally(() => { flushing = false });
