@@ -38,11 +38,11 @@ const console = Logging.background;
 // Claude CLI emits the token on its own line after completion.
 // While output is still streaming, a chunk can end mid-token: require the
 // whitespace that follows it. Once the CLI has exited the buffer is complete.
-const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})(?=\s)/;
+const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})(?=[\s\x07\x1B])/;
 const FINAL_TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
 
 // Match the OAuth URL even when the terminal wraps it across lines.
-const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)(?=\s)/;
+const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)(?=[\s\x07\x1B])/;
 
 type OAuthFailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'provider-error';
 type OAuthResult = { success?: boolean; error?: string; reason?: OAuthFailureReason };
@@ -53,6 +53,7 @@ const INVALID_CODE_PATTERN = /OAuth error:/i;
 
 interface OAuthSession {
   ptyProcess:   pty.IPty;
+  rawBuffer:    string;
   stdoutBuffer: string;
   authWindow:   BrowserWindow | null;
 }
@@ -60,8 +61,18 @@ interface OAuthSession {
 let activeSession: OAuthSession | null = null;
 
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+  return text
+    // Terminal hyperlinks (OSC 8): keep only the complete target URL, padded
+    // with spaces. Newer Claude CLIs print the sign-in URL this way, wrapped
+    // in escape codes rather than followed by whitespace.
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B\]8;[^;\x07\x1B]*;([^\x07\x1B]*)(?:\x1B\\|\x07)/g, (_m, target: string) => (target ? ` ${ target } ` : ' '))
+    // Any other complete OSC sequence (titles, notifications, queries).
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B\][^\x07\x1B]*(?:\x1B\\|\x07)/g, '')
+    // CSI sequences (colors, cursor moves, private modes).
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B\[[0-9;?<>=]*[a-zA-Z~]/g, '');
 }
 
 /** Redact sensitive OAuth params so they never hit disk. */
@@ -107,7 +118,7 @@ async function isVMRunning(): Promise<boolean> {
  * CLI inside this pseudo-terminal relay (python3 ships in the guest image).
  */
 const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t devpts devpts /dev/pts -o newinstance,ptmxmode=0666,mode=0620,gid=5; }';
-const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            # The host side runs this through a cooked terminal, which turns\n            # Enter (\\r) into \\n; interactive CLIs only submit on \\r.\n            os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
+const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 1000, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            # The host side runs this through a cooked terminal, which turns\n            # Enter (\\r) into \\n; interactive CLIs only submit on \\r.\n            os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 async function ensureClaudeCliInVM(): Promise<void> {
   firstRunTrace('claude', 'CLI ensure started');
@@ -334,7 +345,7 @@ export function initClaudeOAuthEvents(): void {
       });
       firstRunTrace('claude', 'PTY spawned');
 
-      const session: OAuthSession = { ptyProcess, stdoutBuffer: '', authWindow: null };
+      const session: OAuthSession = { ptyProcess, rawBuffer: '', stdoutBuffer: '', authWindow: null };
       activeSession = session;
 
       let urlOpened = false;
@@ -395,7 +406,10 @@ export function initClaudeOAuthEvents(): void {
 
       ptyProcess.onData((data: string) => {
         const clean = stripAnsi(data);
-        session.stdoutBuffer += clean;
+        // Clean the whole stream, not each chunk: an escape sequence split
+        // across chunks would otherwise survive and hide the URL or token.
+        session.rawBuffer += data;
+        session.stdoutBuffer = stripAnsi(session.rawBuffer);
 
         // Stream progress to the renderer (UI status line)
         if (!options?.firstRun) {
