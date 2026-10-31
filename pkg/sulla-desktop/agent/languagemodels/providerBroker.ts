@@ -84,6 +84,15 @@ export async function providerFetch(
   ctx: ToolExecutionContext | undefined,
   options: ProviderFetchOptions,
 ): Promise<Response> {
+  if (['lm-studio', 'local-server'].includes(providerId)) {
+    const target = new URL(url);
+    const host = target.hostname.toLowerCase();
+    const privateLan = /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(host);
+    if (target.protocol !== 'http:' || !(['localhost', '127.0.0.1', '::1', 'host.sulla.internal'].includes(host) || privateLan)) {
+      throw new Error(`${ providerId } only allows HTTP connections to localhost, host.sulla.internal, or a private LAN address`);
+    }
+    return fetch(url, init);
+  }
   if (!usesContainerVaultAuthority() || providerId === 'ollama') return fetch(url, init);
   // During first run the verified key can briefly live only in main-process
   // memory while the encrypted container vault starts. Use it for the first

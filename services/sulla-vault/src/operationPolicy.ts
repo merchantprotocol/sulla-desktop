@@ -64,13 +64,15 @@ const OPENAI_COMPATIBLE_PROVIDER_BINDINGS = [
   { integration: 'deepinfra', hosts: ['api.deepinfra.com'], inference: /^\/v1\/openai\/chat\/completions$/, discovery: /^\/v1\/openai\/models$/ },
   { integration: 'sambanova', hosts: ['api.sambanova.ai'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
   { integration: 'ollama-cloud', hosts: ['ollama.com'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/api\/tags$/ },
+  { integration: 'azure-openai', inference: /^\/openai\/v1\/chat\/completions$/, discovery: /^\/openai\/v1\/models$/ },
+  { integration: 'aws-bedrock', hosts: ['bedrock-runtime.us-east-1.amazonaws.com', 'bedrock-runtime.us-west-2.amazonaws.com', 'bedrock-runtime.eu-central-1.amazonaws.com', 'bedrock-runtime.eu-west-1.amazonaws.com', 'bedrock-runtime.ap-northeast-1.amazonaws.com', 'bedrock-runtime.ap-southeast-2.amazonaws.com'], inference: /^\/openai\/v1\/chat\/completions$/, discovery: /^\/openai\/v1\/models$/ },
 ] as const;
 
 const openAICompatibleInferenceBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
-  integration: provider.integration, hosts: [...provider.hosts], injections: authHeaders(['api_key']), pathPattern: provider.inference,
+  integration: provider.integration, ...('hosts' in provider ? { hosts: [...provider.hosts] } : {}), injections: provider.integration === 'azure-openai' ? [{ field: 'api_key', target: 'header' as const, name: 'api-key', scheme: 'raw' as const }] : authHeaders(['api_key']), pathPattern: provider.inference,
 }));
 const openAICompatibleDiscoveryBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
-  integration: provider.integration, hosts: [...provider.hosts], injections: authHeaders(['api_key']), pathPattern: provider.discovery,
+  integration: provider.integration, ...('hosts' in provider ? { hosts: [...provider.hosts] } : {}), injections: provider.integration === 'azure-openai' ? [{ field: 'api_key', target: 'header' as const, name: 'api-key', scheme: 'raw' as const }] : authHeaders(['api_key']), pathPattern: provider.discovery,
 }));
 
 export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationPolicy>> = {
@@ -143,7 +145,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     injections: [],
   },
   'provider.inference': {
-    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', 'vertex-ai', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
     requireItemSites: true,
     methods: ['POST'],
     allowStreaming: true,
@@ -190,6 +192,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'cohere', hosts: ['api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/compatibility\/v1\/chat\/completions$/ },
       { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
       { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/chat\/completions$/ },
+      { integration: 'vertex-ai', injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }], pathPattern: /^\/v1\/projects\/[^/]+\/locations\/[^/]+\/publishers\/google\/models\/[^/]+:generateContent$/ },
       ...openAICompatibleInferenceBindings,
       // A custom endpoint has no globally trusted host. Its item policy is the
       // authority and is populated from the user-entered HTTPS base URL.

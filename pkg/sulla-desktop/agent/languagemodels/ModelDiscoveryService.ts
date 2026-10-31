@@ -373,7 +373,7 @@ export class ModelDiscoveryService {
     // A key supplied by the Connect form is intentionally used for a direct
     // verification request. Saved accounts have no renderer-visible key and
     // therefore take the brokered provider.discovery lane below.
-    const containerAuthority = usesContainerVaultAuthority() && providerId !== 'ollama' && !apiKey;
+    const containerAuthority = usesContainerVaultAuthority() && !['ollama', 'lm-studio', 'local-server'].includes(providerId) && !apiKey;
     const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
     const cacheKey = containerAuthority
       ? `${ providerId }-${ runtime!.accountId }`

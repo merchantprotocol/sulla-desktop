@@ -38,7 +38,7 @@ const console = Logging.background;
 const LOG_PREFIX = '[IntegrationOAuth]';
 
 type ApiKeyProviderId = 'anthropic' | 'openai' | 'grok' | 'google' | 'groq' | 'mistral' | 'cerebras' | 'together'
-  | 'cohere' | 'deepseek' | 'arcee' | 'nvidia' | 'kimi' | 'alibaba' | 'custom' | OpenAICompatibleProviderId;
+  | 'vertex-ai' | 'cohere' | 'deepseek' | 'arcee' | 'nvidia' | 'kimi' | 'alibaba' | 'custom' | OpenAICompatibleProviderId;
 
 interface ApiKeyProviderConfig {
   name: string;
@@ -130,6 +130,14 @@ const API_KEY_PROVIDERS: Record<ApiKeyProviderId, ApiKeyProviderConfig> = {
   },
 };
 
+API_KEY_PROVIDERS['vertex-ai' as ApiKeyProviderId] = {
+  name: 'Google Vertex AI Express',
+  verifyUrl: values => `https://${ values.region }-aiplatform.googleapis.com/v1/projects/${ encodeURIComponent(values.project_id || '') }/locations/${ encodeURIComponent(values.region || '') }/publishers/google/models/${ encodeURIComponent(values.model || 'gemini-2.5-flash') }:generateContent`,
+  headers: apiKey => ({ 'x-goog-api-key': apiKey }),
+  method: 'POST', body: { contents: [{ role: 'user', parts: [{ text: 'Hi' }] }], generationConfig: { maxOutputTokens: 1 } },
+  chatModelFilter: id => /^gemini-/i.test(id), staticModels: ['gemini-2.5-flash'],
+};
+
 for (const definition of OPENAI_COMPATIBLE_PROVIDERS) {
   const baseUrl = (values: Record<string, string>) => providerBaseUrl(definition, values);
   const modelsEndpoint = (values: Record<string, string>) => definition.modelsUrl
@@ -137,14 +145,17 @@ for (const definition of OPENAI_COMPATIBLE_PROVIDERS) {
     : '';
   const special = definition.id === 'openrouter'
     ? { verifyUrl: () => 'https://openrouter.ai/api/v1/key', modelsUrl: modelsEndpoint }
+    : definition.id === 'aws-bedrock'
+      ? { verifyUrl: (values: Record<string, string>) => `${ baseUrl(values) }/chat/completions`, method: 'POST' as const, body: { model: 'amazon.nova-pro-v1:0', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] } }
     : definition.id === 'github-models'
       ? { verifyUrl: () => 'https://api.github.com/user', modelsUrl: modelsEndpoint }
       : definition.id === 'perplexity'
       ? { verifyUrl: () => 'https://api.perplexity.ai/chat/completions', method: 'POST' as const, body: { model: 'sonar', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] } }
       : { verifyUrl: modelsEndpoint, ...(definition.id === 'huggingface' || definition.id === 'sambanova' || definition.id === 'ollama-cloud' ? { probeFirstModel: true } : {}) };
+  if ('local' in definition && definition.local) continue;
   API_KEY_PROVIDERS[definition.id] = {
     name: definition.name,
-    headers: apiKey => ({ ...bearer(apiKey), ...(definition.extraHeaders || {}) }),
+    headers: apiKey => ({ ...('authHeader' in definition && definition.authHeader === 'api-key' ? { 'api-key': apiKey } : bearer(apiKey)), ...(definition.extraHeaders || {}) }),
     chatModelFilter: id => definition.defaultModelFilter.test(id),
     staticModels: definition.staticModels ? [...definition.staticModels] : undefined,
     ...special,

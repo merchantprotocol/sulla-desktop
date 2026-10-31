@@ -39,3 +39,9 @@ export const minimaxRegions = new StaticOptions('minimax_regions', [
   { value: 'international', label: 'International' },
   { value: 'china', label: 'China' },
 ]);
+
+export const bedrockRegions = new StaticOptions('bedrock_regions', [
+  { value: 'us-east-1', label: 'US East (N. Virginia)' }, { value: 'us-west-2', label: 'US West (Oregon)' },
+  { value: 'eu-central-1', label: 'Europe (Frankfurt)' }, { value: 'eu-west-1', label: 'Europe (Ireland)' },
+  { value: 'ap-northeast-1', label: 'Asia Pacific (Tokyo)' }, { value: 'ap-southeast-2', label: 'Asia Pacific (Sydney)' },
+]);
