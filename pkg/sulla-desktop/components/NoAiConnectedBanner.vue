@@ -76,7 +76,7 @@ async function refresh() {
 
 function openModels() {
   if (requestedIntegration.value) void openVaultConnect(requestedIntegration.value);
-  else openMainTab('models');
+  else openMainTab('integrations');
 }
 function onModelChanged() { void refresh(); }
 function onOpenConnections() { openModels(); }
