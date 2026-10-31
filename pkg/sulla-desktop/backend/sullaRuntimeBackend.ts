@@ -947,11 +947,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       present: result.present, loaded: result.loaded, failed: result.failed.map(f => `${ f.name }: ${ f.error.message.split('\n')[0] }`),
     });
     // The images ship inside the app, so a load that fails twice means a
-    // damaged app or a full disk; say which component instead of quietly
-    // pulling it (which fails offline with an error that names nothing).
-    if (reportProgress && result.failed.length) {
-      throw new Error(`Couldn't load component ${ result.failed.map(f => f.name).join(', ') }. ` +
-        'Free up disk space or reinstall Sulla, then try again.');
+    // damaged app or a full disk. Name the component loudly, but still let
+    // compose download it: online, that recovers instead of failing the boot.
+    if (result.failed.length) {
+      console.error(`[bundled-images] Couldn't load component ${ result.failed.map(f => f.name).join(', ') } from the app; ` +
+        'downloading it instead. If this keeps happening, free up disk space or reinstall Sulla.');
     }
   }
 
