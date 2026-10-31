@@ -38,7 +38,8 @@ describe('CloudDeviceTransport', () => {
     });
 
     const calls = (mock.rpc as any).mock.calls;
-    expect(calls.map(call => call[1].body.method)).toEqual(['initialize', 'tools/list', 'tools/call']);
+    expect(calls.map((call: [string, { body: { method: string } }, string]) => call[1].body.method))
+      .toEqual(['initialize', 'tools/list', 'tools/call']);
     for (const [target, envelope, signature] of calls) {
       expect(target).toBe('app-1');
       expect(envelope).toMatchObject({ v: 1, targetDeviceId: 'app-1', callerDeviceId: 'desktop-1' });
