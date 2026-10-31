@@ -7,7 +7,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -145,28 +144,21 @@ func dataFilesystem(disk string) (string, error) {
 	return disk, nil
 }
 
-// prepareDataDisk mounts the data disk and binds its trees into place. An
-// error means it is not mounted: Docker must then not start, or it would run
-// on the RAM-backed root and everything set up would vanish on the next boot.
-func prepareDataDisk() error {
+func prepareDataDisk() {
 	disk := dataDiskPath()
 	if _, err := os.Stat(disk); err != nil {
 		log.Printf("data disk %s missing", disk)
-		return fmt.Errorf("data disk %s missing", disk)
+		return
 	}
 	device, err := dataFilesystem(disk)
 	if err != nil {
 		log.Printf("data disk not mounted: %v", err)
-		return err
-	}
-	if err := checkDataFilesystem(device); err != nil {
-		log.Printf("data disk not mounted: %v", err)
-		return err
+		return
 	}
 	_ = os.MkdirAll(dataMount, 0755)
 	if err := syscall.Mount(device, dataMount, "ext4", syscall.MS_NOATIME, ""); err != nil {
 		log.Printf("mount %s on %s: %v", device, dataMount, err)
-		return fmt.Errorf("mount %s: %w", device, err)
+		return
 	}
 	adoptEarlyLayout()
 	for _, bind := range dataBinds {
@@ -179,42 +171,6 @@ func prepareDataDisk() error {
 	}
 	_ = os.MkdirAll("/var/lib/docker", 0710)
 	_ = os.MkdirAll(filepath.Dir(agentLogPath), 0755)
-	return nil
-}
-
-// checkDataFilesystem repairs what an unclean shutdown left behind before the
-// mount. e2fsck -p fixes the safe problems on its own; exit status 4 means it
-// needs answers, and -y gives them. 8 and above is an operational error
-// (e.g. it could not read the disk).
-func checkDataFilesystem(device string) error {
-	started := time.Now()
-	status := func(err error) int {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		if err != nil {
-			return 8
-		}
-		return 0
-	}
-	out, err := exec.Command("/sbin/e2fsck", "-p", device).CombinedOutput()
-	code := status(err)
-	if code >= 4 && code < 8 {
-		log.Printf("e2fsck -p %s exited %d; repairing with -y: %s", device, code, strings.TrimSpace(string(out)))
-		out, err = exec.Command("/sbin/e2fsck", "-y", device).CombinedOutput()
-		code = status(err)
-	}
-	log.Printf("e2fsck %s exited %d in %s", device, code, time.Since(started).Round(time.Millisecond))
-	if code >= 4 {
-		return fmt.Errorf("e2fsck %s exited %d: %s", device, code, lastLine(string(out)))
-	}
-	return nil
-}
-
-func lastLine(text string) string {
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	return lines[len(lines)-1]
 }
 
 // adoptEarlyLayout moves Docker's store from the first runtime builds, which

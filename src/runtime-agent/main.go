@@ -104,6 +104,9 @@ func main() {
 	// nosuid/nodev are mount flags; passed as option text the kernel rejects
 	// the whole mount with EINVAL and /dev never gets device nodes.
 	mustMount("devtmpfs", "/dev", "devtmpfs", syscall.MS_NOSUID, "mode=0755")
+	// Pseudo-terminals: interactive CLIs (claude setup-token) need a tty, and
+	// devtmpfs alone provides /dev/ptmx without the devpts instance behind it.
+	mustMount("devpts", "/dev/pts", "devpts", syscall.MS_NOSUID|syscall.MS_NOEXEC, "newinstance,ptmxmode=0666,mode=0620,gid=5")
 	ensureDevices()
 	loadBootModules()
 	mountUsr()
@@ -116,7 +119,7 @@ func main() {
 	// "/", and a shared "/" propagates that move over the guest's own root.
 	// So /mnt gets its own tmpfs, and that whole tree is shared.
 	mustMount("tmpfs", "/mnt", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
-	dataDiskErr := prepareDataDisk()
+	prepareDataDisk()
 	if err := syscall.Mount("", "/mnt", "", syscall.MS_SHARED|syscall.MS_REC, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "make /mnt rshared: %v\n", err)
 	}
@@ -130,23 +133,16 @@ func main() {
 	// re-checks it every few seconds, so an early image pull would otherwise
 	// fall back to a resolver on localhost.
 	configureUser(a.log)
-	enableZram(a.log)
-	configureNetwork(a.ctx, a.log)
+	configureNetwork(a.log)
 	configureHostLoopback(a.log)
 	go a.controlServer()
 	go a.dockerProxy()
 	go a.execServer()
 	go a.forwardServer()
 	go a.hostLoopbackServer()
-	if dataDiskErr != nil {
-		// Recorded for replay, so the host sees it as soon as it connects
-		// and stops waiting for Docker; the cause is in the agent log.
-		a.emit("data-disk-failed", "", dataDiskErr.Error(), "")
-	} else {
-		go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
-		go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
-		go a.watchDocker()
-	}
+	go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
+	go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
+	go a.watchDocker()
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGPWR)
 	select {
@@ -249,7 +245,7 @@ func openLogger() *log.Logger {
 	return log.New(io.MultiWriter(writers...), "", log.LstdFlags|log.Lmicroseconds)
 }
 
-func configureNetwork(ctx context.Context, l *log.Logger) {
+func configureNetwork(l *log.Logger) {
 	_ = exec.Command("/sbin/ip", "link", "set", "lo", "up").Run()
 	if kernelArg("sulla.network") == "off" {
 		l.Printf("network disabled by sulla.network=off")
@@ -259,79 +255,11 @@ func configureNetwork(ctx context.Context, l *log.Logger) {
 		l.Printf("eth0: %v", err)
 		return
 	}
-	// One quick lease before the daemons start, so they see a resolver.
 	if err := exec.Command("/sbin/udhcpc", "-q", "-n", "-i", "eth0").Run(); err != nil {
 		l.Printf("dhcp: %v", err)
 	}
 	ensureResolver(l)
-	l.Printf("network ready uptime_ms=%d %s", uptime(), networkSummary())
-	go superviseDHCP(ctx, l)
-}
-
-// superviseDHCP keeps a DHCP client running for the life of the guest: it
-// renews the lease, and when the first try failed (the Mac's Wi-Fi was
-// reconnecting, or the NAT was slow) it keeps asking until it gets one.
-func superviseDHCP(ctx context.Context, l *log.Logger) {
-	for ctx.Err() == nil {
-		cmd := exec.CommandContext(ctx, "/sbin/udhcpc", "-f", "-i", "eth0", "-A", "5")
-		err := cmd.Run()
-		if ctx.Err() != nil {
-			return
-		}
-		l.Printf("dhcp client exited (%v); restarting %s", err, networkSummary())
-		time.Sleep(5 * time.Second)
-	}
-}
-
-// networkStatus reports eth0's IPv4 address and whether there is a default route.
-func networkStatus() map[string]any {
-	addr := ""
-	if out, err := exec.Command("/sbin/ip", "-4", "-o", "addr", "show", "dev", "eth0").Output(); err == nil {
-		if fields := strings.Fields(string(out)); len(fields) >= 4 {
-			addr = fields[3]
-		}
-	}
-	route, _ := exec.Command("/sbin/ip", "-4", "route", "show", "default").Output()
-	return map[string]any{"eth0Address": addr, "defaultRoute": strings.TrimSpace(string(route)) != ""}
-}
-
-func networkSummary() string {
-	status := networkStatus()
-	return fmt.Sprintf("eth0=%v default_route=%v", status["eth0Address"], status["defaultRoute"])
-}
-
-// enableZram gives the guest compressed swap in RAM (half its memory, lz4),
-// so a memory peak (services migrating, a first agent starting) slows the
-// guest down instead of waking the OOM killer.
-func enableZram(l *log.Logger) {
-	if out, err := exec.Command("/sbin/modprobe", "zram", "num_devices=1").CombinedOutput(); err != nil {
-		l.Printf("zram: modprobe: %v %s", err, strings.TrimSpace(string(out)))
-		return
-	}
-	waitForDevice("/dev/zram0")
-	var totalKiB uint64
-	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
-		fmt.Sscanf(string(b), "MemTotal: %d kB", &totalKiB)
-	}
-	if totalKiB == 0 {
-		l.Printf("zram: unknown memory size")
-		return
-	}
-	// lz4 when the kernel has it; otherwise its default stays.
-	_ = os.WriteFile("/sys/block/zram0/comp_algorithm", []byte("lz4\n"), 0)
-	if err := os.WriteFile("/sys/block/zram0/disksize", []byte(strconv.FormatUint(totalKiB/2*1024, 10)+"\n"), 0); err != nil {
-		l.Printf("zram: disksize: %v", err)
-		return
-	}
-	if out, err := exec.Command("/sbin/mkswap", "/dev/zram0").CombinedOutput(); err != nil {
-		l.Printf("zram: mkswap: %v %s", err, strings.TrimSpace(string(out)))
-		return
-	}
-	if out, err := exec.Command("/sbin/swapon", "-p", "100", "/dev/zram0").CombinedOutput(); err != nil {
-		l.Printf("zram: swapon: %v %s", err, strings.TrimSpace(string(out)))
-		return
-	}
-	l.Printf("zram: %d MiB of compressed swap", totalKiB/2/1024)
+	l.Printf("network ready uptime_ms=%d", uptime())
 }
 
 // ensureResolver makes sure the guest has a DNS server. The image ships no
@@ -598,7 +526,7 @@ func (a *agent) status() any {
 	if b, e := os.ReadFile("/proc/loadavg"); e == nil {
 		fmt.Sscanf(string(b), "%f", &load)
 	}
-	return map[string]any{"units": units, "memTotalKiB": mt, "memAvailableKiB": ma, "loadAvg1": load, "network": networkStatus()}
+	return map[string]any{"units": units, "memTotalKiB": mt, "memAvailableKiB": ma, "loadAvg1": load}
 }
 
 func (a *agent) dockerProxy() {
