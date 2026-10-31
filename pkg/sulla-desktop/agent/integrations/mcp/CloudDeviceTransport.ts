@@ -181,6 +181,11 @@ export class CloudDeviceTransport {
     if (proof.ts !== ts) {
       throw new Error('Device signing clock changed while preparing the Cloud tool call.');
     }
-    return this.channel.rpc(this.targetDeviceId, envelope, proof.signature);
+    const response = await this.channel.rpc(this.targetDeviceId, envelope, proof.signature);
+    if (response?.error) {
+      const message = response.error.message || response.error.code || 'device tool call failed';
+      throw new Error(`Cloud app device error: ${ message }`);
+    }
+    return response;
   }
 }

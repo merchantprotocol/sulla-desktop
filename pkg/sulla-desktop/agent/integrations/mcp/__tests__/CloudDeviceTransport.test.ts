@@ -57,4 +57,10 @@ describe('CloudDeviceTransport', () => {
     const transport = new CloudDeviceTransport('ai-visibility-lab', 'app-1', manifest, mock);
     await expect(transport.callTool('list_projects')).rejects.toThrow('offline');
   });
+
+  it('does not turn a JSON-RPC error into a successful empty result', async() => {
+    const mock = channel(() => ({ error: { code: -32603, message: 'scope denied' } }));
+    const transport = new CloudDeviceTransport('ai-visibility-lab', 'app-1', manifest, mock);
+    await expect(transport.callTool('list_projects')).rejects.toThrow('scope denied');
+  });
 });
