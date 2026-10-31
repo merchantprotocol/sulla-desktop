@@ -110,7 +110,7 @@ const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
 const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
   'account_label', 'connection_status', 'connected_at', 'last_sync_at', 'base_url', 'server_url',
-  'gateway_url', 'provider', 'provider_id', 'model', 'workspace_id', 'llm_access', 'client_id', 'oauth_client_id',
+  'gateway_url', 'provider', 'provider_id', 'model', 'workspace_id', 'region', 'plan', 'llm_access', 'client_id', 'oauth_client_id',
   'expires_at', 'token_type', 'scope',
 ]);
 const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;

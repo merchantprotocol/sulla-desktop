@@ -18,6 +18,7 @@ import {
 } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
+import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
 
 import type { BrokerInjection } from '../../vault-broker';
 
@@ -380,7 +381,12 @@ export class ModelDiscoveryService {
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
-      const baseUrl = (options.baseUrl || runtime?.values.base_url || provider.baseUrl).replace(/\/+$/, '');
+      const providerBaseUrl = providerId === 'kimi'
+        ? kimiBaseUrl(runtime?.values ?? {})
+        : providerId === 'alibaba'
+          ? alibabaBaseUrl(runtime?.values ?? {})
+          : provider.baseUrl;
+      const baseUrl = (options.baseUrl || runtime?.values.base_url || providerBaseUrl).replace(/\/+$/, '');
       if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint

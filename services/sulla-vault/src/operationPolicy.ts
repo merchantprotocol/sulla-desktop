@@ -230,9 +230,9 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'anthropic', hosts: ['api.anthropic.com'], injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }], pathPattern: /^\/v1\/models$/ },
       { integration: 'google', hosts: ['generativelanguage.googleapis.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1beta\/models$/ },
       { integration: 'grok', hosts: ['api.x.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
-      { integration: 'kimi', hosts: ['api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'kimi', hosts: ['api.moonshot.ai', 'api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
       { integration: 'nvidia', hosts: ['integrate.api.nvidia.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
-      { integration: 'alibaba', hosts: ['coding-intl.dashscope.aliyuncs.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'alibaba', hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|compatible-mode\/v1)\/models$/ },
       { integration: 'groq', hosts: ['api.groq.com'], injections: authHeaders(['api_key']), pathPattern: /^\/openai\/v1\/models$/ },
       { integration: 'mistral', hosts: ['api.mistral.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
       { integration: 'cerebras', hosts: ['api.cerebras.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
@@ -247,7 +247,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
   // GET-only, exact host + path per credential lane; the response is the
   // provider's model list, never the credential.
   'provider.models': {
-    integrations: ['claude-code', 'anthropic', 'openai', 'grok'],
+    integrations: ['claude-code', 'anthropic', 'openai', 'grok', 'kimi', 'alibaba'],
     methods: ['GET'],
     injections: [],
     bindings: [
@@ -287,6 +287,18 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
         injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
         injectionSets: [[{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
         pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'kimi',
+        hosts: ['api.moonshot.ai', 'api.moonshot.cn'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'alibaba',
+        hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/(?:v1|compatible-mode\/v1)\/models$/,
       },
       {
         integration: 'grok',
