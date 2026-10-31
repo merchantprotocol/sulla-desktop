@@ -547,6 +547,12 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'), request.body,
       ));
     });
+    app.put('/v1/broker/integrations/:integrationId/desktop-account', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.importDesktopIntegrationAccount(
+        identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'), request.body,
+      ));
+    });
     app.put('/v1/broker/sulla-cloud/session', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.adoptSullaCloudSession(identity.serviceId, identity.token, request.body));

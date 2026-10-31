@@ -159,6 +159,19 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
     return;
   }
 
+  if (usesContainerVaultAuthority()) {
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault session service is unavailable');
+    await client.importIntegrationAccount(entry.integrationId, {
+      accountId: entry.accountId,
+      label: entry.values.account_label,
+      values: entry.values,
+      active: entry.activate !== false,
+      connected: entry.activate !== false,
+    });
+    return;
+  }
+
   const service = getIntegrationService();
   await service.setMultipleValues(Object.entries(entry.values).map(([property, value]) => ({
     integration_id: entry.integrationId,

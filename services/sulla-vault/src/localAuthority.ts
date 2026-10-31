@@ -62,6 +62,7 @@ import type {
   BrokerVaultItemWriteRequest,
   BrokerVaultItemUpdateRequest,
   BrokerVaultItemWriteResponse,
+  BrokerIntegrationAccountImportRequest,
   BrokerIntegrationCredentialWriteRequest,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
@@ -1978,6 +1979,100 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         this.requireGeneration(generation);
       }));
     }
+    return this.readIntegrationMetadata(integrationId, accountId);
+  }
+
+  /** Trusted Desktop handoff for credentials collected by first-run and Connect UI. */
+  async importDesktopIntegrationAccount(
+    callerId: string, token: string | undefined, integrationId: string, input: BrokerIntegrationAccountImportRequest,
+  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
+    this.requireDesktopIdentity(callerId, token);
+    const accountId = String(input?.accountId ?? '').trim();
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
+    }
+    if (!input.values || typeof input.values !== 'object' || Array.isArray(input.values)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Integration account values are invalid');
+    }
+    const values: Record<string, string> = Object.create(null) as Record<string, string>;
+    for (const [property, value] of Object.entries(input.values)) {
+      if (!/^[A-Za-z0-9._-]{1,128}$/.test(property) || typeof value !== 'string') {
+        throw new LocalVaultError('invalid_operation', 400, 'Integration account value is invalid');
+      }
+      values[property] = value;
+    }
+    const label = typeof input.label === 'string' && input.label.trim()
+      ? input.label.trim().slice(0, 120)
+      : (values.account_label || accountId);
+    values.account_label = label;
+    if (input.connected !== undefined) values.connection_status = input.connected ? 'connected' : 'disconnected';
+
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const integrationRef = `${ integrationId }/${ accountId }`;
+    const existing = await this.db.query<ItemRow>(
+      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
+       WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL LIMIT 1`,
+      [keys.userId, integrationRef],
+    );
+    this.requireGeneration(generation);
+    const itemId = existing.rows[0]?.id ?? randomUUID();
+    let plaintext: VaultItemPlaintext;
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      plaintext = JSON.parse(await decryptItemText(
+        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key },
+        keys.userKey, { itemId, ownerId: keys.userId },
+      )) as VaultItemPlaintext;
+      plaintext.integration ??= { integrationId, accountId, properties: {} };
+      plaintext.integration.properties = { ...plaintext.integration.properties, ...values };
+      plaintext.name = label;
+    } else {
+      const sites = trustedOriginsForIntegration(integrationId);
+      if (integrationId === 'custom' && values.base_url) {
+        try {
+          const baseUrl = new URL(values.base_url);
+          if (baseUrl.protocol === 'https:' && baseUrl.hostname) sites.push(baseUrl.hostname.toLowerCase());
+        } catch { /* invalid base URLs are rejected when used; never grant a site here */ }
+      }
+      const policy = {
+        mode: 'agents' as const, level: 'autofill' as const, agents: [], sites: [...new Set(sites)],
+        expiresAt: null, askFirst: false, allowServerAgents: false,
+      };
+      plaintext = {
+        type: 'apiKey', name: label, agentPolicy: policy,
+        integration: { integrationId, accountId, properties: values },
+      };
+    }
+    const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+    await this.runSecurityOperation(() => this.runTransaction(async client => {
+      this.requireGeneration(generation);
+      if (existing.rowCount) {
+        const row = existing.rows[0];
+        const updated = await client.query(
+          `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now()
+           WHERE id=$3 AND revision=$4 AND deleted_at IS NULL`,
+          [encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision],
+        );
+        if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
+      } else {
+        await client.query(
+          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
+           VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
+          [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef],
+        );
+      }
+      if (input.active !== false) {
+        await client.query(
+          `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
+           VALUES ($1,$2,$3)
+           ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
+          [keys.userId, integrationId, accountId],
+        );
+      }
+      await this.auditHumanAction(client, keys.userId, existing.rowCount ? 'integration_account_updated' : 'integration_account_created', itemId, label);
+    }));
+    this.requireGeneration(generation);
     return this.readIntegrationMetadata(integrationId, accountId);
   }
 
