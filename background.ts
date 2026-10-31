@@ -87,8 +87,9 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
-import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { FIRST_RUN_LAST_STEP, getFirstRunState, readFirstRunStateFile, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { e2eTrace } from '@pkg/main/e2eTrace';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
@@ -159,6 +160,10 @@ const firstRunCoordinator = new FirstRunCoordinator();
 
 let cfg: settings.Settings;
 let firstRunDialogComplete = false;
+let firstRunCredentialsWatch: ReturnType<typeof setInterval> | undefined;
+// Last backend start failure while the wizard is open. The wizard shows it
+// with Try again instead of a native error window.
+let firstRunBackendFailure: { message: string; detail?: string } | null = null;
 let gone = false; // when true indicates app is shutting down
 let shuttingDown = false; // re-entrancy guard for before-quit handler
 let backendStarted = false;
@@ -235,6 +240,8 @@ Electron.app.on('second-instance', async(_event, argv) => {
   console.warn('A second instance was started');
   if (firstRunDialogComplete) {
     window.openMain();
+  } else {
+    firstRunTrace('wizard', 'second launch; bringing the wizard back', { shown: window.showFirstRunWindow() });
   }
 
   // Linux/Windows deliver sulla:// URLs by appending them to the
@@ -321,11 +328,13 @@ firstRunCoordinator.addCondition('aiRuntimeReady');
 firstRunCoordinator.addCondition('credentialsSet');
 firstRunCoordinator.addCondition('deployCompleted');
 firstRunCoordinator.addCondition('wizardFinished');
-// The user signed in to their AI provider (Claude, ChatGPT or Grok — OAuth
-// only). Sign-in needs the VM and the database, so it runs on the wizard's
-// "Finishing" screen once deploy completes, and the wizard stays open until
-// it succeeds.
+// The user signed in to their AI provider (Claude, ChatGPT or Grok). This is
+// informational only: "I'll do this later" and the API-key choice finish
+// setup without it, and the main window offers the connection afterwards.
 firstRunCoordinator.addCondition('aiConnected');
+// Every sign-in made during setup is in the unlocked vault. Until then the
+// sign-ins live only in memory, so the wizard stays open and says so.
+firstRunCoordinator.addCondition('credentialsSaved');
 let firstRunAiSignInReady = false;
 
 firstRunCoordinator.registerStep(
@@ -364,9 +373,15 @@ firstRunCoordinator.registerStep(
 
 firstRunCoordinator.registerStep(
   'closeFirstRunWindow',
-  ['deployCompleted', 'wizardFinished', 'aiConnected'],
+  ['deployCompleted', 'wizardFinished', 'credentialsSaved'],
   () => {
+    if (shuttingDown || gone) {
+      firstRunTrace('wizard', 'ready to close, but the app is quitting; not opening main');
+
+      return;
+    }
     console.log('[FirstRunCoordinator] Closing first-run window and opening main');
+    firstRunTrace('wizard', 'closing the wizard and opening main (deploy done, wizard finished, sign-ins saved)');
     const firstRunWindow = window.getWindow('first-run');
 
     if (firstRunWindow && !firstRunWindow.isDestroyed()) {
@@ -396,6 +411,12 @@ mainEvents.on('first-run-ai-runtime-ready', async() => {
 
 mainEvents.on('sulla-managed-services-ready', async() => {
   console.log('[FirstRunCoordinator] sulla-managed-services-ready');
+  if (firstRunBackendFailure) {
+    firstRunTrace('wizard', 'services ready after a failure; clearing the banner');
+    // A later attempt worked: clear the wizard's failure banner.
+    firstRunBackendFailure = null;
+    window.getWindow('first-run')?.webContents.send('first-run:backend-failed', null);
+  }
   await firstRunCoordinator.setCondition('deployCompleted');
 });
 
@@ -767,7 +788,8 @@ async function initUI() {
   // Opening onboarding must not serialize the rest of app startup. In
   // particular, backend boot continues while the user works through the wizard.
   void doFirstRunDialog().then(() => {
-    if (gone) return;
+    // Closing the wizard while a quit is in progress must not open main.
+    if (gone || shuttingDown) return;
     if (!cfg.application.startInBackground) window.openMain();
   }).catch((error) => {
     console.error('[FirstRun] Could not open onboarding:', error);
@@ -849,34 +871,63 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
 }
 
 async function doFirstRunDialog() {
-  let { onboardingComplete } = getFirstRunState();
-  // settings.json is not evidence of a prior install: settingsImpl.load()
-  // writes it at startup before this runs. firstRunDialogNeeded() covers it.
-  const existingFiles = [
-    path.join(paths.appHome, 'vault-control-token.enc'),
-    path.join(paths.appHome, 'vault-bootstrap-identity.enc'),
-    path.join(paths.appHome, 'vault-v2-key.enc'),
-    path.join(paths.sullaConfig, 'vault-key.enc'),
-  ].some(candidate => fs.existsSync(candidate));
-  let credentialsWereSaved = false;
+  const { state, status } = readFirstRunStateFile();
+  let { onboardingComplete } = state;
 
-  try {
-    const fallback = JSON.parse(fs.readFileSync(path.join(Electron.app.getPath('userData'), 'sulla-settings-fallback.json'), 'utf8'));
+  firstRunTrace('wizard', 'launch: read first-run state', {
+    file: status, step: state.step, onboardingComplete, signInsSaved: state.credentialsSaved,
+  });
 
-    credentialsWereSaved = fallback?.firstRunCredentialsNeeded === false || fallback?.firstRunCredentialsNeeded === 'false';
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') console.warn('[FirstRun] Could not inspect legacy first-run settings:', err);
+  if (status === 'missing') {
+    // No state file: either a brand-new install or one that finished before
+    // first-run-state.json existed. Only a vault that was actually created,
+    // or the legacy "credentials saved" flag, proves the latter. settings.json
+    // and the per-boot vault identity/control files do not.
+    const vaultCreated = [
+      path.join(paths.appHome, 'vault-v2-key.enc'),
+      path.join(paths.sullaConfig, 'vault-key.enc'),
+    ].some(candidate => fs.existsSync(candidate));
+    let credentialsWereSaved = false;
+
+    try {
+      const fallback = JSON.parse(fs.readFileSync(path.join(Electron.app.getPath('userData'), 'sulla-settings-fallback.json'), 'utf8'));
+
+      credentialsWereSaved = fallback?.firstRunCredentialsNeeded === false || fallback?.firstRunCredentialsNeeded === 'false';
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') console.warn('[FirstRun] Could not inspect legacy first-run settings:', err);
+    }
+
+    firstRunTrace('wizard', 'no state file; checking for a finished older install', { vaultCreated, legacySignInsSaved: credentialsWereSaved });
+    if (vaultCreated || credentialsWereSaved) {
+      onboardingComplete = true;
+      updateFirstRunState({ onboardingComplete: true });
+      console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
+    } else {
+      // From here on "setup in progress" lives in the state file, written
+      // before the backend boots, so a relaunch resumes the wizard.
+      updateFirstRunState({ onboardingComplete: false, step: 0 });
+    }
+  } else if (status === 'corrupt') {
+    // An unreadable file never counts as finished. Setup runs again.
+    firstRunTrace('wizard', 'state file was unreadable; moved aside and running setup again');
+    onboardingComplete = false;
+    updateFirstRunState({ onboardingComplete: false, step: 0 });
   }
 
-  if (!onboardingComplete && (!settingsImpl.firstRunDialogNeeded() || credentialsWereSaved || existingFiles)) {
-    onboardingComplete = true;
-    updateFirstRunState({ onboardingComplete: true });
-    console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
+  // Setup reached Finishing, but the Cloud sign-in it held in memory never
+  // reached the vault before the app quit. Reopen the wizard at Account, which
+  // asks for the password again, instead of opening an app with no account.
+  if (onboardingComplete && state.credentialsSaved === false) {
+    console.log('[FirstRun] Setup finished before its sign-in was saved; asking for the password again');
+    firstRunTrace('wizard', 'last run quit before sign-ins reached the vault; reopening at Account');
+    onboardingComplete = false;
+    updateFirstRunState({ onboardingComplete: false, step: 1 });
   }
 
   const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
 
   e2eTrace(`first-run dialog needed=${ needsFirstRun }`);
+  firstRunTrace('wizard', needsFirstRun ? 'opening the wizard' : 'setup already finished; no wizard', { onboardingComplete });
 
   if (needsFirstRun) {
     await window.openFirstRunDialog();
@@ -887,6 +938,7 @@ async function doFirstRunDialog() {
     await firstRunCoordinator.setCondition('credentialsSet');
     await firstRunCoordinator.setCondition('wizardFinished');
     await firstRunCoordinator.setCondition('aiConnected');
+    await firstRunCoordinator.setCondition('credentialsSaved');
   }
   firstRunDialogComplete = true;
 }
@@ -1341,7 +1393,8 @@ Electron.app.on('activate', async() => {
   // On macOS it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (!firstRunDialogComplete) {
-    console.log('Still processing the first-run dialog: not opening main window');
+    // Bring back a minimized or hidden wizard instead of doing nothing.
+    firstRunTrace('wizard', 'Dock click; bringing the wizard back', { shown: window.showFirstRunWindow() });
 
     return;
   }
@@ -1434,20 +1487,24 @@ ipcMainProxy.handle('first-run-preflight' as any, async() => {
     };
   }
 
-  try {
-    const response = await Electron.net.fetch('https://sulladesktop.com/', {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(8_000),
-    });
+  // Any HTTP answer, even an error page, means the Mac is online. Ask the
+  // website and the Cloud API (same base as main/sullaCloudAuth.ts) so one
+  // blocked host or a HEAD-hostile CDN doesn't stop setup.
+  const reach = (url: string) => Electron.net.fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
 
-    if (!response.ok) throw new Error(`HTTP ${ response.status }`);
+  try {
+    const response = await Promise.any([reach('https://sulladesktop.com/'), reach('https://sulla-workers.merchantprotocol.workers.dev/')]);
+
+    firstRunTrace('wizard', 'preflight: online', { httpStatus: response.status, url: response.url });
   } catch (err) {
     console.warn('[FirstRun] Network preflight failed:', err);
+    firstRunTrace('wizard', 'preflight: could not reach the internet', { error: Array.isArray((err as any)?.errors) ? (err as any).errors.map((e: any) => String(e?.message ?? e)) : String(err) });
 
     return {
-      ok:      false,
-      kind:    'network',
-      message: 'Sulla could not reach the internet. Check your connection, then retry.',
+      ok:          false,
+      kind:        'network',
+      canContinue: true,
+      message:     'Sulla could not reach the internet. Check your connection and retry, or continue anyway.',
     };
   }
 
@@ -1550,16 +1607,171 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   await firstRunCoordinator.setCondition('credentialsSet');
 });
 
-// User finished the last user-driven step (Your AI) in the first-run wizard.
+// The wizard moved to a step. One awaited call saves the step and sets the
+// coordinator condition, so a crash can't leave one without the other.
 // Index 3 is the "Finishing" screen — see stepNames in pages/FirstRun.vue.
-ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
-  console.log('[FirstRunCoordinator] Wizard reached step:', step);
-  if (step >= 3) {
-    // Reaching Finishing means every user-driven screen is complete. AI may
-    // be connected now or deferred; either way the wizard must not recur.
-    updateFirstRunState({ onboardingComplete: true, step: 0 });
-    await firstRunCoordinator.setCondition('wizardFinished');
+ipcMainProxy.handle('first-run-wizard-step' as any, async(event: Electron.IpcMainInvokeEvent, step: any) => {
+  requireFirstRunStateSender(event);
+  const target = Number.isInteger(step) ? Math.min(Math.max(step, 0), FIRST_RUN_LAST_STEP) : 0;
+
+  console.log('[FirstRunCoordinator] Wizard reached step:', target);
+  firstRunTrace('wizard', `step recorded: ${ target }`, { requested: step });
+  if (target < FIRST_RUN_LAST_STEP) return updateFirstRunState({ step: target });
+  // Already recorded this launch (a reload resumed Finishing): keep the
+  // saved-sign-in flag as it is.
+  if (firstRunCoordinator.isConditionMet('wizardFinished')) return getFirstRunState();
+
+  // Reaching Finishing means every user-driven screen is complete. AI may be
+  // connected now or deferred; either way the wizard must not recur. The
+  // sign-ins are still only in memory, so remember that until the vault has
+  // them: a relaunch before then asks for the password again.
+  const state = updateFirstRunState({ onboardingComplete: true, step: target, credentialsSaved: false });
+
+  watchFirstRunCredentialsSaved();
+  await firstRunCoordinator.setCondition('wizardFinished');
+
+  return state;
+});
+
+// Plain names for what Finishing is still saving.
+const FIRST_RUN_PENDING_LABELS: Record<string, string> = {
+  'sulla-cloud': 'your Sulla sign-in',
+  'claude-code': 'Claude',
+  codex:         'ChatGPT',
+  grok:          'Grok',
+};
+
+/** Whether the vault is unlocked and holds every sign-in made during setup. */
+async function firstRunCredentialsStatus(): Promise<{ saved: boolean; waitingOn: string[] }> {
+  const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
+  const { pendingIntegrationIds } = await import('@pkg/main/firstRun/pendingCredentials');
+  const waitingOn: string[] = [];
+
+  if (!getServiceLifecycleManager().isVaultUnlocked()) waitingOn.push('your vault');
+  for (const id of pendingIntegrationIds()) waitingOn.push(FIRST_RUN_PENDING_LABELS[id] || id);
+
+  return { saved: waitingOn.length === 0, waitingOn };
+}
+
+/**
+ * From Finishing on, wait until the sign-ins are in the vault, then record it
+ * and let the wizard close. Until then a relaunch asks for the password again.
+ */
+function watchFirstRunCredentialsSaved(): void {
+  if (firstRunCredentialsWatch) return;
+  let lastWaitingOn = '';
+  const check = async() => {
+    const { saved, waitingOn } = await firstRunCredentialsStatus();
+
+    if (waitingOn.join(', ') !== lastWaitingOn) {
+      lastWaitingOn = waitingOn.join(', ');
+      firstRunTrace('wizard', saved ? 'sign-ins are all in the vault' : 'Finishing is waiting to save sign-ins', { waitingOn });
+    }
+    if (!saved) return;
+    if (firstRunCredentialsWatch) clearInterval(firstRunCredentialsWatch);
+    firstRunCredentialsWatch = undefined;
+    updateFirstRunState({ credentialsSaved: true });
+    console.log('[FirstRun] Sign-ins are saved in the vault');
+    await firstRunCoordinator.setCondition('credentialsSaved');
+  };
+
+  firstRunCredentialsWatch = setInterval(() => {
+    check().catch(err => console.warn('[FirstRun] Could not check saved sign-ins:', err));
+  }, 2_000);
+  firstRunCredentialsWatch.unref?.();
+}
+
+ipcMainProxy.handle('first-run:credentials-status' as any, (event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+
+  return firstRunCredentialsStatus();
+});
+
+// Finishing's Try again: write whatever is still held in memory now instead
+// of waiting for the next retry.
+ipcMainProxy.handle('first-run:retry-credentials' as any, async(event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  const { flushPendingCredentials } = await import('@pkg/main/firstRun/pendingCredentials');
+  const result = await flushPendingCredentials().catch((err) => {
+    console.warn('[FirstRun] Retrying the sign-in save failed:', err);
+
+    return { flushed: [], failed: [], error: err instanceof Error ? err.message : String(err) };
+  });
+  const status = await firstRunCredentialsStatus();
+
+  firstRunTrace('wizard', 'Try again: saving sign-ins now', { ...result, waitingOn: status.waitingOn });
+
+  return status;
+});
+
+// After a reload, the Cloud sign-in may already be in the vault rather than
+// in memory. The account step uses this to avoid asking for it again.
+// Saving a sign-in has stalled and the owner chose to go on. Open the app;
+// the sign-ins stay in memory and keep retrying in the background. The state
+// file still says they are unsaved, so a relaunch before they land asks for
+// the password again instead of opening an app with no account.
+ipcMainProxy.handle('first-run:continue-anyway' as any, async(event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  const { waitingOn } = await firstRunCredentialsStatus();
+  firstRunTrace('wizard', 'Open Sulla anyway: closing while sign-ins are still unsaved', { waitingOn });
+  await firstRunCoordinator.setCondition('credentialsSaved');
+});
+
+ipcMainProxy.handle('first-run:account-saved' as any, async(event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
+  const { isCloudSignedIn } = await import('@pkg/main/sullaCloudAuth');
+
+  const unlocked = getServiceLifecycleManager().isVaultUnlocked();
+  const saved = unlocked && await isCloudSignedIn().catch(() => false);
+
+  firstRunTrace('wizard', 'checked whether the vault holds the Cloud sign-in', { vaultUnlocked: unlocked, saved });
+
+  return { saved };
+});
+
+ipcMainProxy.handle('first-run:wizard-status' as any, (event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+
+  return {
+    wizardFinished: firstRunCoordinator.isConditionMet('wizardFinished'),
+    backendFailure: firstRunBackendFailure,
+  };
+});
+
+// An older vault on this Mac is locked. The main window shows its unlock
+// screen, so open it next to the wizard.
+ipcMainProxy.handle('first-run:open-vault-unlock' as any, (event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  firstRunTrace('wizard', 'opening main to unlock an older vault');
+  window.openMain();
+});
+
+ipcMainProxy.handle('first-run:retry-backend' as any, (event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  firstRunTrace('wizard', 'Try again: restarting the workspace', { backendState: k8smanager.state });
+  if (k8smanager.state === State.STARTING) return { started: false };
+  firstRunBackendFailure = null;
+  setImmediate(() => {
+    void startBackend();
+  });
+
+  return { started: true };
+});
+
+// The header Quit button closes the wizard like the red button does, so it
+// gets the same "Setup isn't finished" confirmation.
+ipcMainProxy.handle('first-run:quit' as any, (event: Electron.IpcMainInvokeEvent) => {
+  requireFirstRunStateSender(event);
+  const firstRunWindow = window.getWindow('first-run');
+
+  firstRunTrace('wizard', 'header Quit clicked');
+  if (firstRunWindow && !firstRunWindow.isDestroyed()) {
+    firstRunWindow.close();
+
+    return;
   }
+  Electron.app.quit();
 });
 
 function requireFirstRunStateSender(event: Electron.IpcMainInvokeEvent) {
@@ -1579,6 +1791,8 @@ ipcMainProxy.handle('first-run-state:get' as any, (event) => {
 ipcMainProxy.handle('first-run-state:set' as any, (event, patch) => {
   requireFirstRunStateSender(event);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || 'version' in patch) throw new Error('Invalid first-run state patch');
+  // Completion is main's call (first-run-wizard-step), never the renderer's.
+  if ('onboardingComplete' in patch || 'credentialsSaved' in patch) throw new Error('Invalid first-run state patch');
 
   return updateFirstRunState(patch);
 });
@@ -2081,9 +2295,23 @@ async function handleFailure(payload: any) {
     return;
   }
 
-  // First launch intentionally boots in parallel with onboarding. Container
-  // locks and transient boot failures stay in the progress UI/logs instead of
-  // interrupting the wizard with a native error dialog.
+  // First launch boots in parallel with onboarding. While the wizard is open,
+  // a start failure shows there with Try again instead of a native error
+  // window, and the wizard stays open rather than handing off to a broken app.
+  const firstRunWindow = window.getWindow('first-run');
+
+  if (!firstRunDialogComplete && firstRunWindow && !firstRunWindow.isDestroyed()) {
+    console.error('[FirstRun] Backend failed to start during setup:', payload);
+    const detail = payload instanceof Error ? payload.message : typeof payload?.message === 'string' ? payload.message : '';
+
+    firstRunBackendFailure = { message: 'Sulla\'s private workspace didn\'t start.', detail: detail || undefined };
+    firstRunTrace('wizard', 'workspace failed to start; showing Try again in the wizard', { error: detail, backendState: k8smanager.state });
+    firstRunWindow.webContents.send('first-run:backend-failed', firstRunBackendFailure);
+
+    return;
+  }
+
+  // No wizard window (yet): keep the old behaviour of opening the app degraded.
   if (!firstRunDialogComplete && k8smanager.state === State.STARTING) {
     console.warn('[FirstRun] Backend is still booting; suppressing startup dialog:', payload);
     mainEvents.emit('sulla-managed-services-failed');

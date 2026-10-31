@@ -15,6 +15,8 @@ import Electron, {
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
+import { FIRST_RUN_LAST_STEP, getFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -537,6 +539,22 @@ export function openDialog(id: string, opts?: Electron.BrowserWindowConstructorO
 }
 
 /**
+ * Bring the first-run window to the front if it is open. Returns false when
+ * there is no wizard.
+ */
+export function showFirstRunWindow(): boolean {
+  const window = getWindow('first-run');
+
+  if (!window || window.isDestroyed()) return false;
+  Electron.app.dock?.show();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+
+  return true;
+}
+
+/**
  * Open the first run window, and return once the user has accepted any
  * configuration required.
  */
@@ -574,6 +592,8 @@ export async function openFirstRunDialog() {
   let appIsQuitting = false;
   const allowCloseForQuit = () => {
     appIsQuitting = true;
+    // Shutdown can take a while; tell the wizard so it stops taking input.
+    if (!window.isDestroyed()) window.webContents.send('first-run:quitting');
   };
 
   Electron.app.on('before-quit', allowCloseForQuit);
@@ -582,15 +602,20 @@ export async function openFirstRunDialog() {
   // coordinator close happens only after onboardingComplete is persisted.
   window.on('close', (event) => {
     if (window.isDestroyed() || appIsQuitting) return;
+    // On Finishing, the sign-ins are still only in memory.
+    const finishing = getFirstRunState().step >= FIRST_RUN_LAST_STEP;
     const result = Electron.dialog.showMessageBoxSync(window, {
       type: 'question',
       buttons: ['Keep setup open', 'Quit'],
       defaultId: 0,
       cancelId: 0,
       title: 'Setup isn\'t finished',
-      message: 'Setup isn\'t finished. Quit and pick up where you left off?',
+      message: finishing
+        ? 'Setup isn\'t finished. If you quit now, you may need to enter your password again next time.'
+        : 'Setup isn\'t finished. Quit and pick up where you left off?',
     });
     event.preventDefault();
+    firstRunTrace('wizard', result === 1 ? 'close confirmed: quitting setup' : 'close cancelled: keeping setup open', { step: getFirstRunState().step });
     if (result === 1) {
       // before-quit flips appIsQuitting before Electron closes windows again,
       // so Cmd+Q and this button share one confirmation and one quit path.
