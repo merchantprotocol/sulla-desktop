@@ -14,9 +14,9 @@ COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
 # instead of copying the Electron-only store (and its entire main-process graph).
 COPY services/sulla-tools/src/pendingCredentials.container.ts ./pkg/sulla-desktop/main/firstRun/pendingCredentials.ts
 COPY tsconfig.json ./tsconfig.json
-# Resolve both the static and guarded dynamic pending-credential imports in the
-# same filesystem layout used by the running image.
-RUN ./node_modules/.bin/tsx -e "Promise.all([import('/app/pkg/sulla-desktop/agent/integrations/select_box/GrokModels.ts'),import('/app/pkg/sulla-desktop/main/firstRun/pendingCredentials.ts')])"
+# Exercise the exact target used by the agent modules' guarded dynamic imports.
+# The real-entrypoint smoke job below covers their static module graph.
+RUN ./node_modules/.bin/tsx -e "import('/app/pkg/sulla-desktop/main/firstRun/pendingCredentials.ts').then(m=>{if(m.getPendingCredential('grok')!==undefined||m.hasPendingCredential('grok'))process.exit(1)})"
 ENV NODE_ENV=production
 WORKDIR /app/services/sulla-tools
 USER node
