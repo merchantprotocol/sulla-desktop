@@ -357,6 +357,11 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
     throw new VaultNotReadyError(`vault not ready: ${ (err as Error)?.message || err }`);
   }
   const accountId = activeConnectedAccountId(metadata);
+  // A first-run sign-in held in memory is written into the vault right after
+  // it unlocks. Retry until it lands instead of reporting a signed-out Mac.
+  if (!accountId && getPendingCredential(INTEGRATION_ID)) {
+    throw new VaultNotReadyError('vault not ready: the Sulla Cloud session is still being saved');
+  }
   if (!accountId) {
     startupAdoptionError = SIGN_IN_AGAIN;
     return null;
