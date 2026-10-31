@@ -50,14 +50,14 @@ export class AnthropicService extends BaseLanguageModel {
       model:   valMap.model || 'claude-sonnet-4-6',
       baseUrl: 'https://api.anthropic.com/v1',
       apiKey:  valMap.api_key || '',
-      workspaceId: valMap.workspace_id || '',
+      workspaceId: valMap.workspace_id?.trim() || '',
     });
   }
 
   constructor(config: LLMServiceConfig & { workspaceId?: string }) {
     super(config);
     this.config = config;
-    this.workspaceId = config.workspaceId || '';
+    this.workspaceId = config.workspaceId?.trim() || '';
   }
 
   public setRetryCount(count: number): void {

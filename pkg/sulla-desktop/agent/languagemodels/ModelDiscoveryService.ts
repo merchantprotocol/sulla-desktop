@@ -393,6 +393,7 @@ export class ModelDiscoveryService {
             workspaceId = getPendingCredential('anthropic')?.values.workspace_id || workspaceId;
           } catch { /* optional workspace metadata */ }
         }
+        workspaceId = workspaceId.trim();
         if (workspaceId) headers['anthropic-workspace-id'] = workspaceId;
       }
 
