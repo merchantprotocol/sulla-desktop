@@ -148,6 +148,8 @@ interface MainEventNames {
 
   /** Emitted after the current backend generation reconciles managed services. */
   'sulla-managed-services-ready'(): void;
+  /** Chat can start right now (tools, vault, agent image, web safety check). */
+  'first-run-chat-ready'(): void;
   /** The managed services failed to start after all retries; the app opens degraded. */
   'sulla-managed-services-failed'(): void;
   /**

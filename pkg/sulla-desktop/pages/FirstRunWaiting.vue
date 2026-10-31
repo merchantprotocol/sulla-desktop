@@ -273,11 +273,15 @@ async function openVaultUnlock() {
   await ipcRenderer.invoke('first-run:open-vault-unlock' as any).catch((err: unknown) => console.warn('[FirstRunWaiting] Could not open the vault unlock:', err));
 }
 
-// ─── Chat readiness (information only; never blocks closing) ─────
+// ─── Chat readiness: once chat is ready, this window closes ──────
+// Main closes it as soon as chat is ready and the sign-ins are saved. If it is
+// still open a little later, open Sulla anyway: "ready" must never sit here.
+const OPEN_WHEN_READY_MS = 15_000;
+let openWhenReadyTimer: ReturnType<typeof setTimeout> | undefined;
 const chatReady = ref<{ ready: boolean; waitingOn: string[] } | null>(null);
 const chatLine = computed(() => {
   if (!chatReady.value) return '';
-  if (chatReady.value.ready) return 'Chat is ready.';
+  if (chatReady.value.ready) return 'Chat is ready. Opening Sulla…';
   const waiting = chatReady.value.waitingOn;
 
   return waiting.length ? `Getting chat ready: waiting on ${ waiting.join(', ') }.` : 'Getting chat ready…';
@@ -287,6 +291,14 @@ function onChatReady(_event: unknown, status: { ready?: boolean; waitingOn?: str
   if (!status) return;
   chatReady.value = { ready: status.ready === true, waitingOn: Array.isArray(status.waitingOn) ? status.waitingOn : [] };
   traceFirstRun('finishing', 'chat readiness', chatReady.value);
+  if (chatReady.value.ready && !openWhenReadyTimer) {
+    openWhenReadyTimer = setTimeout(() => {
+      // Never skip unlocking an older vault: that is the one thing the user must do here.
+      if (oldVaultLocked.value) return;
+      traceFirstRun('finishing', 'chat ready but the window is still open; opening Sulla', { saved: credentials.value.saved, waitingOn: credentials.value.waitingOn });
+      void continueAnyway();
+    }, OPEN_WHEN_READY_MS);
+  }
 }
 
 onMounted(() => {
@@ -303,6 +315,7 @@ onUnmounted(() => {
   ipcRenderer.removeListener('first-run:chat-ready-status' as any, onChatReady);
   ipcRenderer.removeListener('first-run:backend-failed' as any, onBackendFailed);
   if (pollTimer) clearInterval(pollTimer);
+  clearTimeout(openWhenReadyTimer);
 });
 </script>
 
