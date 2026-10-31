@@ -243,7 +243,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         required:        true,
         placeholder:     'Select a model...',
         selectBoxId:     'anthropic_models',
-        selectDependsOn: ['api_key'],
+        selectDependsOn: ['api_key', 'workspace_id'],
       },
     ],
   },
