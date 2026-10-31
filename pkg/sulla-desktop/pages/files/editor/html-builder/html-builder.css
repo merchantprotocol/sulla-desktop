@@ -1288,6 +1288,10 @@
   font-family: inherit;
   color: var(--tx);
   width: 118px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   outline: none;
   padding: 4px 6px;
   border-radius: 6px
