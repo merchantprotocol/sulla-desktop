@@ -33,6 +33,8 @@ class MemoryRepository implements PullRepository {
   async cloudHeads() { return [...this.heads.values()] }
   async hasLocalVersion(versionId:string) { return this.versions.has(versionId) }
   async isCloudVersion(versionId:string) { return this.cloudVersions.has(versionId) }
+  parents = new Map<string, string | null>();
+  async versionParent(versionId:string) { return this.parents.has(versionId) ? this.parents.get(versionId) : undefined }
   async localFile(_collectionId:string, fileId:string):Promise<LocalFileState | null> {
     const file = this.files.get(fileId);
     if (!file) return null;
@@ -263,4 +265,45 @@ test('a zero-byte chunk remains invalid when the manifest declares non-empty con
     v: 1, path: 'not-empty.txt', mime: 'text/plain', size: 1, mtime: NOW.toISOString(),
     sha256: 'b'.repeat(64), chunks: [['a'.repeat(64), 0]], deleted: false, parentVersionId: null,
   }), /chunk size invalid/);
+});
+
+async function legacyParentPull(manifestParent:string | null) {
+  const root = new Uint8Array(randomBytes(32));
+  const fileId = randomUUID(), grandparent = randomUUID(), parent = randomUUID(), versionId = randomUUID();
+  const repository = new MemoryRepository();
+  repository.versions.set(grandparent, { fileId, chunks: [], deleted: false });
+  repository.versions.set(parent, { fileId, chunks: [], deleted: false });
+  repository.parents.set(grandparent, null);
+  repository.parents.set(parent, grandparent);
+  repository.cloudVersions.add(parent);
+  repository.files.set(fileId, { collectionId: COLLECTION, path: 'page.html', current: parent });
+  const manifest = parseManifestPlain({
+    v: 1, path: 'page.html', mime: 'text/html', size: 0, mtime: NOW.toISOString(),
+    sha256: createHash('sha256').update(Buffer.alloc(0)).digest('hex'),
+    chunks: [], deleted: false, parentVersionId: manifestParent ?? grandparent,
+  });
+  const remote = {
+    fileId, versionId, parentVersionId: parent, deleted: false, seq: 1, deviceId: 'cloud', createdAt: NOW.toISOString(),
+    manifest: await sealManifest(root, COLLECTION, 1, fileId, versionId, manifest), chunkIds: [],
+  };
+  const head = await signHead(root, {
+    collectionId: COLLECTION, keyVersion: 1, seq: 1, prevMac: '',
+    stateHash: await stateHash([{ fileId, versionId, deleted: false }]),
+  });
+  const content = { async materialize() { return { chunkIds: [], chunks: [] } } };
+  const api = { changes: async() => ({ versions: [remote], head }) };
+  const result = await new CloudPuller(api, repository, content, DEVICE, () => NOW)
+    .pull({ collectionId: COLLECTION, keyVersion: 1, lastSeq: 0, head: null }, root);
+  return { result, repository, versionId, fileId };
+}
+
+test('legacy Cloud save naming the grandparent as manifest parent applies without a fork', async() => {
+  const { result, repository, versionId, fileId } = await legacyParentPull(null);
+  assert.equal(result.applied, 1);
+  assert.equal(repository.conflicts, 0);
+  assert.equal(repository.files.get(fileId)?.current, versionId);
+});
+
+test('a manifest parent that is not an ancestor of the commit parent is still rejected', async() => {
+  await assert.rejects(legacyParentPull(randomUUID()), /cloud parent does not match manifest/);
 });

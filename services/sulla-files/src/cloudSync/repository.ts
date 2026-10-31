@@ -413,6 +413,11 @@ export class PgCloudSyncRepository implements PullRepository {
     return Boolean((await this.db.query('SELECT 1 FROM file_versions WHERE id=$1', [versionId])).rowCount);
   }
 
+  async versionParent(versionId:string):Promise<string | null | undefined> {
+    const row = (await this.db.query('SELECT parent_version_id::text AS parent FROM file_versions WHERE id=$1', [versionId])).rows[0];
+    return row ? (row.parent ?? null) : undefined;
+  }
+
   async isCloudVersion(versionId:string):Promise<boolean> {
     return Boolean((await this.db.query('SELECT 1 FROM files_cloud_versions WHERE version_id=$1', [versionId])).rowCount);
   }
