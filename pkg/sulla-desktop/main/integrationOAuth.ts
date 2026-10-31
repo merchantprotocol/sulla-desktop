@@ -108,12 +108,13 @@ function probeRequest(providerId: FirstRunApiProviderId, model: string): { url: 
   }
   return {
     url: providerId === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.x.ai/v1/chat/completions',
-    body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] },
+    // Newer OpenAI models reject max_tokens; max_completion_tokens works for all.
+    body: { model, ...(providerId === 'openai' ? { max_completion_tokens: 16 } : { max_tokens: 1 }), messages: [{ role: 'user', content: 'Hi' }] },
   };
 }
 
 function apiResponseError(providerName: string, status: number, text: string): string {
-  if (/(insufficient[_ -]?quota|credit balance|billing|payment|required|no credit)/i.test(text)) {
+  if (/(insufficient[_ -]?quota|credit balance|billing|payment required|no credit|exceeded your current quota)/i.test(text)) {
     return 'Your key works, but the account has no credit.';
   }
   if (status === 401) return 'That key was not accepted. Check it and try again.';
@@ -307,8 +308,12 @@ export function initIntegrationOAuthEvents(): void {
         body: JSON.stringify(probe.body),
         signal: AbortSignal.timeout(15_000),
       });
-      if (!probeResponse.ok) {
-        const probeText = await probeResponse.text();
+      const probeText = probeResponse.ok ? '' : await probeResponse.text();
+      // A 400 means the key authenticated and the request shape was refused
+      // (model parameters, limits). Only auth, permission and billing failures
+      // say anything about the key itself.
+      const keyProblem = !probeResponse.ok && (probeResponse.status !== 400 || /(insufficient[_ -]?quota|credit balance|billing|payment required|no credit|exceeded your current quota)/i.test(probeText));
+      if (keyProblem) {
         const errorClass = `probe-http-${ probeResponse.status }`;
         firstRunTrace('api-key', 'verification failed', { provider: providerId, errorClass });
         return { success: false, error: apiResponseError(provider.name, probeResponse.status, probeText) };
