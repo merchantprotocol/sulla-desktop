@@ -18,7 +18,7 @@ import { useModelSettings } from '@pkg/composables/preferences/useModelSettings'
 import { usePromptSections } from '@pkg/composables/preferences/usePromptSections';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 
-const enabled = useSullaSetting('heartbeatEnabled', true, 'boolean', { refreshOnFocus: true });
+const enabled = useSullaSetting('heartbeatEnabled', false, 'boolean', { refreshOnFocus: true });
 const delay = useSullaSetting('heartbeatDelayMinutes', 15, 'number');
 const provider = useSullaSetting('heartbeatProvider', 'default', 'string');
 const models = useModelSettings();
