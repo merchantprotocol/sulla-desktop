@@ -7,7 +7,7 @@ on:
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'
-      - 'pkg/sulla-desktop/utils/instance.ts'
+      - 'pkg/sulla-desktop/utils/**'
       - 'contracts/server-split/**'
       - '.github/workflows/sulla-tools-image.yml'
   push:
@@ -18,6 +18,7 @@ on:
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'
+      - 'pkg/sulla-desktop/utils/**'
       - 'contracts/server-split/**'
       - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-tools-image.yml'
@@ -29,8 +30,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build image and import entrypoint dependencies
+      - name: Build image
         run: docker build --file services/sulla-tools/Dockerfile --tag sulla-tools-smoke .
+      - name: Start the real entrypoint and keep it healthy for 30 seconds
+        run: |
+          docker network create sulla-tools-smoke
+          docker run -d --name postgres --network sulla-tools-smoke \
+            -e POSTGRES_USER=sulla -e POSTGRES_PASSWORD=sulla_dev_password -e POSTGRES_DB=sulla postgres:16-alpine
+          docker run -d --name redis --network sulla-tools-smoke redis:7-alpine
+          for attempt in $(seq 1 30); do
+            docker exec postgres pg_isready -U sulla -d sulla && docker exec redis redis-cli ping | grep -q PONG && break
+            sleep 1
+          done
+          docker run -d --name tools --network sulla-tools-smoke \
+            -e SULLA_API_TOKEN=0123456789012345678901234567890123456789 \
+            sulla-tools-smoke
+          for attempt in $(seq 1 30); do
+            if docker exec tools wget -q -O- http://127.0.0.1:3000/healthz | grep -q '"status":"ok"'; then break; fi
+            test "$(docker inspect --format '{{.State.Running}}' tools)" = true
+            sleep 1
+          done
+          for second in $(seq 1 30); do
+            test "$(docker inspect --format '{{.State.Running}}' tools)" = true
+            docker exec tools wget -q -O- http://127.0.0.1:3000/healthz | grep -q '"status":"ok"'
+            sleep 1
+          done
+          docker logs tools
   image:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
