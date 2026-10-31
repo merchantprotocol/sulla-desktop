@@ -105,7 +105,9 @@ export function initIntegrationOAuthEvents(): void {
         if (payload.integrationId === 'codex') {
           const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('@pkg/agent/util/codexAuthFile');
           if (!writeCodexAuthFile(tokens)) throw new Error('ChatGPT sign-in did not return usable credentials');
-          if (!await linkCodexHomeIntoVm()) throw new Error('ChatGPT signed in, but the Sulla VM is not ready yet');
+          // The VM may still be starting during first run. The sign-in is kept;
+          // ensureCodexAuthFile() links it into the VM before the first Codex turn.
+          if (!await linkCodexHomeIntoVm().catch(() => false)) console.log(`${ LOG_PREFIX } Codex sign-in saved; it will be linked into the VM once it is ready`);
         }
       }
 
