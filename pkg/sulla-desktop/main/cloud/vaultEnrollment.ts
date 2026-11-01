@@ -57,7 +57,7 @@ async function enroll(s:State,masterKey:Uint8Array,cloudUserId:string):Promise<E
   if(!consumed.ok)throw new Error(`enrollment_consume_${consumed.status}`);
   const {wrappedUserKey}=await consumed.json() as {wrappedUserKey:unknown};
   const client=getConfiguredApprovalClient(); if(!client)throw new Error('vault enrollment service unavailable');
-  const proof=await client.adoptVaultEnrollment({requestId:request.id,vaultId,vaultEpoch:epoch,privateKeyJwk,wrappedUserKey,masterKey:Buffer.from(masterKey).toString('base64url'),cloudUserId});
+  const proof=await client.adoptVaultEnrollment({requestId:request.id,vaultId,vaultEpoch:epoch,privateKeyJwk:request.privateKeyJwk,wrappedUserKey,masterKey:Buffer.from(masterKey).toString('base64url'),cloudUserId});
   const confirmed=await signed('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(request.id)}/confirm`,vaultId,`enrollment-confirm:${request.id}`,proof);
   if(!confirmed.ok)throw new Error(`enrollment_confirm_${confirmed.status}`);
   await client.commitVaultEnrollment(request.id);
