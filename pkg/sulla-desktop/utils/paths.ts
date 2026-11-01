@@ -97,11 +97,13 @@ function getDefaultPaths(): Partial<Paths> {
   switch (process.platform) {
   case 'darwin': {
     const appHome = path.join(home, 'Library', 'Application Support', `sulla-desktop${ instanceSuffix }`);
-    // In a packaged app, process.resourcesPath points to Contents/Resources;
-    // extraResources are nested under a 'resources' subdirectory there.
-    // In dev, fall back to the project's resources directory.
+    // Packaged apps put extraResources under Contents/Resources/resources,
+    // while Electron's unpackaged process.resourcesPath already ends in /resources.
+    // Avoid appending a second resources segment in the latter case.
     const resources = process.resourcesPath
-      ? path.join(process.resourcesPath, 'resources')
+      ? path.basename(process.resourcesPath).toLowerCase() === 'resources'
+        ? process.resourcesPath
+        : path.join(process.resourcesPath, 'resources')
       : path.join(process.cwd(), 'resources');
 
     return {
@@ -126,7 +128,9 @@ function getDefaultPaths(): Partial<Paths> {
     const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
     const appHome = path.join(dataHome, `sulla-desktop${ instanceSuffix }`);
     const resources = process.resourcesPath
-      ? path.join(process.resourcesPath, 'resources')
+      ? path.basename(process.resourcesPath).toLowerCase() === 'resources'
+        ? process.resourcesPath
+        : path.join(process.resourcesPath, 'resources')
       : path.join(process.cwd(), 'resources');
 
     return {
