@@ -75,9 +75,13 @@ Rules:
 - Always end with exactly one wrapper. Never end without one.`;
 
 export function buildCompletionWrappersSection(ctx: PromptBuildContext): PromptSection | null {
+  const content = ctx.mode === 'local' ? COMPLETION_WRAPPERS_LOCAL_CONTENT : COMPLETION_WRAPPERS_CONTENT;
+  const voiceNote = ctx.chatMode === 'voice'
+    ? '\n\nFor voice turns, the DONE summary is a neutral one-line technical note about the action taken (or no action taken). It is protocol metadata, must never be spoken aloud, and must not repeat the spoken reply.'
+    : '';
   return {
     id:             'completion_wrappers',
-    content:        ctx.mode === 'local' ? COMPLETION_WRAPPERS_LOCAL_CONTENT : COMPLETION_WRAPPERS_CONTENT,
+    content:        content + voiceNote,
     priority:       80,
     cacheStability: 'stable',
   };
