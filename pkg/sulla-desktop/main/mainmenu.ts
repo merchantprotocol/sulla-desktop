@@ -17,6 +17,7 @@ import {
   openDocker, openMain, openPreferences, getWindow, openUrlInApp,
 } from '@pkg/window';
 import { openProcessManager } from '@pkg/window/processManager';
+import { openSupportCenter } from '@pkg/window/supportCenter';
 import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.mainmenu;
@@ -390,6 +391,21 @@ function getInspectMenu(): MenuItem {
   });
 }
 
+function getSupportMenu(): MenuItem {
+  return new MenuItem({
+    label: '&Support',
+    submenu: [
+      { label: 'Support Center…', accelerator: 'Alt+CmdOrCtrl+H', click: () => openSupportCenter('home') },
+      { type: 'separator' },
+      { label: 'Logs', accelerator: 'Alt+CmdOrCtrl+L', click: () => openSupportCenter('logs') },
+      { label: 'Send Feedback…', click: () => openSupportCenter('feedback') },
+      { label: 'My Tickets', click: () => openSupportCenter('tickets') },
+      { type: 'separator' },
+      { label: 'Request Remote Support…', click: () => openSupportCenter('remote') },
+    ],
+  });
+}
+
 function getHelpMenu(isMac: boolean): MenuItem {
   const helpMenuItems: MenuItemConstructorOptions[] = [
     ...(!isMac
@@ -683,6 +699,7 @@ function getMacApplicationMenu(): MenuItem[] {
     getEditMenu(true),
     getHistoryMenu(),
     getInspectMenu(),
+    getSupportMenu(),
     new MenuItem({
       label:   '&Window',
       submenu: [
@@ -802,6 +819,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
     getEditMenu(false),
     getHistoryMenu(),
     getInspectMenu(),
+    getSupportMenu(),
     getHelpMenu(false),
   ];
 }
