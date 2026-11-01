@@ -93,9 +93,12 @@ function registerHandlers() {
 
 export function openSupportCenter(section = 'home') {
   registerHandlers();
-  return createWindow('support-center', `${ webRoot }/support.html#${ encodeURIComponent(section) }`, {
+  const existing = getWindow('support-center');
+  const window = createWindow('support-center', `${ webRoot }/support.html#${ encodeURIComponent(section) }`, {
     title: 'Sulla Support', width: 1120, height: 780, minWidth: 860, minHeight: 620,
     backgroundColor: '#f5f7fa', autoHideMenuBar: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false, devTools: !app.isPackaged, webSecurity: true },
   });
+  if (existing) { window.webContents.send('support:navigate', section) }
+  return window;
 }
