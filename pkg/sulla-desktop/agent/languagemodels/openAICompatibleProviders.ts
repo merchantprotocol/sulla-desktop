@@ -21,7 +21,7 @@ export interface OpenAICompatibleProviderDefinition {
 
 const chatModels = /^(?!.*(?:embed|rerank|moderation|guard|image|audio|speech|tts|whisper))/i;
 
-export const OPENAI_COMPATIBLE_PROVIDERS = [
+export const OPENAI_COMPATIBLE_PROVIDERS: readonly OpenAICompatibleProviderDefinition[] = [
   { id: 'openrouter', name: 'OpenRouter', developer: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', modelsUrl: 'https://openrouter.ai/api/v1/models', keyHelp: 'Get your key at openrouter.ai/keys.', defaultModelFilter: chatModels, extraHeaders: { 'HTTP-Referer': 'https://sulladesktop.com', 'X-Title': 'Sulla' } },
   { id: 'fireworks', name: 'Fireworks AI', developer: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1', modelsUrl: 'https://api.fireworks.ai/inference/v1/models', keyHelp: 'Find your key at app.fireworks.ai → Settings → API Keys.', defaultModelFilter: chatModels },
   { id: 'perplexity', name: 'Perplexity', developer: 'Perplexity AI', baseUrl: 'https://api.perplexity.ai', modelsUrl: '', keyHelp: 'Find your key at console.perplexity.ai → API Keys.', defaultModelFilter: chatModels, staticModels: ['sonar', 'sonar-pro', 'sonar-reasoning-pro', 'sonar-deep-research'] },
@@ -36,7 +36,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS = [
   { id: 'aws-bedrock', name: 'AWS Bedrock', developer: 'Amazon Web Services', baseUrl: '', modelsUrl: '/models', keyHelp: 'In AWS Console, open Amazon Bedrock → API keys; choose the region where you enabled model access.', defaultModelFilter: chatModels, staticModels: ['global.anthropic.claude-sonnet-4-5-20250929-v1:0', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'us.meta.llama4-maverick-17b-instruct-v1:0', 'amazon.nova-pro-v1:0'], regionSelect: { id: 'bedrock_regions', label: 'Region', options: [{ value: 'us-east-1', label: 'US East (N. Virginia)' }, { value: 'us-west-2', label: 'US West (Oregon)' }, { value: 'eu-central-1', label: 'Europe (Frankfurt)' }, { value: 'eu-west-1', label: 'Europe (Ireland)' }, { value: 'ap-northeast-1', label: 'Asia Pacific (Tokyo)' }, { value: 'ap-southeast-2', label: 'Asia Pacific (Sydney)' }] } },
   { id: 'lm-studio', name: 'LM Studio', developer: 'LM Studio', baseUrl: '', modelsUrl: '/models', keyHelp: 'Start the Local Server in LM Studio, then use its OpenAI-compatible URL; no API key is needed.', defaultModelFilter: chatModels, keyRequired: false, local: true },
   { id: 'local-server', name: 'Local server (OpenAI-compatible)', developer: 'Local', baseUrl: '', modelsUrl: '/models', keyHelp: 'Start your local OpenAI-compatible server and enter its /v1 base URL; no API key is needed.', defaultModelFilter: chatModels, keyRequired: false, local: true },
-] as const satisfies readonly OpenAICompatibleProviderDefinition[];
+];
 
 export type OpenAICompatibleProviderId = typeof OPENAI_COMPATIBLE_PROVIDERS[number]['id'];
 
