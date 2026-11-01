@@ -2097,7 +2097,9 @@
     $('ta').value = src;
     renderCode();
     render();
-    if (options.readOnly) setEditing(false);
+    // HTML files open as their designed page first. Editing is an explicit
+    // action for this mount, rather than a preference inherited from the last file.
+    setEditing(false);
     if (options.sourceEditorFactory) {
       const sourceHost = host.querySelector('.shb-dv-ed');
       sourceHost.innerHTML = '';
@@ -2116,7 +2118,6 @@
     try {
       const v = localStorage.getItem('sulla.htmlEditor.view');
       if (v) setView(v);
-      if (!options.readOnly && localStorage.getItem('sulla.htmlEditor.editing') === '0') setEditing(false)
     } catch (_) {}
 
     if (options.onRename) $('fname').addEventListener('change', event => options.onRename(event.target.value));
