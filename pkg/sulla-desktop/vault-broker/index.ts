@@ -28,7 +28,7 @@ import type {
   SullaCloudDesktopRequest,
   AccountPasswordRewrapRequest,
   AccountPasswordRewrapResponse,
-  VaultDeviceApprovalWrapRequest,
+  VaultDeviceApprovalWrapRequest, VaultEnrollmentWrapRequest, VaultEnrollmentAdoptRequest,
   RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { loopbackOrigin } from '@pkg/utils/instance';
@@ -561,6 +561,11 @@ export class LocalVaultApprovalClient {
     }
     return response.json() as Promise<{ wrappedUserKey: unknown }>;
   }
+
+  async wrapVaultEnrollment(request:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:unknown}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-wrap',request) as Promise<{wrappedUserKey:unknown}> }
+  async adoptVaultEnrollment(request:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-adopt',request) as Promise<{bundleMac:string;headMac:string}> }
+  async commitVaultEnrollment(requestId:string):Promise<{adopted:true}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-commit',{requestId}) as Promise<{adopted:true}> }
+  private async approvalPost(path:string,body:unknown):Promise<unknown>{ const identity=typeof this.identity==='function'?await this.identity():this.identity; const response=await this.transport(`${this.endpoint}${path}`,{method:'POST',headers:{authorization:`Bearer ${identity.serviceToken}`,'content-type':'application/json','x-sulla-service-id':identity.serviceId},body:JSON.stringify(body)}); if(!response.ok){const error=await errorBody(response);throw new VaultBrokerError(error.error,error.message,response.status)} return response.json() }
 
   async rotateRecoveryKey(): Promise<RecoveryKeyRotateResponse> {
     const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
