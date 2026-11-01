@@ -13,6 +13,8 @@ import { signDeviceMessage } from './deviceKey';
 export type EnrollmentDisposition='create'|'trusted'|'adopted'|'waiting'|'recovery';
 type State={state:'no_vault'|'trusted'|'approval_available'|'waiting_for_approver'|'recovery_required';vaultId?:string;epoch?:number};
 let pending:Promise<EnrollmentDisposition>|null=null;
+let prepared:Promise<State>|null=null;
+let preparedForUserId='';
 let activeRequest:{id:string;vaultId:string;epoch:number;privateKeyJwk:JsonWebKey}|null=null;
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 async function signed(method:string,path:string,vaultId:string,op:string,body?:unknown):Promise<Response>{
@@ -32,16 +34,21 @@ async function state():Promise<State>{
  if(!response.ok)throw new Error(`enrollment_state_${response.status}`);
  return response.json() as Promise<State>;
 }
+async function openRequest(s:State):Promise<void>{
+ const vaultId=s.vaultId!,epoch=s.epoch!;
+ if(activeRequest?.vaultId===vaultId)return;
+ const pair=await globalThis.crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']) as CryptoKeyPair;
+ const publicKey=pair?Buffer.from(await globalThis.crypto.subtle.exportKey('raw',pair.publicKey)).toString('base64url'):'';
+ const privateKeyJwk=await globalThis.crypto.subtle.exportKey('jwk',pair.privateKey);
+ const nonce=crypto.randomBytes(16).toString('base64url');
+ const opened=await signed('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests`,vaultId,'enrollment-request',{publicKey,nonce});
+ if(!opened.ok&&opened.status!==409)throw new Error(`enrollment_request_${opened.status}`);
+ if(opened.ok){const created=await opened.json() as {id:string;vaultId:string;epoch:number}; activeRequest={...created,privateKeyJwk};}
+}
 async function enroll(s:State,masterKey:Uint8Array,cloudUserId:string):Promise<EnrollmentDisposition>{
  const vaultId=s.vaultId!,epoch=s.epoch!;
- const pair=activeRequest?null:await globalThis.crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']) as CryptoKeyPair|null;
- const publicKey=pair?Buffer.from(await globalThis.crypto.subtle.exportKey('raw',pair.publicKey)).toString('base64url'):'';
- const privateKeyJwk=pair?await globalThis.crypto.subtle.exportKey('jwk',pair.privateKey):activeRequest!.privateKeyJwk;
- const nonce=crypto.randomBytes(16).toString('base64url');
- const opened=activeRequest?null:await signed('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests`,vaultId,'enrollment-request',{publicKey,nonce});
- if(opened&&!opened.ok&&opened.status!==409)throw new Error(`enrollment_request_${opened.status}`);
- let request=activeRequest?.vaultId===vaultId?activeRequest:null;
- if(!request&&opened?.ok){const created=await opened.json() as {id:string;vaultId:string;epoch:number}; activeRequest={...created,privateKeyJwk}; request=activeRequest;}
+ await openRequest(s);
+ const request=activeRequest?.vaultId===vaultId?activeRequest:null;
  if(!request)return'waiting';
  for(let attempt=0;attempt<60;attempt++){
   await sleep(5_000);
@@ -59,8 +66,23 @@ async function enroll(s:State,masterKey:Uint8Array,cloudUserId:string):Promise<E
  }
  throw new Error('enrollment_timeout');
 }
-export async function gateVaultCreation(masterKey:Uint8Array,cloudUserId:string):Promise<EnrollmentDisposition>{
- pending??=(async()=>{const s=await state();if(s.state==='no_vault')return'create';if(s.state==='trusted')return'trusted';if(s.state==='recovery_required')return'recovery';return enroll(s,masterKey,cloudUserId)})().finally(()=>{pending=null});
+/** Ask Cloud about the signed-in account before any local-vault create path runs. */
+export async function gateVaultCreation():Promise<EnrollmentDisposition>{
+ const userId=await getCurrentUserId();
+ if(!userId)throw new Error('enrollment_requires_cloud_session');
+ if(preparedForUserId!==userId){preparedForUserId=userId;prepared=null;activeRequest=null;}
+ prepared??=state().then(async s=>{
+  if(s.state==='approval_available'||s.state==='waiting_for_approver')await openRequest(s);
+  return s;
+ });
+ const s=await prepared;
+ if(s.state==='no_vault')return'create';
+ if(s.state==='trusted')return'trusted';
+ if(s.state==='recovery_required')return'recovery';
+ return'waiting';
+}
+export async function completeVaultEnrollment(masterKey:Uint8Array,cloudUserId:string):Promise<EnrollmentDisposition>{
+ pending??=(async()=>{const disposition=await gateVaultCreation();if(disposition!=='waiting')return disposition;return enroll(await prepared!,masterKey,cloudUserId)})().finally(()=>{pending=null});
  return pending;
 }
 export { signed as signedEnrollmentRequest };

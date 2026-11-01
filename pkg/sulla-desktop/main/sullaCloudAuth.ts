@@ -926,8 +926,12 @@ export function initSullaCloudAuthEvents(): void {
             traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
             return;
           }
-          const { gateVaultCreation } = await import('./cloud/vaultEnrollment');
-          const disposition = await gateVaultCreation(pendingCloudMasterKey!, pendingCloudUserId!);
+          const { completeVaultEnrollment, gateVaultCreation } = await import('./cloud/vaultEnrollment');
+          let disposition = await gateVaultCreation();
+          if (disposition === 'waiting') {
+            traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a signed-in computer, phone, or Cloud session.');
+            disposition = await completeVaultEnrollment(pendingCloudMasterKey!, pendingCloudUserId!);
+          }
           if (disposition === 'waiting') { traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a computer, phone, or Cloud session that is signed in.'); return; }
           if (disposition === 'recovery') { traceWait('the existing Cloud vault needs recovery'); return; }
           if (disposition === 'trusted') { traceWait('this computer is trusted; waiting for the existing Cloud vault to sync'); return; }
@@ -1060,7 +1064,17 @@ export function initSullaCloudAuthEvents(): void {
     return { ok: true, status: await buildStatus() };
   });
 
-  // Shared success path: persist session, auto-pair relay, return status.
+  const checkEnrollmentAfterCloudSignIn = async(): Promise<void> => {
+    // This metadata-only gate deliberately has no password/master-key input.
+    // Run it before cloud services can wake the local-vault create path.
+    const { gateVaultCreation } = await import('./cloud/vaultEnrollment');
+    const disposition = await gateVaultCreation();
+    if (disposition === 'waiting') firstRunTrace('vault', 'Waiting for your other Sulla to approve this computer. Approval has to come from a signed-in computer, phone, or Cloud session.');
+    else if (disposition === 'recovery') firstRunTrace('vault', 'the existing Cloud vault needs recovery');
+    else if (disposition === 'trusted') firstRunTrace('vault', 'this computer is trusted; waiting for the existing Cloud vault to sync');
+  };
+
+  // Shared success path: persist session, gate vault creation, auto-pair relay, return status.
   const completeSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
     const session = responseToSession(data);
     try {
@@ -1071,6 +1085,7 @@ export function initSullaCloudAuthEvents(): void {
       console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', error);
       return { ok: false, error, status: await buildStatus(error).catch(() => signedOutStatus(error)) };
     }
+    await checkEnrollmentAfterCloudSignIn();
     try {
       // Relay room is the stable userId, not the active contractor — so
       // switching businesses later doesn't drop the mobile connection.
@@ -1107,6 +1122,7 @@ export function initSullaCloudAuthEvents(): void {
         contractors_json:    JSON.stringify(session.contractors),
       },
     });
+    await checkEnrollmentAfterCloudSignIn();
     try { await getDesktopRelayClient().setPairedUserId(session.userId) } catch (err) { console.warn('[SullaCloudAuth] Auto-pair failed:', err) }
     try {
       const { startCloudServices } = await import('./cloud/cloudLifecycle');
@@ -1142,8 +1158,9 @@ export function initSullaCloudAuthEvents(): void {
       !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   };
 
-  const completeSignInForCurrentState = (data: VerifyResponse, notReadyError: string) =>
-    shouldKeepSessionInMemory() ? completeFirstRunSignIn(data) : completeSignInWhenReady(data, notReadyError);
+  const completeSignInForCurrentState = async(data: VerifyResponse, notReadyError: string) => {
+    return shouldKeepSessionInMemory() ? completeFirstRunSignIn(data) : completeSignInWhenReady(data, notReadyError);
+  };
 
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
     const normalizedPhone = phone.trim();

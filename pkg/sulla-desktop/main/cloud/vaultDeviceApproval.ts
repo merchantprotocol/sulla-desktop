@@ -98,7 +98,7 @@ class VaultDeviceApprovalService {
 
   private async promptEnrollment(request:EnrollmentRequest):Promise<boolean>{
     const window=BrowserWindow.getFocusedWindow()??BrowserWindow.getAllWindows()[0];
-    const options={type:'question' as const,buttons:['Deny','Approve'],defaultId:0,cancelId:0,noLink:true,title:'Sulla Desktop',message:'Approve this computer?',detail:`A signed-in ${request.requesterType.replace('_',' ')} is asking to use your existing Sulla vault.`};
+    const options={type:'question' as const,buttons:['Cancel','Allow'],defaultId:0,cancelId:0,noLink:true,title:'Sulla Desktop',message:'Allow this computer to use your Sulla vault?',detail:`Requester: ${request.requesterId}\n\nA signed-in ${request.requesterType.replace('_',' ')} is asking to use your existing Sulla vault.`};
     const result=window?await dialog.showMessageBox(window,options):await dialog.showMessageBox(options); return result.response===1;
   }
 
