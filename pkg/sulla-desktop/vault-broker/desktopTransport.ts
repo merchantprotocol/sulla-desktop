@@ -11,7 +11,6 @@ import Electron from 'electron';
 import paths from '@pkg/utils/paths';
 
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
-import { withSilentVaultRestore } from '@pkg/main/silentVaultRestoreTransport';
 
 const BROKER_TOKEN_FILE = 'vault-broker-token.enc';
 const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';
@@ -73,18 +72,7 @@ async function loadDesktopIdentity(fileName: string, serviceId: string): Promise
 }
 
 /** Electron net transport pinned to the locally provisioned vault certificate. */
-const rawDesktopVaultFetch: VaultBrokerFetch = async(input, init) => {
+export const desktopVaultFetch: VaultBrokerFetch = async(input, init) => {
   const session = await getPinnedSession();
   return session.fetch(input, init);
 };
-
-export const desktopVaultFetch: VaultBrokerFetch = withSilentVaultRestore(rawDesktopVaultFetch, async() => {
-  // Loaded only after a broker request reports locked. VaultKeyService runs
-  // the safeStorage unwrap in the isolated bootstrap helper, never here.
-  const { getFirstRunState } = require('@pkg/main/firstRun/firstRunState') as typeof import('@pkg/main/firstRun/firstRunState');
-
-  if (!getFirstRunState().onboardingComplete) return false;
-  const { getVaultKeyService } = require('@pkg/agent/services/VaultKeyService') as typeof import('@pkg/agent/services/VaultKeyService');
-
-  return getVaultKeyService().initialize();
-});

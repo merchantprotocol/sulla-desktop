@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { VaultBrokerFetch } from './index';
+import type { VaultBrokerFetch } from '@pkg/vault-broker';
+
 
 /** Retry a locked broker request once after restoring its opaque session. */
 export function withSilentVaultRestore(fetcher: VaultBrokerFetch, restore: () => Promise<boolean>): VaultBrokerFetch {
