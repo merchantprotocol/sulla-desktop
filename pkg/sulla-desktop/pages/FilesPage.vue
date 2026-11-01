@@ -11,15 +11,12 @@
     :navigation="props.navigation"
     @navigation-consumed="emit('navigation-consumed')"
     @open-editor="openEditor"
-  >
-    <template #cloud-vault><VaultPage modal restore-files /></template>
-  </FilesBrowser>
+  />
 </template>
 
 <script setup lang="ts">
 import { openDocumentTab, type FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import VaultPage from './VaultPage.vue';
 import { DesktopFilesDataSource } from './files/DesktopFilesDataSource';
 import FilesBrowser from './files/FilesBrowser.vue';
 import type { FilesItem } from './files/types';

@@ -160,7 +160,6 @@ const firstRunCoordinator = new FirstRunCoordinator();
 
 let cfg: settings.Settings;
 let firstRunDialogComplete = false;
-let firstRunCredentialsWatch: ReturnType<typeof setInterval> | undefined;
 // Last backend start failure while the wizard is open. The wizard shows it
 // with Try again instead of a native error window.
 let firstRunBackendFailure: { message: string; detail?: string } | null = null;
@@ -337,8 +336,8 @@ firstRunCoordinator.addCondition('wizardFinished');
 // informational only: "I'll do this later" and the API-key choice finish
 // setup without it, and the main window offers the connection afterwards.
 firstRunCoordinator.addCondition('aiConnected');
-// Every sign-in made during setup is in the unlocked vault. Until then the
-// sign-ins live only in memory, so the wizard stays open and says so.
+// First-run secrets stay in main-process memory. This condition means the
+// handoff is ready; vault persistence starts only after the wizard closes.
 firstRunCoordinator.addCondition('credentialsSaved');
 let firstRunAiSignInReady = false;
 
@@ -386,7 +385,7 @@ firstRunCoordinator.registerStep(
       return;
     }
     console.log('[FirstRunCoordinator] Closing first-run window and opening main');
-    firstRunTrace('wizard', 'closing the wizard and opening main (deploy done, wizard finished, sign-ins saved)');
+    firstRunTrace('wizard', 'closing the wizard and opening main (deploy done, wizard finished, sign-ins held for post-setup persistence)');
     const firstRunWindow = window.getWindow('first-run');
 
     if (firstRunWindow && !firstRunWindow.isDestroyed()) {
@@ -395,7 +394,9 @@ firstRunCoordinator.registerStep(
       // bypasses the unfinished-setup confirmation installed by the window.
       firstRunWindow.destroy();
     }
+    updateFirstRunState({ credentialsSaved: true });
     window.openMain();
+    void import('@pkg/main/sullaCloudAuth').then(({ signalSullaCloudStartupRestore }) => signalSullaCloudStartupRestore());
   },
 );
 
@@ -1705,19 +1706,14 @@ ipcMainProxy.handle('first-run-wizard-step' as any, async(event: Electron.IpcMai
 async function markFirstRunWizardFinished() {
   const state = updateFirstRunState({ onboardingComplete: true, step: FIRST_RUN_LAST_STEP, credentialsSaved: false });
 
-  watchFirstRunCredentialsSaved();
   await firstRunCoordinator.setCondition('wizardFinished');
+  // A retained in-memory handoff is sufficient to finish first run. The
+  // vault is deliberately not a setup dependency; persistence begins after
+  // closeFirstRunWindow marks credentialsSaved in the state file.
+  await firstRunCoordinator.setCondition('credentialsSaved');
 
   return state;
 }
-
-// Plain names for what Finishing is still saving.
-const FIRST_RUN_PENDING_LABELS: Record<string, string> = {
-  'sulla-cloud': 'your Sulla sign-in',
-  'claude-code': 'Claude',
-  codex:         'ChatGPT',
-  grok:          'Grok',
-};
 
 /**
  * Whether the vault is unlocked and holds every sign-in made during setup.
@@ -1726,15 +1722,12 @@ const FIRST_RUN_PENDING_LABELS: Record<string, string> = {
  */
 async function firstRunCredentialsStatus(): Promise<{ saved: boolean; waitingOn: string[]; vaultServiceReady: boolean }> {
   const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
-  const { pendingIntegrationIds } = await import('@pkg/main/firstRun/pendingCredentials');
   const lifecycle = getServiceLifecycleManager();
-  const waitingOn: string[] = [];
   const vaultServiceReady = lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
 
-  if (!lifecycle.isVaultUnlocked()) waitingOn.push('your vault');
-  for (const id of pendingIntegrationIds()) waitingOn.push(FIRST_RUN_PENDING_LABELS[id] || id);
-
-  return { saved: waitingOn.length === 0, waitingOn, vaultServiceReady };
+  // Pending credentials are intentionally held in memory throughout first
+  // run. They are ready for the post-setup flush and must not hold the UI.
+  return { saved: true, waitingOn: [], vaultServiceReady };
 }
 
 /** A vault was created on this Mac (same files doFirstRunDialog checks). */
@@ -1743,34 +1736,6 @@ function firstRunVaultExists(): boolean {
     path.join(paths.appHome, 'vault-v2-key.enc'),
     path.join(paths.sullaConfig, 'vault-key.enc'),
   ].some(candidate => fs.existsSync(candidate));
-}
-
-/**
- * From Finishing on, wait until the sign-ins are in the vault, then record it
- * and let the wizard close. Until then a relaunch asks for the password again.
- */
-function watchFirstRunCredentialsSaved(): void {
-  if (firstRunCredentialsWatch) return;
-  let lastWaitingOn = '';
-  const check = async() => {
-    const { saved, waitingOn } = await firstRunCredentialsStatus();
-
-    if (waitingOn.join(', ') !== lastWaitingOn) {
-      lastWaitingOn = waitingOn.join(', ');
-      firstRunTrace('wizard', saved ? 'sign-ins are all in the vault' : 'Finishing is waiting to save sign-ins', { waitingOn });
-    }
-    if (!saved) return;
-    if (firstRunCredentialsWatch) clearInterval(firstRunCredentialsWatch);
-    firstRunCredentialsWatch = undefined;
-    updateFirstRunState({ credentialsSaved: true });
-    console.log('[FirstRun] Sign-ins are saved in the vault');
-    await firstRunCoordinator.setCondition('credentialsSaved');
-  };
-
-  firstRunCredentialsWatch = setInterval(() => {
-    check().catch(err => console.warn('[FirstRun] Could not check saved sign-ins:', err));
-  }, 2_000);
-  firstRunCredentialsWatch.unref?.();
 }
 
 ipcMainProxy.handle('first-run:credentials-status' as any, (event: Electron.IpcMainInvokeEvent) => {
@@ -1839,14 +1804,6 @@ ipcMainProxy.handle('first-run:wizard-status' as any, (event: Electron.IpcMainIn
     wizardFinished: firstRunCoordinator.isConditionMet('wizardFinished'),
     backendFailure: firstRunBackendFailure,
   };
-});
-
-// An older vault on this Mac is locked. The main window shows its unlock
-// screen, so open it next to the wizard.
-ipcMainProxy.handle('first-run:open-vault-unlock' as any, (event: Electron.IpcMainInvokeEvent) => {
-  requireFirstRunStateSender(event);
-  firstRunTrace('wizard', 'opening main to unlock an older vault');
-  window.openMain();
 });
 
 ipcMainProxy.handle('first-run:retry-backend' as any, (event: Electron.IpcMainInvokeEvent) => {
