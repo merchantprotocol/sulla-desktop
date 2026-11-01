@@ -10,7 +10,7 @@ import { getCurrentUserId } from '../sullaCloudAuth';
 import { cloudRequest } from './cloudFetch';
 import { signDeviceMessage } from './deviceKey';
 
-export type EnrollmentDisposition='create'|'trusted'|'adopted'|'waiting'|'recovery';
+export type EnrollmentDisposition='create'|'trusted'|'adopted'|'approval_available'|'waiting_for_approver'|'recovery';
 type State={state:'no_vault'|'trusted'|'approval_available'|'waiting_for_approver'|'recovery_required';vaultId?:string;epoch?:number};
 let pending:Promise<EnrollmentDisposition>|null=null;
 let prepared:Promise<State>|null=null;
@@ -49,7 +49,7 @@ async function enroll(s:State,masterKey:Uint8Array,cloudUserId:string):Promise<E
  const vaultId=s.vaultId!,epoch=s.epoch!;
  await openRequest(s);
  const request=activeRequest?.vaultId===vaultId?activeRequest:null;
- if(!request)return'waiting';
+ if(!request)return s.state==='approval_available'?'approval_available':'waiting_for_approver';
  for(let attempt=0;attempt<60;attempt++){
   await sleep(5_000);
   const consumed=await signed('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(request.id)}/consume`,vaultId,`enrollment-consume:${request.id}`,{});
@@ -79,10 +79,10 @@ export async function gateVaultCreation():Promise<EnrollmentDisposition>{
  if(s.state==='no_vault')return'create';
  if(s.state==='trusted')return'trusted';
  if(s.state==='recovery_required')return'recovery';
- return'waiting';
+ return s.state;
 }
 export async function completeVaultEnrollment(masterKey:Uint8Array,cloudUserId:string):Promise<EnrollmentDisposition>{
- pending??=(async()=>{const disposition=await gateVaultCreation();if(disposition!=='waiting')return disposition;return enroll(await prepared!,masterKey,cloudUserId)})().finally(()=>{pending=null});
+ pending??=(async()=>{const disposition=await gateVaultCreation();if(disposition!=='approval_available'&&disposition!=='waiting_for_approver')return disposition;return enroll(await prepared!,masterKey,cloudUserId)})().finally(()=>{pending=null});
  return pending;
 }
 export { signed as signedEnrollmentRequest };
