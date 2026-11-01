@@ -78,11 +78,10 @@ function registerHandlers() {
     return store().update(state => { state.tickets.unshift(ticket) });
   });
   ipcMain.handle('support:remote', (event, action: unknown) => {
-    authorize(event); if (!['request', 'offer', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }
+    authorize(event); if (!['request', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }
     return store().update((state) => {
       const now = new Date().toISOString();
       if (action === 'request' && ['idle', 'ended'].includes(state.remote.status)) { state.remote = { status: 'waiting', requestedAt: now } }
-      else if (action === 'offer' && state.remote.status === 'waiting') { state.remote.status = 'approval' }
       else if (action === 'approve' && state.remote.status === 'approval') { state.remote.status = 'connected'; state.remote.approvedAt = now }
       else if (action === 'end' && state.remote.status !== 'idle') { state.remote.status = 'ended'; state.remote.endedAt = now }
       else if (action === 'reset') { state.remote = { status: 'idle' } }
