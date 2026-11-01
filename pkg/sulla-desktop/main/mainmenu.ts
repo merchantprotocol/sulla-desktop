@@ -399,9 +399,13 @@ function getSupportMenu(): MenuItem {
       { type: 'separator' },
       { label: 'Logs', accelerator: 'Alt+CmdOrCtrl+L', click: () => openSupportCenter('logs') },
       { label: 'Send Feedback…', click: () => openSupportCenter('feedback') },
+      { label: 'Open a Ticket…', click: () => openSupportCenter('tickets') },
       { label: 'My Tickets', click: () => openSupportCenter('tickets') },
       { type: 'separator' },
       { label: 'Request Remote Support…', click: () => openSupportCenter('remote') },
+      { type: 'separator' },
+      { label: 'Privacy and Metrics…', click: () => openSupportCenter('privacy') },
+      { label: 'Update channel: LTS · v1.7.5', enabled: false },
     ],
   });
 }
