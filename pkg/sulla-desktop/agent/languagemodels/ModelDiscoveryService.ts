@@ -18,7 +18,7 @@ import {
 } from './providerBroker';
 import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
-import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl } from './openAICompatibleProviders';
+import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl, type OpenAICompatibleProviderDefinition } from './openAICompatibleProviders';
 import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
 
 import type { BrokerInjection } from '../../vault-broker';
@@ -340,7 +340,7 @@ export class ModelDiscoveryService {
       ],
     },
 
-    ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map(definition => [definition.id, {
+    ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((definition: OpenAICompatibleProviderDefinition) => [definition.id, {
       baseUrl: providerBaseUrl(definition, {}),
       modelsEndpoint: definition.modelsUrl.startsWith('http') ? definition.modelsUrl : definition.modelsUrl,
       authHeader: 'Authorization',

@@ -6,11 +6,6 @@
 -->
 <template>
   <div class="agent-router-root">
-    <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
-    <VaultUnlockScreen
-      v-if="vaultUnlockVisible"
-    />
-
     <div class="agent-router-body">
       <!--
         Global ModeRail — lives at the window level so it stays visible
@@ -40,7 +35,7 @@
         the bookmarks it opens swap through the preview tab beside it.
       -->
       <BookmarksPane
-        v-if="bookmarksOpen && loggedIn"
+        v-if="bookmarksOpen"
         :active-tab="activeTabInfo"
         :reveal-id="bookmarkRevealId"
         @close="toggleBookmarks(false)"
@@ -92,7 +87,7 @@
     </aside>
 
     <!-- Startup progress overlay -->
-    <StartupOverlay :force-visible="!vaultStatusResolved" />
+    <StartupOverlay />
 
     <!-- Status Bar Footer -->
     <footer class="agent-footer">
@@ -160,7 +155,6 @@ import { useRoute, useRouter } from 'vue-router';
 import BrowserTab from './BrowserTab.vue';
 import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
-import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
@@ -172,7 +166,6 @@ import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
@@ -183,16 +176,8 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
-const { loggedIn, vaultSetUp, statusResolved: vaultStatusResolved, tryAutoLogin, invalidateStatus } = useVaultUnlock();
+const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
-// While booting, vault-gated services report 'waiting-on-unlock' as soon as the vault is known locked.
-const bootVaultLocked = ref(false);
-function onBootSnapshot(_event: unknown, snapshot?: StartupProgressSnapshot | null) {
-  bootVaultLocked.value = !!snapshot?.services?.some(s => s.status === 'waiting-on-unlock');
-}
-const vaultUnlockVisible = computed(() => vaultSetUp.value && (systemReady.value
-  ? vaultStatusResolved.value && !loggedIn.value
-  : bootVaultLocked.value));
 
 watch(systemReady, (ready) => {
   if (!ready) {
@@ -203,8 +188,8 @@ watch(systemReady, (ready) => {
   void tryAutoLogin();
 }, { immediate: true });
 
-// Close the side panel when a full-screen overlay is active (vault lock or startup)
-const sidePanelBlocked = computed(() => !vaultStatusResolved.value || vaultUnlockVisible.value || startupOverlayVisible.value);
+// Close the side panel while the startup overlay is active.
+const sidePanelBlocked = computed(() => startupOverlayVisible.value);
 watch(sidePanelBlocked, (blocked) => {
   if (blocked) {
     ipcRenderer.invoke('chrome-api:sidePanel:close' as any, { all: true });
@@ -694,8 +679,6 @@ onMounted(async() => {
   void refreshRailExtensions();
   ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
-  ipcRenderer.on('startup-progress' as any, onBootSnapshot);
-  ipcRenderer.invoke('startup-progress' as any).then(snapshot => onBootSnapshot(undefined, snapshot)).catch(() => undefined);
 
   // Register sub-tab change listener
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
@@ -749,7 +732,6 @@ onMounted(async() => {
 onUnmounted(() => {
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
-  ipcRenderer.removeListener('startup-progress' as any, onBootSnapshot);
   presenceTracker.stop();
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);

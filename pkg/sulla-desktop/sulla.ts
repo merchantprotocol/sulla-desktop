@@ -205,6 +205,10 @@ export async function onVaultUnlocked(): Promise<void> {
 export async function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
   console.log('[Integrations] Sulla integrations initialized');
 
+  const { configureSignedInVaultBroker } = await import('@pkg/main/configureSignedInVaultBroker');
+
+  configureSignedInVaultBroker();
+
   // NOTE: initSullaEvents() is now called in background.ts before initUI()
   // so handlers are registered before any window can invoke them.
 

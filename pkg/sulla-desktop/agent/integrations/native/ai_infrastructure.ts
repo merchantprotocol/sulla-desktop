@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Integration } from '../types';
-import { OPENAI_COMPATIBLE_PROVIDERS } from '../../languagemodels/openAICompatibleProviders';
+import { OPENAI_COMPATIBLE_PROVIDERS, type OpenAICompatibleProviderDefinition } from '../../languagemodels/openAICompatibleProviders';
 
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   mcp: {
@@ -814,7 +814,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   },
 
 
-  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((provider, index) => [provider.id, {
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((provider: OpenAICompatibleProviderDefinition, index) => [provider.id, {
     id:          provider.id,
     sort:        20 + index,
     paid:        true,

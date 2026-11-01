@@ -250,7 +250,7 @@ export function signalSullaCloudStartupRestore(): void {
 
 function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
   if (error instanceof VaultBrokerError) {
-    if (error.code === 'vault_locked' || error.status === 423) return `Unlock the vault to ${ action }.`;
+    if (error.code === 'vault_locked' || error.status === 423) return `Your signed-in session could not be restored. Sign in to Sulla Cloud again to ${ action }.`;
     if (error.status === 404 || error.code === 'not_found') {
       return `Update the Sulla Vault service to ${ action } from Desktop.`;
     }
@@ -905,6 +905,9 @@ export function initSullaCloudAuthEvents(): void {
       firstRunTrace('vault', `vault creation waiting: ${ reason }`);
     };
     const flushWhenReady = () => {
+      // First run never calls, waits on, or creates the vault. Its sign-in and
+      // derived key remain in main-process memory until the wizard has closed.
+      if (getFirstRunState().credentialsSaved === false) return;
       if (pendingCloudMasterKey && !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) traceWait('vault service not ready yet');
       // Create the vault as soon as its service is up, even mid-setup: the key
       // exists from the Account step, and waiting only widens the window

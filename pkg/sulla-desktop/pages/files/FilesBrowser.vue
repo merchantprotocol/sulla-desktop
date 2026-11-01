@@ -862,21 +862,17 @@
       </form>
     </dialog>
     <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
-    <dialog ref="cloudRestoreDialog" class="folder-details cloud-restore-dialog" @close="cloudRestoreVaultOpen = false">
+    <dialog ref="cloudRestoreDialog" class="folder-details cloud-restore-dialog">
       <h2>Restore from Sulla Cloud</h2>
       <p>This creates a Files collection inside Sulla, where agents can read it through Files. It does not put files into Documents or any other Mac folder.</p>
       <p v-if="cloudRestoreError" class="error">{{ cloudRestoreError }}</p>
-      <div v-if="cloudRestoreVaultOpen" class="cloud-vault-host"><slot name="cloud-vault" /></div>
-      <template v-else>
         <p v-if="!cloudCollections.length" class="muted">No unrestored Cloud collections were found.</p>
         <button v-else-if="dataSource.restoreAllCloudCollections" class="btn pri" type="button" :disabled="busy" @click="restoreCloudCollection('all')">Restore everything</button>
         <article v-for="collection in cloudCollections" :key="collection.collectionId" class="cloud-collection">
           <div><b>{{ collection.collectionId }}</b><small>{{ formatBytes(collection.bytes) }} · updated {{ timeAgo(collection.updatedAt) }}</small></div>
           <button class="btn pri" type="button" :disabled="busy" @click="restoreCloudCollection(collection)">Restore</button>
         </article>
-      </template>
       <button class="btn" type="button" @click="cloudRestoreDialog?.close()">Close</button>
-      <button v-if="cloudRestoreVaultOpen" class="btn pri" type="button" :disabled="busy" @click="continueCloudRestore">Continue restore</button>
     </dialog>
   </div>
 </template>
@@ -899,10 +895,9 @@ import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './compos
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 interface CloudFilesCollection { collectionId:string; bytes:number; updatedAt:string }
-const cloudRestoreDialog=ref<HTMLDialogElement|null>(null); const cloudCollections=ref<CloudFilesCollection[]>([]); const cloudRestoreError=ref(''); const cloudRestoreVaultOpen=ref(false); let pendingCloudRestore:CloudFilesCollection|'all'|undefined;
-async function openCloudRestore(){ cloudRestoreError.value=''; cloudRestoreVaultOpen.value=false; cloudCollections.value=await props.dataSource.listCloudCollections?.() ?? []; cloudRestoreDialog.value?.showModal() }
-async function restoreCloudCollection(collection:CloudFilesCollection|'all'){ pendingCloudRestore=collection; busy.value=true; cloudRestoreError.value=''; try { if (collection==='all') { if (!props.dataSource.restoreAllCloudCollections) throw new Error('Cloud restore is unavailable.'); const result=await props.dataSource.restoreAllCloudCollections(); await refresh(true); if (result.failed.length) { cloudRestoreError.value=`${result.failed.length} of ${result.failed.length+result.restored.length} collections could not be verified and were not restored.`; cloudCollections.value=await props.dataSource.listCloudCollections?.() ?? []; return } cloudRestoreDialog.value?.close(); return } if (!props.dataSource.restoreCloudCollection) throw new Error('Cloud restore is unavailable.'); await props.dataSource.restoreCloudCollection(collection.collectionId,`Restored ${new Date(collection.updatedAt).toLocaleDateString()}`); await refresh(true); cloudRestoreDialog.value?.close() } catch(cause){ const message=cause instanceof Error?cause.message:String(cause); if(/cloud_vault_locked|Unlock the Cloud vault/.test(message))cloudRestoreVaultOpen.value=true; else cloudRestoreError.value=message } finally { busy.value=false } }
-async function continueCloudRestore(){ if(pendingCloudRestore)await restoreCloudCollection(pendingCloudRestore) }
+const cloudRestoreDialog=ref<HTMLDialogElement|null>(null); const cloudCollections=ref<CloudFilesCollection[]>([]); const cloudRestoreError=ref('');
+async function openCloudRestore(){ cloudRestoreError.value=''; cloudCollections.value=await props.dataSource.listCloudCollections?.() ?? []; cloudRestoreDialog.value?.showModal() }
+async function restoreCloudCollection(collection:CloudFilesCollection|'all'){ busy.value=true; cloudRestoreError.value=''; try { if (collection==='all') { if (!props.dataSource.restoreAllCloudCollections) throw new Error('Cloud restore is unavailable.'); const result=await props.dataSource.restoreAllCloudCollections(); await refresh(true); if (result.failed.length) { cloudRestoreError.value=`${result.failed.length} of ${result.failed.length+result.restored.length} collections could not be verified and were not restored.`; cloudCollections.value=await props.dataSource.listCloudCollections?.() ?? []; return } cloudRestoreDialog.value?.close(); return } if (!props.dataSource.restoreCloudCollection) throw new Error('Cloud restore is unavailable.'); await props.dataSource.restoreCloudCollection(collection.collectionId,`Restored ${new Date(collection.updatedAt).toLocaleDateString()}`); await refresh(true); cloudRestoreDialog.value?.close() } catch(cause){ cloudRestoreError.value=cause instanceof Error?cause.message:String(cause) } finally { busy.value=false } }
 const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem, collectionId?:string] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
@@ -2583,5 +2578,5 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 }
 .details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{margin:auto;max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}.folder-guidance-warning{color:var(--warning);font-size:12px}.folder-guidance-field{display:block;margin:14px 0;color:var(--dim);font-size:12px}.folder-guidance-field textarea,.folder-guidance-field input{display:block;box-sizing:border-box;width:100%;margin-top:6px;border:1px solid var(--line-2);border-radius:8px;background:var(--paper);color:var(--text);padding:9px}.folder-guidance-field textarea{min-height:76px;resize:vertical}
 .more-system-areas{border:0;background:transparent;color:var(--muted);text-align:left;padding:6px 12px;font-size:11px;cursor:pointer}
-.cloud-restore-dialog{width:min(760px,calc(100vw - 48px))}.cloud-vault-host{height:430px;margin:14px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}.cloud-collection{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2)}.cloud-collection b,.cloud-collection small{display:block}.cloud-collection b{font:11px var(--mono);overflow-wrap:anywhere}.cloud-collection small{margin-top:5px;color:var(--dim)}
+.cloud-restore-dialog{width:min(760px,calc(100vw - 48px))}.cloud-collection{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2)}.cloud-collection b,.cloud-collection small{display:block}.cloud-collection b{font:11px var(--mono);overflow-wrap:anywhere}.cloud-collection small{margin-top:5px;color:var(--dim)}
 </style>

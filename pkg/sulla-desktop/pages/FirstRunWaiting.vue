@@ -19,7 +19,7 @@
         {{ aiLine.text }}
       </li>
       <li :class="credentials.saved ? 'frw-success' : 'frw-muted'">
-        {{ credentials.saved ? 'Your sign-ins are saved in your vault.' : 'Saving your sign-ins to your vault…' }}
+        {{ credentials.saved ? 'Your sign-ins are ready.' : 'Preparing your sign-ins…' }}
       </li>
       <li
         v-if="chatLine"
@@ -30,32 +30,7 @@
     </ul>
 
     <div
-      v-if="oldVaultLocked && !credentials.saved"
-      class="frw-notice mt-4"
-    >
-      <p class="text-sm mb-2">
-        This Mac already has a vault that uses a different password. Unlock it once with that password or its recovery key, and Sulla moves it to your Sulla password.
-      </p>
-      <button
-        type="button"
-        class="px-4 py-2 rounded-md font-medium frw-btn-accent"
-        @click="openVaultUnlock"
-      >
-        Unlock old vault
-      </button>
-      <button
-        v-if="offerOpenAnyway"
-        type="button"
-        class="px-4 py-2 rounded-md font-medium ml-2"
-        :disabled="opening"
-        @click="continueAnyway"
-      >
-        {{ opening ? 'Opening Sulla…' : 'Open Sulla anyway' }}
-      </button>
-    </div>
-
-    <div
-      v-else-if="offerOpenAnyway"
+      v-if="offerOpenAnyway"
       class="frw-notice mt-4"
     >
       <p
@@ -185,7 +160,6 @@ async function loadAi() {
 
 // ─── Saving sign-ins to the vault (the wizard closes after this) ──
 const credentials = ref<{ saved: boolean; waitingOn: string[] }>({ saved: false, waitingOn: [] });
-const oldVaultLocked = ref(false);
 const savingStalled = ref(false);
 const installSlow = ref(false);
 const backendFailed = ref(false);
@@ -211,17 +185,9 @@ async function poll() {
       vaultServiceReadyAt = Date.now();
       traceFirstRun('finishing', 'vault service is up; saving sign-ins can start', { afterMs: vaultServiceReadyAt - mountedAt });
     }
-    if (!credentials.value.saved) {
-      const session = await ipcRenderer.invoke('sulla-cloud:first-run-session' as any).catch(() => null);
-
-      const locked = session?.oldVaultLocked === true;
-
-      if (locked && !oldVaultLocked.value) traceFirstRun('finishing', 'an older vault on this Mac is locked; asking to unlock it');
-      oldVaultLocked.value = locked;
-    }
     const stalled = !credentials.value.saved && vaultServiceReadyAt !== undefined && Date.now() - vaultServiceReadyAt > SAVE_STALL_MS;
 
-    if (stalled && !savingStalled.value) traceFirstRun('finishing', 'saving sign-ins is taking over 3 minutes; offering Try again', { waitingOn: credentials.value.waitingOn, oldVaultLocked: oldVaultLocked.value });
+    if (stalled && !savingStalled.value) traceFirstRun('finishing', 'preparing sign-ins is taking over 3 minutes; offering Try again', { waitingOn: credentials.value.waitingOn });
     savingStalled.value = stalled;
     // Still open this long: something is still installing or saving.
     const slow = Date.now() - mountedAt > INSTALL_SLOW_MS;
@@ -268,11 +234,6 @@ function onBackendFailed(_event: unknown, failure: { message: string } | null) {
   backendFailed.value = !!failure;
 }
 
-async function openVaultUnlock() {
-  traceFirstRun('finishing', 'Unlock old vault clicked');
-  await ipcRenderer.invoke('first-run:open-vault-unlock' as any).catch((err: unknown) => console.warn('[FirstRunWaiting] Could not open the vault unlock:', err));
-}
-
 // ─── Chat readiness: once chat is ready, this window closes ──────
 // Main closes it as soon as chat is ready and the sign-ins are saved. If it is
 // still open a little later, open Sulla anyway: "ready" must never sit here.
@@ -293,8 +254,6 @@ function onChatReady(_event: unknown, status: { ready?: boolean; waitingOn?: str
   traceFirstRun('finishing', 'chat readiness', chatReady.value);
   if (chatReady.value.ready && !openWhenReadyTimer) {
     openWhenReadyTimer = setTimeout(() => {
-      // Never skip unlocking an older vault: that is the one thing the user must do here.
-      if (oldVaultLocked.value) return;
       traceFirstRun('finishing', 'chat ready but the window is still open; opening Sulla', { saved: credentials.value.saved, waitingOn: credentials.value.waitingOn });
       void continueAnyway();
     }, OPEN_WHEN_READY_MS);
