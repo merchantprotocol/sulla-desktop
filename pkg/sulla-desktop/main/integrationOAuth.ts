@@ -157,7 +157,7 @@ for (const definition of OPENAI_COMPATIBLE_PROVIDERS) {
     name: definition.name,
     headers: apiKey => ({ ...('authHeader' in definition && definition.authHeader === 'api-key' ? { 'api-key': apiKey } : bearer(apiKey)), ...(definition.extraHeaders || {}) }),
     chatModelFilter: id => definition.defaultModelFilter.test(id),
-    staticModels: definition.staticModels ? [...definition.staticModels] : undefined,
+    staticModels: 'staticModels' in definition && definition.staticModels ? [...definition.staticModels] : undefined,
     ...special,
   };
 }
