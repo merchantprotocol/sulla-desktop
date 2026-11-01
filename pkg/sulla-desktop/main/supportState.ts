@@ -15,7 +15,7 @@ export interface SupportState {
   logging: { sources: Record<string, boolean>; autoEnabledUntil?: string; lastErrorAt?: string };
   feedback: SupportMessage[];
   tickets: SupportTicket[];
-  remote: { status: RemoteSupportStatus; requestedAt?: string; approvedAt?: string; endedAt?: string };
+  remote: { status: RemoteSupportStatus; requestedAt?: string; offeredAt?: string; offeredBy?: string; approvedAt?: string; endedAt?: string };
 }
 
 const DEFAULT_SOURCES = { desktop: true, runtime: true, containers: true, ai: true };
@@ -57,6 +57,16 @@ export class SupportStateStore {
       state.logging.lastErrorAt = now.toISOString();
       state.logging.autoEnabledUntil = new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString();
       for (const source of Object.keys(DEFAULT_SOURCES)) { state.logging.sources[source] = true }
+    });
+  }
+
+  /** Records an authenticated offer received by the relay. This does not grant access. */
+  noteRemoteOffer(offeredBy: string, now = new Date()): SupportState {
+    return this.update((state) => {
+      if (state.remote.status !== 'waiting') { return }
+      state.remote.status = 'approval';
+      state.remote.offeredAt = now.toISOString();
+      state.remote.offeredBy = offeredBy.slice(0, 120);
     });
   }
 }

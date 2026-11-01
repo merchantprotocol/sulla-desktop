@@ -77,6 +77,15 @@ function registerHandlers() {
     authorize(event); const ticket = { id: id('SUP'), createdAt: new Date().toISOString(), subject: cleanText(input?.subject, 160), body: cleanText(input?.body, 10_000), attachments: attachments(input?.attachments), replies: [] };
     return store().update(state => { state.tickets.unshift(ticket) });
   });
+  ipcMain.handle('support:reply-ticket', (event, input: any) => {
+    authorize(event); const ticketId = cleanText(input?.ticketId, 80);
+    const reply = { id: id('REPLY'), createdAt: new Date().toISOString(), body: cleanText(input?.body, 10_000), attachments: attachments(input?.attachments) };
+    return store().update((state) => {
+      const ticket = state.tickets.find(item => item.id === ticketId);
+      if (!ticket) { throw new Error('Ticket not found.') }
+      ticket.replies.push(reply);
+    });
+  });
   ipcMain.handle('support:remote', (event, action: unknown) => {
     authorize(event); if (!['request', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }
     return store().update((state) => {
@@ -100,4 +109,11 @@ export function openSupportCenter(section = 'home') {
   });
   if (existing) { window.webContents.send('support:navigate', section) }
   return window;
+}
+
+
+/** Called only after the Cloud relay authenticates a support offer. */
+export function recordRemoteSupportOffer(offeredBy: string): SupportState {
+  registerHandlers();
+  return store().noteRemoteOffer(offeredBy);
 }

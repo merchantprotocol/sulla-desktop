@@ -29,4 +29,12 @@ describe('SupportStateStore', () => {
     expect(state.logging.lastErrorAt).toBe(now.toISOString());
     expect(state.logging.autoEnabledUntil).toBe('2026-11-02T12:00:00.000Z');
   });
+  test('an authenticated offer requires a waiting request and never grants access', () => {
+    const store = new SupportStateStore(directory);
+    expect(store.noteRemoteOffer('Jonathon', new Date('2026-11-01T12:00:00.000Z')).remote.status).toBe('idle');
+    store.update(state => { state.remote = { status: 'waiting', requestedAt: 'now' } });
+    expect(store.noteRemoteOffer('Jonathon', new Date('2026-11-01T12:00:00.000Z')).remote).toEqual({
+      status: 'approval', requestedAt: 'now', offeredAt: '2026-11-01T12:00:00.000Z', offeredBy: 'Jonathon',
+    });
+  });
 });
