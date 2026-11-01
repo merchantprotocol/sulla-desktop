@@ -18,6 +18,7 @@ import Electron from 'electron';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { getInstallId } from '@pkg/main/installId';
+import { SupportStateStore } from '@pkg/main/supportState';
 
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 const MAX_ERROR_MESSAGE_LENGTH = 1_024;
@@ -91,6 +92,8 @@ export interface ErrorReportPayload {
  * Never throws — silently fails if the network is down.
  */
 export async function submitErrorReport(report: ErrorReportPayload): Promise<{ success: boolean; action?: string; issue_number?: number }> {
+  // Diagnostics are local and vault-independent; an error enables every source for 24 hours.
+  try { new SupportStateStore(Electron.app.getPath('userData')).noteError() } catch { /* Reporting must never fail on state I/O. */ }
   const payload: ErrorReportPayload = {
     error_type:    report.error_type || 'unknown',
     error_message: report.error_message || 'No error message provided',
