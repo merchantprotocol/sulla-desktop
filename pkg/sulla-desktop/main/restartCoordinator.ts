@@ -6,6 +6,7 @@
 import Electron from 'electron';
 
 import mainEvents from '@pkg/main/mainEvents';
+import { writeRestartMarker } from '@pkg/main/restartMarker';
 import { RestartState } from '@pkg/main/restartState';
 import type { RestartKind } from '@pkg/main/restartState';
 import Logging from '@pkg/utils/logging';
@@ -56,6 +57,13 @@ export function restartKind(): RestartKind | undefined {
 export function completeRestart(): void {
   if (!state.beginCompletion()) return;
 
+  console.log('[Restart] Shutdown complete; writing restart handoff marker');
+  try {
+    writeRestartMarker(Electron.app.getPath('userData'));
+  } catch (error) {
+    console.error('[Restart] Could not write restart handoff marker; relaunching anyway', error);
+  }
+
   if (state.kind === 'update') {
     if (!updateInstaller) {
       console.error('[Restart] Update installer is missing; falling back to an application relaunch');
@@ -71,7 +79,7 @@ export function completeRestart(): void {
     }
   }
 
-  console.log('[Restart] Shutdown complete; registering relaunch and exiting old instance');
+  console.log('[Restart] Registering application relaunch');
   Electron.app.relaunch();
   // app.exit avoids another cancellable before-quit pass. Electron releases
   // the single-instance lock before launching the registered replacement.

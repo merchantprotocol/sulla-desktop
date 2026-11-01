@@ -27,6 +27,13 @@ const QUIET_TIMEOUT_MS = 120_000;
 const STOP_TIMEOUT_MS = 70_000;
 // Darwin 23 is macOS 14, the first release that can save and restore a VM.
 // The host accepts only sulla.<name>=<value> with this value alphabet.
+let activeRuntime: NativeRuntime | undefined;
+
+/** Force down the runtime process Desktop owns before a hard-deadline relaunch. */
+export async function forceStopOwnedSullaRuntime(): Promise<void> {
+  await activeRuntime?.forceStop();
+}
+
 const KERNEL_ARG_VALUE = /^[A-Za-z0-9._-]+$/;
 
 export interface SullaRuntimeShare {
@@ -120,6 +127,7 @@ export class NativeRuntime {
     const child = spawn(this.artifacts.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     this.#child = child;
+    activeRuntime = this;
     this.#stopping = false;
     let dockerReady = false;
     this.#exited = new Promise(resolve => child.once('exit', () => resolve()));
@@ -218,6 +226,30 @@ export class NativeRuntime {
   }
 
 
+  /** Deadline-only stop: TERM briefly, then KILL, and wait for disk ownership to clear. */
+  async forceStop(): Promise<void> {
+    const child = this.#child;
+
+    if (!child || !this.running) {
+      this.#release();
+
+      return;
+    }
+    this.#stopping = true;
+    child.kill('SIGTERM');
+    const exited = await Promise.race([
+      this.#exited!.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2_000)),
+    ]);
+
+    if (!exited) {
+      child.kill('SIGKILL');
+      await this.#exited!;
+    }
+    this.#release();
+  }
+
+
   /** The host's own status line, or undefined when no runtime answers. */
   async status(): Promise<{ state: string; hello: boolean; uptimeMs: number } | undefined> {
     try {
@@ -249,6 +281,7 @@ export class NativeRuntime {
   }
 
   #release() {
+    if (activeRuntime === this) activeRuntime = undefined;
     process.removeListener('exit', this.#killOnExit);
     this.#child = undefined;
     this.#exited = undefined;
