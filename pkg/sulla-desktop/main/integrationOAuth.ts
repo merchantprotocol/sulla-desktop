@@ -58,7 +58,9 @@ const openAiChatModel = (id: string): boolean => !/(audio|realtime|transcri(?:be
 const bearer = (apiKey: string): Record<string, string> => ({ Authorization: `Bearer ${ apiKey }` });
 const modelsUrl = (baseUrl: string): string => `${ baseUrl.replace(/\/$/, '') }/models`;
 
-const API_KEY_PROVIDERS: Record<ApiKeyProviderId, ApiKeyProviderConfig> = {
+// OpenAI-compatible providers are added by the loop below, so the literal
+// cannot list every ApiKeyProviderId up front.
+const API_KEY_PROVIDERS: Record<string, ApiKeyProviderConfig> = {
   anthropic: {
     name: 'Anthropic',
     verifyUrl: () => 'https://api.anthropic.com/v1/models?limit=1000',
@@ -155,7 +157,7 @@ for (const definition of OPENAI_COMPATIBLE_PROVIDERS) {
   if ('local' in definition && definition.local) continue;
   API_KEY_PROVIDERS[definition.id] = {
     name: definition.name,
-    headers: apiKey => ({ ...('authHeader' in definition && definition.authHeader === 'api-key' ? { 'api-key': apiKey } : bearer(apiKey)), ...(definition.extraHeaders || {}) }),
+    headers: apiKey => ({ ...('authHeader' in definition && definition.authHeader === 'api-key' ? { 'api-key': apiKey } : bearer(apiKey)), ...('extraHeaders' in definition && definition.extraHeaders ? definition.extraHeaders : {}) }),
     chatModelFilter: id => definition.defaultModelFilter.test(id),
     staticModels: 'staticModels' in definition && definition.staticModels ? [...definition.staticModels] : undefined,
     ...special,
