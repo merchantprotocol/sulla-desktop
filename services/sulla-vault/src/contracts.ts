@@ -419,6 +419,14 @@ export interface RecoveryKeyRotateResponse {
   replacedExisting: boolean;
 }
 
+
+export interface VaultEnrollmentWrapRequest {
+  requestId:string; vaultId:string; vaultEpoch:number; publicKey:string; bundle:unknown; head:unknown; records?:unknown; approved:boolean;
+}
+export interface VaultEnrollmentAdoptRequest {
+  requestId:string; vaultId:string; vaultEpoch:number; privateKeyJwk:JsonWebKey; wrappedUserKey:unknown; masterKey:string; cloudUserId:string;
+}
+
 export interface VaultDeviceApprovalWrapRequest {
   requestId: string;
   vaultId: string;

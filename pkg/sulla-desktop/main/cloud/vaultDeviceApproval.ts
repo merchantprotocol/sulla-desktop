@@ -6,6 +6,10 @@
 import { BrowserWindow, dialog } from 'electron';
 
 import { getConfiguredApprovalClient } from '@pkg/vault-broker';
+import { getDesktopDeviceId } from '../deviceIdentity';
+import { signedEnrollmentRequest } from './vaultEnrollment';
+
+interface EnrollmentRequest { id:string; requesterType:string; requesterId:string; publicKey:string; nonce:string; expiresAt:string }
 
 interface ApprovalRequest {
   id: string; vaultId: string; vaultEpoch: number; publicKey: string; expiresAt: string;
@@ -37,8 +41,7 @@ class VaultDeviceApprovalService {
       const client = getConfiguredApprovalClient();
       if (!client) return;
       const response = await client.sullaCloudRequest({ method: 'GET', path: '/auth/password/device-approval/requests', responseType: 'json' });
-      if (response.status !== 200) return;
-      const body = response.body as { requests?: ApprovalRequest[] };
+      const body = response.status === 200 ? response.body as { requests?: ApprovalRequest[] } : { requests: [] };
       for (const request of body.requests ?? []) {
         if (this.seen.has(request.id)) continue;
         this.seen.add(request.id);
@@ -49,6 +52,7 @@ class VaultDeviceApprovalService {
           body: { wrappedUserKey: wrapped.wrappedUserKey }, responseType: 'json',
         });
       }
+      await this.pollEnrollment(client);
     } finally {
       this.inFlight = false;
     }
@@ -69,6 +73,35 @@ class VaultDeviceApprovalService {
     const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
     return result.response === 1;
   }
+
+  private async pollEnrollment(client:NonNullable<ReturnType<typeof getConfiguredApprovalClient>>):Promise<void>{
+    const deviceId=await getDesktopDeviceId();
+    const status=await client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/status?deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'});
+    const vault=status.body as {enabled?:boolean;vaultId?:string;epoch?:number}; if(!vault.enabled||!vault.vaultId)return;
+    const listed=await signedEnrollmentRequest('GET',`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/enrollment/requests`,vault.vaultId,'enrollment-list');
+    if(!listed.ok)return;
+    const body=await listed.json() as {requests?:EnrollmentRequest[]};
+    for(const request of body.requests??[]){
+      if(this.seen.has(`enroll:${request.id}`))continue; this.seen.add(`enroll:${request.id}`);
+      if(!await this.promptEnrollment(request))continue;
+      const [bundleResult,recordsResult]=await Promise.all([
+        client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'}),
+        client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/records?scope=personal&deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'}),
+      ]);
+      if(bundleResult.status!==200||recordsResult.status!==200)continue;
+      const bundleBody=bundleResult.body as any, recordsBody=recordsResult.body as any;
+      const wrapped=await client.wrapVaultEnrollment({requestId:request.id,vaultId:vault.vaultId,vaultEpoch:Number(vault.epoch??bundleBody.bundle?.epoch),publicKey:request.publicKey,bundle:bundleBody.bundle??bundleBody,head:recordsBody.head,records:recordsBody.records,approved:true});
+      await signedEnrollmentRequest('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/enrollment/requests/${encodeURIComponent(request.id)}/respond`,vault.vaultId,`enrollment-respond:${request.id}`,{wrappedUserKey:wrapped.wrappedUserKey});
+      break;
+    }
+  }
+
+  private async promptEnrollment(request:EnrollmentRequest):Promise<boolean>{
+    const window=BrowserWindow.getFocusedWindow()??BrowserWindow.getAllWindows()[0];
+    const options={type:'question' as const,buttons:['Deny','Approve'],defaultId:0,cancelId:0,noLink:true,title:'Sulla Desktop',message:'Approve this computer?',detail:`A signed-in ${request.requesterType.replace('_',' ')} is asking to use your existing Sulla vault.`};
+    const result=window?await dialog.showMessageBox(window,options):await dialog.showMessageBox(options); return result.response===1;
+  }
+
 }
 
 export const VaultDeviceApproval = new VaultDeviceApprovalService();

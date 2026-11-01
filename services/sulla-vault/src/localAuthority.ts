@@ -79,8 +79,11 @@ import type {
   AccountPasswordRewrapRequest,
   AccountPasswordRewrapResponse,
   VaultDeviceApprovalWrapRequest,
+  VaultEnrollmentWrapRequest, VaultEnrollmentAdoptRequest,
 } from './contracts.js';
 import { transportWrap } from './filesCloudEscrow.js';
+import { transportWrapBytes, transportUnwrapBytes, type TransportEnvelope } from '../../sulla-files/src/cloudSync/envelope.js';
+import { createSyncEnvelope, loadSodium, type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
@@ -349,6 +352,9 @@ const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/bundle$/, ['GET']],
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
   [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
+  [/^\/cloud-vault-sync\/enrollment\/state$/, ['GET']],
+  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/enrollment\/requests$/, ['GET', 'POST']],
+  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/enrollment\/requests\/[0-9a-f-]{36}\/(?:respond|consume|confirm)$/, ['POST']],
   [/^\/auth\/password\/device-approval\/requests$/, ['GET']],
   [/^\/auth\/password\/device-approval\/requests\/[0-9a-f-]{36}\/respond$/, ['POST']],
   [/^\/files-sync\/v1\/collections$/, ['GET']],
@@ -565,6 +571,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly cacheChallenges = new Map<string, Challenge>();
   private readonly challengeRate = new Map<string, { count: number; resetAt: number }>();
   private readonly pendingApprovals = new Map<string, number>();
+  private readonly pendingVaultEnrollments = new Map<string,{expiresAt:number;bundle:SyncBundle;head:SyncHead;userKey:Uint8Array;privateKey:Uint8Array;masterKey:Uint8Array;cloudUserId:string}>();
   private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
   private readonly humanSessions = new Map<string, HumanSession>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
@@ -1445,6 +1452,49 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       recoveryMasterKey?.fill(0);
       recoveryKey?.fill(0);
     }
+  }
+
+  async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
+    this.requireApprovalIdentity(serviceId, token);
+    if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault enrollment was not approved');
+    const keys=this.requireKeys();
+    const env=createSyncEnvelope(await loadSodium());
+    const bundle=input.bundle as SyncBundle, head=input.head as SyncHead;
+    env.verifyBundle(bundle,keys.userKey);
+    if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
+    const payload=Buffer.from(JSON.stringify({userKey:Buffer.from(keys.userKey).toString('base64url'),bundle,head,...(input.records===undefined?{}:{records:input.records})}));
+    try{return{wrappedUserKey:await transportWrapBytes(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch)}}finally{payload.fill(0)}
+  }
+
+  async adoptVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}> {
+    this.requireApprovalIdentity(serviceId,token);
+    if(!await this.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists');
+    const masterKey=Buffer.from(input.masterKey||'','base64url');
+    if(masterKey.byteLength!==32)throw new LocalVaultError('invalid_unlock_material',400,'Account master key is invalid');
+    let userKey:Uint8Array|undefined, privateKey:Uint8Array|undefined, plain:Uint8Array|undefined;
+    try{
+      const e=input.wrappedUserKey as TransportEnvelope;
+      const recipient=await globalThis.crypto.subtle.importKey('jwk',input.privateKeyJwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
+      plain=await transportUnwrapBytes(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
+      const payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain)) as {userKey:string;bundle:SyncBundle;head:SyncHead};
+      userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
+      const env=createSyncEnvelope(await loadSodium()); env.verifyBundle(payload.bundle,userKey);
+      if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
+      const wrapped=await unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
+      privateKey=await unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
+      this.pendingVaultEnrollments.set(input.requestId,{expiresAt:Date.now()+60_000,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
+      return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
+    }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
+  }
+
+  async commitVaultEnrollment(serviceId:string,token:string|undefined,requestId:string):Promise<{adopted:true}>{
+    this.requireApprovalIdentity(serviceId,token); const staged=this.pendingVaultEnrollments.get(requestId); this.pendingVaultEnrollments.delete(requestId);
+    if(!staged||staged.expiresAt<Date.now())throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
+    try{ if(!await this.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists'); const b=staged.bundle;
+      const verifier=makeLoginVerifier(await deriveLoginHash(staged.masterKey));
+      await this.runTransaction(async client=>{await client.query(`INSERT INTO users(id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf) VALUES ($1,'desktop@local.sulla',$2,$3,$4,$5,$6,$7)`,[b.vaultUserId,verifier.salt,verifier.verifier,b.publicKey,b.encryptedPrivateKey,b.encryptedUserKey,{authority:'container',version:1,cloudUserId:staged.cloudUserId,password:{salt:b.kdf.salt,parameters:{memoryBytes:b.kdf.memoryBytes,operations:b.kdf.ops}}}]); await client.query(`INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_pull_at) VALUES ($1,$2,$3,$4,0,'',$5,now())`,[b.vaultUserId,b.vaultId,b.epoch,b.bundleGeneration,createHash('sha256').update(JSON.stringify(b)).digest('hex')]);});
+      this.lockNow();this.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.generation+=1;this.migrationState='unlocked';this.stageCacheUpdate(staged.masterKey);return{adopted:true};
+    }finally{staged.userKey.fill(0);staged.privateKey.fill(0);staged.masterKey.fill(0)}
   }
 
   /** Build a reset relay envelope only after the native approval prompt returned an explicit tap. */

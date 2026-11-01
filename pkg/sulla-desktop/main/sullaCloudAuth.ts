@@ -917,7 +917,7 @@ export function initSullaCloudAuthEvents(): void {
       flushing = true;
       void (async() => {
         // An unlocked vault moves to the account password; a vault that does
-        // not exist yet (fresh install) is created from the account key.
+        // not exist yet is created only after Cloud proves there is no existing vault.
         let creating = false;
         if (!lifecycle.isVaultUnlocked()) {
           const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
@@ -926,9 +926,15 @@ export function initSullaCloudAuthEvents(): void {
             traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
             return;
           }
+          const { gateVaultCreation } = await import('./cloud/vaultEnrollment');
+          const disposition = await gateVaultCreation(pendingCloudMasterKey!, pendingCloudUserId!);
+          if (disposition === 'waiting') { traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a computer, phone, or Cloud session that is signed in.'); return; }
+          if (disposition === 'recovery') { traceWait('the existing Cloud vault needs recovery'); return; }
+          if (disposition === 'trusted') { traceWait('this computer is trusted; waiting for the existing Cloud vault to sync'); return; }
+          if (disposition === 'adopted') { zeroPendingCloudMasterKey(); firstRunTrace('vault', 'existing Cloud vault adopted and unlocked'); return; }
           creating = true;
         }
-        firstRunTrace('vault', creating ? 'no vault yet; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
+        firstRunTrace('vault', creating ? 'no Cloud vault exists; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
         await flushAccountPasswordWrap();
         firstRunTrace('vault', creating ? 'vault created and unlocked' : 'vault now uses the Cloud password');
         if (creating) {
