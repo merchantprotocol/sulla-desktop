@@ -11,7 +11,7 @@ import Electron from 'electron';
 import paths from '@pkg/utils/paths';
 
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
-import { withSilentVaultRestore } from './silentRestoreTransport';
+import { withSilentVaultRestore } from '@pkg/main/silentVaultRestoreTransport';
 
 const BROKER_TOKEN_FILE = 'vault-broker-token.enc';
 const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';

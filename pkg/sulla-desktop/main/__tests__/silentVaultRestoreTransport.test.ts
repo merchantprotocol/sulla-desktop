@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { withSilentVaultRestore } from './silentRestoreTransport';
+import { withSilentVaultRestore } from '../silentVaultRestoreTransport';
 
 describe('desktop broker silent restore', () => {
   it('restores and retries a locked broker request without exposing an unlock gate', async() => {
