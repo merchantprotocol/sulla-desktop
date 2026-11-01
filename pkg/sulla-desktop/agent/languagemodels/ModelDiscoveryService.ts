@@ -341,7 +341,16 @@ export class ModelDiscoveryService {
     },
 
     ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((definition: OpenAICompatibleProviderDefinition) => [definition.id, {
-      baseUrl: providerBaseUrl(definition, {}),
+      // Azure needs the user's resource URL, so its base URL can't be built
+      // from empty values. Computing it here at load time must never throw,
+      // or the whole main process fails to start.
+      baseUrl: (() => {
+        try {
+          return providerBaseUrl(definition, {});
+        } catch {
+          return '';
+        }
+      })(),
       modelsEndpoint: definition.modelsUrl.startsWith('http') ? definition.modelsUrl : definition.modelsUrl,
       authHeader: 'Authorization',
       parseResponse: (data: any) => {
