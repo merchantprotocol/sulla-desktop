@@ -11,6 +11,7 @@ import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, ip
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { requestApplicationRestart } from '@pkg/main/restartCoordinator';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import {
@@ -109,11 +110,7 @@ function getApplicationMenu(): MenuItem[] {
 }
 
 function restartApplication(): void {
-  console.log('[Shutdown] restartApplication() called — emitting "restarting" event');
-  mainEvents.emit('restarting');
-  console.log('[Shutdown] "restarting" event emitted, calling app.relaunch() + app.quit()');
-  Electron.app.relaunch();
-  Electron.app.quit();
+  requestApplicationRestart();
 }
 
 /**

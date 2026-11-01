@@ -11,7 +11,7 @@
 // eslint-disable-next-line import-x/order
 import '@pkg/main/ipcGuestGuard';
 
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -57,6 +57,7 @@ import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
+import { completeRestart, isRestartRequested, restartKind } from '@pkg/main/restartCoordinator';
 import buildApplicationMenu, { sendAgentCommand } from '@pkg/main/mainmenu';
 import setupNetworking from '@pkg/main/networking';
 import { Snapshots } from '@pkg/main/snapshots/snapshots';
@@ -1215,46 +1216,13 @@ function isK8sError(object: any): object is K8sError {
   return 'errCode' in object;
 }
 
-// When true, the app is restarting (not fully quitting) — skip container/VM teardown
-let isRestarting = false;
-let relaunchSpawned = false;
-
-mainEvents.on('restarting', () => {
-  console.log('[Shutdown] background.ts received "restarting" event — setting isRestarting=true');
-  isRestarting = true;
-});
-
-// Electron.app.relaunch() (called once, early, in mainmenu.ts's
-// restartApplication()) only actually spawns the new instance as part of
-// Electron's own native quit path completing. Both force-exit backstops
-// below call raw process.exit(), which terminates the process immediately
-// and bypasses that native path entirely — so a restart that hits either
-// backstop (the exact "some item hanging that wouldn't ever let go" case)
-// silently drops the relaunch: the app shuts down and never comes back.
-// Guard against that by spawning the new instance ourselves, independent
-// of how cleanly the current process manages to exit. Idempotent (only
-// ever spawns once) so it's safe to call from more than one backstop.
-function ensureRelaunchIfRestarting(): void {
-  if (!isRestarting || relaunchSpawned) return;
-  relaunchSpawned = true;
-  try {
-    const child = spawn(process.execPath, process.argv.slice(1), {
-      detached: true,
-      stdio:    'ignore',
-      cwd:      process.cwd(),
-    });
-
-    child.unref();
-    sullaLog({ topic: 'shutdown', level: 'info', message: 'ensureRelaunchIfRestarting: spawned detached relaunch process' });
-  } catch (err: any) {
-    sullaLog({ topic: 'shutdown', level: 'error', message: `ensureRelaunchIfRestarting failed: ${ err?.message }`, error: err });
-  }
-}
+// Restart intent is owned by restartCoordinator so menu, updater and future
+// support-session callers all share this shutdown path.
 
 Electron.app.on('before-quit', async(event) => {
   const triggerStack = new Error('before-quit trigger trace').stack;
 
-  console.log(`[Shutdown] before-quit fired — gone=${ gone }, shuttingDown=${ shuttingDown }, isRestarting=${ isRestarting }`);
+  console.log(`[Shutdown] before-quit fired — gone=${ gone }, shuttingDown=${ shuttingDown }, restart=${ restartKind() ?? 'none' }`);
   console.log(`[Shutdown] before-quit call stack:\n${ triggerStack }`);
   if (gone) {
     console.log('[Shutdown] before-quit: already gone, emitting "quit" and returning');
@@ -1270,7 +1238,7 @@ Electron.app.on('before-quit', async(event) => {
   }
   // Quitting on Finishing drops sign-ins held only in memory: the wizard
   // asks first and quits again itself if the owner confirms.
-  if (!isRestarting && window.holdQuitForFirstRun()) {
+  if (!isRestartRequested() && window.holdQuitForFirstRun()) {
     console.log('[Shutdown] before-quit: held while the first-run wizard asks to confirm');
     event.preventDefault();
 
@@ -1287,8 +1255,11 @@ Electron.app.on('before-quit', async(event) => {
   const forceExitTimer = setTimeout(() => {
     sullaLog({ topic: 'shutdown', level: 'error', message: `Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting` });
     console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
-    ensureRelaunchIfRestarting();
-    process.exit(1);
+    if (isRestartRequested()) {
+      gone = true;
+      console.error('[Restart] Hard shutdown deadline reached; forcing restart handoff');
+      completeRestart();
+    } else process.exit(1);
   }, SHUTDOWN_DEADLINE_MS);
 
   forceExitTimer.unref(); // don't let this timer keep the process alive on its own
@@ -1319,6 +1290,10 @@ Electron.app.on('before-quit', async(event) => {
       timeoutPromise,
     ]).finally(() => clearTimeout(timer));
   };
+
+  if (isRestartRequested()) {
+    console.log(`[Restart] Graceful shutdown started for ${ restartKind() } restart`);
+  }
 
   // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
 
@@ -1371,7 +1346,8 @@ Electron.app.on('before-quit', async(event) => {
 
   sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling sullaEnd()' });
   console.log('[Shutdown] before-quit: calling sullaEnd()');
-  await sullaEnd(isRestarting ? 'restart' : 'full');
+  // A process restart must release the VM, data disk, ports and every child.
+  await sullaEnd('full');
   sullaLog({ topic: 'shutdown', level: 'info', message: 'sullaEnd() complete' });
   console.log('[Shutdown] before-quit: sullaEnd() complete');
 
@@ -1379,7 +1355,7 @@ Electron.app.on('before-quit', async(event) => {
   // SULLA DESKTOP - END
   /// /////////////////////////////////////////////////////////////////////////////
 
-  const shutdownMode = isRestarting ? 'RESTART' : 'FULL QUIT';
+  const shutdownMode = isRestartRequested() ? `RESTART (${ restartKind() })` : 'FULL QUIT';
 
   // ── Graceful container stop ──
   // Stop all running Docker containers with a 30-second grace period BEFORE
@@ -1387,7 +1363,7 @@ Electron.app.on('before-quit', async(event) => {
   // time to flush InnoDB/WAL buffers instead of being SIGKILL'd when the
   // Docker daemon or VM is torn down. The Sulla runtime saves the running VM
   // instead, and its guest stops containers itself when it has to shut down.
-  if (!isRestarting && !isSullaRuntimeActive()) {
+  if (!isSullaRuntimeActive()) {
     await withTimeout('docker-containers-stop', 45_000, (async() => {
       try {
         const ids = execFileSync('docker', ['ps', '-q'], { timeout: 5_000 }).toString().trim();
@@ -1410,14 +1386,10 @@ Electron.app.on('before-quit', async(event) => {
   try {
     await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
 
-    // The Sulla runtime is a child of this process, so a restart stops it too;
-    // quitting saves its state so the next launch resumes it.
-    if (isRestarting && !isSullaRuntimeActive()) {
-      sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
-    } else {
-      if (isSullaRuntimeActive()) suspendSullaRuntimeOnNextStop();
-      await withTimeout('k8smanager.stop', 60_000, k8smanager?.stop() ?? Promise.resolve());
-    }
+    // Always stop the runtime before a process restart. Leaving it alive races
+    // the replacement process for its data disk, sockets and host ports.
+    if (isSullaRuntimeActive()) suspendSullaRuntimeOnNextStop();
+    await withTimeout('k8smanager.stop', 60_000, k8smanager?.stop() ?? Promise.resolve());
 
     await withTimeout('shutdown-integrations', 10_000, mainEvents.tryInvoke('shutdown-integrations') ?? Promise.resolve());
 
@@ -1433,7 +1405,11 @@ Electron.app.on('before-quit', async(event) => {
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
-    Electron.app.quit();
+    if (isRestartRequested()) {
+      completeRestart();
+    } else {
+      Electron.app.quit();
+    }
 
     // Replace the overall deadline with a post-quit backstop.
     // If app.quit() doesn't terminate the process within 15s (lingering
@@ -1442,8 +1418,8 @@ Electron.app.on('before-quit', async(event) => {
     const postQuitTimer = setTimeout(() => {
       sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 15s — force-exiting' });
       console.warn('[Shutdown] Post-quit backstop: process still alive after 15s — force-exiting');
-      ensureRelaunchIfRestarting();
-      process.exit(0);
+      if (isRestartRequested()) completeRestart();
+      else process.exit(0);
     }, 15_000);
 
     postQuitTimer.unref();

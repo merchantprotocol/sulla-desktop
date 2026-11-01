@@ -26,6 +26,7 @@ import { updateEvents } from './UpdateManager';
 
 import { Settings } from '@pkg/config/settings';
 import mainEvent from '@pkg/main/mainEvents';
+import { requestUpdateRestart } from '@pkg/main/restartCoordinator';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
@@ -86,7 +87,11 @@ export function installQueuedUpdate(): void {
 
     return;
   }
-  autoUpdater.quitAndInstall();
+  requestUpdateRestart(() => {
+    // isSilent=false keeps the normal installer UI; forceRunAfter=true makes
+    // Squirrel.Mac launch the installed version even when updater defaults differ.
+    autoUpdater.quitAndInstall(false, true);
+  });
 }
 
 /**
