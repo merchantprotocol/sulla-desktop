@@ -415,13 +415,14 @@ function transportInfo(requestId:string, vaultId:string, vaultEpoch:number):stri
   return `${ requestId }|${ vaultId }|${ vaultEpoch }`;
 }
 
-export async function transportWrap(
-  key32:Uint8Array,
+export async function transportWrapBytes(
+  plaintext:Uint8Array,
   recipientPublicKey:string,
   requestId:string,
   vaultId:string,
   vaultEpoch:number,
 ):Promise<TransportEnvelope> {
+  if (!(plaintext instanceof Uint8Array) || plaintext.byteLength < 1 || plaintext.byteLength > 2_000_000) throw new Error('bad transport payload');
   assertUuid(requestId, 'requestId');
   const ephemeral = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']) as CryptoKeyPair;
   const epk = b64u(new Uint8Array(await subtle.exportKey('raw', ephemeral.publicKey)));
@@ -430,25 +431,36 @@ export async function transportWrap(
   const ct = new Uint8Array(await subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: enc.encode(`sulla-fs1|transport|${ info }|${ epk }`), tagLength: 128 },
     await transportKey(ephemeral.privateKey, recipientPublicKey, info, 'encrypt'),
-    view(key32),
+    view(plaintext),
   ));
   return { format: 'sulla-files-sync-transport', v: 1, alg: 'ECDH-P256+HKDF-SHA256+A256GCM', epk, nonce: b64u(iv), ct: b64u(ct) };
 }
 
-export async function transportUnwrap(
+export async function transportUnwrapBytes(
   envelope:TransportEnvelope,
   recipientPrivateKey:CryptoKey,
   requestId:string,
   vaultId:string,
   vaultEpoch:number,
 ):Promise<Uint8Array> {
-  if (envelope?.format !== 'sulla-files-sync-transport' || envelope.v !== 1) throw new Error('unsupported transport');
+  if (envelope?.format !== 'sulla-files-sync-transport' || envelope.v !== 1 || envelope.alg !== 'ECDH-P256+HKDF-SHA256+A256GCM') throw new Error('unsupported transport');
   const info = transportInfo(requestId, vaultId, vaultEpoch);
   const out = new Uint8Array(await subtle.decrypt(
     { name: 'AES-GCM', iv: unb64u(envelope.nonce), additionalData: enc.encode(`sulla-fs1|transport|${ info }|${ envelope.epk }`), tagLength: 128 },
     await transportKey(recipientPrivateKey, envelope.epk, info, 'decrypt'),
     unb64u(envelope.ct),
   ));
+  if (out.byteLength < 1 || out.byteLength > 2_000_000) throw new Error('bad transport');
+  return out;
+}
+
+export async function transportWrap(key32:Uint8Array, recipientPublicKey:string, requestId:string, vaultId:string, vaultEpoch:number):Promise<TransportEnvelope> {
+  if (key32.byteLength !== 32) throw new Error('bad transport key');
+  return transportWrapBytes(key32, recipientPublicKey, requestId, vaultId, vaultEpoch);
+}
+
+export async function transportUnwrap(envelope:TransportEnvelope, recipientPrivateKey:CryptoKey, requestId:string, vaultId:string, vaultEpoch:number):Promise<Uint8Array> {
+  const out = await transportUnwrapBytes(envelope, recipientPrivateKey, requestId, vaultId, vaultEpoch);
   if (out.byteLength !== 32) throw new Error('bad transport');
   return out;
 }

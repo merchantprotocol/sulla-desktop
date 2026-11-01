@@ -917,7 +917,7 @@ export function initSullaCloudAuthEvents(): void {
       flushing = true;
       void (async() => {
         // An unlocked vault moves to the account password; a vault that does
-        // not exist yet (fresh install) is created from the account key.
+        // not exist yet is created only after Cloud proves there is no existing vault.
         let creating = false;
         if (!lifecycle.isVaultUnlocked()) {
           const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
@@ -926,9 +926,19 @@ export function initSullaCloudAuthEvents(): void {
             traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
             return;
           }
+          const { completeVaultEnrollment, gateVaultCreation } = await import('./cloud/vaultEnrollment');
+          let disposition = await gateVaultCreation();
+          if (disposition === 'approval_available' || disposition === 'waiting_for_approver') {
+            traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a signed-in computer, phone, or Cloud session.');
+            disposition = await completeVaultEnrollment(pendingCloudMasterKey!, pendingCloudUserId!);
+          }
+          if (disposition === 'approval_available' || disposition === 'waiting_for_approver') { traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a computer, phone, or Cloud session that is signed in.'); return; }
+          if (disposition === 'recovery') { traceWait('the existing Cloud vault needs recovery'); return; }
+          if (disposition === 'trusted') { traceWait('this computer is trusted; waiting for the existing Cloud vault to sync'); return; }
+          if (disposition === 'adopted') { zeroPendingCloudMasterKey(); firstRunTrace('vault', 'existing Cloud vault adopted and unlocked'); return; }
           creating = true;
         }
-        firstRunTrace('vault', creating ? 'no vault yet; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
+        firstRunTrace('vault', creating ? 'no Cloud vault exists; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
         await flushAccountPasswordWrap();
         firstRunTrace('vault', creating ? 'vault created and unlocked' : 'vault now uses the Cloud password');
         if (creating) {
@@ -1054,7 +1064,28 @@ export function initSullaCloudAuthEvents(): void {
     return { ok: true, status: await buildStatus() };
   });
 
-  // Shared success path: persist session, auto-pair relay, return status.
+  const checkEnrollmentAfterCloudSignIn = async(): Promise<boolean> => {
+    // This metadata-only gate deliberately has no password/master-key input.
+    // Run it before cloud services can wake the local-vault create path.
+    const { gateVaultCreation } = await import('./cloud/vaultEnrollment');
+    const disposition = await gateVaultCreation();
+    if (disposition === 'approval_available' || disposition === 'waiting_for_approver') {
+      const message = disposition === 'approval_available'
+        ? 'Waiting for your other Sulla to approve this computer.'
+        : 'Waiting for a signed-in computer, phone, or Cloud session to approve this computer.';
+      firstRunTrace('vault', message);
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      const options = { type: 'info' as const, buttons: ['OK'], defaultId: 0, cancelId: 0, noLink: true, title: 'Sulla Desktop', message };
+      if (window) await dialog.showMessageBox(window, options);
+      else await dialog.showMessageBox(options);
+      return false;
+    }
+    if (disposition === 'recovery') firstRunTrace('vault', 'the existing Cloud vault needs recovery');
+    else if (disposition === 'trusted') firstRunTrace('vault', 'this computer is trusted; waiting for the existing Cloud vault to sync');
+    return true;
+  };
+
+  // Shared success path: persist session, gate vault creation, auto-pair relay, return status.
   const completeSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
     const session = responseToSession(data);
     try {
@@ -1065,6 +1096,12 @@ export function initSullaCloudAuthEvents(): void {
       console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', error);
       return { ok: false, error, status: await buildStatus(error).catch(() => signedOutStatus(error)) };
     }
+    let mayStartCloudServices = false;
+    try {
+      mayStartCloudServices = await checkEnrollmentAfterCloudSignIn();
+    } catch (err) {
+      console.error('[SullaCloudAuth] Could not check vault enrollment state; cloud services will not start:', err);
+    }
     try {
       // Relay room is the stable userId, not the active contractor — so
       // switching businesses later doesn't drop the mobile connection.
@@ -1072,7 +1109,7 @@ export function initSullaCloudAuthEvents(): void {
     } catch (err) {
       console.warn('[SullaCloudAuth] Auto-pair failed:', err);
     }
-    try {
+    if (mayStartCloudServices) try {
       // Always connected while signed in: device registration + secure
       // channel, plus whichever syncs the owner opted into.
       const { startCloudServices } = await import('./cloud/cloudLifecycle');
@@ -1101,8 +1138,14 @@ export function initSullaCloudAuthEvents(): void {
         contractors_json:    JSON.stringify(session.contractors),
       },
     });
-    try { await getDesktopRelayClient().setPairedUserId(session.userId) } catch (err) { console.warn('[SullaCloudAuth] Auto-pair failed:', err) }
+    let mayStartCloudServices = false;
     try {
+      mayStartCloudServices = await checkEnrollmentAfterCloudSignIn();
+    } catch (err) {
+      console.error('[SullaCloudAuth] Could not check vault enrollment state; cloud services will not start:', err);
+    }
+    try { await getDesktopRelayClient().setPairedUserId(session.userId) } catch (err) { console.warn('[SullaCloudAuth] Auto-pair failed:', err) }
+    if (mayStartCloudServices) try {
       const { startCloudServices } = await import('./cloud/cloudLifecycle');
       await startCloudServices();
     } catch (err) { console.warn('[SullaCloudAuth] Failed to start cloud services:', err) }
@@ -1136,8 +1179,9 @@ export function initSullaCloudAuthEvents(): void {
       !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   };
 
-  const completeSignInForCurrentState = (data: VerifyResponse, notReadyError: string) =>
-    shouldKeepSessionInMemory() ? completeFirstRunSignIn(data) : completeSignInWhenReady(data, notReadyError);
+  const completeSignInForCurrentState = async(data: VerifyResponse, notReadyError: string) => {
+    return shouldKeepSessionInMemory() ? completeFirstRunSignIn(data) : completeSignInWhenReady(data, notReadyError);
+  };
 
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
     const normalizedPhone = phone.trim();

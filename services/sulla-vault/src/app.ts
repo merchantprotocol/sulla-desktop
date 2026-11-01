@@ -569,6 +569,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(await localAuthority.wrapUserKeyForApprovedDevice(identity.serviceId, identity.token, request.body));
     });
+    app.post('/v1/broker/sulla-cloud/enrollment-wrap', async(request,response)=>{ const identity=serviceIdentity(request); response.json(await localAuthority.wrapVaultEnrollment(identity.serviceId,identity.token,request.body)); });
+    app.post('/v1/broker/sulla-cloud/enrollment-adopt', async(request,response)=>{ const identity=serviceIdentity(request); response.json(await localAuthority.adoptVaultEnrollment(identity.serviceId,identity.token,request.body)); });
+    app.post('/v1/broker/sulla-cloud/enrollment-commit', async(request,response)=>{ const identity=serviceIdentity(request); response.json(await localAuthority.commitVaultEnrollment(identity.serviceId,identity.token,requiredString(request.body.requestId,'requestId'))); });
     app.post('/v1/broker/sulla-cloud/recovery-key/rotate', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.rotateAccountRecoveryKey(identity.serviceId, identity.token));
