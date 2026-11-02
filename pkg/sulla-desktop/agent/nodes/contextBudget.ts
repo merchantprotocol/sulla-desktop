@@ -33,8 +33,18 @@ function isToolResult(message: ChatMessage): boolean {
 
 function compactText(text: string): string {
   if (text.length <= TOOL_RESULT_COMPACT_LIMIT) return text;
-  const omitted = text.length - TOOL_RESULT_HEAD_CHARS - TOOL_RESULT_TAIL_CHARS;
-  return `${ text.slice(0, TOOL_RESULT_HEAD_CHARS) }\n[tool result compacted: ${ omitted } chars omitted]\n${ text.slice(-TOOL_RESULT_TAIL_CHARS) }`;
+
+  // UTF-16 slicing can split an astral character. JSON.stringify then emits a
+  // lone surrogate escape, which strict Unicode JSON decoders reject.
+  let headEnd = TOOL_RESULT_HEAD_CHARS;
+  let tailStart = text.length - TOOL_RESULT_TAIL_CHARS;
+  const splitsPair = (index: number) =>
+    text.charCodeAt(index - 1) >= 0xD800 && text.charCodeAt(index - 1) <= 0xDBFF &&
+    text.charCodeAt(index) >= 0xDC00 && text.charCodeAt(index) <= 0xDFFF;
+  if (splitsPair(headEnd)) headEnd--;
+  if (splitsPair(tailStart)) tailStart++;
+  const omitted = tailStart - headEnd;
+  return `${ text.slice(0, headEnd) }\n[tool result compacted: ${ omitted } chars omitted]\n${ text.slice(tailStart) }`;
 }
 
 function compactBlock(block: ContentBlock): ContentBlock {
