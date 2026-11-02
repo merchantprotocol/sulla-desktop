@@ -30,6 +30,8 @@ export class ClaudeSetupTokenAdapter {
   private authorizeUrlSeen = false;
   private codeSent = false;
   private enterSent = false;
+  private settled = false;
+  private exitCode: number | null = null;
 
   async prepare(): Promise<string> {
     firstRunTrace('claude', 'CLI ensure started');
@@ -49,12 +51,13 @@ export class ClaudeSetupTokenAdapter {
 
   run(callbacks: ClaudeSetupTokenCallbacks): Promise<string> {
     return new Promise((resolve, reject) => {
-      let settled = false;
       const finish = (error?: Error, token?: string) => {
-        if (settled) return;
-        settled = true;
-        if (error) reject(error);
-        else resolve(token!);
+        if (this.settled) return;
+        this.settled = true;
+        if (error) {
+          this.traceOutputTail(error.message);
+          reject(error);
+        } else resolve(token!);
       };
 
       try {
@@ -82,6 +85,7 @@ export class ClaudeSetupTokenAdapter {
         if (parsed.token) finish(undefined, parsed.token);
       });
       this.process.onExit(({ exitCode }) => {
+        this.exitCode = exitCode;
         const parsed = this.parser.finish();
 
         if (parsed.token) finish(undefined, parsed.token);
@@ -99,10 +103,34 @@ export class ClaudeSetupTokenAdapter {
   }
 
   dispose(): void {
+    // Cancelled or timed out by the coordinator before the CLI finished: the
+    // terminal output is the only record of what the CLI was actually doing.
+    if (!this.settled && this.process) this.traceOutputTail('stopped before the CLI finished');
+    this.settled = true;
     if (this.enterTimer) clearTimeout(this.enterTimer);
     this.enterTimer = null;
     try { this.process?.kill() } catch { /* already exited */ }
     this.process = null;
+  }
+
+  /**
+   * Record what `claude setup-token` printed when sign-in fails, so a failed
+   * run says why. Only on failure (a successful run ends with the token), and
+   * the trace scrubs sk-ant tokens, JWTs, OAuth query values and long opaque
+   * strings before anything is written.
+   */
+  private traceOutputTail(reason: string): void {
+    try {
+      const text = this.parser.finish().text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      firstRunTrace('claude', 'setup-token output on failure', {
+        providerId: 'claude',
+        status:     'failure',
+        reason,
+        exitCode:   this.exitCode,
+        error:      text.slice(-240),
+        output:     text.slice(-2_000),
+      });
+    } catch { /* tracing must never break sign-in */ }
   }
 
   private sendEnter(): void {
