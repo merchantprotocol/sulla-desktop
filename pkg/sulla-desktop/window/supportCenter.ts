@@ -107,7 +107,7 @@ async function createLogBundle(state: SupportState): Promise<Buffer> {
 async function uploadLogAttachment(): Promise<any> {
   const bytes = await createLogBundle(store().read());
   if (bytes.length > MAX_ATTACHMENT_BYTES) throw new Error('The selected logs are larger than 25 MB. Turn off sources and try again.');
-  const form = new FormData(); form.append('file', new Blob([bytes], { type: 'application/zip' }), 'sulla-support-logs.zip');
+  const form = new FormData(); form.append('file', new Blob([new Uint8Array(bytes)], { type: 'application/zip' }), 'sulla-support-logs.zip');
   return (await cloudRequest('/attachments', { method: 'POST', body: form })).attachment;
 }
 

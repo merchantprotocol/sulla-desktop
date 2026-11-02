@@ -135,14 +135,15 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
       }
       throw ex;
     }
-    const options: GenericServerOptions = yaml.parse(fileContents);
+    const parsed: GenericServerOptions = yaml.parse(fileContents);
     const channelState = readUpdateChannelState();
-    const configured = new URL(options.url.endsWith('/') ? options.url : `${ options.url }/`);
-    options.url = channelState.pinnedVersion
+    const configured = new URL(parsed.url.endsWith('/') ? parsed.url : `${ parsed.url }/`);
+    const feedUrl = channelState.pinnedVersion
       ? new URL(`../../releases/v${ channelState.pinnedVersion }/`, configured).toString()
       : channelState.channel === 'nightly'
         ? new URL('../nightly/', configured).toString()
         : configured.toString();
+    const options: GenericServerOptions = { ...parsed, url: feedUrl };
 
     switch (os.platform()) {
     case 'darwin':
