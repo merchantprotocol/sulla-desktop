@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { describe, expect, jest, test } from '@jest/globals';
+
 import { IntegrationService } from '../IntegrationService';
 import { configureCredentialBroker } from '../../../vault-broker';
 

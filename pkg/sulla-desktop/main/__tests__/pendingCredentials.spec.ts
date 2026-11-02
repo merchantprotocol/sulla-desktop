@@ -3,28 +3,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-const importIntegrationAccount = jest.fn();
+import { describe, expect, jest, test } from '@jest/globals';
 
-jest.mock('electron', () => ({
-  __esModule: true,
+const importIntegrationAccount: any = jest.fn();
+
+jest.unstable_mockModule('electron', () => ({
   default: { app: { isPackaged: true }, BrowserWindow: { getAllWindows: () => [] } },
 }));
-jest.mock('@pkg/vault-broker', () => ({
+jest.unstable_mockModule('../../vault-broker', () => ({
   usesContainerVaultAuthority: () => true,
   getConfiguredApprovalClient: () => ({ importIntegrationAccount }),
 }));
-jest.mock('@pkg/agent/services/IntegrationService', () => ({ getIntegrationService: jest.fn() }));
-jest.mock('@pkg/agent/services/ServiceLifecycleManager', () => ({ getServiceLifecycleManager: jest.fn() }));
-jest.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: jest.fn() }));
-jest.mock('@pkg/main/firstRun/firstRunState', () => ({ getFirstRunState: jest.fn(), updateFirstRunState: jest.fn() }));
-jest.mock('@pkg/agent/services/brokeredModelList', () => ({ clearBrokeredModelListCache: jest.fn() }));
-jest.mock('@pkg/agent/languagemodels/codexModelCatalog', () => ({ clearCodexModelCatalogCache: jest.fn() }));
-jest.mock('@pkg/agent/languagemodels/claudeModelCatalog', () => ({ clearClaudeModelCatalogCache: jest.fn() }));
-
-import { flushPendingCredentials, queuePendingCredential } from '../firstRun/pendingCredentials';
+jest.unstable_mockModule('../../agent/services/IntegrationService', () => ({ getIntegrationService: jest.fn() }));
+jest.unstable_mockModule('../../agent/services/ServiceLifecycleManager', () => ({ getServiceLifecycleManager: jest.fn() }));
+jest.unstable_mockModule('../firstRun/firstRunTrace', () => ({ firstRunTrace: jest.fn() }));
+jest.unstable_mockModule('../firstRun/firstRunState', () => ({ getFirstRunState: jest.fn(), updateFirstRunState: jest.fn() }));
+jest.unstable_mockModule('../../agent/services/brokeredModelList', () => ({ clearBrokeredModelListCache: jest.fn() }));
+jest.unstable_mockModule('../../agent/languagemodels/codexModelCatalog', () => ({ clearCodexModelCatalogCache: jest.fn() }));
+jest.unstable_mockModule('../../agent/languagemodels/claudeModelCatalog', () => ({ clearClaudeModelCatalogCache: jest.fn() }));
 
 describe('pending credential Desktop-account handoff', () => {
   test('connect flush atomically imports connected active metadata without using secret egress', async() => {
+    const { flushPendingCredentials, queuePendingCredential } = await import('../firstRun/pendingCredentials');
     importIntegrationAccount.mockResolvedValueOnce({
       integrationId: 'synthetic-ai', activeAccountId: 'desktop-account',
       accounts: [{ accountId: 'desktop-account', active: true, connected: true }],
