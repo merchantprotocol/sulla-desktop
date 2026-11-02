@@ -24,6 +24,8 @@ import * as childProcess from 'child_process';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { claudeCredentialResolver } from '@pkg/agent/languagemodels/credentials/ClaudeCredentialResolver';
+import { bindLeaseToProcess } from '@pkg/agent/languagemodels/guestClaudeBridge';
 
 const console = Logging.background;
 
@@ -72,12 +74,13 @@ export function initClaudeCodeTestEvents(): void {
   ): Promise<TestResult> => {
     const runtimePath = paths.sullaRuntime;
 
-    // Pull Claude auth token from settings so we can set CLAUDE_CODE_OAUTH_TOKEN
+    // Resolve Claude auth once so vault OAuth and legacy credentials behave the same
     // inside the VM. `sulla-runtime exec --` runs non-interactive so /etc/claude-env
     // isn't sourced by .profile; we inject the env var explicitly via sh -c.
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    const oauthToken = await SullaSettingsModel.get('claudeOAuthToken', '') ?? '';
-    const apiKey = await SullaSettingsModel.get('claudeApiKey', '') ?? '';
+    const credential = await claudeCredentialResolver.resolve({ execution: true, conversationId: 'claude-code-test' });
+    const oauthToken = credential.kind === 'oauth-capability' || credential.kind === 'oauth-pending' ? credential.oauthToken ?? '' : '';
+    const apiKey = credential.kind === 'api-key' ? credential.apiKey : '';
+    const baseUrl = 'baseUrl' in credential ? credential.baseUrl : undefined;
 
     if (!oauthToken && !apiKey) {
       return {
@@ -93,6 +96,7 @@ export function initClaudeCodeTestEvents(): void {
     const envAssignments: string[] = [];
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ JSON.stringify(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ JSON.stringify(apiKey) }`);
+    if (baseUrl) envAssignments.push(`ANTHROPIC_BASE_URL=${ JSON.stringify(baseUrl) }`);
 
     // Build: env VAR=... claude -p "$PROMPT" --flags [--session-id X]
     const claudeArgs = [
@@ -113,7 +117,8 @@ export function initClaudeCodeTestEvents(): void {
 
     // Redacted log: don't write the OAuth token to disk.
     const redactedArgs = args.map((a) => a.replace(/CLAUDE_CODE_OAUTH_TOKEN="[^"]+"/g, 'CLAUDE_CODE_OAUTH_TOKEN=***')
-      .replace(/ANTHROPIC_API_KEY="[^"]+"/g, 'ANTHROPIC_API_KEY=***'));
+      .replace(/ANTHROPIC_API_KEY="[^"]+"/g, 'ANTHROPIC_API_KEY=***')
+      .replace(/ANTHROPIC_BASE_URL="[^"]+"/g, 'ANTHROPIC_BASE_URL=***'));
     console.log('[ClaudeTest] Spawning:', redactedArgs.join(' '));
 
     return await new Promise((resolve) => {
@@ -124,6 +129,7 @@ export function initClaudeCodeTestEvents(): void {
           TERM:      'dumb',
         },
       });
+      bindLeaseToProcess(proc, 'lease' in credential ? credential.lease : undefined);
 
       let stdoutBuffer = '';
       let stderrBuffer = '';

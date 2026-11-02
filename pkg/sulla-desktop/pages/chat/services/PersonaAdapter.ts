@@ -221,6 +221,21 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('decisions:changed', applyDecision);
     this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+
+    const reconnectClaude = (_event: unknown, payload: { type?: string; providerId?: string; message?: string }) => {
+      if (payload?.type !== 'provider-auth-reconnect-required' || payload.providerId !== 'claude-code') return;
+      const createdAt = Date.now();
+      this.controller.appendMessage({
+        id:        asMessageId(`claude-reconnect-${ createdAt }`),
+        kind:      'notice',
+        text:      payload.message || 'Claude sign-in expired. Reconnect',
+        action:    { label: 'Reconnect', kind: 'connect' },
+        createdAt,
+      });
+      this.controller.persistThread();
+    };
+    ipcRenderer.on('provider-auth:reconnect-required' as any, reconnectClaude);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, reconnectClaude));
     ipcRenderer.invoke('decisions:list').then(records => records.forEach(r => applyDecision(undefined, r))).catch(() => undefined);
 
     // Approval bridge — when the user clicks approve/deny on a

@@ -47,6 +47,8 @@ import {
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
+import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
+import { VaultLocked } from '../languagemodels/failures';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -1102,8 +1104,16 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       if (!usesContainerVaultAuthority()) return metadata.userId;
       const signal = run.state.metadata.options?.abort?.signal;
 
-      // Right after setup the vault is created and unlocked a moment after
-      // the window closes; wait for that instead of failing the first message.
+      if (run.provider === 'claude-code') {
+        // Claude credential resolution owns vault readiness. Never turn a
+        // locked/unavailable account into a feature-level unlock prompt.
+        const credential = await claudeCredentialResolver.resolve();
+        if (credential.kind === 'none') throw new VaultLocked('claude-code', { cause: credential.unavailable ? 'Claude credential authority unavailable' : 'Claude account is disconnected' });
+        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+      }
+
+      // Other providers retain the startup grace period until their resolvers
+      // move to the same typed, no-prompt execution-auth path.
       if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
         throw await lockedVaultError();
       }
@@ -1293,30 +1303,13 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             integrationId = 'openai';
           }
         } else {
-          try {
-            accountId = await getIntegrationService().getActiveAccountId('claude-code');
-            try {
-              const accounts = await getIntegrationService().getAccounts('claude-code');
-              if (!accounts.find(a => a.account_id === accountId)?.connected) {
-                const alt = accounts.find(a => a.connected);
-                if (alt) {
-                  log.info(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected; falling back to "${ alt.account_id }"`);
-                  accountId = alt.account_id;
-                } else {
-                  log.warn(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected with no connected alternative`);
-                }
-              }
-            } catch (err) {
-              log.warn(`[AgentContainer] Could not verify claude-code account connectivity for ${ containerName }: ${ (err as Error).message }`);
-            }
-            integrationId = 'claude-code';
-            authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
-          } catch (error) {
-            if ((error as Error).message !== 'No local vault account is configured for claude-code') throw error;
-            integrationId = 'anthropic';
-            accountId = await getIntegrationService().getActiveAccountId(integrationId);
-            authMode = 'api-key';
+          const credential = await claudeCredentialResolver.resolve();
+          if (credential.kind === 'none' || !credential.accountId) {
+            throw new VaultLocked('claude-code', { cause: 'Claude credential authority unavailable' });
           }
+          integrationId = 'claude-code';
+          accountId = credential.accountId;
+          authMode = credential.kind === 'api-key' ? 'api-key' : 'oauth';
         }
         let workspaceId = '';
         if (provider === 'claude-code' && authMode === 'api-key') {
