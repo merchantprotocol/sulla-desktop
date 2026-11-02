@@ -18,6 +18,7 @@ export interface TokenMetadata extends TokenAccount {
   clientId?: string;
   connected?: boolean;
   refreshable: boolean;
+  updatedAt?: number;
 }
 
 export interface TokenCustody {

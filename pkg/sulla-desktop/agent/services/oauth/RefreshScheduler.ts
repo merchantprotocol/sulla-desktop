@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { OAuthTokenSet } from '../../integrations/oauth';
+
 export class RefreshScheduler {
   readonly refreshAt = new Map<string, number>();
   readonly retryCounts = new Map<string, number>();
-  readonly inFlight = new Map<string, Promise<any>>();
+  readonly inFlight = new Map<string, Promise<OAuthTokenSet>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   get(key: string): NodeJS.Timeout | undefined { return this.timers.get(key) }
   set(key: string, timer: NodeJS.Timeout): void { this.clearTimer(key); this.timers.set(key, timer) }

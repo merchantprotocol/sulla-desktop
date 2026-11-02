@@ -12,7 +12,11 @@ export class FirstRunMemoryCustody implements RawTokenCustody {
   readonly kind = 'memory' as const;
 
   async store(account: TokenAccount, tokens: OAuthTokenSet): Promise<TokenMetadata> {
-    queuePendingCredential({ integrationId: account.integrationId, accountId: account.accountId, values: { ...tokens } as Record<string, string>, activate: true });
+    const values = Object.fromEntries(Object.entries(tokens)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, typeof value === 'string' ? value : String(value)]));
+    values.provider_id = account.providerId;
+    queuePendingCredential({ integrationId: account.integrationId, accountId: account.accountId, values, activate: true });
     return this.metadata(account, tokens);
   }
 

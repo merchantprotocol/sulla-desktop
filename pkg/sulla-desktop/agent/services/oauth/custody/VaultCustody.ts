@@ -5,6 +5,7 @@
 
 import { getIntegrationService } from '../../IntegrationService';
 import type { OAuthTokenSet } from '../../../integrations/oauth';
+import { requireConfiguredCredentialBroker } from '@pkg/vault-broker';
 import type { TokenAccount, TokenCustody, TokenMetadata } from './TokenCustody';
 
 export class VaultCustody implements TokenCustody {
@@ -19,6 +20,36 @@ export class VaultCustody implements TokenCustody {
     if (!properties.expires_at && !properties.token_type) return null;
     return { integrationId, accountId, providerId: properties.provider_id || properties.provider || '', expiresAt: Number(properties.expires_at) || undefined, scope: properties.scope, tokenType: properties.token_type, clientId: properties.oauth_client_id || properties.client_id, connected: properties.connected !== 'false', refreshable: true };
   }
-  async listRefreshable(): Promise<TokenMetadata[]> { return [] }
+  async listRefreshable(): Promise<TokenMetadata[]> {
+    const { integrations } = await import('../../../integrations/catalog');
+    const broker = requireConfiguredCredentialBroker();
+    const result: TokenMetadata[] = [];
+    for (const [integrationId, integration] of Object.entries(integrations)) {
+      const fallbackProviderId = integration.oauthProviderId;
+      if (!fallbackProviderId) continue;
+      try {
+        const metadata = await broker.integrationMetadata(integrationId);
+        for (const account of metadata.accounts) {
+          if (!account.connected) continue;
+          const properties = account.properties;
+          if (!properties.expires_at && !properties.token_type) continue;
+          result.push({
+            integrationId,
+            accountId: account.accountId,
+            providerId: properties.provider_id || properties.provider || fallbackProviderId,
+            expiresAt: Number(properties.expires_at) || undefined,
+            scope: properties.scope,
+            tokenType: properties.token_type,
+            clientId: properties.oauth_client_id || properties.client_id,
+            connected: account.connected,
+            refreshable: true,
+          });
+        }
+      } catch {
+        // No vault items for this integration.
+      }
+    }
+    return result;
+  }
   async remove(): Promise<void> { /* the vault revoke operation owns removal */ }
 }
