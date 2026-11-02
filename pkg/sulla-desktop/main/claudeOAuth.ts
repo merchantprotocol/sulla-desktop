@@ -28,6 +28,7 @@ import { firstRunTrace, scrubText } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { isClaudeHost, isClaudeOAuthCallbackUrl } from '@pkg/utils/claudeOAuthContract';
 import * as window from '@pkg/window';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
@@ -210,10 +211,6 @@ const LOGGED_IN_PATH = /^\/(new|chats?|recents|projects?)(\/|$)/;
 // Enough to recover from a dropped authorize step, never a reload loop.
 const MAX_AUTHORIZE_RETURNS = 3;
 
-function isClaudeHost(hostname: string): boolean {
-  return hostname === 'claude.ai' || hostname.endsWith('.claude.ai') || hostname === 'claude.com' || hostname.endsWith('.claude.com');
-}
-
 /**
  * Open the OAuth URL in an Electron BrowserWindow and intercept the
  * callback to extract the authorization code and state.
@@ -236,7 +233,7 @@ function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Prom
   const handleUrl = (targetUrl: string): boolean => {
     try {
       const parsed = new URL(targetUrl);
-      if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
+      if (isClaudeOAuthCallbackUrl(targetUrl)) {
         const code = parsed.searchParams.get('code');
         const state = parsed.searchParams.get('state');
         // Claude CLI expects "code#state" format.
