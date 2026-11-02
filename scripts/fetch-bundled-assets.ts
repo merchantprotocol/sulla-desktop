@@ -120,7 +120,7 @@ export async function fetchBundledAssets(arch: string, skip = skippedParts(), ro
     await simpleSpawn('bash', [path.join(root, 'scripts', 'build-whisper-cli.sh'), arch === 'x64' ? 'x86_64' : arch]);
   }
   if (!skip.has('agent-desktop')) {
-    const release = AGENT_DESKTOP_RELEASES[arch === 'x64' ? 'x86_64' : 'arm64'];
+    const release = AGENT_DESKTOP_RELEASES[arch === 'x64' || arch === 'x86_64' ? 'x86_64' : 'arm64'];
     const destination = path.join(darwin, 'agent-desktop');
     const archive = path.join(destination, 'agent-desktop.tar.gz');
     await fs.promises.mkdir(destination, { recursive: true });
