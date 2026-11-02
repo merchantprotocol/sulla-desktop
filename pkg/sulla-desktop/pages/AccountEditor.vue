@@ -584,6 +584,7 @@ import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { claudeOAuthResultError } from '@pkg/utils/claudeOAuthContract';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
@@ -846,12 +847,9 @@ async function handleOAuthConnect() {
   if (integration.value.id === 'claude-code') {
     try {
       const result = await ipcRenderer.invoke('claude-oauth:start');
-      if (result?.error) {
-        oauthError.value = result.error;
-        return;
-      }
-      if (!result?.token) {
-        oauthError.value = 'OAuth flow completed without a token.';
+      const resultError = claudeOAuthResultError(result);
+      if (resultError) {
+        oauthError.value = resultError;
         return;
       }
       emit('saved', 'oauth');
