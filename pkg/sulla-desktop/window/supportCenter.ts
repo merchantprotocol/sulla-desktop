@@ -11,6 +11,7 @@ import yazl from 'yazl';
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
+import { remoteSupportService } from '@pkg/main/supportRemote';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { getCurrentAccessToken, isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
 import { updateManager } from '@pkg/main/update/UpdateManager';
@@ -112,6 +113,10 @@ async function uploadLogAttachment(): Promise<any> {
 
 function registerHandlers() {
   if (registered) { return } registered = true;
+  ipcMain.on('support:open-remote', (event) => {
+    const main = getWindow('main-agent') ?? getWindow('main');
+    if (event.sender === main?.webContents) openSupportCenter('remote');
+  });
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
   ipcMain.handle('support:cloud-status', async(event) => { authorize(event); return { signedIn: await isCloudSignedIn() } });
   ipcMain.handle('support:update-status', (event) => { authorize(event); return updateManager.getState() });
@@ -162,16 +167,13 @@ function registerHandlers() {
     authorize(event); const ticketId = cleanText(input?.ticketId, 80); const body = cleanText(input?.body, 10_000); const uploaded = await uploadAttachments(input?.attachments); if (store().read().privacy.autoAttachLogs) uploaded.push(await uploadLogAttachment()); await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }/reply`, { method: 'POST', body: JSON.stringify({ message: body, attachments: uploaded }) });
     return remoteTicket((await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }`)).ticket);
   });
-  ipcMain.handle('support:remote', (event, action: unknown) => {
-    authorize(event); if (!['request', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }
-    return store().update((state) => {
-      const now = new Date().toISOString();
-      if (action === 'request' && ['idle', 'ended'].includes(state.remote.status)) { state.remote = { status: 'waiting', requestedAt: now } }
-      else if (action === 'approve' && state.remote.status === 'approval') { state.remote.status = 'connected'; state.remote.approvedAt = now }
-      else if (action === 'end' && state.remote.status !== 'idle') { state.remote.status = 'ended'; state.remote.endedAt = now }
-      else if (action === 'reset') { state.remote = { status: 'idle' } }
-      else { throw new Error('That support transition is not available.') }
-    });
+  ipcMain.handle('support:remote', async(event, action: unknown, input?: unknown) => {
+    authorize(event);
+    if (action === 'request') return remoteSupportService.request(typeof input === 'string' ? input : '');
+    if (action === 'approve') return remoteSupportService.approve();
+    if (action === 'end') return remoteSupportService.end();
+    if (action === 'reset') return store().update(state => { state.remote = { status: 'idle', activity: state.remote.activity } });
+    throw new Error('Invalid support action.');
   });
 }
 

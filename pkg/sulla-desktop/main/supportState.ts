@@ -7,6 +7,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export type RemoteSupportStatus = 'idle' | 'waiting' | 'approval' | 'connected' | 'ended';
+export interface RemoteSupportActivity {
+  id: string;
+  tool: string;
+  summary: string;
+  inputSummary: Record<string, unknown>;
+  status: 'started' | 'succeeded' | 'tool_error' | 'rejected' | 'offline' | 'timeout';
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+}
+export interface RemoteSupportGrant {
+  sessionId: string;
+  token: string;
+  deviceId: string;
+  expiresAt: string;
+}
 export interface SupportAttachment { name: string; path: string; size: number }
 export interface SupportMessage { id: string; createdAt: string; body: string; attachments: SupportAttachment[] }
 export interface SupportTicket extends SupportMessage { subject: string; replies: SupportMessage[] }
@@ -15,7 +31,21 @@ export interface SupportState {
   logging: { sources: Record<string, boolean>; autoEnabledUntil?: string; lastErrorAt?: string };
   feedback: SupportMessage[];
   tickets: SupportTicket[];
-  remote: { status: RemoteSupportStatus; requestedAt?: string; offeredAt?: string; offeredBy?: string; approvedAt?: string; endedAt?: string };
+  remote: {
+    status: RemoteSupportStatus;
+    sessionId?: string;
+    message?: string;
+    requestedAt?: string;
+    offeredAt?: string;
+    offeredBy?: string;
+    approvedAt?: string;
+    expiresAt?: string;
+    endedAt?: string;
+    endReason?: string;
+    pendingCloudEnd?: { sessionId: string; reason: string };
+    grant?: RemoteSupportGrant;
+    activity: RemoteSupportActivity[];
+  };
   privacy: { errorReports: boolean; metricsConsent: boolean; autoAttachLogs: boolean };
 }
 
@@ -23,7 +53,7 @@ const DEFAULT_SOURCES = { desktop: true, runtime: true, containers: true, ai: tr
 export const SUPPORT_STATE_FILE = 'support-state.json';
 
 function initialState(): SupportState {
-  return { version: 1, logging: { sources: { ...DEFAULT_SOURCES } }, feedback: [], tickets: [], remote: { status: 'idle' }, privacy: { errorReports: true, metricsConsent: false, autoAttachLogs: false } };
+  return { version: 1, logging: { sources: { ...DEFAULT_SOURCES } }, feedback: [], tickets: [], remote: { status: 'idle', activity: [] }, privacy: { errorReports: true, metricsConsent: false, autoAttachLogs: false } };
 }
 
 export class SupportStateStore {
@@ -36,7 +66,7 @@ export class SupportStateStore {
       return {
         ...initialState(), ...parsed,
         logging: { ...initialState().logging, ...parsed.logging, sources: { ...DEFAULT_SOURCES, ...parsed.logging?.sources } },
-        remote: { ...initialState().remote, ...parsed.remote },
+        remote: { ...initialState().remote, ...parsed.remote, activity: Array.isArray(parsed.remote?.activity) ? parsed.remote.activity.slice(0, 500) : [] },
         privacy: { ...initialState().privacy, ...parsed.privacy },
         feedback: Array.isArray(parsed.feedback) ? parsed.feedback : [],
         tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
@@ -69,6 +99,15 @@ export class SupportStateStore {
       state.remote.status = 'approval';
       state.remote.offeredAt = now.toISOString();
       state.remote.offeredBy = offeredBy.slice(0, 120);
+    });
+  }
+
+  clearGrant(reason: string, now = new Date()): SupportState {
+    return this.update((state) => {
+      state.remote.status = 'ended';
+      state.remote.endedAt = now.toISOString();
+      state.remote.endReason = reason.slice(0, 160);
+      delete state.remote.grant;
     });
   }
 }

@@ -486,10 +486,11 @@ class UpdateManager extends EventEmitter {
     return this.getState();
   }
 
-  status(): { currentVersion: string; channel: UpdateChannel; available?: string; downloading?: number; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
+  status(): { currentVersion: string; channel: UpdateChannel; pinnedVersion?: string; available?: string; downloading?: number; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
     return {
       currentVersion: this.state.currentVersion,
       channel: this.state.channel,
+      pinnedVersion: this.state.pinnedVersion,
       available: this.state.updateAvailable ? this.state.availableVersion : undefined,
       downloading: this.state.phase === 'downloading' ? this.state.progress?.percent ?? 0 : undefined,
       lastUpdateResult: this.state.lastUpdateResult,
