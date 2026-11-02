@@ -862,7 +862,11 @@ export function initSullaEvents(): void {
   // System sleep / wake
   // ─────────────────────────────────────────────────────────────
 
-  const { powerMonitor, BrowserWindow } = require('electron') as typeof import('electron');
+  const { powerMonitor, BrowserWindow, app } = require('electron') as typeof import('electron');
+  app.once('will-quit', () => {
+    const { releaseAllChatActivity } = require('@pkg/main/SleepPreventionService');
+    releaseAllChatActivity();
+  });
 
   powerMonitor.on('suspend', () => {
     console.log('[Power] System suspending');
@@ -874,6 +878,12 @@ export function initSullaEvents(): void {
       getHeartbeatService().handleSuspend();
     } catch (err) {
       console.warn('[Power] Failed to suspend heartbeat scheduler:', err);
+    }
+    try {
+      const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
+      getBackendGraphWebSocketService().handleSuspend();
+    } catch (err) {
+      console.warn('[Power] Failed to suspend chat runs:', err);
     }
 
     // Close the mobile-relay socket cleanly so the relay DO drops this peer
@@ -918,7 +928,9 @@ export function initSullaEvents(): void {
     // message handlers after wake.
     try {
       const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
-      getBackendGraphWebSocketService().reinitialize();
+      // handleResume() snapshots interrupted chat runs, reinitializes
+      // (re-subscribe), then continues those threads.
+      getBackendGraphWebSocketService().handleResume();
     } catch (err) {
       console.warn('[Power] Failed to reinitialize backend graph service:', err);
     }

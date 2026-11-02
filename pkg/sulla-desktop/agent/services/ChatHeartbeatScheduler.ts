@@ -38,6 +38,7 @@ export interface ChatHeartbeatSchedulerDeps {
   clearTimer?: typeof clearTimeout;
   isGraphBusy: (threadId: string) => boolean;
   deliver:     (channel: string, threadId: string, message: string, intervalMinutes: number) => Promise<boolean>;
+  setActive?:   (threadId: string, active: boolean) => void;
 }
 
 export class ChatHeartbeatScheduler {
@@ -66,6 +67,7 @@ export class ChatHeartbeatScheduler {
       delivering: false,
     };
     this.runtimes.set(input.threadId, runtime);
+    this.deps.setActive?.(input.threadId, runtime.config.intervalMinutes !== null);
     if (runtime.busy) this.pause(runtime);
     else this.schedule(runtime, runtime.pending ? BUSY_RETRY_MS : undefined);
     return this.emitStatus(runtime);
@@ -75,6 +77,7 @@ export class ChatHeartbeatScheduler {
     const runtime = this.runtimes.get(threadId);
     if (runtime?.timer) this.clearTimer(runtime.timer);
     this.runtimes.delete(threadId);
+    this.deps.setActive?.(threadId, false);
   }
 
   has(threadId: string): boolean {
@@ -85,6 +88,7 @@ export class ChatHeartbeatScheduler {
     const runtime = this.runtimes.get(threadId);
     if (!runtime) return null;
     runtime.config = normalizeChatHeartbeatConfig(config);
+    this.deps.setActive?.(threadId, runtime.config.intervalMinutes !== null);
     runtime.pending = false;
     runtime.onConfig?.(runtime.config);
     if (runtime.busy) this.pause(runtime);

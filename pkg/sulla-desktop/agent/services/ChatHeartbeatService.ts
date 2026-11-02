@@ -6,11 +6,17 @@
 import { ChatHeartbeatScheduler } from './ChatHeartbeatScheduler';
 import { GraphRegistry } from './GraphRegistry';
 import { getWebSocketClientService } from './WebSocketClientService';
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 
 let instance: ChatHeartbeatScheduler | null = null;
 
 export function getChatHeartbeatService(): ChatHeartbeatScheduler {
   instance ??= new ChatHeartbeatScheduler({
+    setActive: (threadId, active) => {
+      const key = `chat-heartbeat:${ threadId }`;
+      if (active) acquireChatActivity(key);
+      else releaseChatActivity(key);
+    },
     isGraphBusy: (threadId) => {
       const record = GraphRegistry.get(threadId);
       return !!record && record.state?.metadata?.cycleComplete !== true;

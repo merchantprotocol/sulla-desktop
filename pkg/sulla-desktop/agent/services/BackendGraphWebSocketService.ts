@@ -14,6 +14,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { RunActivity } from './RunActivity';
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
@@ -32,6 +33,7 @@ import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
 
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
+const RESUME_CONTINUE_DELAY_MS = 1_000;
 const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Dedicated channel for chats routed from a paired mobile device via the
 // Cloudflare relay. Mobile messages arrive through `DesktopRelayClient`,
@@ -62,6 +64,11 @@ export class BackendGraphWebSocketService {
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
+  private suspendedRuns = new Set<string>();
+  private resumeContexts = new Map<string, {
+    channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
+    overrideAgentId?: string; inputSource?: string;
+  }>();
   private subscribedChannels = new Set<string>();
   private conversationContainers = new Map<string, {
     provider: string;
@@ -140,7 +147,10 @@ export class BackendGraphWebSocketService {
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
+    for (const key of this.activeAborts.keys()) releaseChatActivity(`graph:${ key }`);
     this.activeAborts.clear();
+    this.suspendedRuns.clear();
+    this.resumeContexts.clear();
     for (const [, record] of this.conversationContainers) {
       clearTimeout(record.idleTimer);
       record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
@@ -148,6 +158,39 @@ export class BackendGraphWebSocketService {
     }
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
+  }
+
+  /** Stamp only runs actually in flight when macOS suspends. */
+  handleSuspend(): void {
+    this.suspendedRuns = new Set(this.activeAborts.keys());
+    console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
+  }
+
+  /**
+   * Wake recovery. Snapshot the threads whose runs crossed sleep BEFORE
+   * reinitialize(): dispose() aborts every in-flight run (their LLM sockets
+   * died while the Mac slept) and clears the resume bookkeeping, so reading
+   * it afterwards would find nothing and the tabs would stay stopped.
+   * Then re-subscribe and send each interrupted thread a continue.
+   */
+  handleResume(): void {
+    const interrupted = [...this.suspendedRuns]
+      .map(key => this.resumeContexts.get(key))
+      .filter((context): context is NonNullable<typeof context> => !!context);
+    this.suspendedRuns.clear();
+    this.reinitialize();
+    if (interrupted.length) console.log(`[BackendGraphWS] Continuing ${ interrupted.length } chat thread(s) interrupted by system sleep`);
+    for (const context of interrupted) {
+      // Give the aborted runs a moment to unwind their finally blocks first.
+      setTimeout(() => {
+        void this.dispatchToAgent(
+          context.channelId, context.triggerType,
+          'Continue from where you stopped after the computer resumed. Preserve and process any queued messages.',
+          context.threadId, context.scopedWorkflowId, context.overrideAgentId, context.inputSource,
+          { source: 'system_resume', inputSource: 'system' },
+        ).catch(err => console.error('[BackendGraphWS] Failed to continue chat after resume:', err));
+      }, RESUME_CONTINUE_DELAY_MS);
+    }
   }
 
   private async conversationContainer(
@@ -603,6 +646,10 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      this.resumeContexts.set(abortKey, {
+        channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
+      });
+      acquireChatActivity(`graph:${ abortKey }`);
       for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
         await markCompletionDelivered(String(jobId));
       }
@@ -723,6 +770,8 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         this.activeAborts.delete(abortKey);
+        this.resumeContexts.delete(abortKey);
+        releaseChatActivity(`graph:${ abortKey }`);
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this
