@@ -24,6 +24,7 @@ import { EventEmitter } from 'events';
 import { app, ipcMain } from 'electron';
 
 import type { UpdateState as RawUpdateState } from './index';
+import { reconcileCompletedUpdate, setUpdateChannel, type UpdateChannel, type UpdateChannelSetter, type UpdateChannelState } from './channelState';
 
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
@@ -40,7 +41,7 @@ export type UpdatePhase =
   | 'downloaded'
   | 'error';
 
-export type UpdateTrigger = 'manual' | 'auto' | 'startup';
+export type UpdateTrigger = 'manual' | 'auto' | 'startup' | 'support';
 
 export interface RichUpdateState {
   phase:              UpdatePhase;
@@ -67,6 +68,9 @@ export interface RichUpdateState {
   isPackaged:     boolean;
   /** Whether the latest server version is newer than our current one. */
   updateAvailable: boolean;
+  channel: UpdateChannel;
+  pinnedVersion?: string;
+  lastUpdateResult?: UpdateChannelState['lastUpdateResult'];
 }
 
 function formatUpdateError(error: unknown): string {
@@ -110,6 +114,7 @@ class UpdateManager extends EventEmitter {
     updaterEnabled:  false,
     isPackaged:      app.isPackaged,
     updateAvailable: false,
+    channel:         'lts',
   };
 
   /** The currently-requested trigger, carried through until the next terminal phase. */
@@ -118,6 +123,10 @@ class UpdateManager extends EventEmitter {
 
   constructor() {
     super();
+    const channelState = reconcileCompletedUpdate();
+    this.state.channel = channelState.channel;
+    this.state.pinnedVersion = channelState.pinnedVersion;
+    this.state.lastUpdateResult = channelState.lastUpdateResult;
 
     // Subscribe to low-level events immediately — the background.ts startup
     // path calls setupUpdate() directly, so we must be listening before any
@@ -443,6 +452,51 @@ class UpdateManager extends EventEmitter {
     }
   }
 
+  /** Durable API used by Settings and the allowlisted remote-support handlers. */
+  async setChannel(channel: UpdateChannel, options: { pinnedVersion?: string; setBy: UpdateChannelSetter }): Promise<RichUpdateState> {
+    const channelState = setUpdateChannel(channel, options);
+    const { reconfigureUpdater } = await import('./index');
+    reconfigureUpdater();
+    this.setState({
+      channel: channelState.channel,
+      pinnedVersion: channelState.pinnedVersion,
+      lastUpdateResult: channelState.lastUpdateResult,
+      phase: 'idle', availableVersion: undefined, updateAvailable: false, progress: undefined, error: undefined,
+    });
+    return this.getState();
+  }
+
+  async checkAndInstall(): Promise<RichUpdateState> {
+    await this.checkForUpdates('support');
+    if (this.state.phase === 'downloaded') {
+      await this.installUpdate();
+      return this.getState();
+    }
+    if (!['available', 'downloading', 'checking'].includes(this.state.phase)) return this.getState();
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Timed out waiting for the update download.')) }, 30 * 60_000);
+      const onState = (next: RichUpdateState) => {
+        if (next.phase === 'downloaded') { cleanup(); resolve() }
+        else if (next.phase === 'error' || next.phase === 'not-available') { cleanup(); reject(new Error(next.error || 'No update is available.')) }
+      };
+      const cleanup = () => { clearTimeout(timeout); this.off('state', onState) };
+      this.on('state', onState);
+    });
+    await this.installUpdate();
+    return this.getState();
+  }
+
+  status(): { currentVersion: string; channel: UpdateChannel; pinnedVersion?: string; available?: string; downloading?: number; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
+    return {
+      currentVersion: this.state.currentVersion,
+      channel: this.state.channel,
+      pinnedVersion: this.state.pinnedVersion,
+      available: this.state.updateAvailable ? this.state.availableVersion : undefined,
+      downloading: this.state.phase === 'downloading' ? this.state.progress?.percent ?? 0 : undefined,
+      lastUpdateResult: this.state.lastUpdateResult,
+    };
+  }
+
   /**
    * Update the cached updater-enabled flag when the user toggles the setting.
    */
@@ -455,4 +509,9 @@ class UpdateManager extends EventEmitter {
 }
 
 export const updateManager = new UpdateManager();
+export const supportUpdateApi = {
+  setChannel: (channel: UpdateChannel, options: { pinnedVersion?: string; setBy: UpdateChannelSetter }) => updateManager.setChannel(channel, options),
+  checkAndInstall: () => updateManager.checkAndInstall(),
+  status: () => updateManager.status(),
+};
 export default updateManager;

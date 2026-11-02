@@ -61,6 +61,14 @@
         {{ retrying ? 'Trying…' : 'Try again' }}
       </button>
       <button
+        v-if="backendFailed || openFailed"
+        type="button"
+        class="px-4 py-2 rounded-md font-medium frw-btn-accent mr-2"
+        @click="ipcRenderer.send('support:open', 'home')"
+      >
+        Get help
+      </button>
+      <button
         type="button"
         class="px-4 py-2 rounded-md font-medium"
         :disabled="opening"

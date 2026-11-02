@@ -8,7 +8,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
@@ -44,6 +44,8 @@ export interface BrowserTab {
    */
   lastAccessedAt?: number;
   /** Durable launch metadata for a visible agent-owned chat thread. */
+  /** Super-admin remote support tab. The session id is opaque and all details are refreshed from Cloud. */
+  supportSession?: { sessionId: string };
   agentChat?: {
     threadId:        string;
     agentId:         string;

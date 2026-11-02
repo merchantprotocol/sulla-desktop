@@ -66,6 +66,7 @@ export interface SullaFileReference {
 export interface IpcMainEvents {
   /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
   'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
+  'support:open': (section?: string) => void;
   'backend-state-check':   () => string;
   'k8s-restart':           () => void;
   'settings-read':         () => void;
@@ -274,7 +275,13 @@ export interface IpcMainInvokeEvents {
 
   // #region main/update (centralized UpdateManager)
   'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
-  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup' | 'support') => void;
+  'support:update-status':  () => import('@pkg/main/update/UpdateManager').RichUpdateState;
+  'support:update-install': () => void;
+  'support-session:get':    (id: string) => { session: any };
+  'support-session:events': (id: string) => any;
+  'support-session:end':    (id: string, reason?: string) => any;
+  'support-session:extend': (id: string, hours: number) => any;
   'updater:install':   () => void;
   // #endregion
 

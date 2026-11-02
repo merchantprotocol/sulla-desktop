@@ -93,6 +93,8 @@ const PURPOSE_TAGS = {
   'vault-sync-v3': 'sulla-vault-sync-v3',
   'files-sync-v1': 'sulla-files-sync-v1',
   'device-tools-rpc-v1': 'sulla-device-tools-rpc-v1',
+  'device-tools-host-v1': 'sulla-device-tools-host-v1',
+  'support-desktop-v1': 'sulla-support-desktop-v1',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;

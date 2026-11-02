@@ -45,6 +45,7 @@ import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 import { initRecipeRailApps } from './marketplace/recipeRailApps';
 import { initExtensionUiIpc } from './extensionUiIpc';
 import { initIntegrationGrantIpc } from './integrationGrantIpc';
+import { initSupportSessionIpc } from './supportSessionIpc';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -85,6 +86,7 @@ export function initSullaEvents(): void {
   initMessageBusIpc();
   initExtensionUiIpc();
   initIntegrationGrantIpc();
+  initSupportSessionIpc();
   initAgentTabContractIpc();
   initTabsIpc();
   initAgentsIpc();

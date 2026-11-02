@@ -39,6 +39,7 @@ import { settingsToolManifests } from './settings/manifests';
 import { skillsToolManifests } from './skills/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
+import { supportToolManifests } from './support/manifests';
 import { workflowToolManifests } from './workflow/manifests';
 
 import type { ToolManifest } from './registry';
@@ -77,5 +78,6 @@ export const allToolManifests: ToolManifest[] = [
   ...skillsToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,
+  ...supportToolManifests,
   ...workflowToolManifests,
 ];

@@ -87,6 +87,11 @@ onBeforeUnmount(() => {
     </div>
 
     <PrefCard title="Troubleshooting">
+      <PrefRow title="Sulla Support" subtitle="Tickets, redacted logs, feedback and remote help — no AI or vault required.">
+        <button type="button" class="btn sm" @click="ipcRenderer.send('support:open', 'home')">
+          Open Support Center
+        </button>
+      </PrefRow>
       <PrefRow
         title="Debug logging"
         :subtitle="alwaysDebugging ? 'On because SULLA_DEBUG_ENABLED is set.' : 'Writes much more detail to the logs.'"
