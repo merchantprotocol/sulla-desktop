@@ -110,6 +110,7 @@ export function useOAuthConnection(providerId: string | (() => string), provider
     get canRetry() { return this.status === 'failed' || this.status === 'cancelled'; },
   });
   let attempt = 0;
+  let resolveClaudeResult: ((result: OAuthResult) => void) | null = null;
 
   const onClaudeStage = (_event: unknown, text: unknown) => {
     if (resolveProviderId() === 'claude-code' && typeof text === 'string' && text && ['starting', 'waiting-for-browser'].includes(state.status)) {
@@ -117,8 +118,13 @@ export function useOAuthConnection(providerId: string | (() => string), provider
       state.stageText = text;
     }
   };
+  const onClaudeResult = (_event: unknown, result: OAuthResult) => resolveClaudeResult?.(result);
   ipcRenderer.on('claude-oauth:stage' as any, onClaudeStage);
-  onScopeDispose(() => ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage));
+  ipcRenderer.on('claude-oauth:result' as any, onClaudeResult);
+  onScopeDispose(() => {
+    ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage);
+    ipcRenderer.removeListener('claude-oauth:result' as any, onClaudeResult);
+  });
 
   async function start(options: OAuthStartOptions = {}): Promise<boolean> {
     const currentAttempt = ++attempt;
@@ -129,8 +135,12 @@ export function useOAuthConnection(providerId: string | (() => string), provider
     state.failureCode = null;
     try {
       state.status = 'waiting-for-browser';
+      const claudeResult = id === 'claude-code' ? new Promise<OAuthResult>((resolve) => { resolveClaudeResult = resolve }) : null;
       const invocation: Promise<OAuthResult> = id === 'claude-code'
-        ? ipcRenderer.invoke('claude-oauth:start', options.firstRun ? { firstRun: true } as any : undefined)
+        ? Promise.race([
+          ipcRenderer.invoke('claude-oauth:start', options.firstRun ? { firstRun: true } as any : undefined),
+          claudeResult!,
+        ])
         : ipcRenderer.invoke('integration-oauth:start', {
           integrationId: options.integrationId ?? id,
           providerId:    options.oauthProviderId ?? id,
@@ -172,6 +182,7 @@ export function useOAuthConnection(providerId: string | (() => string), provider
       } else {
         result = await invocation;
       }
+      if (id === 'claude-code') resolveClaudeResult = null;
       if (currentAttempt !== attempt) return false;
       if (result?.success === true) {
         state.status = 'saving';
@@ -184,6 +195,7 @@ export function useOAuthConnection(providerId: string | (() => string), provider
       state.status = code === 'cancelled' ? 'cancelled' : 'failed';
       return false;
     } catch (error) {
+      if (resolveProviderId() === 'claude-code') resolveClaudeResult = null;
       if (currentAttempt !== attempt) return false;
       const code = oauthFailureCode(error);
       state.failureCode = code;
