@@ -947,15 +947,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue';
+import { onBeforeUnmount, onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
 
 import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
+import { getIntegrationService, type IntegrationAccount } from '@pkg/agent/services/IntegrationService';
+import type { ClaudeReconnectRequiredEvent } from '@pkg/agent/languagemodels/credentials/ClaudeAuthFailureCoordinator';
+import { useOAuthConnection } from '@pkg/composables/useOAuthConnection';
 import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { formatFuzzyTime } from '@pkg/utils/dateFormat';
@@ -976,6 +977,10 @@ const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroup
 const route = useRoute();
 const router = useRouter();
 const integrationService = getIntegrationService();
+const oauthConnection = useOAuthConnection(
+  () => integration.value?.id || '',
+  () => integration.value?.name || 'The provider',
+);
 
 /** Safely resolve an integration icon/media path — returns null if the asset doesn't exist */
 function safeIconSrc(path: string): string | null {
@@ -1373,57 +1378,19 @@ const handleOAuthConnect = async() => {
   // OAuth connections use a fixed account id — no label needed
   const targetAccountId = 'oauth';
 
-  // Claude Code uses a PTY-driven CLI flow (`claude setup-token`) that can't
-  // reuse the standard HTTP OAuth pipeline. Route to its dedicated IPC handler.
+  // Claude uses the dedicated setup-token IPC behind the shared presenter.
   if (integration.value.id === 'claude-code') {
     isLoading.value = true;
     try {
-      const result = await ipcRenderer.invoke('claude-oauth:start');
-      if (result?.error) {
-        oauthError.value = result.error;
+      const connected = await oauthConnection.start();
+      if (!connected) {
+        oauthError.value = oauthConnection.state.errorMessage;
         return;
       }
-      if (!result?.token) {
-        oauthError.value = 'OAuth flow completed without a token.';
-        return;
-      }
-      // claudeOAuth.ts persisted the token + connection status to the vault
-      // already. Just refresh the UI.
       await refreshAccounts();
       integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
       mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
       oauthSuccess.value = 'Successfully signed in — Claude Code is ready to use.';
-    } catch (error: any) {
-      console.error('Claude OAuth connection failed:', error);
-      oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
-    } finally {
-      isLoading.value = false;
-    }
-    return;
-  }
-
-  // OpenAI uses an embedded BrowserWindow OAuth flow. Route to its dedicated IPC handler.
-  if (integration.value.id === 'openai') {
-    isLoading.value = true;
-    try {
-      const result = await ipcRenderer.invoke('openai-oauth:start');
-      if (result?.error) {
-        oauthError.value = result.error;
-        return;
-      }
-      if (!result?.success) {
-        oauthError.value = 'OAuth authorization failed. Please try again.';
-        return;
-      }
-      // openaiOAuth.ts persisted the token + connection status to the vault
-      // already. Just refresh the UI.
-      await refreshAccounts();
-      integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
-      mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
-      oauthSuccess.value = 'Successfully signed in with OpenAI — ready to use.';
-    } catch (error: any) {
-      console.error('OpenAI OAuth connection failed:', error);
-      oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
     } finally {
       isLoading.value = false;
     }
@@ -1483,16 +1450,17 @@ const handleOAuthConnect = async() => {
     // embedded) auth window and waits for the callback. Must run in main:
     // embedded-window providers (Codex, Grok) construct a BrowserWindow, which
     // is undefined in the renderer ("BrowserWindow is not a constructor").
-    const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {
+    const connected = await oauthConnection.start({
       integrationId: integration.value.id,
-      providerId:    integration.value.oauthProviderId!,
+      oauthProviderId: integration.value.oauthProviderId!,
       clientId,
       clientSecret,
-      accountId:     targetAccountId,
-      extraScopes:   integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
+      accountId: targetAccountId,
+      extraScopes: integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
     });
-    if (!oauthResult?.success) {
-      throw new Error(oauthResult?.error || 'OAuth authorization failed. Please try again.');
+    if (!connected) {
+      oauthError.value = oauthConnection.state.errorMessage;
+      return;
     }
 
     // Set the OAuth account as active
@@ -1556,7 +1524,16 @@ const handleConnect = async() => {
   }
 };
 
+function onReconnectRequired(_event: unknown, payload: ClaudeReconnectRequiredEvent) {
+  if (payload?.providerId !== 'claude-code' || integration.value?.id !== 'claude-code') return;
+  integration.value.connected = false;
+  if (mergedIntegrations.value['claude-code']) mergedIntegrations.value['claude-code'].connected = false;
+  oauthSuccess.value = '';
+  oauthError.value = payload.message;
+}
+
 onMounted(async() => {
+  ipcRenderer.on('provider-auth:reconnect-required' as any, onReconnectRequired);
   // Initialize integration service
   await integrationService.initialize();
 
@@ -1622,6 +1599,7 @@ onMounted(async() => {
     loadClaudeUsage().catch(() => { /* ignore */ });
   }
 });
+onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, onReconnectRequired));
 </script>
 
 <style scoped>

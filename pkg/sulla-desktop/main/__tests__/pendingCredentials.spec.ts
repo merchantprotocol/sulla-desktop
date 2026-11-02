@@ -6,6 +6,7 @@
 import { describe, expect, jest, test } from '@jest/globals';
 
 const importIntegrationAccount: any = jest.fn();
+const stored = new Map<string, any>();
 
 jest.unstable_mockModule('electron', () => ({
   default: { app: { isPackaged: true }, BrowserWindow: { getAllWindows: () => [] } },
@@ -16,6 +17,14 @@ jest.unstable_mockModule('../../vault-broker', () => ({
 }));
 jest.unstable_mockModule('../../agent/services/IntegrationService', () => ({ getIntegrationService: jest.fn() }));
 jest.unstable_mockModule('../../agent/services/ServiceLifecycleManager', () => ({ getServiceLifecycleManager: jest.fn() }));
+jest.unstable_mockModule('../firstRun/firstRunCredentialStore', () => ({
+  storeFirstRunCredential: jest.fn(async(entry: any) => stored.set(`${ entry.integrationId }\0${ entry.accountId }`, entry)),
+  loadFirstRunCredentials: jest.fn(async() => [...stored.values()]),
+  deleteFirstRunCredential: jest.fn(async(integrationId: string, accountId: string) => stored.delete(`${ integrationId }\0${ accountId }`)),
+  deleteFirstRunCredentialsForIntegration: jest.fn(async(integrationId: string) => {
+    for (const [key, entry] of stored) if (entry.integrationId === integrationId) stored.delete(key);
+  }),
+}));
 jest.unstable_mockModule('../firstRun/firstRunTrace', () => ({ firstRunTrace: jest.fn() }));
 jest.unstable_mockModule('../firstRun/firstRunState', () => ({ getFirstRunState: jest.fn(), updateFirstRunState: jest.fn() }));
 jest.unstable_mockModule('../../agent/services/brokeredModelList', () => ({ clearBrokeredModelListCache: jest.fn() }));
@@ -29,7 +38,7 @@ describe('pending credential Desktop-account handoff', () => {
       integrationId: 'synthetic-ai', activeAccountId: 'desktop-account',
       accounts: [{ accountId: 'desktop-account', active: true, connected: true }],
     });
-    queuePendingCredential({
+    await queuePendingCredential({
       integrationId: 'synthetic-ai', accountId: 'desktop-account', activate: true,
       values: { account_label: 'Synthetic desktop', api_key: 'synthetic-key' },
     });

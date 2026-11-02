@@ -347,7 +347,7 @@ export function initIntegrationOAuthEvents(): void {
       const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: payload.integrationId }) });
       if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
-      queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
+      await queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
       return { success: true };
     }
     try {
@@ -380,22 +380,13 @@ export function initIntegrationOAuthEvents(): void {
           if (!model) throw new Error('Grok signed in, but the account could not access any models');
           values.model = model;
         }
-        queuePendingCredential({
+        await queuePendingCredential({
           integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
         });
         firstRunTrace('oauth', 'credentials queued', { integrationId: payload.integrationId, custody: 'pending' });
         const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
         await getModelProviderService().reconcilePrimaryProvider(false, payload.integrationId);
         firstRunTrace('oauth', 'provider reconcile called', { integrationId: payload.integrationId });
-        if (payload.integrationId === 'codex') {
-          const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('@pkg/agent/util/codexAuthFile');
-          if (!writeCodexAuthFile(tokens)) throw new Error('ChatGPT sign-in did not return usable credentials');
-          // The VM may still be starting during first run. The sign-in is kept;
-          // ensureCodexAuthFile() links it into the VM before the first Codex turn.
-          const linked = await linkCodexHomeIntoVm().catch(() => false);
-          firstRunTrace('codex', 'auth file prepared', { written: true, linked });
-          if (!linked) console.log(`${ LOG_PREFIX } Codex sign-in saved; it will be linked into the VM once it is ready`);
-        }
       }
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
@@ -407,13 +398,16 @@ export function initIntegrationOAuthEvents(): void {
       console.error(`${ LOG_PREFIX } OAuth failed for ${ payload?.integrationId }:`, errMsg);
 
       const lower = errMsg.toLowerCase();
-      const reason: OAuthFailureReason = lower.includes('already in use') || lower.includes('eaddrinuse') ? 'busy-port'
+      const typedCode = err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code || '') : '';
+      const reason: OAuthFailureReason = typedCode === 'port_in_use' || lower.includes('already in use') || lower.includes('eaddrinuse') ? 'busy-port'
         : lower.includes('window closed') || lower.includes('cancel') ? 'user-closed'
           : lower.includes('could not access any models') ? 'no-access'
         : lower.includes('timed out') || lower.includes('timeout') ? 'timeout'
           : lower.includes('offline') || lower.includes('network') || lower.includes('fetch') ? 'offline'
             : lower.includes('vm') && lower.includes('ready') ? 'vm-not-ready' : 'provider-error';
-      const error = reason === 'busy-port' ? `Another app is using ${ payload.integrationId === 'codex' ? "ChatGPT's" : "Grok's" } sign-in port. Quit it and try again.`
+      const error = reason === 'busy-port' ? (typedCode === 'port_in_use'
+        ? errMsg.replace(/^OAuth callback port /, 'Sign-in port ')
+        : `Another app is using ${ payload.integrationId === 'codex' ? "ChatGPT's" : "Grok's" } sign-in port. Quit it and try again.`)
         : reason === 'no-access' ? `Your ${ payload.integrationId === 'grok' ? 'Grok' : 'AI' } plan cannot use the API.`
           : reason === 'user-closed' ? 'Sign-in was closed.'
         : reason === 'timeout' ? 'Sign-in took too long. Try again.'
@@ -480,7 +474,7 @@ export function initIntegrationOAuthEvents(): void {
 
     try {
       if (usesContainerVaultAuthority()) {
-        queuePendingCredential({ integrationId, accountId, values, activate: true });
+        await queuePendingCredential({ integrationId, accountId, values, activate: true });
         const flushed = await flushPendingCredentials();
         if (!flushed.flushed.includes(integrationId)) {
           const failure = flushed.failures[integrationId] ?? classifyIntegrationSaveFailure(new Error('The account could not be saved.'));
@@ -551,7 +545,7 @@ export function initIntegrationOAuthEvents(): void {
       }
     }
 
-    queuePendingCredential({
+    await queuePendingCredential({
       integrationId: providerId,
       accountId: 'default',
       values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },

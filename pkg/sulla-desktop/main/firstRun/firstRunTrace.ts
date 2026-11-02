@@ -13,9 +13,16 @@
  * keys are dropped and token-shaped strings are masked before writing.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+
+import Electron from 'electron';
+
 import Logging from '@pkg/utils/logging';
 
 const log = Logging['first-run'];
+const TRACE_NAME = 'first-run-trace.log';
+const MAX_TRACE_BYTES = 1024 * 1024;
 
 const SECRET_KEY = /token|secret|password|passphrase|masterkey|master_key|authhash|cookie|credential|api_?key|oauth_code|^code$/i;
 const SECRET_VALUE = [
@@ -32,6 +39,39 @@ export function scrubText(text: string): string {
     const eq = match.indexOf('=');
     return eq > 0 && eq < 20 ? `${ match.slice(0, eq + 1) }[redacted]` : '[redacted]';
   }), text);
+}
+
+export function firstRunTracePath(): string {
+  return path.join(Electron.app.getPath('userData'), TRACE_NAME);
+}
+
+function oneLine(value: unknown, fallback = '-'): string {
+  if (value === undefined || value === null || value === '') return fallback;
+  return scrubText(String(value)).replace(/[\r\n\t]+/g, ' ').slice(0, 240);
+}
+
+function appendTraceLine(area: string, event: string, details: Record<string, unknown> = {}): void {
+  const tracePath = firstRunTracePath();
+  try {
+    const size = fs.statSync(tracePath).size;
+    if (size >= MAX_TRACE_BYTES) fs.renameSync(tracePath, `${ tracePath }.1`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const provider = details.providerId ?? details.integrationId ?? details.provider ?? area;
+  const accountId = details.accountId ?? details.userId;
+  const status = details.status ?? details.reason ?? details.code ??
+    (typeof details.success === 'boolean' ? (details.success ? 'success' : 'failure') : 'info');
+  const error = details.error ?? details.message ?? details.errorText;
+  const line = [
+    new Date().toISOString(),
+    `step=${ oneLine(event) }`,
+    `provider=${ oneLine(provider) }`,
+    `account=${ oneLine(accountId) }`,
+    `status=${ oneLine(status) }`,
+    `error=${ oneLine(error) }`,
+  ].join('\t');
+  fs.appendFileSync(tracePath, `${ line }\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 function scrub(value: unknown, depth = 0): unknown {
@@ -60,6 +100,7 @@ export function firstRunTrace(area: string, event: string, details?: Record<stri
   try {
     const suffix = details && Object.keys(details).length ? ` ${ JSON.stringify(scrub(details)) }` : '';
     log.log(`[${ area }] ${ scrubText(event) }${ suffix }`);
+    appendTraceLine(area, event, details);
   } catch {
     // Tracing must never break first run.
   }

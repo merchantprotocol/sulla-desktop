@@ -75,9 +75,13 @@ export async function reconcileCodexAuthRevocationInVm(): Promise<void> {
 
 /**
  * Pull the ChatGPT account id out of the id_token JWT — codex routes plan
- * usage through it. A missing claim is non-fatal (the CLI re-derives it).
+ * usage through it. Non-fatal for the legacy auth-file custody (the CLI
+ * re-derives it from a bare auth.json), but the bridge paths (PendingMemoryBridge,
+ * the guest ContainerBrokerLease) set this claim as an explicit header
+ * themselves, so a missing claim there must fail before spawn rather than
+ * silently route to the wrong — or no — ChatGPT account.
  */
-function extractAccountId(idToken: string | undefined): string | null {
+export function extractChatgptAccountId(idToken: string | undefined): string | null {
   if (!idToken) return null;
   try {
     const payload = idToken.split('.')[1];
@@ -136,7 +140,7 @@ export function writeCodexAuthFile(tokens: Partial<OAuthTokenSet>): boolean {
         id_token:      idToken ?? null,
         access_token:  tokens.access_token,
         refresh_token: tokens.refresh_token ?? null,
-        account_id:    extractAccountId(idToken),
+        account_id:    extractChatgptAccountId(idToken),
       },
       last_refresh: new Date().toISOString(),
     };
@@ -288,19 +292,93 @@ export async function removeCodexAuthFile(): Promise<void> {
   } catch { /* VM may be stopped; host credential is already revoked. */ }
 }
 
+/** The UI's OAuth connect flow stores tokens under account id 'oauth'; older/headless flows use 'default'. */
+async function resolveCodexAccountId(): Promise<string> {
+  try {
+    const { getIntegrationService } = await import('../services/IntegrationService');
+    return await getIntegrationService().getActiveAccountId('codex');
+  } catch {
+    return 'oauth';
+  }
+}
+
+/**
+ * Pull a newer guest-rotated ~/.codex/auth.json back into host custody. The
+ * CLI self-refreshes its own auth file in place inside the VM; without this,
+ * a guest-side rotation is silently clobbered by a stale host copy on the
+ * next ensure/link cycle (oauth-overhaul audit: "the guest Codex CLI and the
+ * host scheduler can both rotate tokens without reconciling"). GuestAuthFile
+ * is legacy custody only — never called when the vault authority owns the
+ * token.
+ */
+export async function reconcileCodexAuthRotation(accountId: string): Promise<boolean> {
+  if (typeof process !== 'undefined' && process.type === 'renderer') return false;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return false;
+  const marker = '---sulla-codex-auth---';
+  try {
+    const { default: paths } = await import('@pkg/utils/paths');
+    const { execFile } = await import('child_process');
+    const guestExec = (args: string[]) => new Promise<string>((resolve, reject) => {
+      execFile(paths.sullaRuntime, args, { env: { ...process.env }, timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    });
+    const raw = await guestExec(['exec', '--', 'sh', '-c', [
+      'set -eu',
+      'f="$HOME/.codex/auth.json"',
+      '[ -f "$f" ] || exit 0',
+      'stat -c %Y "$f"',
+      `echo ${ marker }`,
+      'cat "$f"',
+    ].join('\n')]);
+    const splitAt = raw.indexOf(marker);
+    if (splitAt === -1) return false;
+    const guestMtime = Number(raw.slice(0, splitAt).trim());
+    const guestJson = raw.slice(splitAt + marker.length).trim();
+    if (!Number.isFinite(guestMtime) || !guestJson) return false;
+
+    let hostMtime = 0;
+    try { hostMtime = Math.trunc(fs.statSync(codexAuthPath()).mtimeMs / 1_000) } catch { /* no host copy yet */ }
+    if (guestMtime <= hostMtime) return false;
+
+    const parsed = JSON.parse(guestJson) as { tokens?: { access_token?: unknown; refresh_token?: unknown; id_token?: unknown } };
+    const accessToken = parsed.tokens?.access_token;
+    if (typeof accessToken !== 'string' || !accessToken) return false;
+    const tokens: OAuthTokenSet = {
+      access_token:  accessToken,
+      refresh_token: typeof parsed.tokens?.refresh_token === 'string' ? parsed.tokens.refresh_token : undefined,
+      id_token:      typeof parsed.tokens?.id_token === 'string' ? parsed.tokens.id_token : undefined,
+      token_type:    'Bearer',
+      expires_at:    decodeJwtExpiry(accessToken) ?? undefined,
+    };
+
+    const { getOAuthService } = await import('../services/OAuthService');
+    await getOAuthService().adoptTokens('codex', accountId, 'codex', tokens);
+    console.log('[codexAuthFile] Imported guest-rotated Codex credentials back into custody');
+    return true;
+  } catch (err) {
+    console.warn('[codexAuthFile] Could not reconcile guest Codex token rotation:', err);
+    return false;
+  }
+}
+
 /**
  * Make sure ~/.codex/auth.json exists, rebuilding it from the stored OAuth
  * token row when missing (fresh install, wiped home dir). The file is the
  * CLI's live store — when it already exists we leave it alone, since the CLI
  * may hold fresher tokens than the DB row.
+ *
+ * GuestAuthFile custody only. The container-vault authority never exports
+ * raw OAuth credentials for Codex to write here — callers must resolve
+ * ContainerBrokerLease (see codexExecutionAuth.ts) instead, so this returns
+ * false rather than the "nothing to do, proceed" lie that let a guest spawn
+ * without any real authentication (oauth-overhaul audit finding #1).
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
-  // Persistent container authority never exports raw OAuth credentials. Its
-  // provider.cli bridge supplies the session directly to the Codex process.
   const { usesContainerVaultAuthority } = await import('../../vault-broker');
-  if (usesContainerVaultAuthority()) return true;
+  if (usesContainerVaultAuthority()) return false;
 
   migrateLegacyCodexAuth();
+  const accountId = await resolveCodexAccountId();
+  await reconcileCodexAuthRotation(accountId);
   const exists = fs.existsSync(codexAuthPath());
   const fresh = exists && isAuthFileFresh();
   firstRunTrace('codex', 'auth file ensure started', { fileExists: exists, fresh });
@@ -310,37 +388,23 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     return linked;
   }
   try {
-    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
-    const pending = getPendingCredential('codex');
-    if (pending?.values.access_token && writeCodexAuthFile(pending.values as OAuthTokenSet)) {
-      const linked = await linkCodexHomeIntoVm();
-      firstRunTrace('codex', 'auth file ensured', { source: 'pending', linked });
-      return linked;
-    }
-
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
 
-    // The UI's OAuth connect flow stores tokens under account id 'oauth';
-    // older/headless flows use 'default'. Prefer the integration's active
-    // account when one is set.
+    // Prefer the integration's active account when one is set.
     const accountIds = ['oauth', 'default'];
-    try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      const active = await getIntegrationService().getActiveAccountId('codex');
-      if (active && !accountIds.includes(active)) accountIds.unshift(active);
-    } catch { /* fall back to the known account ids */ }
+    if (accountId && !accountIds.includes(accountId)) accountIds.unshift(accountId);
 
-    for (const accountId of accountIds) {
+    for (const candidateAccountId of accountIds) {
       try {
-        const tokens = await oauthService.ensureFreshTokens('codex', accountId);
+        const tokens = await oauthService.ensureFreshTokens('codex', candidateAccountId);
         if (writeCodexAuthFile(tokens)) {
           const linked = await linkCodexHomeIntoVm();
-          firstRunTrace('codex', 'auth file ensured', { source: 'vault', accountId, linked });
+          firstRunTrace('codex', 'auth file ensured', { source: 'vault', accountId: candidateAccountId, linked });
           return linked;
         }
       } catch {
-        const stored = await oauthService.getStoredTokens('codex', accountId);
+        const stored = await oauthService.getStoredTokens('codex', candidateAccountId);
         if (!stored?.raw_response) continue;
         const tokens = (typeof stored.raw_response === 'string'
           ? JSON.parse(stored.raw_response)

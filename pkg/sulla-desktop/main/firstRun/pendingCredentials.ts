@@ -11,6 +11,13 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
+import {
+  deleteFirstRunCredential,
+  deleteFirstRunCredentialsForIntegration,
+  loadFirstRunCredentials,
+  storeFirstRunCredential,
+} from '@pkg/main/firstRun/firstRunCredentialStore';
 
 export interface PendingCredential {
   integrationId: string;
@@ -33,6 +40,7 @@ let vaultUnlocked = false;
 let vaultReady = false;
 let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
+let loadRun: Promise<void> | undefined;
 
 class PendingSessionExpiredError extends Error {}
 
@@ -76,8 +84,9 @@ function clearValues(values: Record<string, string>): void {
   }
 }
 
-export function queuePendingCredential(entry: PendingCredential): void {
-  firstRunTrace('pending', 'sign-in held in memory until the vault is ready', {
+export async function queuePendingCredential(entry: PendingCredential): Promise<void> {
+  if (loadRun) await loadRun;
+  firstRunTrace('pending', 'sign-in encrypted in runtime Postgres until the vault is ready', {
     integrationId: entry.integrationId, accountId: entry.accountId, fields: Object.keys(entry.values), vaultUnlocked, vaultReady,
   });
   if (entry.integrationId === 'sulla-cloud') {
@@ -86,26 +95,38 @@ export function queuePendingCredential(entry: PendingCredential): void {
       pending.delete(candidateKey);
       clearValues(candidate.values);
     }
+    await deleteFirstRunCredentialsForIntegration(entry.integrationId);
   }
   const key = keyFor(entry);
   const previous = pending.get(key);
   if (previous) clearValues(previous.values);
-  pending.set(key, {
+  const durableEntry = {
     integrationId: entry.integrationId,
     accountId:     entry.accountId,
     values:        { ...entry.values },
     activate:      entry.activate,
-  });
+  };
+  firstRunTrace('pending', 'custody write started', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'started' });
+  try {
+    await storeFirstRunCredential(durableEntry);
+    firstRunTrace('pending', 'Postgres custody write completed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
+  } catch (error) {
+    firstRunTrace('pending', 'Postgres custody write failed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'postgres_write_failed', error });
+    throw error;
+  }
+  pending.set(key, durableEntry);
   void clearModelListCaches();
   if (vaultUnlocked && vaultReady) scheduleFlush?.();
 }
 
-export function clearPendingCredential(integrationId: string): void {
+export async function clearPendingCredential(integrationId: string): Promise<void> {
+  if (loadRun) await loadRun;
   for (const [key, entry] of pending) {
     if (entry.integrationId !== integrationId) continue;
     pending.delete(key);
     clearValues(entry.values);
   }
+  await deleteFirstRunCredentialsForIntegration(integrationId);
 }
 
 export function hasPendingCredential(integrationId: string): boolean {
@@ -117,8 +138,8 @@ export function pendingIntegrationIds(): string[] {
 }
 
 /** Main-process-only read used while the vault copy is still pending. */
-export function getPendingCredential(integrationId: string): PendingCredential | undefined {
-  return [...pending.values()].find(candidate => candidate.integrationId === integrationId);
+export function getPendingCredential(integrationId: string, accountId?: string): PendingCredential | undefined {
+  return [...pending.values()].find(candidate => candidate.integrationId === integrationId && (!accountId || candidate.accountId === accountId));
 }
 
 async function writeEntry(entry: PendingCredential): Promise<void> {
@@ -167,15 +188,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
   }
 
   if (usesContainerVaultAuthority()) {
-    const client = getConfiguredApprovalClient();
-    if (!client) throw new Error('Desktop vault session service is unavailable');
-    await client.importIntegrationAccount(entry.integrationId, {
-      accountId: entry.accountId,
-      label: entry.values.account_label,
-      values: entry.values,
-      active: entry.activate !== false,
-      connected: entry.activate !== false,
-    });
+    await promoteMemoryCredentialToVault(entry);
     return;
   }
 
@@ -205,8 +218,22 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
         try {
           firstRunTrace('pending', 'saving sign-in into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           await writeEntry(entry);
+          firstRunTrace('pending', 'vault custody confirmed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
+          // First run keeps Codex tokens only in this main-process map. Once
+          // the vault accepts them, materialize the CLI file exactly once and
+          // copy it into the guest before clearing the in-memory token set.
+          if (entry.integrationId === 'codex') {
+            const { prepareCodexAuthAfterExchange } = await import('@pkg/agent/util/codexAuthFile');
+            const prepared = await prepareCodexAuthAfterExchange(entry.values, usesContainerVaultAuthority());
+            firstRunTrace('codex', 'credentials prepared after vault flush', prepared);
+          }
           firstRunTrace('pending', 'sign-in saved into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           if (pending.get(key) !== entry) continue;
+          // The vault write above is the durability handoff. Delete the
+          // encrypted staging row only after that write (and any required
+          // Codex preparation) has confirmed.
+          await deleteFirstRunCredential(entry.integrationId, entry.accountId);
+          firstRunTrace('pending', 'Postgres staging row deleted', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
           pending.delete(key);
           clearValues(entry.values);
           flushed.push(entry.integrationId);
@@ -238,11 +265,22 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
 export function startPendingCredentialFlush(): void {
   if (hooksStarted) return;
   hooksStarted = true;
+  loadRun = loadFirstRunCredentials().then(entries => {
+    for (const entry of entries) pending.set(keyFor(entry), entry);
+    firstRunTrace('pending', 'loaded encrypted sign-ins from runtime Postgres', {
+      integrations: entries.map(entry => entry.integrationId),
+    });
+  }).catch(error => {
+    firstRunTrace('pending', 'could not load encrypted sign-ins from runtime Postgres; will retry at next start', { error });
+  }).finally(() => {
+    loadRun = undefined;
+    if (vaultUnlocked && vaultReady) scheduleFlush?.();
+  });
   const lifecycle = getServiceLifecycleManager();
   vaultUnlocked = lifecycle.isVaultUnlocked();
   vaultReady = lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   const schedule = () => {
-    if (!pending.size || !vaultUnlocked || !vaultReady || retryTimer) return;
+    if (loadRun || !pending.size || !vaultUnlocked || !vaultReady || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       void flushPendingCredentials().then(result => {
@@ -254,6 +292,7 @@ export function startPendingCredentialFlush(): void {
         }
       });
     }, retryDelayMs);
+    firstRunTrace('pending', 'vault flush retry scheduled', { status: 'scheduled', retryInMs: retryDelayMs, pending: pending.size });
   };
   scheduleFlush = schedule;
   lifecycle.on('vault:state', (unlocked: boolean) => {
@@ -274,5 +313,5 @@ export function startPendingCredentialFlush(): void {
   lifecycle.on('service:stopped', (name: string) => {
     if (name === 'vault') vaultReady = false;
   });
-  if (vaultUnlocked && vaultReady) schedule();
+  if (vaultUnlocked && vaultReady && !loadRun) schedule();
 }

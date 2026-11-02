@@ -90,12 +90,17 @@ function describeUrl(u: string): string {
  */
 export type AuthCallbackHandler = (url: string) => boolean;
 
-function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl?: AuthCallbackHandler): void {
+function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl?: AuthCallbackHandler, isNavigationAllowed?: (url: string) => boolean): void {
   const wc = win.webContents;
   const block = (event: Electron.Event, u: string) => {
     if (!isWebUrl(u)) {
       event.preventDefault();
       console.log(`${ logPrefix } Blocked hand-off to another app: ${ scheme(u) }`);
+      return;
+    }
+    if (isNavigationAllowed && !isNavigationAllowed(u)) {
+      event.preventDefault();
+      console.warn(`${ logPrefix } Blocked navigation to ${ describeUrl(u) }`);
       return;
     }
     // Callback caught: stop it from loading. Anything else listening on that
@@ -118,11 +123,18 @@ function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl
     if (!isWebUrl(details.url)) {
       details.preventDefault();
       console.log(`${ logPrefix } Blocked frame hand-off to another app: ${ scheme(details.url) }`);
+    } else if (isNavigationAllowed && !isNavigationAllowed(details.url)) {
+      details.preventDefault();
+      console.warn(`${ logPrefix } Blocked frame navigation to ${ describeUrl(details.url) }`);
     }
   });
   wc.setWindowOpenHandler(({ url }) => {
     if (!isWebUrl(url)) {
       console.log(`${ logPrefix } Blocked popup to another app: ${ scheme(url) }`);
+      return { action: 'deny' };
+    }
+    if (isNavigationAllowed && !isNavigationAllowed(url)) {
+      console.warn(`${ logPrefix } Blocked popup to ${ describeUrl(url) }`);
       return { action: 'deny' };
     }
     console.log(`${ logPrefix } Sign-in popup opened: ${ describeUrl(url) }`);
@@ -143,7 +155,7 @@ function contain(win: BrowserWindow, partition: string, logPrefix: string, onUrl
       },
     };
   });
-  wc.on('did-create-window', child => contain(child, partition, logPrefix, onUrl));
+  wc.on('did-create-window', child => contain(child, partition, logPrefix, onUrl, isNavigationAllowed));
 }
 
 export interface ContainedAuthWindowOptions {
@@ -157,6 +169,8 @@ export interface ContainedAuthWindowOptions {
   autoHideMenuBar?: boolean;
   /** Spots the OAuth callback in this window or any popup. Return true when handled. */
   onUrl?:           AuthCallbackHandler;
+  /** Optional provider-specific allowlist for web navigation and popups. */
+  isNavigationAllowed?: (url: string) => boolean;
 }
 
 export function createContainedAuthWindow(opts: ContainedAuthWindowOptions): BrowserWindow {
@@ -173,6 +187,6 @@ export function createContainedAuthWindow(opts: ContainedAuthWindowOptions): Bro
       session:          lockDownSession(opts.partition, opts.logPrefix),
     },
   });
-  contain(win, opts.partition, opts.logPrefix, opts.onUrl);
+  contain(win, opts.partition, opts.logPrefix, opts.onUrl, opts.isNavigationAllowed);
   return win;
 }

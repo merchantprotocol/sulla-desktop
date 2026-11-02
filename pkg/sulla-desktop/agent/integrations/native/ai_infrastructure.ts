@@ -6,6 +6,8 @@
 import type { Integration } from '../types';
 import { OPENAI_COMPATIBLE_PROVIDERS, type OpenAICompatibleProviderDefinition } from '../../languagemodels/openAICompatibleProviders';
 
+const AI_ML_OWNED_PROVIDER_IDS = new Set(['huggingface', 'perplexity']);
+
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   mcp: {
     id:          'mcp',
@@ -437,43 +439,6 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
-  cohere: {
-    id:          'cohere',
-    sort:        8,
-    paid:        false,
-    beta:        true,
-    comingSoon:  false,
-    name:        'Cohere',
-    description: 'Connect to Cohere\'s free tier for Command A, Command A Reasoning, Command A Translate, Command A Vision, Command R, Command R+, Command R7B, and Command R7B Arabic. All models support tool use. 1,000 API calls/month (non-commercial use).',
-    category:    'AI Infrastructure',
-    icon:        'cohere.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-22 00:00:00',
-    developer:   'Cohere',
-    formGuide:   'Get your free trial API key from dashboard.cohere.com/api-keys. Free tier is limited to non-commercial use with 1,000 API calls per month. Only Command family models support tool use (Aya models do not).',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Cohere API Key',
-        hint:        'Free trial key from dashboard.cohere.com/api-keys',
-        type:        'password',
-        required:    true,
-        placeholder: '...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a Cohere model to use.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'cohere_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
   deepseek: {
     id:          'deepseek',
     sort:        8.5,
@@ -620,80 +585,6 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
-  groq: {
-    id:          'groq',
-    sort:        12,
-    paid:        false,
-    beta:        false,
-    comingSoon:  false,
-    name:        'Groq',
-    description: 'Ultra-fast free-tier inference for Llama 4, DeepSeek R1, Qwen 2.5 Coder, and more — powered by Groq LPU hardware.',
-    category:    'AI Infrastructure',
-    icon:        'groq.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-25',
-    developer:   'Groq',
-    formGuide:   'Get your free API key at console.groq.com/keys. Free tier has generous daily limits with extremely fast inference.',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Groq API Key',
-        hint:        'Generate this for free at console.groq.com/keys.',
-        type:        'password',
-        required:    true,
-        placeholder: 'gsk_...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a model. Llama 4 Scout and DeepSeek R1 are great for coding.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'groq_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
-  mistral: {
-    id:          'mistral',
-    sort:        13,
-    paid:        false,
-    beta:        false,
-    comingSoon:  false,
-    name:        'Mistral AI',
-    description: 'Access Mistral models including the free-tier Codestral — purpose-built for code generation, completion, and explanation.',
-    category:    'AI Infrastructure',
-    icon:        'mistral.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-25',
-    developer:   'Mistral AI',
-    formGuide:   'Get your API key at console.mistral.ai/api-keys. Codestral is available free for non-commercial use.',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Mistral API Key',
-        hint:        'Generate this at console.mistral.ai/api-keys.',
-        type:        'password',
-        required:    true,
-        placeholder: '...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a model. Codestral is optimized for coding tasks.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'mistral_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
   cerebras: {
     id:          'cerebras',
     sort:        14,
@@ -814,9 +705,11 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   },
 
 
-  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((provider: OpenAICompatibleProviderDefinition, index) => [provider.id, {
+  // huggingface and perplexity keep their richer cards in ./ai_ml.ts (they won by
+  // spread order before duplicate ids became a startup error), so skip them here.
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.filter((provider) => !AI_ML_OWNED_PROVIDER_IDS.has(provider.id)).map((provider: OpenAICompatibleProviderDefinition) => [provider.id, {
     id:          provider.id,
-    sort:        20 + index,
+    sort:        20 + OPENAI_COMPATIBLE_PROVIDERS.indexOf(provider),
     paid:        true,
     beta:        false,
     comingSoon:  false,

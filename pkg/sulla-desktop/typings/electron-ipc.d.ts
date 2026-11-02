@@ -383,9 +383,6 @@ export interface IpcMainInvokeEvents {
   'claude-oauth:start':  (options?: { firstRun?: boolean }) => { success?: boolean; token?: string; error?: string };
   'claude-oauth:cancel': () => void;
 
-  /** OpenAI OAuth flow */
-  'openai-oauth:start': () => { success: boolean; error?: string };
-
   /** Generic integration OAuth flow — runs in main so embedded auth windows (Codex, Grok) can construct BrowserWindow */
   'integration-oauth:start': (payload: {
     integrationId: string;

@@ -6,6 +6,25 @@
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../providerRecovery';
 
 describe('providerRecovery', () => {
+  it.each([
+    ['auth', new Error('HTTP 401 unauthorized'), 'auth'],
+    ['quota', new Error('weekly limit reached'), 'quota'],
+    ['rate limit', new Error('too many requests'), 'rate_limit'],
+    ['timeout', new Error('request ETIMEDOUT'), 'timeout'],
+    ['empty', new Error('returned empty response'), 'empty'],
+    ['unavailable', new Error('service unavailable'), 'unavailable'],
+    ['routing', new Error('workspace routing discovery failed'), 'unavailable'],
+    ['interrupted', new Error('operation aborted'), 'interrupted'],
+    ['CLI exhausted', Object.assign(new Error('recovery exhausted'), { cliRecoveryExhausted: true }), 'unavailable'],
+    ['unknown', new Error('something unexpected happened'), 'unknown'],
+  ])('classifies %s failures', (_label, error, kind) => {
+    expect(classifyLLMFailure(error)).toMatchObject({ kind });
+  });
+
+  it('does not turn vault or broker credential text into provider auth', () => {
+    expect(classifyLLMFailure(new Error('vault broker credential lookup failed'))).toMatchObject({ kind: 'unknown' });
+  });
+
   it('classifies quota and weekly-limit failures as fallbackable provider failures', () => {
     expect(classifyLLMFailure(new Error('HTTP 402 Grok Build usage balance exhausted'))).toMatchObject({
       kind:            'quota',

@@ -24,10 +24,13 @@ import {
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
-import { bindLeaseToProcess, createGuestClaudeAuth, releaseLease } from './guestClaudeBridge';
+import { bindLeaseToProcess, releaseLease } from './guestClaudeBridge';
+import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
+import { handleClaudeAuthFailure } from './credentials/ClaudeAuthFailureCoordinator';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
 import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
@@ -194,56 +197,29 @@ export class ClaudeCodeService extends BaseLanguageModel {
     } catch { /* Durable store unavailable — non-fatal */ }
   }
 
-  /**
-   * Resolve how the VM's `claude` authenticates. With the container-owned
-   * Vault the secret never leaves the vault, so the process gets a bridge
-   * capability + base URL (and a lease the caller must bind to the process).
-   * Otherwise: integration vault first, SullaSettingsModel fallback.
-   */
+  /** Resolve Claude auth through the shared precedence/account policy. */
   private async resolveClaudeCreds(
     convId: string,
     state?: BaseThreadState,
   ): Promise<{ oauthToken: string; apiKey: string; baseUrl?: string; lease?: ProviderCliBridgeLease }> {
-    // During first run the vault may not exist yet. Pending credentials remain
-    // main-process memory only and are passed straight to this one guest
-    // process, exactly like the legacy non-broker path; nothing is written.
-    try {
-      const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
-      const pending = getPendingCredential('claude-code');
-      const oauthToken = pending?.values.oauth_token || pending?.values.access_token || '';
-      const apiKey = pending?.values.api_key || '';
-      if (oauthToken || apiKey) {
-        firstRunTrace('claude', 'credentials resolved', { source: 'pending', hasOAuth: !!oauthToken, hasApiKey: !!apiKey });
-        return { oauthToken, apiKey };
-      }
-    } catch { /* pending custody is main-process-only */ }
-
-    const bridged = await createGuestClaudeAuth({ conversationId: convId, state });
-    if (bridged) {
-      firstRunTrace('claude', 'credentials resolved', { source: 'vault-bridge' });
-      return bridged;
+    const resolved = await claudeCredentialResolver.resolve({ execution: true, conversationId: convId, state });
+    if (resolved.kind === 'none' && resolved.unavailable) {
+      throw new VaultLocked('claude-code', { cause: 'Claude credential authority unavailable' });
     }
-
-    let oauthToken = '';
-    let apiKey = '';
-    try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      const values = await getIntegrationService().getFormValues('claude-code');
-      for (const v of values) {
-        if (v.property === 'oauth_token' && v.value) oauthToken = v.value;
-        if (v.property === 'api_key' && v.value) apiKey = v.value;
-      }
-    } catch (err) {
-      firstRunTrace('claude', 'credential lookup failed', { source: 'vault', error: err instanceof Error ? err.message : String(err) });
-      console.warn('[ClaudeCodeService] Vault lookup failed, falling back to SullaSettingsModel:', err);
-    }
-    if (!oauthToken && !apiKey) {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-      apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
-    }
-    firstRunTrace('claude', 'credentials resolved', { source: oauthToken || apiKey ? 'vault-or-settings' : 'none', hasOAuth: !!oauthToken, hasApiKey: !!apiKey });
-    return { oauthToken, apiKey };
+    const oauthToken = resolved.kind === 'oauth-capability' || resolved.kind === 'oauth-pending'
+      ? resolved.oauthToken ?? ''
+      : '';
+    const apiKey = resolved.kind === 'api-key' ? resolved.apiKey : '';
+    firstRunTrace('claude', 'credentials resolved', {
+      source: resolved.source, accountId: resolved.accountId, kind: resolved.kind,
+      hasOAuth: !!oauthToken, hasApiKey: !!apiKey,
+    });
+    return {
+      oauthToken,
+      apiKey,
+      baseUrl: 'baseUrl' in resolved ? resolved.baseUrl : undefined,
+      lease:   'lease' in resolved ? resolved.lease : undefined,
+    };
   }
 
   /**
@@ -1778,15 +1754,23 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (errored) {
             const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
             log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
-            reject(new Error(`Claude Code: ${ msg }`));
+            const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
+            await handleClaudeAuthFailure(typedFailure);
+            reject(isPermanentCliFailure(typedFailure) && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('process_exit', `Claude Code: ${ msg }`, typedFailure, !(toolStarts.size > 0 || unresolvedTool), Boolean(toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 
           if (code !== 0) {
             const msg = errorMessage || stderrBuffer.trim().slice(-200) || `claude exited with code ${ code }`;
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+            const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
+            await handleClaudeAuthFailure(typedFailure);
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 
@@ -1799,9 +1783,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (!textCollected.trim()) {
             const stderrTail = stderrBuffer.trim().slice(-200);
             log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+            const typedFailure = legacyProviderFailure('claude-code', stderrTail || 'Claude Code returned no output', { exitCode: code });
+            await handleClaudeAuthFailure(typedFailure);
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 
