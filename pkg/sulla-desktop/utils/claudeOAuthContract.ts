@@ -17,6 +17,25 @@ export function isClaudeOAuthCallbackUrl(targetUrl: string): boolean {
   }
 }
 
+export type ClaudeOAuthResult =
+  | { status: 'success'; success: true }
+  | { status: 'cancelled' | 'timeout' | 'cli_unavailable' | 'vm_not_ready' | 'provider_error'; success: false; message: string; error: string; reason: 'user-closed' | 'timeout' | 'cli-missing' | 'vm-not-ready' | 'provider-error' };
+
+export function claudeOAuthFailure(
+  status: Exclude<ClaudeOAuthResult['status'], 'success'>,
+  message: string,
+): ClaudeOAuthResult {
+  const reasons = {
+    cancelled: 'user-closed',
+    timeout: 'timeout',
+    cli_unavailable: 'cli-missing',
+    vm_not_ready: 'vm-not-ready',
+    provider_error: 'provider-error',
+  } as const;
+
+  return { status, success: false, message, error: message, reason: reasons[status] };
+}
+
 export function claudeOAuthResultError(result: unknown): string | null {
   if (!result || typeof result !== 'object') {
     return 'Claude returned an invalid sign-in response. Please try again.';
