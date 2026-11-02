@@ -6,6 +6,8 @@
 import type { Integration } from '../types';
 import { OPENAI_COMPATIBLE_PROVIDERS, type OpenAICompatibleProviderDefinition } from '../../languagemodels/openAICompatibleProviders';
 
+const AI_ML_OWNED_PROVIDER_IDS = new Set(['huggingface', 'perplexity']);
+
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   mcp: {
     id:          'mcp',
@@ -703,9 +705,11 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   },
 
 
-  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((provider: OpenAICompatibleProviderDefinition, index) => [provider.id, {
+  // huggingface and perplexity keep their richer cards in ./ai_ml.ts (they won by
+  // spread order before duplicate ids became a startup error), so skip them here.
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.filter((provider) => !AI_ML_OWNED_PROVIDER_IDS.has(provider.id)).map((provider: OpenAICompatibleProviderDefinition) => [provider.id, {
     id:          provider.id,
-    sort:        20 + index,
+    sort:        20 + OPENAI_COMPATIBLE_PROVIDERS.indexOf(provider),
     paid:        true,
     beta:        false,
     comingSoon:  false,
