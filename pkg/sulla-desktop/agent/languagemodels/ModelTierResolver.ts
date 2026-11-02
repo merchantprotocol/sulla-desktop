@@ -17,7 +17,7 @@
 import { modelDiscoveryService } from './ModelDiscoveryService';
 import { isModelRoutingAlias } from './modelSlotRouting';
 import { usesContainerVaultAuthority } from '../../vault-broker';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
 import { getIntegrationService } from '../services/IntegrationService';
 
 export type ModelTier = 'fast' | 'balanced' | 'powerful';
@@ -78,9 +78,10 @@ function selectBestForTier(modelIds: string[], tier: ModelTier): string | undefi
 
 async function getApiKeyForProvider(providerId: string): Promise<string> {
   if (providerId === 'claude-code') {
-    const oauth = await SullaSettingsModel.get('claudeOAuthToken', '');
-    const apiKey = await SullaSettingsModel.get('claudeApiKey', '');
-    return oauth || apiKey;
+    const credential = await claudeCredentialResolver.resolve();
+    if (credential.kind === 'api-key') return credential.apiKey;
+    if (credential.kind === 'oauth-capability' || credential.kind === 'oauth-pending') return credential.oauthToken ?? '';
+    return '';
   }
   try {
     const svc = getIntegrationService();

@@ -22,7 +22,7 @@
 // for /v1/models — the endpoint answers 400. The OAuth branch is kept in case
 // that changes; a failed live lookup never substitutes hardcoded model ids.
 
-import { usesContainerVaultAuthority } from '../../vault-broker';
+import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
 import Logging from '@pkg/utils/logging';
 
 const log = Logging.background;
@@ -52,44 +52,6 @@ interface RawAnthropicModel {
   display_name?: string;
 }
 
-async function resolveClaudeCodeCreds(): Promise<{ oauthToken: string; apiKey: string; workspaceId: string }> {
-  let oauthToken = '';
-  let apiKey = '';
-  let workspaceId = '';
-
-  try {
-    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
-    const pending = getPendingCredential('claude-code');
-    oauthToken = pending?.values.oauth_token || pending?.values.access_token || '';
-    apiKey = pending?.values.api_key || '';
-    workspaceId = pending?.values.workspace_id?.trim() || '';
-  } catch { /* first-run pending credentials are main-process-only */ }
-
-  if (!oauthToken && !apiKey) try {
-    const { getIntegrationService } = await import('../services/IntegrationService');
-    const values = await getIntegrationService().getFormValues('claude-code');
-    for (const v of values) {
-      if (v.property === 'oauth_token' && v.value) oauthToken = v.value;
-      if (v.property === 'api_key' && v.value) apiKey = v.value;
-      if (v.property === 'workspace_id' && v.value) workspaceId = v.value.trim();
-    }
-  } catch (err) {
-    log.warn(`[claudeModelCatalog] Vault lookup failed, trying SullaSettingsModel: ${ err }`);
-  }
-
-  if (!oauthToken && !apiKey) {
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-      apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
-    } catch (err) {
-      log.warn(`[claudeModelCatalog] SullaSettingsModel lookup failed: ${ err }`);
-    }
-  }
-
-  return { oauthToken, apiKey, workspaceId };
-}
-
 async function fetchModelsWithHeaders(headers: Record<string, string>): Promise<ClaudeCatalogModel[] | null> {
   try {
     const response = await fetch('https://api.anthropic.com/v1/models', { headers });
@@ -110,7 +72,7 @@ async function fetchModelsWithHeaders(headers: Record<string, string>): Promise<
   }
 }
 
-async function fetchLiveModels(oauthToken: string, apiKey: string, workspaceId: string): Promise<ClaudeCatalogModel[] | null> {
+async function fetchLiveModels(apiKey: string, workspaceId: string): Promise<ClaudeCatalogModel[] | null> {
   // API key first — same header shape AnthropicModels.ts already uses
   // successfully for the "anthropic" provider, so it's the proven path.
   if (apiKey) {
@@ -118,15 +80,6 @@ async function fetchLiveModels(oauthToken: string, apiKey: string, workspaceId: 
       'x-api-key':         apiKey,
       'anthropic-version': '2023-06-01',
       ...(workspaceId ? { 'anthropic-workspace-id': workspaceId } : {}),
-    });
-    if (models) return models;
-  }
-
-  // Claude Code subscription OAuth — the CLI's own auth pattern.
-  if (oauthToken) {
-    const models = await fetchModelsWithHeaders({
-      Authorization:      `Bearer ${ oauthToken }`,
-      'anthropic-beta':   'oauth-2025-04-20',
     });
     if (models) return models;
   }
@@ -152,7 +105,8 @@ async function fetchBrokeredModels(): Promise<ClaudeCatalogModel[] | null> {
  * Return the live Claude model catalog: the "Auto" sentinel followed by
  * every model Anthropic reports for the signed-in claude-code account. Never
  * throws — on any failure (no credential, unauthorized, network) it returns
- * only the provider-agnostic Auto sentinel, never hardcoded model ids.
+ * only the provider-agnostic Auto sentinel. OAuth accounts use the CLI's
+ * supported static aliases because Anthropic rejects their token on /v1/models.
  *
  * @param opts.force — bypass the short in-memory cache (used by explicit
  *   "refresh models" actions; the picker's routine reads hit the cache).
@@ -162,13 +116,20 @@ export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<
     return cache.models;
   }
 
-  const pending = await resolveClaudeCodeCreds();
+  const credential = await claudeCredentialResolver.resolve();
   let dynamic: ClaudeCatalogModel[] | null;
-  if (pending.oauthToken || pending.apiKey) {
-    dynamic = await fetchLiveModels(pending.oauthToken, pending.apiKey, pending.workspaceId);
-  } else if (usesContainerVaultAuthority()) {
-    // Container vault: the app holds no Claude credential — list through the
-    // vault broker, which attaches the account's key/OAuth token itself.
+  if (credential.kind === 'oauth-capability' || credential.kind === 'oauth-pending') {
+    // Anthropic rejects Claude subscription OAuth on /v1/models. Keep the
+    // supported CLI aliases stable instead of making a request known to fail.
+    dynamic = [
+      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
+      { id: 'claude-opus-5', name: 'Claude Opus 5' },
+      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
+      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' },
+    ];
+  } else if (credential.kind === 'api-key' && credential.apiKey) {
+    dynamic = await fetchLiveModels(credential.apiKey, credential.workspaceId ?? '');
+  } else if (credential.kind === 'api-key' && credential.source === 'vault-broker') {
     dynamic = await fetchBrokeredModels();
   } else {
     dynamic = null;
