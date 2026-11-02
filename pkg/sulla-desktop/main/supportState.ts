@@ -12,6 +12,8 @@ export interface RemoteSupportActivity {
   tool: string;
   summary: string;
   inputSummary: Record<string, unknown>;
+  fullCommand?: string;
+  output?: string;
   status: 'started' | 'succeeded' | 'tool_error' | 'rejected' | 'offline' | 'timeout';
   startedAt: string;
   completedAt?: string;
