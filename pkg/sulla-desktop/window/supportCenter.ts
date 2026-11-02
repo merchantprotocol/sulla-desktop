@@ -9,6 +9,8 @@ import path from 'node:path';
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
+import { getCurrentAccessToken, isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
 import paths from '@pkg/utils/paths';
 import { createWindow, getWindow, webRoot } from '@pkg/window';
 
@@ -53,9 +55,33 @@ function readTail(file: string, maxBytes = 96 * 1024) {
   } catch { return '' }
 }
 
+async function cloudRequest(pathname: string, init: RequestInit = {}): Promise<any> {
+  const token = await getCurrentAccessToken();
+  if (!token) throw new Error('Sign in to Sulla Cloud to use Support Center tickets and feedback.');
+  const response = await fetch(`${ CLOUD_API_BASE }/support${ pathname }`, {
+    ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ token }`, ...(init.headers || {}) },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `Support request failed (${ response.status }).`);
+  return body;
+}
+
+function remoteTicket(value: any): any {
+  const replies = Array.isArray(value?.replies) ? value.replies : [];
+  return { id: String(value.id), createdAt: value.created_at || value.createdAt, subject: value.subject || '', body: value.message || value.last_message || '', attachments: [], replies: replies.map((reply: any) => ({ id: String(reply.id), createdAt: reply.created_at || reply.createdAt, body: reply.message || '', attachments: [] })) };
+}
+
 function registerHandlers() {
   if (registered) { return } registered = true;
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
+  ipcMain.handle('support:cloud-status', async(event) => { authorize(event); return { signedIn: await isCloudSignedIn() } });
+  ipcMain.handle('support:set-privacy', async(event, key: unknown, enabled: unknown) => {
+    authorize(event); if (!['errorReports', 'metricsConsent', 'autoAttachLogs'].includes(String(key)) || typeof enabled !== 'boolean') throw new Error('Invalid privacy setting.');
+    if (key === 'metricsConsent') await cloudRequest('/metrics-consent', { method: 'PUT', body: JSON.stringify({ agreed: enabled }) });
+    return store().update(value => { (value.privacy as any)[String(key)] = enabled });
+  });
+  ipcMain.handle('support:unread', async(event) => { authorize(event); return (await cloudRequest('/unread')).count || 0 });
   ipcMain.handle('support:set-source', (event, source: unknown, enabled: unknown) => {
     authorize(event); if (typeof source !== 'string' || !allowedSources.has(source) || typeof enabled !== 'boolean') { throw new Error('Invalid log source.') }
     return store().update(state => { state.logging.sources[source] = enabled });
@@ -69,22 +95,19 @@ function registerHandlers() {
     if (result.canceled) { return [] }
     return result.filePaths.slice(0, 10).map(file => ({ path: file, name: path.basename(file), size: fs.statSync(file).size }));
   });
-  ipcMain.handle('support:add-feedback', (event, input: any) => {
-    authorize(event); const message = { id: id('FB'), createdAt: new Date().toISOString(), body: cleanText(input?.body, 10_000), attachments: attachments(input?.attachments) };
+  ipcMain.handle('support:add-feedback', async(event, input: any) => {
+    authorize(event); const body = cleanText(input?.body, 10_000); await cloudRequest('/feedback', { method: 'POST', body: JSON.stringify({ message: body, attachments: [] }) });
+    const message = { id: id('FB'), createdAt: new Date().toISOString(), body, attachments: attachments(input?.attachments) };
     return store().update(state => { state.feedback.unshift(message) });
   });
-  ipcMain.handle('support:create-ticket', (event, input: any) => {
-    authorize(event); const ticket = { id: id('SUP'), createdAt: new Date().toISOString(), subject: cleanText(input?.subject, 160), body: cleanText(input?.body, 10_000), attachments: attachments(input?.attachments), replies: [] };
-    return store().update(state => { state.tickets.unshift(ticket) });
+  ipcMain.handle('support:tickets', async(event) => { authorize(event); const result = await cloudRequest('/tickets'); return (result.tickets || []).map(remoteTicket) });
+  ipcMain.handle('support:create-ticket', async(event, input: any) => {
+    authorize(event); const subject = cleanText(input?.subject, 160); const body = cleanText(input?.body, 10_000); const result = await cloudRequest('/tickets', { method: 'POST', body: JSON.stringify({ subject, message: body, attachments: [] }) });
+    const ticket = { ...remoteTicket(result.ticket), subject, body, attachments: attachments(input?.attachments) }; return store().update(state => { state.tickets.unshift(ticket) });
   });
-  ipcMain.handle('support:reply-ticket', (event, input: any) => {
-    authorize(event); const ticketId = cleanText(input?.ticketId, 80);
-    const reply = { id: id('REPLY'), createdAt: new Date().toISOString(), body: cleanText(input?.body, 10_000), attachments: attachments(input?.attachments) };
-    return store().update((state) => {
-      const ticket = state.tickets.find(item => item.id === ticketId);
-      if (!ticket) { throw new Error('Ticket not found.') }
-      ticket.replies.push(reply);
-    });
+  ipcMain.handle('support:reply-ticket', async(event, input: any) => {
+    authorize(event); const ticketId = cleanText(input?.ticketId, 80); const body = cleanText(input?.body, 10_000); await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }/reply`, { method: 'POST', body: JSON.stringify({ message: body, attachments: [] }) });
+    return store().update((state) => { const ticket = state.tickets.find(item => item.id === ticketId); if (ticket) ticket.replies.push({ id: id('REPLY'), createdAt: new Date().toISOString(), body, attachments: [] }); });
   });
   ipcMain.handle('support:remote', (event, action: unknown) => {
     authorize(event); if (!['request', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }

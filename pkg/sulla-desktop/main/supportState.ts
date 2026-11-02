@@ -16,13 +16,14 @@ export interface SupportState {
   feedback: SupportMessage[];
   tickets: SupportTicket[];
   remote: { status: RemoteSupportStatus; requestedAt?: string; offeredAt?: string; offeredBy?: string; approvedAt?: string; endedAt?: string };
+  privacy: { errorReports: boolean; metricsConsent: boolean; autoAttachLogs: boolean };
 }
 
 const DEFAULT_SOURCES = { desktop: true, runtime: true, containers: true, ai: true };
 export const SUPPORT_STATE_FILE = 'support-state.json';
 
 function initialState(): SupportState {
-  return { version: 1, logging: { sources: { ...DEFAULT_SOURCES } }, feedback: [], tickets: [], remote: { status: 'idle' } };
+  return { version: 1, logging: { sources: { ...DEFAULT_SOURCES } }, feedback: [], tickets: [], remote: { status: 'idle' }, privacy: { errorReports: true, metricsConsent: false, autoAttachLogs: false } };
 }
 
 export class SupportStateStore {
@@ -36,6 +37,7 @@ export class SupportStateStore {
         ...initialState(), ...parsed,
         logging: { ...initialState().logging, ...parsed.logging, sources: { ...DEFAULT_SOURCES, ...parsed.logging?.sources } },
         remote: { ...initialState().remote, ...parsed.remote },
+        privacy: { ...initialState().privacy, ...parsed.privacy },
         feedback: Array.isArray(parsed.feedback) ? parsed.feedback : [],
         tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
       };
