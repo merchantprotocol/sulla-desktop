@@ -278,6 +278,10 @@ export interface IpcMainInvokeEvents {
   'updater:check':     (trigger?: 'manual' | 'auto' | 'startup' | 'support') => void;
   'support:update-status':  () => import('@pkg/main/update/UpdateManager').RichUpdateState;
   'support:update-install': () => void;
+  'support-session:get':    (id: string) => { session: any };
+  'support-session:events': (id: string) => any;
+  'support-session:end':    (id: string, reason?: string) => any;
+  'support-session:extend': (id: string, hours: number) => any;
   'updater:install':   () => void;
   // #endregion
 
