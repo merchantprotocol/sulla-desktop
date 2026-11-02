@@ -14,6 +14,7 @@ import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
 import { chatToolManifests } from './chat/manifests';
+import { desktopToolManifests } from './desktop/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
@@ -51,6 +52,7 @@ export const allToolManifests: ToolManifest[] = [
   ...calendarToolManifests,
   ...chatToolManifests,
   ...captureToolManifests,
+  ...desktopToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
   ...episodicToolManifests,

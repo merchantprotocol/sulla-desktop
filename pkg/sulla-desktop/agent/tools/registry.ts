@@ -73,12 +73,13 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'desktop', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'redis', 'reflex', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
+    desktop:            'See and operate macOS apps through the accessibility tree when Administrative Access is enabled.',
     applescript:        'Execute AppleScript to control macOS applications when Administrative Access is enabled.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     memory:             'Tools for the memory recall subconscious agent — Redis citation index lookup/store, tool discovery, and catalog browsing.',
