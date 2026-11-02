@@ -6,6 +6,8 @@
 // BackendGraphWebSocketService.ts
 // Main-process agent dispatcher: routes messages on the sulla-desktop and
 // heartbeat channels to the default agent via GraphRegistry.
+import { toolRegistry } from '@pkg/agent/tools/registry';
+import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
@@ -536,6 +538,25 @@ export class BackendGraphWebSocketService {
           },
           timestamp: Date.now(),
         });
+      }
+
+      // A support tab supplies an opaque session id every turn. Resolve the
+      // fixed tool set here rather than trusting renderer-provided names. If an
+      // active session ends, the tab omits the id and the old capability is
+      // synchronously removed before this turn can execute.
+      const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
+        ? metadata.supportSessionId : '';
+      if (supportSessionId) {
+        (state.metadata as any).supportSessionId = supportSessionId;
+        const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+        (state.metadata as any).allowedToolNames = supportTabTools;
+        (state.metadata as any).conversationContext = typeof metadata?.conversationContext === 'string' ? metadata.conversationContext : '';
+        (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
+      } else if ((state.metadata as any).supportSessionId) {
+        delete (state.metadata as any).supportSessionId;
+        delete (state.metadata as any).allowedToolNames;
+        delete (state.metadata as any).conversationContext;
+        delete (state as any).llmTools;
       }
 
       // A saved/cached thread carries a historical copy of its agent config.

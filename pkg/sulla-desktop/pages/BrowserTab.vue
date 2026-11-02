@@ -378,6 +378,16 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'support-session'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <SupportSessionTab
+          :tab-id="props.tabId"
+          :session-id="getTab(props.tabId)?.supportSession?.sessionId || ''"
+          :is-visible="props.isVisible"
+        />
+      </div>
+    </template>
+
     <!-- Terminal: xterm.js PTY into the Sulla VM (sulla-runtime exec 0) -->
     <template v-else-if="tabMode === 'terminal'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -423,6 +433,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 // canvas). Each is only rendered inside its own v-if branch below.
 const AgentRoutines = defineAsyncComponent(() => import('./AgentRoutines.vue'));
 const FileEditorTab = defineAsyncComponent(() => import('./FileEditorTab.vue'));
+const SupportSessionTab = defineAsyncComponent(() => import('./SupportSessionTab.vue'));
 const TerminalTab = defineAsyncComponent(() => import('./TerminalTab.vue'));
 const PreferencesPage = defineAsyncComponent(() => import('./Preferences.vue'));
 const DockerPage = defineAsyncComponent(() => import('./Docker.vue'));
@@ -447,6 +458,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   decide:        'Decide',
   preferences:   'Preferences',
   docker:        'Docker',
+  'support-session': 'Support session',
 };
 
 const props = defineProps<{

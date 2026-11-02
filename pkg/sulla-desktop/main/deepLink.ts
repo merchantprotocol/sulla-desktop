@@ -142,6 +142,17 @@ function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {
     return;
   }
 
+  if (section === 'support' && action.startsWith('session/')) {
+    const sessionId = action.slice('session/'.length).trim();
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) {
+      console.warn('[deep-link] invalid support session id');
+      return;
+    }
+    target.focus();
+    target.webContents.send('agent-command', { command: 'support:open-session', sessionId });
+    return;
+  }
+
   // Use Cases is the current name; marketplace and packages stay working.
   if ((section === 'marketplace' || section === 'packages' || section === 'use-cases') && action === 'install') {
     const id = parsed.searchParams.get('id');

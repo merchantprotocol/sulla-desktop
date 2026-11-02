@@ -560,6 +560,14 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'support:open-session': {
+    const sessionId = args.sessionId;
+    if (!sessionId) break;
+    const existing = browserTabs.find(t => t.mode === 'support-session' && t.supportSession?.sessionId === sessionId);
+    const targetTab = existing ?? createTab('about:blank', { mode: 'support-session', title: 'Support session', supportSession: { sessionId } } as any);
+    router.push(`/Browser/${ targetTab.id }`);
+    break;
+  }
   case 'marketplace:open-detail': {
     // Fired by the main-process deep-link handler when the user clicks
     // "Open in Sulla Desktop" on sulladesktop.com (sulla://marketplace/
