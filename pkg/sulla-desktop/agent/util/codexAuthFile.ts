@@ -126,7 +126,7 @@ function isAuthFileFresh(): boolean {
  * Write the codex CLI auth file from an OAuth token set. Returns false (and
  * logs) on failure — callers treat that as "codex not signed in".
  */
-export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
+export function writeCodexAuthFile(tokens: Partial<OAuthTokenSet>): boolean {
   if (!tokens?.access_token) return false;
   try {
     const idToken = typeof tokens.id_token === 'string' ? tokens.id_token : undefined;
@@ -155,6 +155,38 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
     console.error('[codexAuthFile] Failed to write auth.json:', err);
     return false;
   }
+}
+
+export type CodexAuthPreparationResult =
+  | { custody: 'vault-bridge'; written: false; linked: false }
+  | { custody: 'auth-file'; written: true; linked: boolean };
+
+/**
+ * Prepare raw Codex OAuth credentials for the legacy/first-run CLI path.
+ *
+ * A container-vault exchange has already persisted the credentials and only
+ * returns sanitized metadata. It must never be treated as a token set or
+ * copied into a host/guest auth file; Codex uses the opaque provider.cli
+ * bridge in that mode. For raw-token paths, a durable local write is required,
+ * while a stopped/not-yet-ready guest is recoverable: ensureCodexAuthFile()
+ * retries the guest copy immediately before the next guest Codex turn.
+ */
+export async function prepareCodexAuthAfterExchange(
+  tokens: Partial<OAuthTokenSet>,
+  vaultOwned: boolean,
+  linkIntoVm: () => Promise<boolean> = linkCodexHomeIntoVm,
+): Promise<CodexAuthPreparationResult> {
+  if (vaultOwned) return { custody: 'vault-bridge', written: false, linked: false };
+
+  if (!writeCodexAuthFile(tokens)) {
+    throw new Error('ChatGPT signed in, but its credentials could not be prepared locally');
+  }
+
+  return {
+    custody: 'auth-file',
+    written: true,
+    linked:  await linkIntoVm(),
+  };
 }
 
 /** Copy the exact Codex auth file into the guest-owned CLI home. */
@@ -263,6 +295,11 @@ export async function removeCodexAuthFile(): Promise<void> {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
+  // Persistent container authority never exports raw OAuth credentials. Its
+  // provider.cli bridge supplies the session directly to the Codex process.
+  const { usesContainerVaultAuthority } = await import('../../vault-broker');
+  if (usesContainerVaultAuthority()) return true;
+
   migrateLegacyCodexAuth();
   const exists = fs.existsSync(codexAuthPath());
   const fresh = exists && isAuthFileFresh();

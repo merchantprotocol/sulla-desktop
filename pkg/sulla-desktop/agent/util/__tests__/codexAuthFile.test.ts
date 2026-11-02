@@ -12,9 +12,37 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 const ensureFreshTokensMock: any = jest.fn();
 const getStoredTokensMock: any = jest.fn();
 let tempHome = '';
+let containerAuthority = false;
 
 jest.unstable_mockModule('os', () => ({
+  default: { homedir: () => tempHome },
   homedir: () => tempHome,
+}));
+
+jest.unstable_mockModule('electron', () => ({
+  default: {},
+  app: { getPath: () => tempHome },
+}));
+
+jest.unstable_mockModule('../../../utils/paths', () => ({
+  default: { sullaRuntime: '/synthetic/sulla-runtime' },
+}));
+
+jest.unstable_mockModule('child_process', () => ({
+  execFile: (_file: string, args: string[], _options: unknown, callback: (...args: any[]) => void) => {
+    const output = args[0] === 'exec' && args.some(arg => arg.includes('mktemp -d /tmp/sulla-codex-auth.XXXXXXXX'))
+      ? '/tmp/sulla-codex-auth.synthetic\n'
+      : '';
+    callback(null, output);
+  },
+}));
+
+jest.unstable_mockModule('../../../main/firstRun/pendingCredentials', () => ({
+  getPendingCredential: () => null,
+}));
+
+jest.unstable_mockModule('../../../main/firstRun/firstRunTrace', () => ({
+  firstRunTrace: jest.fn(),
 }));
 
 jest.unstable_mockModule('../../services/OAuthService', () => ({
@@ -30,6 +58,10 @@ jest.unstable_mockModule('../../services/IntegrationService', () => ({
   }),
 }));
 
+jest.unstable_mockModule('../../../vault-broker', () => ({
+  usesContainerVaultAuthority: () => containerAuthority,
+}));
+
 function jwtWithExpiry(expiresAtMs: number): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({ exp: Math.floor(expiresAtMs / 1000) })).toString('base64url');
@@ -42,6 +74,7 @@ describe('codexAuthFile', () => {
     tempHome = fs.mkdtempSync(path.join(nodeOs.tmpdir(), 'codex-auth-file-'));
     ensureFreshTokensMock.mockReset();
     getStoredTokensMock.mockReset();
+    containerAuthority = false;
   });
 
   afterEach(() => {
@@ -102,5 +135,42 @@ describe('codexAuthFile', () => {
     const saved = JSON.parse(fs.readFileSync(codexAuthPath(), 'utf-8'));
     expect(saved.tokens.access_token).toBe(freshAccessToken);
     expect(saved.tokens.refresh_token).toBe('refresh-token');
+  });
+
+  it('accepts metadata-only vault exchange results without writing or linking credentials', async() => {
+    containerAuthority = true;
+    const { codexAuthPath, ensureCodexAuthFile, prepareCodexAuthAfterExchange } = await import('../codexAuthFile');
+
+    await expect(prepareCodexAuthAfterExchange({
+      token_type: 'Bearer',
+      expires_at: Date.now() + 60 * 60 * 1000,
+    }, true)).resolves.toEqual({ custody: 'vault-bridge', written: false, linked: false });
+    await expect(ensureCodexAuthFile()).resolves.toBe(true);
+
+    expect(fs.existsSync(codexAuthPath())).toBe(false);
+    expect(ensureFreshTokensMock).not.toHaveBeenCalled();
+    expect(getStoredTokensMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a raw-token sign-in durable when the guest is not ready for linking', async() => {
+    const { codexAuthPath, ensureCodexAuthFile, prepareCodexAuthAfterExchange } = await import('../codexAuthFile');
+    const accessToken = jwtWithExpiry(Date.now() + 60 * 60 * 1000);
+
+    await expect(prepareCodexAuthAfterExchange({
+      access_token: accessToken,
+      token_type:   'Bearer',
+    }, false, async() => false)).resolves.toEqual({ custody: 'auth-file', written: true, linked: false });
+
+    expect(JSON.parse(fs.readFileSync(codexAuthPath(), 'utf-8')).tokens.access_token).toBe(accessToken);
+    await expect(ensureCodexAuthFile()).resolves.toBe(true);
+    expect(ensureFreshTokensMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a raw-token exchange when no local credential can be written', async() => {
+    const { codexAuthPath, prepareCodexAuthAfterExchange } = await import('../codexAuthFile');
+
+    await expect(prepareCodexAuthAfterExchange({ token_type: 'Bearer' }, false))
+      .rejects.toThrow('credentials could not be prepared locally');
+    expect(fs.existsSync(codexAuthPath())).toBe(false);
   });
 });
