@@ -22,7 +22,8 @@ import paths from '@pkg/utils/paths';
 import * as window from '@pkg/window';
 
 const console = Logging.background;
-const RECONNECT_MS = 5_000;
+const RECONNECT_MIN_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
 const POLL_MS = 3_000;
 const MAX_ACTIVITY = 500;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -130,6 +131,7 @@ export class RemoteSupportService {
   private reconnect?: ReturnType<typeof setTimeout>;
   private poll?: ReturnType<typeof setInterval>;
   private starting = false;
+  private reconnectAttempt = 0;
 
   configureRuntime(runtime: Runtime) { this.runtime = runtime }
 
@@ -144,7 +146,7 @@ export class RemoteSupportService {
   stop() {
     if (this.reconnect) clearTimeout(this.reconnect);
     if (this.poll) clearInterval(this.poll);
-    this.reconnect = undefined; this.poll = undefined;
+    this.reconnect = undefined; this.poll = undefined; this.reconnectAttempt = 0;
     this.socket?.close(); this.socket = undefined;
   }
 
@@ -167,8 +169,9 @@ export class RemoteSupportService {
     const current = this.state().remote;
     if (current.status !== 'approval' || !current.sessionId) throw new Error('This support request is not ready for approval.');
     const token = crypto.randomBytes(32).toString('base64url');
-    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token });
     const deviceId = await getDesktopDeviceId();
+    const signed = signDeviceMessage('support-desktop-v1', [await this.currentUserId(), deviceId, current.sessionId, 'approve', crypto.createHash('sha256').update(token).digest('hex')]);
+    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId, ts: signed.ts, signature: signed.signature });
     const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
     if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
     stateStore().update((state) => {
@@ -198,7 +201,7 @@ export class RemoteSupportService {
     try {
       const result = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(grant.sessionId) }/grant`, undefined, { 'X-Sulla-Support-Token': grant.token });
       if (!result.active) throw new Error('The support grant is no longer active.');
-      stateStore().update((state) => { state.remote.status = 'connected'; state.remote.expiresAt = result.expiresAt; if (state.remote.grant) state.remote.grant.expiresAt = result.expiresAt });
+      stateStore().update((state) => { state.remote.status = 'connected'; state.remote.expiresAt = result.expiresAt; state.remote.offeredBy = result.acceptedByName || state.remote.offeredBy; if (state.remote.grant) state.remote.grant.expiresAt = result.expiresAt });
       broadcast(); await this.ensureHost(); await this.reportDeviceStatus();
     } catch (error: any) {
       if (error?.status === 403) { stateStore().clearGrant(error.code === 'support_grant_invalid' ? 'revoked_or_expired' : 'grant_invalid'); broadcast() }
@@ -240,13 +243,13 @@ export class RemoteSupportService {
     this.starting = true;
     try {
       const deviceId = await getDesktopDeviceId();
-      const signed = signDeviceMessage('device-tools-host-v1', [(await this.currentUserId()), deviceId]);
-      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', ts: signed.ts, signature: signed.signature });
-      await this.publishManifest(deviceId);
+      const grant = this.state().remote.grant!;
+      const signed = signDeviceMessage('device-tools-host-v1', [await this.currentUserId(), deviceId, grant.sessionId]);
+      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId, ts: signed.ts, signature: signed.signature });
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(ticket.url);
         const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Support channel connection timed out.')) }, 15_000);
-        socket.once('open', () => { clearTimeout(timeout); this.socket = socket; this.attachSocket(socket); resolve() });
+        socket.once('open', () => { clearTimeout(timeout); this.reconnectAttempt = 0; this.socket = socket; this.attachSocket(socket); resolve() });
         socket.once('error', (error) => { clearTimeout(timeout); reject(error) });
       });
     } catch (error) { console.warn('[RemoteSupport] tool host connection failed:', error); this.scheduleReconnect() }
@@ -260,9 +263,6 @@ export class RemoteSupportService {
     return id;
   }
 
-  private async publishManifest(deviceId: string) {
-    await jsonCloud('PUT', `/device-tools/${ encodeURIComponent(deviceId) }/manifest`, { appSlug: 'sulla-desktop', appVersion: app.getVersion(), tools: TOOLS.map(tool => ({ ...tool, requiredScope: 'support', inputSchema: tool.inputSchema })) });
-  }
 
   private attachSocket(socket: WebSocket) {
     socket.on('message', data => void this.onSocketFrame(String(data)));
@@ -272,7 +272,8 @@ export class RemoteSupportService {
 
   private scheduleReconnect() {
     if (this.reconnect || !this.state().remote.grant) return;
-    this.reconnect = setTimeout(() => { this.reconnect = undefined; void this.restore() }, RECONNECT_MS);
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(this.reconnectAttempt++, 5));
+    this.reconnect = setTimeout(() => { this.reconnect = undefined; void this.restore() }, delay);
     this.reconnect.unref?.();
   }
 
@@ -395,8 +396,9 @@ export class RemoteSupportService {
 
   private async reportDeviceStatus() {
     const remote = this.state().remote; if (!remote.sessionId || !remote.grant) return;
-    const metadata = await getDesktopDeviceMetadata();
-    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { appVersion: app.getVersion(), updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(), deviceName: metadata.name });
+    const [metadata, deviceId, userId] = await Promise.all([getDesktopDeviceMetadata(), getDesktopDeviceId(), this.currentUserId()]);
+    const signed = signDeviceMessage('support-desktop-v1', [userId, deviceId, remote.sessionId, 'device-status']);
+    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, ts: signed.ts, signature: signed.signature, appVersion: app.getVersion(), updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(), deviceName: metadata.name });
   }
 }
 

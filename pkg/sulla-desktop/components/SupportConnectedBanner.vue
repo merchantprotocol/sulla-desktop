@@ -2,7 +2,7 @@
 <template>
   <div v-if="remote.status === 'connected'" class="support-connected" role="status">
     <i />
-    <b>Sulla support is connected</b>
+    <b>{{ remote.offeredBy || 'Sulla support' }} is connected</b>
     <span>Inside your Sulla runtime only · expires {{ expiry }}</span>
     <button type="button" @click="openSupport">View activity</button>
     <button type="button" class="end" :disabled="ending" @click="endSupport">End support</button>
@@ -13,7 +13,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Remote = { status: string; expiresAt?: string };
+type Remote = { status: string; offeredBy?: string; expiresAt?: string };
 const remote = ref<Remote>({ status: 'idle' });
 const ending = ref(false);
 const expiry = computed(() => remote.value.expiresAt ? new Date(remote.value.expiresAt).toLocaleString() : 'soon');
