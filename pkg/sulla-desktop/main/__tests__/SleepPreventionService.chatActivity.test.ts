@@ -9,11 +9,9 @@ const start = jest.fn(() => 41);
 const stop = jest.fn();
 const isStarted = jest.fn(() => true);
 
-jest.unstable_mockModule('electron', () => ({
-  powerSaveBlocker: { start, stop, isStarted },
-}));
-
 const service = await import('../SleepPreventionService');
+
+service.setPowerSaveBlockerForTests({ start, stop, isStarted } as any);
 
 describe('SleepPreventionService chat activity', () => {
   afterEach(() => {

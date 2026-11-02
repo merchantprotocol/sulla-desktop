@@ -21,6 +21,20 @@ const activeHolders = new Set<string>();
 const chatActivityHolders = new Set<string>();
 let appSuspensionBlockerId: number | null = null;
 
+type PowerSaveBlocker = Pick<import('electron').PowerSaveBlocker, 'start' | 'stop' | 'isStarted'>;
+let powerSaveBlockerOverride: PowerSaveBlocker | null = null;
+
+/** Electron's blocker, loaded lazily so this module imports fine outside Electron. */
+function getPowerSaveBlocker(): PowerSaveBlocker {
+  if (powerSaveBlockerOverride) return powerSaveBlockerOverride;
+  return (require('electron') as typeof import('electron')).powerSaveBlocker;
+}
+
+/** Test seam: swap in a fake powerSaveBlocker (pass null to restore). */
+export function setPowerSaveBlockerForTests(blocker: PowerSaveBlocker | null): void {
+  powerSaveBlockerOverride = blocker;
+}
+
 // ── Caffeinate (sleep prevention) ──
 
 /**
@@ -93,8 +107,7 @@ export function acquireChatActivity(key: string): void {
 
   startCaffeinate('chat-activity');
   try {
-    const { powerSaveBlocker } = require('electron') as typeof import('electron');
-    appSuspensionBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    appSuspensionBlockerId = getPowerSaveBlocker().start('prevent-app-suspension');
     console.log(`[SleepPrevention] prevent-app-suspension started (ID ${ appSuspensionBlockerId }) — chat:${ key }`);
   } catch (err) {
     console.error('[SleepPrevention] Failed to start prevent-app-suspension:', err);
@@ -111,7 +124,7 @@ export function releaseChatActivity(key: string): void {
   stopCaffeinate('chat-activity');
   if (appSuspensionBlockerId === null) return;
   try {
-    const { powerSaveBlocker } = require('electron') as typeof import('electron');
+    const powerSaveBlocker = getPowerSaveBlocker();
     if (powerSaveBlocker.isStarted(appSuspensionBlockerId)) powerSaveBlocker.stop(appSuspensionBlockerId);
     console.log(`[SleepPrevention] prevent-app-suspension stopped (ID ${ appSuspensionBlockerId }) — last chat holder released`);
   } catch (err) {

@@ -33,6 +33,7 @@ import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
 
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
+const RESUME_CONTINUE_DELAY_MS = 1_000;
 const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Dedicated channel for chats routed from a paired mobile device via the
 // Cloudflare relay. Mobile messages arrive through `DesktopRelayClient`,
@@ -165,16 +166,22 @@ export class BackendGraphWebSocketService {
     console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
   }
 
-  /** Abort sockets that crossed sleep, then continue their threads automatically. */
+  /**
+   * Wake recovery. Snapshot the threads whose runs crossed sleep BEFORE
+   * reinitialize(): dispose() aborts every in-flight run (their LLM sockets
+   * died while the Mac slept) and clears the resume bookkeeping, so reading
+   * it afterwards would find nothing and the tabs would stay stopped.
+   * Then re-subscribe and send each interrupted thread a continue.
+   */
   handleResume(): void {
-    const interrupted = [...this.suspendedRuns];
+    const interrupted = [...this.suspendedRuns]
+      .map(key => this.resumeContexts.get(key))
+      .filter((context): context is NonNullable<typeof context> => !!context);
     this.suspendedRuns.clear();
-    for (const key of interrupted) {
-      const abort = this.activeAborts.get(key);
-      const context = this.resumeContexts.get(key);
-      if (!abort || !context) continue;
-      console.log(`[BackendGraphWS] Aborting and continuing chat thread ${ context.threadId } after system resume`);
-      abort.abort();
+    this.reinitialize();
+    if (interrupted.length) console.log(`[BackendGraphWS] Continuing ${ interrupted.length } chat thread(s) interrupted by system sleep`);
+    for (const context of interrupted) {
+      // Give the aborted runs a moment to unwind their finally blocks first.
       setTimeout(() => {
         void this.dispatchToAgent(
           context.channelId, context.triggerType,
@@ -182,7 +189,7 @@ export class BackendGraphWebSocketService {
           context.threadId, context.scopedWorkflowId, context.overrideAgentId, context.inputSource,
           { source: 'system_resume', inputSource: 'system' },
         ).catch(err => console.error('[BackendGraphWS] Failed to continue chat after resume:', err));
-      }, 0);
+      }, RESUME_CONTINUE_DELAY_MS);
     }
   }
 

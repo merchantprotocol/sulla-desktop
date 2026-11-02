@@ -928,9 +928,9 @@ export function initSullaEvents(): void {
     // message handlers after wake.
     try {
       const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
-      const service = getBackendGraphWebSocketService();
-      service.reinitialize();
-      service.handleResume();
+      // handleResume() snapshots interrupted chat runs, reinitializes
+      // (re-subscribe), then continues those threads.
+      getBackendGraphWebSocketService().handleResume();
     } catch (err) {
       console.warn('[Power] Failed to reinitialize backend graph service:', err);
     }
