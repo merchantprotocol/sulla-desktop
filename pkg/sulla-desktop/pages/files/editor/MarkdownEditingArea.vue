@@ -14,7 +14,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState, Range } from '@codemirror/state';
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { EditorView as Editor } from '@codemirror/view';
 import { textPatch, createEditor, type EditorCollaboration } from './codeMirror';
 const props=defineProps<{ modelValue:string; readOnly:boolean; live?:EditorCollaboration|null }>();
@@ -22,27 +22,51 @@ const emit=defineEmits<{ 'update:modelValue':[value:string]; insertMenu:[point:{
 const wrap=ref<HTMLElement>(),gutterVisible=ref(false),gutterTop=ref(4);let gutterLine=0,contextHadSelection=false;
 const host=ref<HTMLElement>(); let view:Editor|undefined; let applying=false;
 class ImageWidget extends WidgetType { constructor(private readonly src:string,private readonly alt:string){super()} toDOM(){const image=document.createElement('img');image.src=this.src;image.alt=this.alt;image.className='cm-md-image';image.loading='lazy';return image} eq(other:ImageWidget){return other.src===this.src&&other.alt===this.alt} }
-function livePreview(state:EditorState):DecorationSet{
- const decorations:Range<Decoration>[]=[];
- syntaxTree(state).iterate({from:0,to:state.doc.length,enter(node){
-  if(node.name.startsWith('ATXHeading')){const line=state.doc.lineAt(node.from);decorations.push(Decoration.line({class:`cm-md-heading cm-md-h${node.name.slice(-1)}`}).range(line.from))}
-  else if(node.name==='StrongEmphasis')decorations.push(Decoration.mark({class:'cm-md-strong'}).range(node.from,node.to));
-  else if(node.name==='Emphasis')decorations.push(Decoration.mark({class:'cm-md-em'}).range(node.from,node.to));
-  else if(node.name==='Link'&&!state.doc.sliceString(node.from,node.to).startsWith('!['))decorations.push(Decoration.mark({class:'cm-md-link'}).range(node.from,node.to));
-  else if(node.name==='TaskMarker')decorations.push(Decoration.mark({class:'cm-md-task'}).range(node.from,node.to));
- }});
- const source=state.doc.toString();
- // Front matter is shown as property pills; the raw YAML only appears while the cursor is inside it.
- const frontMatter=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(source);
- if(frontMatter){const cursor=state.selection.main.head;if(cursor>frontMatter[0].length)decorations.push(Decoration.replace({block:true}).range(0,frontMatter[0].length-(frontMatter[0].endsWith('\n')?1:0)))}
- const imagePattern=/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\)/g;let match:RegExpExecArray|null;
- while((match=imagePattern.exec(source))){const from=match.index,to=from+match[0].length;const line=state.doc.lineAt(from);const cursor=state.selection.main.head;if(cursor<line.from||cursor>line.to)decorations.push(Decoration.replace({widget:new ImageWidget(match[2],match[1]),block:true}).range(from,to))}
- return Decoration.set(decorations,true);
+class BulletWidget extends WidgetType { toDOM(){const dot=document.createElement('span');dot.className='cm-md-bullet';dot.textContent='•';return dot} }
+class RuleWidget extends WidgetType { toDOM(){const rule=document.createElement('hr');rule.className='cm-md-rule';return rule} }
+class TaskWidget extends WidgetType {
+ constructor(private readonly checked:boolean,private readonly markerFrom:number,private readonly disabled:boolean){super()}
+ eq(other:TaskWidget){return other.checked===this.checked&&other.markerFrom===this.markerFrom&&other.disabled===this.disabled}
+ toDOM(editor:EditorView){const button=document.createElement('button');button.type='button';button.className=`cm-md-checkbox${this.checked?' checked':''}`;button.setAttribute('aria-label',this.checked?'Mark task incomplete':'Mark task complete');button.setAttribute('aria-checked',String(this.checked));button.textContent=this.checked?'✓':'';button.disabled=this.disabled;button.addEventListener('mousedown',event=>event.preventDefault());button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();if(this.disabled)return;const current=editor.state.doc.sliceString(this.markerFrom,this.markerFrom+3);if(!/^\[[ xX]\]$/.test(current))return;editor.dispatch({changes:{from:this.markerFrom+1,to:this.markerFrom+2,insert:/[xX]/.test(current)?' ':'x'}});editor.focus()});return button}
+ ignoreEvent(){return false}
 }
-const preview=EditorView.decorations.compute(['doc','selection'],state=>livePreview(state));
-function build(){view?.destroy();view=undefined;if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'22px',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'#3a7fa0',textDecoration:'underline'},'.cm-md-task':{color:'#3a7fa0'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})],props.live);}
+function plainInline(source:string){return source.replace(/!\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/(`+|\*\*|__|~~|\*|_)/g,'').trim()}
+class TableWidget extends WidgetType {
+ constructor(private readonly source:string,private readonly from:number){super()}
+ eq(other:TableWidget){return other.source===this.source&&other.from===this.from}
+ toDOM(editor:EditorView){const shell=document.createElement('div');shell.className='cm-md-table-shell';shell.title='Click to edit table source';const rows=this.source.split(/\r?\n/).filter(Boolean).map(line=>line.trim().replace(/^\||\|$/g,'').split('|').map(cell=>plainInline(cell.trim())));const body=rows.filter((_,index)=>index!==1);const table=document.createElement('table');body.forEach((cells,rowIndex)=>{const row=document.createElement('tr');cells.forEach(value=>{const cell=document.createElement(rowIndex===0?'th':'td');cell.textContent=value;row.appendChild(cell)});table.appendChild(row)});shell.appendChild(table);shell.addEventListener('click',()=>{editor.dispatch({selection:{anchor:this.from},scrollIntoView:true});editor.focus()});return shell}
+ ignoreEvent(){return false}
+}
+function selectionTouchesLine(state:EditorState,from:number,to:number){return state.selection.ranges.some(range=>range.from<=to&&range.to>=from)}
+function hidden(decorations:Range<Decoration>[],from:number,to:number){if(to>from)decorations.push(Decoration.replace({}).range(from,to))}
+function previewDecorations(editor:EditorView):DecorationSet{
+ const state=editor.state,decorations:Range<Decoration>[]=[],tree=syntaxTree(state),seenLines=new Set<number>(),seenTables=new Set<number>(),tableSpans:{from:number;to:number}[]=[],seenImages=new Set<number>();
+ const ranges=editor.visibleRanges.map(range=>({from:state.doc.lineAt(range.from).from,to:state.doc.lineAt(range.to).to}));
+ for(const range of ranges){
+  for(let pos=range.from;pos<=range.to;){const line=state.doc.lineAt(pos);if(!seenLines.has(line.from)){seenLines.add(line.from);const active=selectionTouchesLine(state,line.from,line.to);const task=/^(\s*)([-+*])\s+(\[[ xX]\])\s+/.exec(line.text);if(task){const prefix=line.from+task[1].length,markerFrom=prefix+task[2].length+1;decorations.push(Decoration.replace({widget:new TaskWidget(/[xX]/.test(task[3]),markerFrom,props.readOnly)}).range(prefix,markerFrom+3));if(/[xX]/.test(task[3]))decorations.push(Decoration.line({class:'cm-md-task-done'}).range(line.from))}else if(!active){const bullet=/^(\s*)([-+*])(?=\s+)/.exec(line.text);if(bullet){const from=line.from+bullet[1].length;decorations.push(Decoration.replace({widget:new BulletWidget()}).range(from,from+1))}const ordered=/^(\s*)(\d+[.)])(?=\s+)/.exec(line.text);if(ordered){const from=line.from+ordered[1].length;decorations.push(Decoration.mark({class:'cm-md-list-number'}).range(from,from+ordered[2].length))}}}if(line.to>=range.to)break;pos=line.to+1}
+  tree.iterate({from:range.from,to:range.to,enter(node){
+   const startLine=state.doc.lineAt(node.from),endLine=state.doc.lineAt(Math.max(node.from,node.to-1)),active=selectionTouchesLine(state,startLine.from,endLine.to),source=state.doc.sliceString(node.from,node.to);
+   if(node.name.startsWith('ATXHeading')){decorations.push(Decoration.line({class:`cm-md-heading cm-md-h${node.name.slice(-1)}`}).range(startLine.from));if(!active){const mark=/^#{1,6}[ \t]+/.exec(source);if(mark)hidden(decorations,node.from,node.from+mark[0].length)}}
+   else if(node.name==='StrongEmphasis')decorations.push(Decoration.mark({class:'cm-md-strong'}).range(node.from,node.to));
+   else if(node.name==='Emphasis')decorations.push(Decoration.mark({class:'cm-md-em'}).range(node.from,node.to));
+   else if(node.name==='Strikethrough')decorations.push(Decoration.mark({class:'cm-md-strike'}).range(node.from,node.to));
+   else if(node.name==='InlineCode')decorations.push(Decoration.mark({class:'cm-md-code'}).range(node.from,node.to));
+   else if((node.name==='EmphasisMark'||node.name==='StrikethroughMark'||node.name==='CodeMark')&&!active)hidden(decorations,node.from,node.to);
+   else if(node.name==='Link'&&!source.startsWith('![')){decorations.push(Decoration.mark({class:'cm-md-link'}).range(node.from,node.to));if(!active){const match=/^\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)$/.exec(source);if(match){hidden(decorations,node.from,node.from+1);const close=node.from+1+match[1].length;hidden(decorations,close,node.to)}}}
+   else if(node.name==='Blockquote'){for(let n=startLine.number;n<=endLine.number;n++)decorations.push(Decoration.line({class:'cm-md-quote'}).range(state.doc.line(n).from))}
+   else if(node.name==='QuoteMark'&&!active)hidden(decorations,node.from,Math.min(node.to+(state.doc.sliceString(node.to,node.to+1)===' '?1:0),state.doc.length));
+   else if(node.name==='HorizontalRule'&&!active)decorations.push(Decoration.replace({widget:new RuleWidget(),block:true}).range(startLine.from,startLine.to));
+   else if(node.name==='Table'&&!active&&!seenTables.has(node.from)){seenTables.add(node.from);tableSpans.push({from:node.from,to:node.to});decorations.push(Decoration.replace({widget:new TableWidget(source,node.from),block:true}).range(startLine.from,endLine.to));return false}
+   else if(node.name==='FencedCode'){for(let n=startLine.number;n<=endLine.number;n++)decorations.push(Decoration.line({class:'cm-md-code-block'}).range(state.doc.line(n).from));if(!active){hidden(decorations,startLine.from,startLine.to);if(endLine.number>startLine.number)hidden(decorations,endLine.from,endLine.to)}return false}
+  }});
+  const text=state.doc.sliceString(range.from,range.to),imagePattern=/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\)/g;let match:RegExpExecArray|null;while((match=imagePattern.exec(text))){const from=range.from+match.index;if(seenImages.has(from))continue;seenImages.add(from);const to=from+match[0].length;if(tableSpans.some(table=>from>=table.from&&from<table.to))continue;const line=state.doc.lineAt(from);if(!selectionTouchesLine(state,line.from,line.to))decorations.push(Decoration.replace({widget:new ImageWidget(match[2],match[1]),block:true}).range(from,to))}
+ }
+ const frontMatter=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(state.doc.toString());if(frontMatter&&state.selection.main.head>frontMatter[0].length)decorations.push(Decoration.replace({block:true}).range(0,frontMatter[0].length-(frontMatter[0].endsWith('\n')?1:0)));
+ return Decoration.set(decorations,true)
+}
+const preview=ViewPlugin.fromClass(class {decorations:DecorationSet;constructor(editor:EditorView){this.decorations=previewDecorations(editor)}update(update:ViewUpdate){if(update.docChanged||update.selectionSet||update.viewportChanged||update.geometryChanged)this.decorations=previewDecorations(update.view)}},{decorations:value=>value.decorations});
+function build(){view?.destroy();view=undefined;if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.domEventHandlers({click(event,editor){if(!(event.metaKey||event.ctrlKey))return false;const pos=editor.posAtCoords({x:event.clientX,y:event.clientY});if(pos===null)return false;let node=syntaxTree(editor.state).resolveInner(pos,-1);while(node&&node.name!=='Link')node=node.parent;if(!node)return false;const match=/\]\((https?:\/\/[^\s)]+)/.exec(editor.state.doc.sliceString(node.from,node.to));if(!match)return false;window.open(match[1],'_blank','noopener,noreferrer');event.preventDefault();return true}}),EditorView.theme({'.cm-md-heading':{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'1.65rem',lineHeight:'1.35'},'.cm-md-h3':{fontSize:'1.3rem'},'.cm-md-h4':{fontSize:'1.12rem'},'.cm-md-h5':{fontSize:'1rem'},'.cm-md-h6':{fontSize:'.92rem',color:'var(--text-muted, #657386)'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-strike,.cm-md-task-done':{textDecoration:'line-through',color:'var(--text-muted, #738094)'},'.cm-md-link':{color:'var(--accent, #3a7fa0)',textDecoration:'underline',cursor:'pointer'},'.cm-md-code':{fontFamily:'"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace',fontSize:'.9em',background:'var(--surface-2, rgba(58,127,160,.1))',borderRadius:'4px',padding:'1px 4px'},'.cm-md-quote':{borderLeft:'3px solid var(--accent, #3a7fa0)',paddingLeft:'14px',color:'var(--text-muted, #657386)'},'.cm-md-list-number':{color:'var(--text-muted, #738094)'},'.cm-md-code-block':{fontFamily:'"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace',fontSize:'.9em',background:'var(--surface-2, rgba(58,127,160,.08))'},'.cm-md-bullet':{display:'inline-block',width:'1ch',color:'var(--accent, #3a7fa0)',fontWeight:'700'},'.cm-md-checkbox':{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'18px',height:'18px',margin:'0 8px 0 1px',padding:'0',border:'2px solid var(--accent, #3a7fa0)',borderRadius:'50%',background:'transparent',color:'#fff',fontSize:'12px',lineHeight:'1',verticalAlign:'-2px',cursor:'pointer'},'.cm-md-checkbox.checked':{background:'var(--accent, #3a7fa0)'},'.cm-md-checkbox:disabled':{cursor:'default'},'.cm-md-rule':{width:'100%',border:'0',borderTop:'1px solid var(--border, #d7dee8)',margin:'14px 0'},'.cm-md-table-shell':{overflowX:'auto',margin:'10px 0',cursor:'text'},'.cm-md-table-shell table':{width:'100%',borderCollapse:'collapse'},'.cm-md-table-shell th,.cm-md-table-shell td':{padding:'8px 10px',border:'1px solid var(--border, #d7dee8)',textAlign:'left'},'.cm-md-table-shell th':{fontWeight:'700',background:'var(--surface-2, rgba(58,127,160,.08))'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})],props.live);}
 onMounted(build);
-// Live editing arrives after the file loads; rebind CodeMirror to the Automerge-backed Y.Text.
 watch(()=>props.live,()=>{build();startAfterFrontMatter();});
 watch(()=>props.modelValue,value=>{if(!view||view.state.doc.toString()===value)return;applying=true;view.dispatch({changes:textPatch(view.state.doc.toString(),value)});applying=false});
 function startAfterFrontMatter(){if(!view)return;const match=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(view.state.doc.toString());if(match)view.dispatch({selection:{anchor:Math.min(match[0].length+1,view.state.doc.length)}})}
