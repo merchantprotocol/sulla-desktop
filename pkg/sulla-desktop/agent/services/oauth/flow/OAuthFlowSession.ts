@@ -65,11 +65,14 @@ export class OAuthFlowSession {
     const { config: cfg, integrationId, providerId } = this.options;
     const owner = `${ this.options.requesterId } (${ integrationId }/${ providerId })`;
     let lease: CallbackPortLease | null = null;
+    firstRunTrace('oauth', 'authorization started', { integrationId, providerId, accountId: this.options.requesterId, status: 'started' });
     try {
       lease = CallbackPortLease.acquire(cfg.fixedCallbackPort, owner);
       this.lease = lease;
+      firstRunTrace('oauth', 'callback port leased', { integrationId, providerId, accountId: this.options.requesterId, status: 'success', port: cfg.fixedCallbackPort ?? 'dynamic' });
     } catch (error) {
       if (error instanceof CallbackPortInUseError) {
+        firstRunTrace('oauth', 'callback port lease failed', { integrationId, providerId, accountId: this.options.requesterId, status: error.code, error });
         return { ok: false, code: 'port_in_use', message: error.message, owner: error.owner, port: error.port };
       }
       throw error;
@@ -143,6 +146,7 @@ export class OAuthFlowSession {
       }
 
       const code = await this.awaitCode(codeSource, authWindow);
+      firstRunTrace('oauth', 'callback received', { integrationId, providerId, accountId: this.options.requesterId, status: 'success' });
       shutdown();
       shutdown = null;
       return { ok: true, code: code.code, codeVerifier, redirectUri };
@@ -157,6 +161,7 @@ export class OAuthFlowSession {
         : lower.includes('timed out') || lower.includes('timeout') ? 'timeout'
           : lower.includes('cancel') || lower.includes('window closed') ? 'cancelled'
             : 'provider_error';
+      firstRunTrace('oauth', 'authorization failed', { integrationId, providerId, accountId: this.options.requesterId, status: code, error: message });
       return { ok: false, code, message };
     } finally {
       this.cancelCurrent = null;

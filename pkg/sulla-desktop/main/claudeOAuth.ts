@@ -59,7 +59,7 @@ async function saveToken(token: string, firstRun: boolean): Promise<void> {
     await persistTokenToVault(token);
     return;
   }
-  queuePendingCredential({
+  await queuePendingCredential({
     integrationId: CLAUDE_INTEGRATION_ID,
     accountId: CLAUDE_OAUTH_ACCOUNT_ID,
     values: { oauth_token: token, api_key: '', account_label: 'Claude Code OAuth' },

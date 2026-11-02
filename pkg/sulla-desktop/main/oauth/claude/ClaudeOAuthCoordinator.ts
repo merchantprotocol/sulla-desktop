@@ -38,6 +38,7 @@ export class ClaudeOAuthCoordinator {
 
   async start(event: Electron.IpcMainInvokeEvent, options: ClaudeOAuthStartOptions = {}): Promise<ClaudeOAuthResult> {
     const requesterId = event.sender.id;
+    firstRunTrace('claude', 'setup-token flow started', { providerId: 'claude', accountId: String(requesterId), status: 'started' });
     const previous = this.currentAttempt.get(requesterId);
 
     // A repeated click may retire this requester's previous attempt, but never
@@ -168,7 +169,7 @@ export class ClaudeOAuthCoordinator {
     session.requester.removeListener('destroyed', session.requesterDestroyed);
     this.sessions.delete(session.key);
     if (this.currentAttempt.get(session.requesterId) === session.key) this.currentAttempt.delete(session.requesterId);
-    firstRunTrace('claude', 'flow resolved', { success: result.success, status: result.status, attemptId: session.attemptId });
+    firstRunTrace('claude', 'flow resolved', { providerId: 'claude', accountId: String(session.requesterId), success: result.success, status: result.status, attemptId: session.attemptId, error: result.success ? undefined : result.message });
     session.resolve(result);
   }
 }

@@ -16,7 +16,7 @@ export class FirstRunMemoryCustody implements RawTokenCustody {
       .filter(([, value]) => value !== undefined && value !== null)
       .map(([key, value]) => [key, typeof value === 'string' ? value : String(value)]));
     values.provider_id = account.providerId;
-    queuePendingCredential({ integrationId: account.integrationId, accountId: account.accountId, values, activate: true });
+    await queuePendingCredential({ integrationId: account.integrationId, accountId: account.accountId, values, activate: true });
     return this.metadata(account, tokens);
   }
 

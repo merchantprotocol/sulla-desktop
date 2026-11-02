@@ -812,7 +812,7 @@ async function refreshAccessToken(): Promise<string> {
       },
     };
     if (pendingSession) {
-      queuePendingCredential({
+      await queuePendingCredential({
         integrationId: INTEGRATION_ID,
         accountId:     refreshed.userId,
         activate:      true,
@@ -992,7 +992,7 @@ export function initSullaCloudAuthEvents(): void {
     } catch { return { available: false } }
   });
   ipcMainProxy.handle('sulla-cloud:first-run-sign-out' as any, async() => {
-    clearPendingCredential(INTEGRATION_ID);
+    await clearPendingCredential(INTEGRATION_ID);
     clearPendingCloudMasterKey();
     firstRunTrace('account', 'pending first-run Cloud sign-in cleared');
     return { ok: true };
@@ -1126,7 +1126,7 @@ export function initSullaCloudAuthEvents(): void {
   // lifecycle flush it after the owner creates and unlocks their vault.
   const completeFirstRunSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
     const session = responseToSession(data);
-    queuePendingCredential({
+    await queuePendingCredential({
       integrationId: INTEGRATION_ID,
       accountId:     session.userId,
       activate:      true,
@@ -1455,7 +1455,7 @@ export function initSullaCloudAuthEvents(): void {
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
     clearPendingCloudMasterKey();
-    clearPendingCredential(INTEGRATION_ID);
+    await clearPendingCredential(INTEGRATION_ID);
     try {
       await clearSession();
     } catch (err) {
