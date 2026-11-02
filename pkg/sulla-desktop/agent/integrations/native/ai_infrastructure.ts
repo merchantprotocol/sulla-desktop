@@ -709,7 +709,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   // spread order before duplicate ids became a startup error), so skip them here.
   ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.filter((provider) => !AI_ML_OWNED_PROVIDER_IDS.has(provider.id)).map((provider: OpenAICompatibleProviderDefinition) => [provider.id, {
     id:          provider.id,
-    sort:        20 + OPENAI_COMPATIBLE_PROVIDERS.indexOf(provider),
+    sort:        20 + (OPENAI_COMPATIBLE_PROVIDERS as readonly OpenAICompatibleProviderDefinition[]).indexOf(provider),
     paid:        true,
     beta:        false,
     comingSoon:  false,
