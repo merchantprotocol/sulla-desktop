@@ -39,17 +39,21 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { FIRST_RUN_AI_PROVIDERS, firstRunAiIconSrc, type FirstRunAiProviderId } from './firstRunAiProviders';
 import { traceFirstRun } from './firstRunWizard';
+import { oauthFailureMessage, useOAuthConnection } from '@pkg/composables/useOAuthConnection';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const emit = defineEmits<{ next: [from?: number]; back: [from?: number] }>();
 const props = defineProps<{ stepIndex?: number }>();
 type ConnectState = 'idle' | 'waiting' | 'connecting' | 'connected';
-// Why a sign-in failed, from claude-oauth:start / integration-oauth:start.
-type FailureReason = 'user-closed' | 'timeout' | 'offline' | 'cli-missing' | 'vm-not-ready' | 'busy-port' | 'no-access' | 'provider-error';
 const providers = FIRST_RUN_AI_PROVIDERS;
 const connectionState = reactive<Record<FirstRunAiProviderId, ConnectState>>({ 'claude-code': 'idle', codex: 'idle', grok: 'idle' });
+const oauthConnections = {
+  'claude-code': useOAuthConnection('claude-code', 'Claude'),
+  codex: useOAuthConnection('codex', 'ChatGPT'),
+  grok: useOAuthConnection('grok', 'Grok'),
+};
 const apiConnectionState = reactive<Record<FirstRunAiProviderId, boolean>>({ 'claude-code': false, codex: false, grok: false });
 const showApiChoices = ref(false); const notice = ref(''); const noticeKind = ref<'info' | 'error'>('info');
 const advancing = ref(false);
@@ -82,82 +86,49 @@ async function connect(id: FirstRunAiProviderId) {
 function cancel(id: FirstRunAiProviderId) {
   traceFirstRun('ai', 'Cancel clicked', { provider: id, state: connectionState[id] });
   attempts[id]++;
-  if (id === 'claude-code') { if (claudeWaitTimer) clearTimeout(claudeWaitTimer); void ipcRenderer.invoke('claude-oauth:cancel').catch(() => undefined); }
-  else void ipcRenderer.invoke('integration-oauth:cancel' as any, id).catch(() => undefined);
+  if (id === 'claude-code' && claudeWaitTimer) clearTimeout(claudeWaitTimer);
+  oauthConnections[id].cancel();
   connectionState[id] = 'idle'; noticeKind.value = 'info';
   notice.value = `${ providerName(id) } sign-in cancelled. Use Connect to try again, or pick another option.`;
 }
-/** True once main holds a sign-in for this provider, whatever the start call says. */
+/** True once main holds a first-run sign-in, even if its start call has not answered yet. */
 async function signInLanded(id: FirstRunAiProviderId): Promise<boolean> {
   const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any).catch(() => null);
   return Array.isArray(status?.pending) && status.pending.includes(id);
 }
-/**
- * Resolve with the start call's result, or earlier when main already holds the
- * sign-in, the user cancelled, or the screen's own deadline passes.
- */
-function watchSignIn(id: FirstRunAiProviderId, attempt: number, start: Promise<OAuthResult>): Promise<OAuthResult | 'cancelled'> {
-  return new Promise((resolve) => {
-    let poll: ReturnType<typeof setInterval> | undefined;
-    const deadline = setTimeout(() => finish({ success: false, error: 'Sign-in is taking too long.', reason: 'timeout' }), CONNECT_TIMEOUT_MS);
-    const finish = (result: OAuthResult | 'cancelled') => { clearTimeout(deadline); if (poll) clearInterval(poll); resolve(result); };
-    poll = setInterval(async() => {
-      if (attempts[id] !== attempt || disposed) { finish('cancelled'); return; }
-      if (await signInLanded(id)) { traceFirstRun('ai', 'main holds the sign-in before the start call answered', { provider: id }); finish({ success: true }); }
-    }, CONNECT_POLL_MS);
-    start.then(finish, (err: unknown) => finish({ success: false, error: err instanceof Error ? err.message : String(err) }));
-  });
-}
-function failureMessage(id: FirstRunAiProviderId, reason: FailureReason | undefined, error: string | undefined) {
-  const name = providerName(id);
-  if (reason === 'user-closed') return `${ name } sign-in was closed. Use Connect to try again, or pick another option.`;
-  if (reason === 'timeout') return `${ name } sign-in took too long. Use Connect to try again, or pick another option.`;
-  if (reason === 'offline') return `${ name } couldn't be reached. Check your connection, then use Connect to try again.`;
-  if (reason === 'busy-port' || reason === 'no-access') return error || `${ name } sign-in is unavailable. Try again.`;
-  if (reason === 'vm-not-ready' || reason === 'cli-missing') return `Sulla's workspace isn't ready for ${ name } yet. Wait a moment, then use Connect to try again.`;
-  return `${ name } didn't finish signing in${ error ? `: ${ error }` : '.' } Nothing was lost. Use Connect to retry or choose another option.`;
-}
-type OAuthResult = { success?: boolean; error?: string; reason?: FailureReason };
 async function runOAuth(id: FirstRunAiProviderId, automaticRetry = true) {
   const attempt = ++attempts[id];
   connectionState[id] = 'connecting'; noticeKind.value = 'info';
   notice.value = id === 'claude-code' ? 'Getting Claude ready… the first time can take a minute.' : `Finish signing in to ${ providerName(id) } in the window that opens.`;
-  let result: OAuthResult | 'cancelled' | undefined;
-  try {
-    const start: Promise<OAuthResult> = id === 'claude-code'
-      ? ipcRenderer.invoke('claude-oauth:start', { firstRun: true } as any)
-      : ipcRenderer.invoke('integration-oauth:start', { integrationId: id, providerId: id, accountId: 'oauth', firstRun: true });
-    result = await watchSignIn(id, attempt, start);
-    traceFirstRun('ai', 'sign-in finished', result === 'cancelled' ? { provider: id, result } : { provider: id, success: !!result?.success, reason: result?.reason, error: result?.error });
-    // Cancelled, or a newer attempt owns the button now.
-    if (result === 'cancelled' || attempts[id] !== attempt) return;
-    if (result?.success) {
-      // The token is held in main either way; a failed bookkeeping call must not hide the connection.
-      await ipcRenderer.invoke('first-run-ai:connected', id).catch((err: unknown) => console.warn('[FirstRunRemoteModel] first-run-ai:connected failed:', err));
-      await markConnected(id);
-      return;
-    }
-  } catch (err) {
-    result = { success: false, error: err instanceof Error ? err.message : String(err) };
-  } finally {
-    // Never leave "Connecting…" stuck, whatever happened above.
-    if (attempts[id] === attempt && connectionState[id] === 'connecting') connectionState[id] = 'idle';
+  const connected = await oauthConnections[id].start({
+    integrationId: id, oauthProviderId: id, accountId: 'oauth', firstRun: true,
+    isConnected: () => signInLanded(id), timeoutMs: CONNECT_TIMEOUT_MS, pollIntervalMs: CONNECT_POLL_MS,
+  });
+  traceFirstRun('ai', 'sign-in finished', {
+    provider: id, success: connected, reason: oauthConnections[id].state.failureCode,
+  });
+  if (attempts[id] !== attempt || disposed) return;
+  if (connected) {
+    await ipcRenderer.invoke('first-run-ai:connected', id).catch((err: unknown) => console.warn('[FirstRunRemoteModel] first-run-ai:connected failed:', err));
+    await markConnected(id);
+    return;
   }
-  if (disposed || result === 'cancelled' || attempts[id] !== attempt) return;
-  // Only a timeout or a provider hiccup retries by itself. If the user closed
-  // the window, they meant it.
-  if (automaticRetry && (result?.reason === 'timeout' || result?.reason === 'provider-error')) {
-    traceFirstRun('ai', 'retrying sign-in once by itself', { provider: id, reason: result?.reason });
+  connectionState[id] = 'idle';
+  const failure = oauthConnections[id].state.failureCode;
+  if (automaticRetry && (failure === 'timeout' || failure === 'provider_error')) {
+    traceFirstRun('ai', 'retrying sign-in once by itself', { provider: id, reason: failure });
     noticeKind.value = 'info'; notice.value = `${ providerName(id) } didn't finish signing in. Trying once more…`;
     await new Promise(resolve => setTimeout(resolve, 1_500));
     if (!disposed && connectionState[id] === 'idle') await runOAuth(id, false);
     return;
   }
-  noticeKind.value = result?.reason === 'user-closed' ? 'info' : 'error';
-  notice.value = failureMessage(id, result?.reason, result?.error);
+  noticeKind.value = failure === 'cancelled' ? 'info' : 'error';
+  notice.value = oauthConnections[id].state.errorMessage || oauthFailureMessage(failure || 'provider_error', providerName(id));
 }
-function onClaudeStage(_event: unknown, text: string) {
-  if (connectionState['claude-code'] === 'connecting' && typeof text === 'string' && text) { noticeKind.value = 'info'; notice.value = text; }
+for (const id of Object.keys(oauthConnections) as FirstRunAiProviderId[]) {
+  watch(() => oauthConnections[id].state.stageText, (text) => {
+    if (connectionState[id] === 'connecting' && text) { noticeKind.value = 'info'; notice.value = text; }
+  });
 }
 async function refreshConnectionStatus() {
   const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any).catch(() => null);
@@ -169,7 +140,6 @@ async function refreshConnectionStatus() {
   return pending;
 }
 onMounted(async() => {
-  ipcRenderer.on('claude-oauth:stage' as any, onClaudeStage);
   // Sign-ins from before a reload are still held in main. Show them.
   try {
     const pending = await refreshConnectionStatus();
@@ -177,7 +147,6 @@ onMounted(async() => {
   } catch { /* nothing to restore */ }
   statusPollTimer = setInterval(() => void refreshConnectionStatus(), CONNECT_POLL_MS);
 });
-onBeforeUnmount(() => ipcRenderer.removeListener('claude-oauth:stage' as any, onClaudeStage));
 function advance() { if (advancing.value) return; advancing.value = true; traceFirstRun('ai', 'Continue clicked', { connected: providers.filter(p => connectionState[p.id] === 'connected').map(p => p.id) }); emit('next', props.stepIndex); }
 async function doLater() {
   if (advancing.value) return;
@@ -233,9 +202,8 @@ onBeforeUnmount(() => {
   if (claudeWaitTimer) clearTimeout(claudeWaitTimer);
   if (statusPollTimer) clearInterval(statusPollTimer);
   // Leaving mid sign-in: stop Claude's sign-in in the VM too.
-  if (isBusy('claude-code')) void ipcRenderer.invoke('claude-oauth:cancel').catch(() => undefined);
-  for (const id of ['codex', 'grok'] as FirstRunAiProviderId[]) {
-    if (isBusy(id)) void ipcRenderer.invoke('integration-oauth:cancel' as any, id).catch(() => undefined);
+  for (const id of Object.keys(oauthConnections) as FirstRunAiProviderId[]) {
+    if (isBusy(id)) oauthConnections[id].cancel();
   }
 });
 </script>

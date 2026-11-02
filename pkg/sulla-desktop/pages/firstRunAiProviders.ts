@@ -8,7 +8,6 @@
  * Each one runs on the user's existing subscription through OAuth.
  */
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type FirstRunAiProviderId = 'claude-code' | 'codex' | 'grok';
 
@@ -46,36 +45,5 @@ export function firstRunAiIconSrc(icon: string): string | null {
     return require(`@pkg/assets/images/${ icon }`);
   } catch {
     return null;
-  }
-}
-
-/**
- * Run the provider's OAuth sign-in (opens the sign-in window from main), then
- * tell main to make it the primary model. Resolves with an error message on
- * failure, or null on success.
- */
-export async function signInFirstRunAi(id: FirstRunAiProviderId): Promise<string | null> {
-  try {
-    if (id === 'claude-code') {
-      // `claude setup-token` in the VM, driven over a PTY.
-      const result = await ipcRenderer.invoke('claude-oauth:start', { firstRun: true } as any);
-
-      if (result?.error) return result.error;
-      if (!result?.success) return 'Sign-in finished without a token. Try again.';
-    } else {
-      const result = await ipcRenderer.invoke('integration-oauth:start', {
-        integrationId: id,
-        providerId:    id,
-        accountId:     'oauth',
-        firstRun:      true,
-      });
-
-      if (!result?.success) return result?.error || 'Sign-in failed. Try again.';
-    }
-    await ipcRenderer.invoke('first-run-ai:connected', id);
-
-    return null;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
   }
 }

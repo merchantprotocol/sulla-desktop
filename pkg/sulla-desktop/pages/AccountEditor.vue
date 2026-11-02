@@ -578,13 +578,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue';
 
 import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { claudeOAuthResultError } from '@pkg/utils/claudeOAuthContract';
+import type { ClaudeReconnectRequiredEvent } from '@pkg/agent/languagemodels/credentials/ClaudeAuthFailureCoordinator';
+import { useOAuthConnection } from '@pkg/composables/useOAuthConnection';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
@@ -603,6 +604,10 @@ const emit = defineEmits<{
 
 const integrationService = getIntegrationService();
 const integration = ref<Integration | null>(null);
+const oauthConnection = useOAuthConnection(
+  () => integration.value?.id || props.integrationId,
+  () => integration.value?.name || 'The provider',
+);
 const loading = ref(true);
 const saving = ref(false);
 
@@ -842,19 +847,15 @@ async function handleOAuthConnect() {
   oauthError.value = '';
   saving.value = true;
 
-  // Claude Code uses a PTY-driven CLI flow, not HTTP OAuth. Route to its
-  // dedicated IPC handler; claudeOAuth.ts persists the token to the vault.
+  // Claude uses the dedicated setup-token IPC behind the shared presenter.
   if (integration.value.id === 'claude-code') {
     try {
-      const result = await ipcRenderer.invoke('claude-oauth:start');
-      const resultError = claudeOAuthResultError(result);
-      if (resultError) {
-        oauthError.value = resultError;
+      const connected = await oauthConnection.start();
+      if (!connected) {
+        oauthError.value = oauthConnection.state.errorMessage;
         return;
       }
       emit('saved', 'oauth');
-    } catch (err: any) {
-      oauthError.value = err?.message || 'OAuth failed. Please try again.';
     } finally {
       saving.value = false;
     }
@@ -880,16 +881,17 @@ async function handleOAuthConnect() {
     }
     // Run the OAuth flow in the MAIN process so embedded-window providers
     // (Codex, Grok) can construct a BrowserWindow — undefined in the renderer.
-    const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {
+    const connected = await oauthConnection.start({
       integrationId: props.integrationId,
-      providerId:    integration.value.oauthProviderId!,
+      oauthProviderId: integration.value.oauthProviderId!,
       clientId,
       clientSecret,
-      accountId:     targetAccountId,
-      extraScopes:   integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
+      accountId: targetAccountId,
+      extraScopes: integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
     });
-    if (!oauthResult?.success) {
-      throw new Error(oauthResult?.error || 'OAuth failed. Please try again.');
+    if (!connected) {
+      oauthError.value = oauthConnection.state.errorMessage;
+      return;
     }
     await integrationService.setActiveAccount(props.integrationId, targetAccountId);
     emit('saved', targetAccountId);
@@ -916,7 +918,16 @@ async function handleDelete() {
   }
 }
 
-onMounted(() => loadIntegration());
+function onReconnectRequired(_event: unknown, payload: ClaudeReconnectRequiredEvent) {
+  if (payload?.providerId !== 'claude-code' || props.integrationId !== 'claude-code') return;
+  oauthError.value = payload.message;
+}
+
+onMounted(() => {
+  ipcRenderer.on('provider-auth:reconnect-required' as any, onReconnectRequired);
+  void loadIntegration();
+});
+onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, onReconnectRequired));
 
 // Prefill password when returning from the generator
 watch(() => props.prefillPassword, (pw) => {
