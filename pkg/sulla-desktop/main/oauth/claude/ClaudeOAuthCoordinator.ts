@@ -170,6 +170,10 @@ export class ClaudeOAuthCoordinator {
     this.sessions.delete(session.key);
     if (this.currentAttempt.get(session.requesterId) === session.key) this.currentAttempt.delete(session.requesterId);
     firstRunTrace('claude', 'flow resolved', { providerId: 'claude', accountId: String(session.requesterId), success: result.success, status: result.status, attemptId: session.attemptId, error: result.success ? undefined : result.message });
+    // Push the terminal result as well as resolving invoke(). Electron can lose
+    // an outstanding invoke reply while the auth BrowserWindow is closing;
+    // the renderer races this event so timeout/failure always clears its busy UI.
+    try { session.requester.send('claude-oauth:result' as any, result) } catch { /* requester closed */ }
     session.resolve(result);
   }
 }
