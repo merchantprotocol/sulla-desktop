@@ -68,7 +68,7 @@ async function refresh() {
   if (!selectedTicket.value && state.value?.tickets[0]) { selectedTicket.value = state.value.tickets[0].id }
 }
 async function loadLogs() { logs.value = await ipcRenderer.invoke('support:logs') }
-async function setSource(key: string, enabled: boolean) { state.value = await ipcRenderer.invoke('support:set-source', key, enabled); await loadLogs() }
+async function setSource(key: string, enabled: boolean) { try { state.value = await ipcRenderer.invoke('support:set-source', key, enabled); await loadLogs() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
 function addFiles(list: AttachmentList, added: Attachment[]) { const target = fileLists[list]; const merged = [...target.value, ...added].filter((file, index, all) => all.findIndex(other => other.path === file.path) === index); if (merged.length > 10) notice.value = 'Only the first 10 attachments were kept.'; target.value = merged.slice(0, 10) }
 async function choose(list: AttachmentList) { try { addFiles(list, await ipcRenderer.invoke('support:choose-files')) } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
 async function dropFiles(list: AttachmentList, event: DragEvent) {
@@ -109,7 +109,8 @@ async function remote(action: string) {
   catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
   finally { busy.value = false }
 }
-async function setPrivacy(key: string, enabled: boolean) { state.value = await ipcRenderer.invoke('support:set-privacy', key, enabled) }
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+async function setPrivacy(key: string, enabled: boolean) { try { state.value = await ipcRenderer.invoke('support:set-privacy', key, enabled) } catch (error) { notice.value = `Couldn't save that setting: ${ errorText(error) }` } }
 async function installUpdate() { updateNoticeDismissed.value = false; await ipcRenderer.invoke('support:update-install') }
 async function sendLogs() { try { const ticket = await ipcRenderer.invoke('support:send-logs', currentTicket.value?.id); notice.value = `Logs sent on ticket ${ ticket.id }.`; await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
 async function downloadLogs() { try { if (await ipcRenderer.invoke('support:download-logs')) notice.value = 'Logs downloaded.' } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
