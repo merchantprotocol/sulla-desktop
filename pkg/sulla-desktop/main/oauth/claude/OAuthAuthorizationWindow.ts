@@ -12,7 +12,6 @@ import { isClaudeHost, isClaudeOAuthCallbackUrl } from '@pkg/utils/claudeOAuthCo
 const CLAUDE_SESSION_COOKIE = 'sessionKey';
 const LOGGED_IN_PATH = /^\/(new|chats?|recents|projects?)(\/|$)/;
 const MAX_AUTHORIZE_RETURNS = 3;
-const IDENTITY_HOSTS = ['accounts.google.com', 'appleid.apple.com', 'login.microsoftonline.com', 'login.live.com'];
 
 /** Contained, state-checking browser surface for Claude authorization. */
 export class OAuthAuthorizationWindow {
@@ -63,8 +62,10 @@ export class OAuthAuthorizationWindow {
       try {
         this.window = createContainedAuthWindow({
           width: 720, height: 800, title: 'Sign in with Claude', partition: 'persist:claude-oauth', logPrefix: '[ClaudeOAuth]',
+          // No host allowlist: Claude's login embeds Cloudflare challenges and
+          // SSO providers load from many domains. The contained window already
+          // blocks hand-offs to other apps; the callback is state-checked below.
           onUrl: handleUrl,
-          isNavigationAllowed: target => this.isAllowed(target),
         });
         const cookies = this.window.webContents.session.cookies;
         const onCookie = (_event: Electron.Event, cookie: Electron.Cookie, _cause: string, removed: boolean) => {
@@ -94,15 +95,6 @@ export class OAuthAuthorizationWindow {
     this.window = null;
   }
 
-  private isAllowed(target: string): boolean {
-    try {
-      const { hostname, protocol } = new URL(target);
-
-      return protocol === 'https:' && (isClaudeHost(hostname) || IDENTITY_HOSTS.some(host => hostname === host || hostname.endsWith(`.${ host }`)));
-    } catch {
-      return false;
-    }
-  }
 
   private returnToAuthorize(): void {
     if (this.settled || !this.window || this.window.isDestroyed() || this.authorizeReturns >= MAX_AUTHORIZE_RETURNS) return;
