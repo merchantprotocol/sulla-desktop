@@ -11,6 +11,7 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 
 export interface PendingCredential {
   integrationId: string;
@@ -117,8 +118,8 @@ export function pendingIntegrationIds(): string[] {
 }
 
 /** Main-process-only read used while the vault copy is still pending. */
-export function getPendingCredential(integrationId: string): PendingCredential | undefined {
-  return [...pending.values()].find(candidate => candidate.integrationId === integrationId);
+export function getPendingCredential(integrationId: string, accountId?: string): PendingCredential | undefined {
+  return [...pending.values()].find(candidate => candidate.integrationId === integrationId && (!accountId || candidate.accountId === accountId));
 }
 
 async function writeEntry(entry: PendingCredential): Promise<void> {
@@ -167,15 +168,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
   }
 
   if (usesContainerVaultAuthority()) {
-    const client = getConfiguredApprovalClient();
-    if (!client) throw new Error('Desktop vault session service is unavailable');
-    await client.importIntegrationAccount(entry.integrationId, {
-      accountId: entry.accountId,
-      label: entry.values.account_label,
-      values: entry.values,
-      active: entry.activate !== false,
-      connected: entry.activate !== false,
-    });
+    await promoteMemoryCredentialToVault(entry);
     return;
   }
 
