@@ -126,7 +126,7 @@ function isAuthFileFresh(): boolean {
  * Write the codex CLI auth file from an OAuth token set. Returns false (and
  * logs) on failure — callers treat that as "codex not signed in".
  */
-export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
+export function writeCodexAuthFile(tokens: Partial<OAuthTokenSet>): boolean {
   if (!tokens?.access_token) return false;
   try {
     const idToken = typeof tokens.id_token === 'string' ? tokens.id_token : undefined;
@@ -172,7 +172,7 @@ export type CodexAuthPreparationResult =
  * retries the guest copy immediately before the next guest Codex turn.
  */
 export async function prepareCodexAuthAfterExchange(
-  tokens: OAuthTokenSet,
+  tokens: Partial<OAuthTokenSet>,
   vaultOwned: boolean,
   linkIntoVm: () => Promise<boolean> = linkCodexHomeIntoVm,
 ): Promise<CodexAuthPreparationResult> {

@@ -15,7 +15,34 @@ let tempHome = '';
 let containerAuthority = false;
 
 jest.unstable_mockModule('os', () => ({
+  default: { homedir: () => tempHome },
   homedir: () => tempHome,
+}));
+
+jest.unstable_mockModule('electron', () => ({
+  default: {},
+  app: { getPath: () => tempHome },
+}));
+
+jest.unstable_mockModule('../../../utils/paths', () => ({
+  default: { sullaRuntime: '/synthetic/sulla-runtime' },
+}));
+
+jest.unstable_mockModule('child_process', () => ({
+  execFile: (_file: string, args: string[], _options: unknown, callback: (...args: any[]) => void) => {
+    const output = args[0] === 'exec' && args.some(arg => arg.includes('mktemp -d /tmp/sulla-codex-auth.XXXXXXXX'))
+      ? '/tmp/sulla-codex-auth.synthetic\n'
+      : '';
+    callback(null, output);
+  },
+}));
+
+jest.unstable_mockModule('../../../main/firstRun/pendingCredentials', () => ({
+  getPendingCredential: () => null,
+}));
+
+jest.unstable_mockModule('../../../main/firstRun/firstRunTrace', () => ({
+  firstRunTrace: jest.fn(),
 }));
 
 jest.unstable_mockModule('../../services/OAuthService', () => ({
