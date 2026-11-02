@@ -1105,10 +1105,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       const signal = run.state.metadata.options?.abort?.signal;
 
       if (run.provider === 'claude-code') {
-        // Claude credential resolution owns vault readiness. Never turn a
-        // locked/unavailable account into a feature-level unlock prompt.
-        const credential = await claudeCredentialResolver.resolve();
-        if (credential.kind === 'none') throw new VaultLocked('claude-code', { cause: credential.unavailable ? 'Claude credential authority unavailable' : 'Claude account is disconnected' });
+        // Right after setup the vault unlocks a moment after the window
+        // closes; keep that grace period, but never turn a still-locked vault
+        // into a feature-level unlock prompt (one-password rule).
+        if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
+          throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
+        }
         return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
       }
 
@@ -1304,12 +1306,20 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           }
         } else {
           const credential = await claudeCredentialResolver.resolve();
-          if (credential.kind === 'none' || !credential.accountId) {
-            throw new VaultLocked('claude-code', { cause: 'Claude credential authority unavailable' });
+          if (credential.kind !== 'none' && credential.accountId) {
+            integrationId = 'claude-code';
+            accountId = credential.accountId;
+            authMode = credential.kind === 'api-key' ? 'api-key' : 'oauth';
+          } else {
+            // No Claude account: keep the existing Anthropic API-key fallback.
+            const anthropicAccount = await getIntegrationService().getActiveAccountId('anthropic').catch(() => '');
+            if (!anthropicAccount) {
+              throw new VaultLocked('claude-code', { cause: credential.kind === 'none' && credential.unavailable ? 'Claude credential authority unavailable' : 'No connected Claude or Anthropic account' });
+            }
+            integrationId = 'anthropic';
+            accountId = anthropicAccount;
+            authMode = 'api-key';
           }
-          integrationId = 'claude-code';
-          accountId = credential.accountId;
-          authMode = credential.kind === 'api-key' ? 'api-key' : 'oauth';
         }
         let workspaceId = '';
         if (provider === 'claude-code' && authMode === 'api-key') {
