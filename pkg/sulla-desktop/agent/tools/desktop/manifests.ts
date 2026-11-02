@@ -50,7 +50,7 @@ export const desktopToolManifests: ToolManifest[] = [
   },
   {
     name: 'get',
-    description: 'Read a property from a qualified snapshot ref.',
+    description: 'Read a property from a qualified ref returned by desktop/snapshot or desktop/find in this session.',
     category: 'desktop',
     schemaDef: { ref: { type: 'string', description: 'Qualified ref, e.g. @s8f3k2p9:e8.' }, property: { type: 'enum', enum: ['text','value','title','bounds','role','states'], optional: true } },
     operationTypes: ['read'],
@@ -76,7 +76,7 @@ export const desktopToolManifests: ToolManifest[] = [
     name: 'app',
     description: 'Launch, close, focus, resize, move, minimize, maximize, or restore a Mac app/window.',
     category: 'desktop',
-    schemaDef: { action: { type: 'enum', enum: ['launch','close_app','focus_window','resize','move','minimize','maximize','restore'] }, app: { type: 'string', optional: true }, window_id: { type: 'string', optional: true }, title: { type: 'string', optional: true }, width: { type: 'number', optional: true }, height: { type: 'number', optional: true }, x: { type: 'number', optional: true }, y: { type: 'number', optional: true } },
+    schemaDef: { action: { type: 'enum', enum: ['launch','close_app','focus_window','resize','move','minimize','maximize','restore'] }, app: { type: 'string', optional: true }, window_id: { type: 'string', optional: true }, title: { type: 'string', optional: true, description: 'focus_window only: window title to focus.' }, width: { type: 'number', optional: true }, height: { type: 'number', optional: true }, x: { type: 'number', optional: true }, y: { type: 'number', optional: true } },
     operationTypes: ['execute'],
     loader: load,
   },
