@@ -33,7 +33,7 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
           </ol>
           <ol v-else>
             <li><b>Code fix PR</b><input v-model="prUrl" placeholder="PR link" /></li>
-            <li><b>Trigger nightly build</b><button @click="openNightly">Open Package workflow</button><small>Run Package on the fix commit with publish_channel nightly and an exact nightly semver.</small></li>
+            <li><b>Trigger nightly build</b><button @click="seedPrompt(`Trigger the Package workflow for merchantprotocol/sulla-desktop on the code fix commit using github_trigger_workflow_run. Use workflow package.yaml, publish_channel nightly, and ask me for the exact nightly semver if it is not already in this chat. Do not publish a GitHub Release.`)">Trigger nightly build</button><small>Run Package on the fix commit with publish_channel nightly and an exact nightly semver.</small></li>
             <li><b>Switch updater to Nightly</b><button @click="seedPrompt('Switch this device to the Nightly update channel using support.update.set_channel.')">Ask Sulla</button></li>
             <li><b>Update, restart, reconnect</b><button @click="seedPrompt('Install the signed Nightly update, then monitor support.update.status until the device reconnects.')">Ask Sulla</button></li>
             <li><b>Verify</b><button @click="seedPrompt('Verify the code fix after reconnect: diagnostics, containers, AI connection, and recent errors.')">Run checks</button></li>
@@ -60,7 +60,6 @@ const healthClass=computed(()=>session.value?.runtimeHealth==='healthy'?'good':'
 async function refresh(){try{const r:any=await ipcRenderer.invoke('support-session:get' as any,props.sessionId); session.value=r.session; error.value='';}catch(e:any){error.value=e?.message||String(e); if(e?.status===403||/super_admin_required|not authorized/i.test(error.value)) errorTitle.value='Not authorized';}finally{loading.value=false;}}
 async function endSession(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); await refresh();}
 async function markResolved(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); await refresh();}
-async function openNightly(){await ipcRenderer.invoke('support-session:open-nightly-workflow' as any);}
 function seedPrompt(text:string){window.dispatchEvent(new CustomEvent('sulla:support-chat-prompt',{detail:{tabId:props.tabId,text}}));}
 onMounted(()=>{void refresh(); timer=setInterval(refresh,10000);}); onBeforeUnmount(()=>clearInterval(timer));
 </script>

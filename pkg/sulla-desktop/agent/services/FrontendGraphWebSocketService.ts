@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { toolRegistry } from '@pkg/agent/tools/registry';
+import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -146,6 +148,21 @@ export class FrontendGraphWebSocketService {
 
     // Get or create persistent AgentGraph for this thread using the default agent
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
+
+    const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
+      ? metadata.supportSessionId : '';
+    if (supportSessionId) {
+      (state.metadata as any).supportSessionId = supportSessionId;
+      const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+      (state.metadata as any).allowedToolNames = supportTabTools;
+      (state.metadata as any).conversationContext = typeof metadata?.conversationContext === 'string' ? metadata.conversationContext : '';
+      (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
+    } else if ((state.metadata as any).supportSessionId) {
+      delete (state.metadata as any).supportSessionId;
+      delete (state.metadata as any).allowedToolNames;
+      delete (state.metadata as any).conversationContext;
+      delete (state as any).llmTools;
+    }
 
     // If this thread was restored from persistence and has prior messages,
     // emit them back to the frontend so the UI can hydrate the chat history.
