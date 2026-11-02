@@ -12,8 +12,8 @@ import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
 import { remoteSupportService } from '@pkg/main/supportRemote';
-import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
-import { getCurrentAccessToken, isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
+import { cloudRequest as cloudFetchRequest } from '@pkg/main/cloud/cloudFetch';
+import { isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import paths from '@pkg/utils/paths';
 import { createWindow, getWindow, webRoot } from '@pkg/window';
@@ -65,15 +65,23 @@ function readTail(file: string, maxBytes = 96 * 1024) {
 }
 
 async function cloudRequest(pathname: string, init: RequestInit = {}): Promise<any> {
-  const token = await getCurrentAccessToken();
-  if (!token) throw new Error('Sign in to Sulla Cloud to use Support Center tickets and feedback.');
-  const response = await fetch(`${ CLOUD_API_BASE }/support${ pathname }`, {
-    ...init, headers: { Authorization: `Bearer ${ token }`, ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(init.headers || {}) },
-    signal: AbortSignal.timeout(20_000),
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `Support request failed (${ response.status }).`);
-  return body;
+  if (!await isCloudSignedIn()) throw new Error('Sign in to Sulla Cloud to use Support Center tickets and feedback.');
+  // Go through cloudFetch so vault-mode installs get the token injected by the
+  // vault (getCurrentAccessToken() is intentionally empty there).
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
+  let body: any = init.body ?? undefined;
+  if (body instanceof FormData) {
+    const encoded = new Response(body);
+    headers['content-type'] = encoded.headers.get('content-type') || 'multipart/form-data';
+    body = Buffer.from(await encoded.arrayBuffer());
+  } else if (body !== undefined) {
+    headers['content-type'] = headers['content-type'] || 'application/json';
+  }
+  headers.accept = 'application/json';
+  const response = await cloudFetchRequest(init.method || 'GET', `/support${ pathname }`, { headers, body });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `Support request failed (${ response.status }).`);
+  return payload;
 }
 
 function remoteAttachment(value: any): SupportAttachment { return { path: '', name: String(value?.file_name || value?.fileName || 'attachment'), size: Number(value?.size_bytes || value?.sizeBytes || 0) } }
