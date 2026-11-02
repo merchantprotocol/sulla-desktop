@@ -14,8 +14,11 @@ export function classifyIntegrationSaveFailure(error: unknown): IntegrationSaveF
   const candidate = error && typeof error === 'object' ? error as { code?: unknown; status?: unknown; message?: unknown } : {};
   const code = typeof candidate.code === 'string' && candidate.code ? candidate.code : 'save_failed';
   const status = typeof candidate.status === 'number' ? candidate.status : undefined;
-  const raw = typeof candidate.message === 'string' ? candidate.message : 'The account could not be saved.';
-  const message = raw.replace(/^Error:\s*/i, '').replace(/unsupported_secret_egress/gi, 'The credential cannot be saved through this path');
+  const message = code === 'unsupported_secret_egress'
+    ? 'The credential cannot be saved through this path.'
+    : code === 'policy_denied' ? 'The vault policy denied this save.'
+      : status === 409 ? 'The account changed while it was being saved. Try again.'
+        : 'The account could not be saved. Try again.';
   return { code, status, message };
 }
 
