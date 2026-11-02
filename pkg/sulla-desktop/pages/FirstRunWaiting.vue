@@ -103,7 +103,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { ipcRenderer } from 'electron';
 
 import { FIRST_RUN_AI_PROVIDERS } from './firstRunAiProviders';
 import { traceFirstRun } from './firstRunWizard';
