@@ -4,10 +4,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ipcRenderer } from 'electron';
 
 type Attachment = { name: string; path: string; size: number };
-type Message = { id: string; createdAt: string; body: string; attachments: Attachment[] };
-type Ticket = Message & { subject: string; replies: Message[] };
 type UpdateState = { phase: string; currentVersion: string; availableVersion?: string; channel: 'lts' | 'nightly'; pinnedVersion?: string; lastUpdateResult?: { previousVersion: string; newVersion: string; channel: 'lts' | 'nightly'; completedAt: string } };
-type State = { logging: { sources: Record<string, boolean>; autoEnabledUntil?: string; lastErrorAt?: string }; feedback: Message[]; tickets: Ticket[]; remote: { status: string; requestedAt?: string; offeredAt?: string; offeredBy?: string; approvedAt?: string; endedAt?: string } };
+type Message = { id: string; createdAt: string; body: string; sender?: 'user' | 'support'; attachments: Attachment[] };
+type Ticket = Message & { subject: string; status?: string; replies: Message[] };
+type State = { logging: { sources: Record<string, boolean>; autoEnabledUntil?: string; lastErrorAt?: string }; feedback: Message[]; tickets: Ticket[]; privacy: { errorReports: boolean; metricsConsent: boolean; autoAttachLogs: boolean }; remote: { status: string; requestedAt?: string; offeredAt?: string; offeredBy?: string; approvedAt?: string; endedAt?: string } };
 
 const sections = ['home', 'logs', 'feedback', 'tickets', 'remote', 'privacy'] as const;
 const labels: Record<string, string> = { home: 'Support Center', logs: 'Logs', feedback: 'Feedback', tickets: 'Tickets', remote: 'Remote support', privacy: 'Privacy' };
@@ -19,6 +19,8 @@ const updateNoticeDismissed = ref(false);
 const logs = ref<any[]>([]);
 const busy = ref(false);
 const notice = ref('');
+const signedIn = ref(true);
+const unread = ref(0);
 const feedbackBody = ref('');
 const feedbackFiles = ref<Attachment[]>([]);
 const feedbackKind = ref('Bug');
@@ -51,6 +53,10 @@ function fromHash() { navigate(location.hash.slice(1).split('?')[0]) }
 async function refresh() {
   state.value = await ipcRenderer.invoke('support:state');
   updateState.value = await ipcRenderer.invoke('support:update-status');
+  signedIn.value = (await ipcRenderer.invoke('support:cloud-status')).signedIn;
+  if (signedIn.value) {
+    try { [state.value.tickets, unread.value] = await Promise.all([ipcRenderer.invoke('support:tickets'), ipcRenderer.invoke('support:unread')]); } catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
+  }
   if (!selectedTicket.value && state.value?.tickets[0]) { selectedTicket.value = state.value.tickets[0].id }
 }
 async function loadLogs() { logs.value = await ipcRenderer.invoke('support:logs') }
@@ -61,26 +67,30 @@ async function submitFeedback() {
   busy.value = true;
   try {
     state.value = await ipcRenderer.invoke('support:add-feedback', { body: `[${ feedbackKind.value }] ${ feedbackBody.value }`, attachments: feedbackFiles.value });
-    feedbackBody.value = ''; feedbackFiles.value = []; notice.value = 'Feedback saved locally.';
-  } finally { busy.value = false }
+    feedbackBody.value = ''; feedbackFiles.value = []; notice.value = 'Feedback sent to Sulla support.';
+  } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false }
 }
 async function createTicket() {
   busy.value = true;
   try {
     state.value = await ipcRenderer.invoke('support:create-ticket', { subject: subject.value, body: ticketBody.value, attachments: ticketFiles.value });
-    selectedTicket.value = state.value!.tickets[0].id; subject.value = ''; ticketBody.value = ''; ticketFiles.value = []; notice.value = 'Ticket created locally.';
-  } finally { busy.value = false }
+    selectedTicket.value = state.value!.tickets[0].id; subject.value = ''; ticketBody.value = ''; ticketFiles.value = []; notice.value = 'Ticket sent to Sulla support.';
+  } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false }
 }
 async function replyTicket() {
   if (!currentTicket.value) { return }
   busy.value = true;
   try {
-    state.value = await ipcRenderer.invoke('support:reply-ticket', { ticketId: currentTicket.value.id, body: replyBody.value, attachments: replyFiles.value });
+    const updated = await ipcRenderer.invoke('support:reply-ticket', { ticketId: currentTicket.value.id, body: replyBody.value, attachments: replyFiles.value });
+    const index = state.value!.tickets.findIndex(ticket => ticket.id === updated.id); if (index >= 0) state.value!.tickets[index] = updated;
     replyBody.value = ''; replyFiles.value = [];
-  } finally { busy.value = false }
+  } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false }
 }
 async function remote(action: string) { state.value = await ipcRenderer.invoke('support:remote', action) }
+async function setPrivacy(key: string, enabled: boolean) { state.value = await ipcRenderer.invoke('support:set-privacy', key, enabled) }
 async function installUpdate() { updateNoticeDismissed.value = false; await ipcRenderer.invoke('support:update-install') }
+async function sendLogs() { try { const ticket = await ipcRenderer.invoke('support:send-logs', currentTicket.value?.id); notice.value = `Logs sent on ticket ${ ticket.id }.`; await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
+async function downloadLogs() { try { if (await ipcRenderer.invoke('support:download-logs')) notice.value = 'Logs downloaded.' } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
 const onUpdateState = (_: unknown, value: UpdateState) => { updateState.value = value; updateNoticeDismissed.value = false };
 const pretty = (value?: string) => value ? new Date(value).toLocaleString() : '';
 const size = (value: number) => value < 1048576 ? `${ Math.max(1, Math.round(value / 1024)) } KB` : `${ (value / 1048576).toFixed(1) } MB`;
@@ -96,7 +106,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
       <nav>
         <a v-for="item in sections" :key="item" :href="`#${item}`" :class="{ on: section === item }">
           <span class="navicon">{{ icons[item] }}</span>{{ labels[item] }}
-          <em v-if="item === 'tickets' && state?.tickets.length">{{ state.tickets.length }}</em>
+          <em v-if="item === 'tickets' && unread">{{ unread }}</em>
           <i v-if="item === 'remote' && state?.remote.status === 'connected'" class="live-dot" />
         </a>
       </nav>
@@ -112,6 +122,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
     </aside>
 
     <main v-if="state">
+      <div v-if="!signedIn" class="alert warn"><b>Sign in to Sulla Cloud</b><span>Tickets and feedback need your Cloud account. Nothing is queued while signed out.</span></div>
       <div v-if="state.remote.status === 'connected'" class="connection"><i class="live-dot" /><b>Sulla support is connected</b><span>Inside your Sulla runtime only · reconnects after restarts</span><button @click="remote('end')">End support</button></div>
       <div class="page">
         <div v-if="notice" class="notice">{{ notice }}<button @click="notice = ''">×</button></div>
@@ -138,7 +149,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
         </section>
 
         <section v-else-if="section === 'logs'">
-          <header class="row"><div><h1>Logs</h1><p>Live logs from this Mac and your Sulla runtime. Credential-shaped fields are redacted.</p></div><button @click="loadLogs">Refresh</button></header>
+          <header class="row"><div><h1>Logs</h1><p>Live logs from this Mac and your Sulla runtime. Credential-shaped fields are redacted.</p></div><div><button @click="loadLogs">Refresh</button> <button @click="sendLogs" :disabled="!signedIn">Send logs to support</button> <button class="primary" @click="downloadLogs">Download logs</button></div></header>
           <div class="alert"><span class="info">i</span><div><b>Logging turns on by itself after an error.</b><p>It stays on for 24 hours after the last error. Switch any source off at any time.</p></div></div>
           <div class="card"><div class="cardhead"><h2>Sources</h2><small v-if="state.logging.autoEnabledUntil">Auto-on until {{ pretty(state.logging.autoEnabledUntil) }}</small></div><div class="cardbody sources"><div v-for="(value, key) in sourceLabels" :key="key" class="source"><span class="sourceicon">{{ { desktop: 'S', runtime: 'VM', containers: '▦', ai: 'AI' }[key] }}</span><div><b>{{ value[0] }}</b><small>{{ value[1] }}</small></div><button class="toggle" :class="{ on: state.logging.sources[key] }" :aria-label="`Toggle ${value[0]}`" @click="setSource(key, !state.logging.sources[key])"><i /></button></div></div></div>
           <div class="terminal"><template v-if="logs.length"><div v-for="entry in logs" :key="entry.source + entry.name"><b>[{{ entry.source }} / {{ entry.name }}]</b>\n{{ entry.text }}</div></template><span v-else>No log entries found for enabled sources.</span></div>
@@ -151,7 +162,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
             <label>What would you like us to know?</label><textarea v-model="feedbackBody" maxlength="10000" placeholder="Tell us what happened or what could work better…" />
             <label>Attachments</label><button class="drop" @click="choose(feedbackFiles)"><b>＋</b><span>Drop files or <strong>choose files</strong></span></button>
             <div class="files"><div v-for="(file, index) in feedbackFiles" :key="file.path"><span class="fileicon">{{ file.name.split('.').pop()?.slice(0, 4).toUpperCase() }}</span><div><b>{{ file.name }}</b><small>{{ size(file.size) }}</small></div><button @click="remove(feedbackFiles, index)">×</button></div></div>
-            <div class="actions"><small>Saved locally. No vault access.</small><a class="button" href="#home">Cancel</a><button class="primary" :disabled="busy || !feedbackBody.trim()" @click="submitFeedback">Send feedback</button></div>
+            <div class="actions"><small>Sent securely to Sulla Cloud. No vault access.</small><a class="button" href="#home">Cancel</a><button class="primary" :disabled="busy || !feedbackBody.trim() || !signedIn" @click="submitFeedback">Send feedback</button></div>
           </div></div>
         </section>
 
@@ -159,8 +170,8 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
           <header class="row"><div><h1>Tickets</h1><p>Create a ticket and keep replies and attachments in one thread.</p></div><button class="primary" @click="selectedTicket = '__new'">Open a ticket</button></header>
           <div class="ticketgrid">
             <nav class="ticketlist"><button v-for="ticket in state.tickets" :key="ticket.id" :class="{ on: ticket.id === currentTicket?.id && selectedTicket !== '__new' }" @click="selectedTicket = ticket.id"><b>{{ ticket.subject }}</b><small>{{ ticket.id }} · {{ ticket.replies.length }} replies</small><span>Open</span></button><div v-if="!state.tickets.length" class="empty">No tickets yet.<br>Open one to start a thread.</div></nav>
-            <form v-if="selectedTicket === '__new' || !currentTicket" @submit.prevent="createTicket"><h2>Open a ticket</h2><label>Subject</label><input v-model="subject" maxlength="160" placeholder="What do you need help with?"><label>What happened?</label><textarea v-model="ticketBody" maxlength="10000" placeholder="Describe the problem" /><button type="button" @click="choose(ticketFiles)">＋ Attach files</button><div class="files"><div v-for="(file, index) in ticketFiles" :key="file.path"><b>{{ file.name }}</b><button type="button" @click="remove(ticketFiles, index)">×</button></div></div><div class="actions"><button class="primary" :disabled="busy || !subject.trim() || !ticketBody.trim()">Open ticket</button></div></form>
-            <article v-else class="thread"><div class="threadhead"><div><h2>{{ currentTicket.subject }}</h2><small>{{ currentTicket.id }} · opened {{ pretty(currentTicket.createdAt) }}</small></div><span class="pill">Open</span></div><div class="message"><span class="avatar you">You</span><div><b>You <small>· {{ pretty(currentTicket.createdAt) }}</small></b><p>{{ currentTicket.body }}</p><div v-if="currentTicket.attachments.length" class="attachment">📎 {{ currentTicket.attachments.map(file => file.name).join(', ') }}</div></div></div><div v-for="reply in currentTicket.replies" :key="reply.id" class="message staff"><span class="avatar">You</span><div><b>You <small>· {{ pretty(reply.createdAt) }}</small></b><p>{{ reply.body }}</p></div></div><div class="composer"><textarea v-model="replyBody" placeholder="Reply…" /><div><button @click="choose(replyFiles)">＋ Attach</button><button class="primary" :disabled="busy || !replyBody.trim()" @click="replyTicket">Reply</button></div></div></article>
+            <form v-if="selectedTicket === '__new' || !currentTicket" @submit.prevent="createTicket"><h2>Open a ticket</h2><label>Subject</label><input v-model="subject" maxlength="160" placeholder="What do you need help with?"><label>What happened?</label><textarea v-model="ticketBody" maxlength="10000" placeholder="Describe the problem" /><button type="button" @click="choose(ticketFiles)">＋ Attach files</button><div class="files"><div v-for="(file, index) in ticketFiles" :key="file.path"><b>{{ file.name }}</b><button type="button" @click="remove(ticketFiles, index)">×</button></div></div><div class="actions"><button class="primary" :disabled="busy || !subject.trim() || !ticketBody.trim() || !signedIn">Open ticket</button></div></form>
+            <article v-else class="thread"><div class="threadhead"><div><h2>{{ currentTicket.subject }}</h2><small>{{ currentTicket.id }} · opened {{ pretty(currentTicket.createdAt) }}</small></div><span class="pill">{{ currentTicket.status || 'open' }}</span></div><div class="message"><span class="avatar you">You</span><div><b>You <small>· {{ pretty(currentTicket.createdAt) }}</small></b><p>{{ currentTicket.body }}</p><div v-if="currentTicket.attachments.length" class="attachment">📎 {{ currentTicket.attachments.map(file => file.name).join(', ') }}</div></div></div><div v-for="reply in currentTicket.replies" :key="reply.id" class="message" :class="{ staff: reply.sender === 'support' }"><span class="avatar" :class="{ you: reply.sender !== 'support' }">{{ reply.sender === 'support' ? 'S' : 'You' }}</span><div><b>{{ reply.sender === 'support' ? 'Sulla support' : 'You' }} <small>· {{ pretty(reply.createdAt) }}</small></b><p>{{ reply.body }}</p><div v-if="reply.attachments.length" class="attachment">📎 {{ reply.attachments.map(file => file.name).join(', ') }}</div></div></div><div class="composer"><textarea v-model="replyBody" placeholder="Reply…" /><div><button @click="choose(replyFiles)">＋ Attach</button><button class="primary" :disabled="busy || !replyBody.trim()" @click="replyTicket">Reply</button></div></div></article>
           </div>
         </section>
 
@@ -177,7 +188,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
 
         <section v-else>
           <header><h1>Privacy</h1><p>See what support can collect. These controls never depend on the vault.</p></header>
-          <div class="card settings"><div><span><b>Send error reports</b><small>Error message, stack trace, app version and OS. Never file contents, passwords, chats or API keys.</small></span><button class="toggle on"><i /></button></div><div><span><b>Share usage metrics</b><small>Setup milestones, versions and errors only, so support can see where setup stopped.</small></span><button class="toggle on"><i /></button></div><div><span><b>Attach logs to tickets automatically</b><small>Adds the last 30 minutes of locally redacted logs.</small></span><button class="toggle"><i /></button></div></div>
+          <div class="card settings"><div><span><b>Send error reports</b><small>Error message, stack trace, app version and OS. Never file contents, passwords, chats or API keys.</small></span><button class="toggle" :class="{ on: state.privacy.errorReports }" @click="setPrivacy('errorReports', !state.privacy.errorReports)"><i /></button></div><div><span><b>Share usage metrics</b><small>Setup milestones, versions and errors only, so support can see where setup stopped.</small></span><button class="toggle" :class="{ on: state.privacy.metricsConsent }" @click="setPrivacy('metricsConsent', !state.privacy.metricsConsent)"><i /></button></div><div><span><b>Attach logs to tickets automatically</b><small>Adds the last 30 minutes of locally redacted logs.</small></span><button class="toggle" :class="{ on: state.privacy.autoAttachLogs }" @click="setPrivacy('autoAttachLogs', !state.privacy.autoAttachLogs)"><i /></button></div></div>
         </section>
       </div>
     </main>

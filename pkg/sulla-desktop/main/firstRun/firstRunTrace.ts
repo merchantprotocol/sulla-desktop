@@ -97,6 +97,7 @@ function scrub(value: unknown, depth = 0): unknown {
  * a short past-tense or present-tense phrase.
  */
 export function firstRunTrace(area: string, event: string, details?: Record<string, unknown>): void {
+  if (/complete|completed|ready|failed|error/i.test(event)) void import('@pkg/main/supportTimeline').then(({ recordSupportTimeline }) => recordSupportTimeline('first_run_step', { area: area.slice(0, 40), step: event.slice(0, 200), outcome: /failed|error/i.test(event) ? 'failed' : 'completed' })).catch(() => undefined);
   try {
     const suffix = details && Object.keys(details).length ? ` ${ JSON.stringify(scrub(details)) }` : '';
     log.log(`[${ area }] ${ scrubText(event) }${ suffix }`);
