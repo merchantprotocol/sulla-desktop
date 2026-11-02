@@ -617,6 +617,24 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
     await db.query("DELETE FROM integration_values WHERE integration_id='broken' AND account_id='rollback'");
     assert.equal((await authority.migrateLegacy('sulla-desktop-control', TOKEN.control)).state, 'unlocked');
 
+    const imported = await authority.importDesktopIntegrationAccount('sulla-desktop-approval', TOKEN.approval, 'synthetic-ai', {
+      accountId: 'desktop-account', label: 'Synthetic desktop', values: { api_key: 'synthetic-key', model: 'synthetic-model' },
+      active: true, connected: true,
+    });
+    assert.equal(imported.activeAccountId, 'desktop-account');
+    assert.equal(imported.accounts[0].active, true);
+    assert.equal(imported.accounts[0].connected, true);
+    assert.equal(imported.accounts[0].properties.api_key, undefined);
+    assert.equal(imported.accounts[0].properties.model, 'synthetic-model');
+    const updatedImport = await authority.importDesktopIntegrationAccount('sulla-desktop-approval', TOKEN.approval, 'synthetic-ai', {
+      accountId: 'desktop-account', label: 'Renamed synthetic desktop', values: { model: 'synthetic-model-2' },
+      active: true, connected: true,
+    });
+    assert.equal(updatedImport.accounts.length, 1);
+    assert.equal(updatedImport.accounts[0].label, 'Renamed synthetic desktop');
+    assert.equal(updatedImport.accounts[0].properties.model, 'synthetic-model-2');
+    assert.equal(updatedImport.accounts[0].revision, imported.accounts[0].revision + 1);
+
     const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
     const request: any = {
       claims: { sub: user.rows[0].id, agent_id: 'sulla', pod_id: 'synthetic', credential_scope: { integration_id: 'openai', account_id: 'default' } },
@@ -786,6 +804,9 @@ test('synthetic pre-unlock flow rotates sessions and migration is idempotent wit
 
     await authority.lock();
     assert.equal(authority.status().unlocked, false);
+    await assert.rejects(authority.importDesktopIntegrationAccount('sulla-desktop-approval', TOKEN.approval, 'synthetic-ai', {
+      accountId: 'desktop-account', values: { api_key: 'synthetic-rejected' }, active: true, connected: true,
+    }), (error: any) => error.code === 'vault_locked' && error.status === 423);
     await assert.rejects(authority.listHumanItems(unlocked.sessionId, unlocked.csrf), (error: any) => ['invalid_human_session', 'vault_locked'].includes(error.code));
 
     const account = await db.query<{ kdf: { password: { salt: string; parameters: { memoryBytes: number; operations: number } } } }>('SELECT kdf FROM users LIMIT 1');

@@ -9,6 +9,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 export interface PendingCredential {
@@ -19,7 +20,13 @@ export interface PendingCredential {
 }
 
 const pending = new Map<string, PendingCredential>();
-let flushRun: Promise<{ flushed: string[]; failed: string[] }> | undefined;
+export interface PendingCredentialFlushResult {
+  flushed: string[];
+  failed: string[];
+  failures: Record<string, IntegrationSaveFailure>;
+}
+
+let flushRun: Promise<PendingCredentialFlushResult> | undefined;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let hooksStarted = false;
 let vaultUnlocked = false;
@@ -182,11 +189,12 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
   if (entry.activate !== false) await service.setConnectionStatus(entry.integrationId, true, entry.accountId);
 }
 
-export async function flushPendingCredentials(): Promise<{ flushed: string[]; failed: string[] }> {
+export async function flushPendingCredentials(): Promise<PendingCredentialFlushResult> {
   if (flushRun) return flushRun;
   flushRun = (async() => {
     const flushed: string[] = [];
     const failed: string[] = [];
+    const failures: Record<string, IntegrationSaveFailure> = {};
     // Keep draining: a refresh or a concurrent sign-in may replace an entry
     // while an earlier snapshot is being written.
     while (true) {
@@ -216,12 +224,13 @@ export async function flushPendingCredentials(): Promise<{ flushed: string[]; fa
           }
           firstRunTrace('pending', 'saving sign-in into the vault failed; will retry', { integrationId: entry.integrationId, accountId: entry.accountId, error });
           failed.push(entry.integrationId);
+          failures[entry.integrationId] = classifyIntegrationSaveFailure(error);
         }
       }
       if (!madeProgress) break;
     }
     if (flushed.length) await clearModelListCaches();
-    return { flushed: [...new Set(flushed)], failed: [...new Set(failed)] };
+    return { flushed: [...new Set(flushed)], failed: [...new Set(failed)], failures };
   })().finally(() => { flushRun = undefined });
   return flushRun;
 }
