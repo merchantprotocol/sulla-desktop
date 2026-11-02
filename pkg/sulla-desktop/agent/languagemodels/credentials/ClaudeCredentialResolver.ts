@@ -10,7 +10,7 @@ import { createGuestClaudeAuth } from '../guestClaudeBridge';
 
 import type { BaseThreadState } from '../../nodes/Graph';
 
-export type ClaudeCredentialSource = 'pending-memory' | 'vault-broker' | 'integration-vault' | 'legacy-settings' | 'none';
+export type ClaudeCredentialSource = 'pending-runtime' | 'vault-broker' | 'integration-vault' | 'legacy-settings' | 'none';
 
 interface ClaudeCredentialBase {
   accountId: string | null;
@@ -41,8 +41,8 @@ export class ClaudeCredentialResolver {
       const apiKey = pending?.values.api_key || '';
       const accountId = pending?.accountId || 'oauth';
       const workspaceId = pending?.values.workspace_id?.trim() || undefined;
-      if (oauthToken) return { kind: 'oauth-pending', accountId, source: 'pending-memory', oauthToken, workspaceId };
-      if (apiKey) return { kind: 'api-key', accountId, source: 'pending-memory', apiKey, workspaceId };
+      if (oauthToken) return { kind: 'oauth-pending', accountId, source: 'pending-runtime', oauthToken, workspaceId };
+      if (apiKey) return { kind: 'api-key', accountId, source: 'pending-runtime', apiKey, workspaceId };
     } catch { /* first-run custody only exists in the main process */ }
 
     const integrations = getIntegrationService();

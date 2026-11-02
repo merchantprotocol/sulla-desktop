@@ -28,10 +28,9 @@ export interface PendingCodexTokens {
 
 /**
  * First-run-only Codex execution path. The ChatGPT session that just signed
- * in lives solely in the main process's pending-credential map (see
- * FirstRunMemoryCustody / main/firstRun/pendingCredentials.ts) — there is no
- * vault yet to broker against, and Jonathon's first-run rule is that no
- * secret touches disk before the vault exists. This hands the guest Codex
+ * in is read from the encrypted runtime-Postgres pending store (see
+ * FirstRunMemoryCustody / main/firstRun/pendingCredentials.ts). The vault is
+ * deliberately not in this write/read path. This hands the guest Codex
  * CLI the exact opaque-capability shape vault-broker/providerCliBridge.ts
  * gives container runs (a random bridge token and a scoped relay path), but
  * resolves the upstream ChatGPT call directly against the in-memory tokens
@@ -84,8 +83,7 @@ export async function createCodexPendingMemoryBridge(
   // injection field against. This stub plays the same role a configured
   // LocalVaultBrokerClient plays for a container run — it is the only place
   // the real bearer and chatgpt-account-id are read — but it injects them
-  // from the first-run tokens handed to this function instead of a stored
-  // vault credential.
+  // from the decrypted current-process cache instead of a vault credential.
   const broker = {
     requestFor: (ctx: ToolExecutionContext, request: Omit<BrokerExecuteRequest, 'claims'>): BrokerExecuteRequest => ({ ...request, claims: toBrokerClaims(ctx) }),
     executeStream: async(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> => fetch(request.url, {

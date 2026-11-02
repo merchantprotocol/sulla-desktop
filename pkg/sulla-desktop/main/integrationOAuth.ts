@@ -347,7 +347,7 @@ export function initIntegrationOAuthEvents(): void {
       const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: payload.integrationId }) });
       if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
-      queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
+      await queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
       return { success: true };
     }
     try {
@@ -380,7 +380,7 @@ export function initIntegrationOAuthEvents(): void {
           if (!model) throw new Error('Grok signed in, but the account could not access any models');
           values.model = model;
         }
-        queuePendingCredential({
+        await queuePendingCredential({
           integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
         });
         firstRunTrace('oauth', 'credentials queued', { integrationId: payload.integrationId, custody: 'pending' });
@@ -474,7 +474,7 @@ export function initIntegrationOAuthEvents(): void {
 
     try {
       if (usesContainerVaultAuthority()) {
-        queuePendingCredential({ integrationId, accountId, values, activate: true });
+        await queuePendingCredential({ integrationId, accountId, values, activate: true });
         const flushed = await flushPendingCredentials();
         if (!flushed.flushed.includes(integrationId)) {
           const failure = flushed.failures[integrationId] ?? classifyIntegrationSaveFailure(new Error('The account could not be saved.'));
@@ -545,7 +545,7 @@ export function initIntegrationOAuthEvents(): void {
       }
     }
 
-    queuePendingCredential({
+    await queuePendingCredential({
       integrationId: providerId,
       accountId: 'default',
       values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
