@@ -303,16 +303,13 @@ export class OAuthService {
       firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId, success: true });
 
       // Codex consumes its OAuth session through its CLI auth file. Materialize
-      // it immediately for both first-run memory custody and container-vault
-      // flows; waiting for a later chat races the pending-credential flush.
+      // raw-token credentials immediately for first-run and legacy custody.
+      // Container authority already persisted the tokens and returns only
+      // sanitized metadata; its provider.cli bridge must remain opaque.
       if (integrationId === 'codex') {
-        const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('../util/codexAuthFile');
-        const written = writeCodexAuthFile(tokens);
-        const linked = written && await linkCodexHomeIntoVm();
-        firstRunTrace('codex', 'auth file prepared', { written, linked });
-        if (!written || (persist && !linked)) {
-          throw new Error('ChatGPT signed in, but its credentials could not be prepared in the Sulla VM');
-        }
+        const { prepareCodexAuthAfterExchange } = await import('../util/codexAuthFile');
+        const prepared = await prepareCodexAuthAfterExchange(tokens, persist && usesContainerVaultAuthority());
+        firstRunTrace('codex', 'credentials prepared', prepared);
       }
 
       if (!persist) {
