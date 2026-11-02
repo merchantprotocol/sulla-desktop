@@ -40,7 +40,81 @@ let vaultUnlocked = false;
 let vaultReady = false;
 let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
-let loadRun: Promise<void> | undefined;
+
+// Runtime Postgres is NOT up during most of first run (the VM is still
+// starting). Memory is the source of truth for the current process; the
+// encrypted Postgres copy is written, reloaded and deleted in the background
+// and retried until the database answers. No caller ever fails because
+// Postgres is not reachable yet.
+const unsyncedWrites = new Map<string, PendingCredential>();
+const unsyncedDeletes = new Set<string>();
+let durableLoaded = false;
+let durableTimer: ReturnType<typeof setTimeout> | undefined;
+let durableDelayMs = 2_000;
+let durableRun: Promise<boolean> | undefined;
+
+function deleteKey(integrationId: string, accountId = '*'): string {
+  return `${ integrationId }\0${ accountId }`;
+}
+
+async function runDurableSync(): Promise<boolean> {
+  if (durableRun) return durableRun;
+  durableRun = (async() => {
+    try {
+      if (!durableLoaded) {
+        const rows = await loadFirstRunCredentials();
+        let merged = 0;
+        for (const row of rows) {
+          const key = keyFor(row);
+          if (pending.has(key) || unsyncedDeletes.has(key) || unsyncedDeletes.has(deleteKey(row.integrationId))) continue;
+          pending.set(key, row);
+          merged++;
+        }
+        durableLoaded = true;
+        firstRunTrace('pending', 'loaded encrypted sign-ins from runtime Postgres', { status: 'success', integrations: rows.map(row => row.integrationId), merged });
+      }
+      for (const key of [...unsyncedDeletes]) {
+        const [integrationId, accountId] = key.split('\0');
+        if (accountId === '*') await deleteFirstRunCredentialsForIntegration(integrationId);
+        else await deleteFirstRunCredential(integrationId, accountId);
+        unsyncedDeletes.delete(key);
+        firstRunTrace('pending', 'Postgres staging row deleted', { integrationId, accountId, status: 'success' });
+      }
+      for (const [key, entry] of [...unsyncedWrites]) {
+        await storeFirstRunCredential(entry);
+        if (unsyncedWrites.get(key) === entry) unsyncedWrites.delete(key);
+        firstRunTrace('pending', 'Postgres custody write completed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
+      }
+      durableDelayMs = 2_000;
+      return true;
+    } catch (error) {
+      firstRunTrace('pending', 'runtime Postgres not reachable yet; sign-ins stay in memory and the encrypted copy will retry', {
+        status: 'postgres_unavailable', retryInMs: durableDelayMs, unsyncedWrites: unsyncedWrites.size, unsyncedDeletes: unsyncedDeletes.size, error,
+      });
+      return false;
+    } finally {
+      durableRun = undefined;
+    }
+  })();
+  return durableRun;
+}
+
+function scheduleDurableSync(delayMs = 0): void {
+  if (durableTimer) return;
+  durableTimer = setTimeout(() => {
+    durableTimer = undefined;
+    void runDurableSync().then((ok) => {
+      if (ok) {
+        if (!durableLoaded || unsyncedWrites.size || unsyncedDeletes.size) scheduleDurableSync(durableDelayMs);
+        else if (vaultUnlocked && vaultReady) scheduleFlush?.();
+        return;
+      }
+      durableDelayMs = Math.min(durableDelayMs * 2, 60_000);
+      scheduleDurableSync(durableDelayMs);
+    });
+  }, delayMs);
+  durableTimer.unref?.();
+}
 
 class PendingSessionExpiredError extends Error {}
 
@@ -85,17 +159,17 @@ function clearValues(values: Record<string, string>): void {
 }
 
 export async function queuePendingCredential(entry: PendingCredential): Promise<void> {
-  if (loadRun) await loadRun;
-  firstRunTrace('pending', 'sign-in encrypted in runtime Postgres until the vault is ready', {
+  firstRunTrace('pending', 'sign-in held in memory; encrypted runtime Postgres copy queued until the vault is ready', {
     integrationId: entry.integrationId, accountId: entry.accountId, fields: Object.keys(entry.values), vaultUnlocked, vaultReady,
   });
   if (entry.integrationId === 'sulla-cloud') {
     for (const [candidateKey, candidate] of pending) {
       if (candidate.integrationId !== 'sulla-cloud') continue;
       pending.delete(candidateKey);
+      unsyncedWrites.delete(candidateKey);
       clearValues(candidate.values);
     }
-    await deleteFirstRunCredentialsForIntegration(entry.integrationId);
+    unsyncedDeletes.add(deleteKey(entry.integrationId));
   }
   const key = keyFor(entry);
   const previous = pending.get(key);
@@ -106,27 +180,24 @@ export async function queuePendingCredential(entry: PendingCredential): Promise<
     values:        { ...entry.values },
     activate:      entry.activate,
   };
-  firstRunTrace('pending', 'custody write started', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'started' });
-  try {
-    await storeFirstRunCredential(durableEntry);
-    firstRunTrace('pending', 'Postgres custody write completed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
-  } catch (error) {
-    firstRunTrace('pending', 'Postgres custody write failed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'postgres_write_failed', error });
-    throw error;
-  }
   pending.set(key, durableEntry);
+  unsyncedDeletes.delete(key);
+  unsyncedWrites.set(key, durableEntry);
+  firstRunTrace('pending', 'custody write started', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'started' });
+  scheduleDurableSync();
   void clearModelListCaches();
   if (vaultUnlocked && vaultReady) scheduleFlush?.();
 }
 
 export async function clearPendingCredential(integrationId: string): Promise<void> {
-  if (loadRun) await loadRun;
   for (const [key, entry] of pending) {
     if (entry.integrationId !== integrationId) continue;
     pending.delete(key);
+    unsyncedWrites.delete(key);
     clearValues(entry.values);
   }
-  await deleteFirstRunCredentialsForIntegration(integrationId);
+  unsyncedDeletes.add(deleteKey(integrationId));
+  scheduleDurableSync();
 }
 
 export function hasPendingCredential(integrationId: string): boolean {
@@ -232,8 +303,9 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
           // The vault write above is the durability handoff. Delete the
           // encrypted staging row only after that write (and any required
           // Codex preparation) has confirmed.
-          await deleteFirstRunCredential(entry.integrationId, entry.accountId);
-          firstRunTrace('pending', 'Postgres staging row deleted', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
+          unsyncedWrites.delete(key);
+          unsyncedDeletes.add(deleteKey(entry.integrationId, entry.accountId));
+          scheduleDurableSync();
           pending.delete(key);
           clearValues(entry.values);
           flushed.push(entry.integrationId);
@@ -265,22 +337,14 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
 export function startPendingCredentialFlush(): void {
   if (hooksStarted) return;
   hooksStarted = true;
-  loadRun = loadFirstRunCredentials().then(entries => {
-    for (const entry of entries) pending.set(keyFor(entry), entry);
-    firstRunTrace('pending', 'loaded encrypted sign-ins from runtime Postgres', {
-      integrations: entries.map(entry => entry.integrationId),
-    });
-  }).catch(error => {
-    firstRunTrace('pending', 'could not load encrypted sign-ins from runtime Postgres; will retry at next start', { error });
-  }).finally(() => {
-    loadRun = undefined;
-    if (vaultUnlocked && vaultReady) scheduleFlush?.();
-  });
+  // Never block startup or the wizard on runtime Postgres: try once now and
+  // keep retrying in the background until it answers.
+  scheduleDurableSync();
   const lifecycle = getServiceLifecycleManager();
   vaultUnlocked = lifecycle.isVaultUnlocked();
   vaultReady = lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   const schedule = () => {
-    if (loadRun || !pending.size || !vaultUnlocked || !vaultReady || retryTimer) return;
+    if (!pending.size || !vaultUnlocked || !vaultReady || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       void flushPendingCredentials().then(result => {
@@ -313,5 +377,5 @@ export function startPendingCredentialFlush(): void {
   lifecycle.on('service:stopped', (name: string) => {
     if (name === 'vault') vaultReady = false;
   });
-  if (vaultUnlocked && vaultReady && !loadRun) schedule();
+  if (vaultUnlocked && vaultReady) schedule();
 }
