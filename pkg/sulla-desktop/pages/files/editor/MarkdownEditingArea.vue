@@ -41,8 +41,11 @@ function selectionTouchesLine(state:EditorState,from:number,to:number){return st
 function hidden(decorations:Range<Decoration>[],from:number,to:number){if(to>from)decorations.push(Decoration.replace({}).range(from,to))}
 function blockPreviewDecorations(state:EditorState):DecorationSet{
  const decorations:Range<Decoration>[]=[],tree=syntaxTree(state),tableSpans:{from:number;to:number}[]=[];
+ const frontMatterEnd=(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(state.doc.toString())?.[0].length)??0;
  tree.iterate({enter(node){
   if(node.name!=='Table'&&node.name!=='HorizontalRule')return;
+  // The front-matter fences parse as rules; they belong to the properties block, not the document.
+  if(node.from<frontMatterEnd)return false;
   const startLine=state.doc.lineAt(node.from),endLine=state.doc.lineAt(Math.max(node.from,node.to-1));
   if(node.name==='Table')tableSpans.push({from:node.from,to:node.to});
   if(selectionTouchesLine(state,startLine.from,endLine.to))return;
