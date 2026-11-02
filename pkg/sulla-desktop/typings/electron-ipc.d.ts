@@ -274,7 +274,9 @@ export interface IpcMainInvokeEvents {
 
   // #region main/update (centralized UpdateManager)
   'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
-  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup' | 'support') => void;
+  'support:update-status':  () => import('@pkg/main/update/UpdateManager').RichUpdateState;
+  'support:update-install': () => void;
   'updater:install':   () => void;
   // #endregion
 

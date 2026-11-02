@@ -9,6 +9,7 @@ import path from 'node:path';
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import paths from '@pkg/utils/paths';
 import { createWindow, getWindow, webRoot } from '@pkg/window';
 
@@ -56,6 +57,8 @@ function readTail(file: string, maxBytes = 96 * 1024) {
 function registerHandlers() {
   if (registered) { return } registered = true;
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
+  ipcMain.handle('support:update-status', (event) => { authorize(event); return updateManager.getState() });
+  ipcMain.handle('support:update-install', async(event) => { authorize(event); await updateManager.installUpdate() });
   ipcMain.handle('support:set-source', (event, source: unknown, enabled: unknown) => {
     authorize(event); if (typeof source !== 'string' || !allowedSources.has(source) || typeof enabled !== 'boolean') { throw new Error('Invalid log source.') }
     return store().update(state => { state.logging.sources[source] = enabled });
