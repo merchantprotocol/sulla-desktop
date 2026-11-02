@@ -147,19 +147,13 @@ export function initOpenAIOAuthEvents(): void {
       });
 
       if (!tokenRes.ok) {
-        const text = await tokenRes.text().catch(() => '');
-        throw new Error(`Token exchange failed: ${ tokenRes.status } ${ text }`);
+        throw new Error(`Token exchange failed with status ${ tokenRes.status }`);
       }
 
       const tokens = await tokenRes.json();
       window.destroy();
 
-      console.log(`${ LOG_PREFIX } First exchange complete, tokens received:`, {
-        has_access_token:  !!tokens.access_token,
-        has_id_token:      !!tokens.id_token,
-        has_refresh_token: !!tokens.refresh_token,
-        token_type:        tokens.token_type,
-      });
+      console.log(`${ LOG_PREFIX } Token exchange response status: ${ tokenRes.status }`);
 
       const accountId = 'oauth';
 
@@ -205,30 +199,18 @@ export function initOpenAIOAuthEvents(): void {
       });
 
       const keyResText = await keyRes.text().catch(() => '');
-      console.log(`${ LOG_PREFIX } Key exchange response: ${ keyRes.status }`, {
-        ok:      keyRes.ok,
-        status:  keyRes.status,
-        headers: Object.fromEntries(keyRes.headers.entries()),
-        body:    keyResText.substring(0, 500),
-      });
+      console.log(`${ LOG_PREFIX } Key exchange response status: ${ keyRes.status }`);
 
       if (!keyRes.ok) {
-        throw new Error(`API key exchange failed: ${ keyRes.status } ${ keyResText.substring(0, 200) }`);
+        throw new Error(`API key exchange failed with status ${ keyRes.status }`);
       }
 
       const keyData = JSON.parse(keyResText);
-      console.log(`${ LOG_PREFIX } Key exchange response parsed:`, {
-        has_access_token: !!keyData.access_token,
-        has_api_key:      !!keyData.api_key,
-        keys:             Object.keys(keyData),
-      });
 
       const apiKey = keyData.access_token || keyData.api_key;
       if (!apiKey) {
         throw new Error('No access_token or api_key in API key exchange response');
       }
-
-      console.log(`${ LOG_PREFIX } Got API key, length: ${ apiKey.length }`);
 
       // Store the actual API key so OpenAIService.create() can use it
       await integrationService.setIntegrationValue({

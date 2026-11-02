@@ -310,6 +310,10 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     return linked;
   }
   try {
+    // First run: the vault does not exist yet, so the only copy of the ChatGPT
+    // sign-in is the main-process pending map. Materialize it lazily for the
+    // first Codex turn. TODO(oauth-overhaul phase 3): replace with a memory-only
+    // bridge (ExecutionAuth) so first run writes no secret to disk.
     const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
     const pending = getPendingCredential('codex');
     if (pending?.values.access_token && writeCodexAuthFile(pending.values as OAuthTokenSet)) {

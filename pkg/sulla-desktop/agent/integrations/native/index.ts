@@ -27,27 +27,44 @@ import { nativeSocialMediaIntegrations } from './social_media';
 
 import type { Integration } from '../types';
 
-export const nativeIntegrations: Record<string, Integration> = {
-  ...nativeSlackIntegration,
-  ...nativeGitHubIntegration,
-  ...nativeAiInfrastructureIntegrations,
-  ...nativeProductivityIntegrations,
-  ...nativeProjectManagementIntegrations,
-  ...nativeCrmSalesIntegrations,
-  ...nativeCustomerSupportIntegrations,
-  ...nativeMarketingIntegrations,
-  ...nativeFinanceIntegrations,
-  ...nativeFileStorageIntegrations,
-  ...nativeSocialMediaIntegrations,
-  ...nativeEcommerceIntegrations,
-  ...nativeHrRecruitingIntegrations,
-  ...nativeAnalyticsIntegrations,
-  ...nativeAutomationIntegrations,
-  ...nativeDesignIntegrations,
-  ...nativeAiMlIntegrations,
-  ...nativeDatabaseIntegrations,
-  ...nativePaidAdsIntegrations,
-  ...nativeSecurityIntegrations,
-  // Newer / missing definitions; spread last so they win by id.
-  ...nativeAdditionalIntegrations,
-};
+type NativeIntegrationSource = readonly [name: string, integrations: Record<string, Integration>];
+
+/** Build once at module startup and fail closed instead of silently overriding a card. */
+export function buildNativeIntegrationCatalog(sources: readonly NativeIntegrationSource[]): Record<string, Integration> {
+  const catalog: Record<string, Integration> = {};
+  const owners = new Map<string, string>();
+  for (const [sourceName, integrations] of sources) {
+    for (const [id, integration] of Object.entries(integrations)) {
+      const previous = owners.get(id);
+      if (previous) throw new Error(`Duplicate native integration id "${ id }" in ${ previous } and ${ sourceName }`);
+      if (integration.id !== id) throw new Error(`Native integration key "${ id }" does not match definition id "${ integration.id }"`);
+      owners.set(id, sourceName);
+      catalog[id] = integration;
+    }
+  }
+  return catalog;
+}
+
+export const nativeIntegrations = buildNativeIntegrationCatalog([
+  ['communication', nativeSlackIntegration],
+  ['developer_tools', nativeGitHubIntegration],
+  ['ai_infrastructure', nativeAiInfrastructureIntegrations],
+  ['productivity', nativeProductivityIntegrations],
+  ['project_management', nativeProjectManagementIntegrations],
+  ['crm_sales', nativeCrmSalesIntegrations],
+  ['customer_support', nativeCustomerSupportIntegrations],
+  ['marketing', nativeMarketingIntegrations],
+  ['finance', nativeFinanceIntegrations],
+  ['file_storage', nativeFileStorageIntegrations],
+  ['social_media', nativeSocialMediaIntegrations],
+  ['ecommerce', nativeEcommerceIntegrations],
+  ['hr_recruiting', nativeHrRecruitingIntegrations],
+  ['analytics', nativeAnalyticsIntegrations],
+  ['automation', nativeAutomationIntegrations],
+  ['design', nativeDesignIntegrations],
+  ['ai_ml', nativeAiMlIntegrations],
+  ['database', nativeDatabaseIntegrations],
+  ['paid_ads', nativePaidAdsIntegrations],
+  ['security', nativeSecurityIntegrations],
+  ['additional', nativeAdditionalIntegrations],
+]);

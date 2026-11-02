@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const brokerExecute = jest.fn<any>();
-const prepareCodexAuthAfterExchange = jest.fn<any>();
+const getMetadataValues = jest.fn<any>();
 const setConnectionStatus = jest.fn<any>();
 const onTokenReceived = jest.fn<any>();
 const shutdown = jest.fn<any>();
@@ -18,7 +18,7 @@ jest.unstable_mockModule('electron', () => ({
 
 jest.unstable_mockModule('../IntegrationService', () => ({
   getIntegrationService: () => ({
-    getMetadataValues:   jest.fn(() => Promise.resolve([])),
+    getMetadataValues,
     setConnectionStatus,
   }),
 }));
@@ -71,19 +71,15 @@ jest.unstable_mockModule('../../../main/firstRun/firstRunTrace', () => ({
   firstRunTrace: jest.fn(),
 }));
 
-jest.unstable_mockModule('../../util/codexAuthFile', () => ({
-  prepareCodexAuthAfterExchange,
-}));
-
 describe('OAuthService container-vault Codex lifecycle', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     brokerExecute.mockReset();
-    prepareCodexAuthAfterExchange.mockReset();
+    getMetadataValues.mockReset();
+    getMetadataValues.mockResolvedValue([]);
     setConnectionStatus.mockReset();
     onTokenReceived.mockReset();
     shutdown.mockReset();
-    prepareCodexAuthAfterExchange.mockResolvedValue({ custody: 'vault-bridge', written: false, linked: false });
   });
 
   afterEach(() => {
@@ -102,7 +98,6 @@ describe('OAuthService container-vault Codex lifecycle', () => {
     const service = new OAuthService();
 
     await expect(service.startFlow('codex', 'codex', '', '', 'oauth')).resolves.toEqual(exchangeMetadata);
-    expect(prepareCodexAuthAfterExchange).toHaveBeenCalledWith(exchangeMetadata, true);
     expect(onTokenReceived).not.toHaveBeenCalled();
     expect(setConnectionStatus).not.toHaveBeenCalled();
 
@@ -111,8 +106,20 @@ describe('OAuthService container-vault Codex lifecycle', () => {
 
     expect(brokerExecute.mock.calls.map(([request]) => (request as { operation: string }).operation))
       .toEqual(['oauth.exchange', 'oauth.refresh']);
-    expect(prepareCodexAuthAfterExchange).toHaveBeenCalledTimes(1);
     expect(onTokenReceived).not.toHaveBeenCalled();
     expect(setConnectionStatus).not.toHaveBeenCalled();
+  });
+
+  it('propagates the vault refresh status and reason to the caller', async() => {
+    getMetadataValues.mockResolvedValue([
+      { account_id: 'oauth', property: 'provider_id', value: 'codex' },
+      { account_id: 'oauth', property: 'token_type', value: 'Bearer' },
+      { account_id: 'oauth', property: 'expires_at', value: String(Date.now() - 1_000) },
+    ]);
+    brokerExecute.mockResolvedValueOnce({ status: 401, body: { error_description: 'refresh token revoked' } });
+
+    const { OAuthService } = await import('../OAuthService');
+    await expect(new OAuthService().ensureVaultTokenFresh('codex', 'oauth'))
+      .rejects.toThrow('OAuth refresh failed: Token refresh failed: status 401 (refresh token revoked)');
   });
 });

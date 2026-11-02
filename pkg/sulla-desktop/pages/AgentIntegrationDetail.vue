@@ -954,8 +954,8 @@ import AgentHeader from './agent/AgentHeader.vue';
 
 import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService';
+import { getIntegrationService, type IntegrationAccount } from '@pkg/agent/services/IntegrationService';
+import { claudeOAuthResultError } from '@pkg/utils/claudeOAuthContract';
 import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { formatFuzzyTime } from '@pkg/utils/dateFormat';
@@ -1379,12 +1379,9 @@ const handleOAuthConnect = async() => {
     isLoading.value = true;
     try {
       const result = await ipcRenderer.invoke('claude-oauth:start');
-      if (result?.error) {
-        oauthError.value = result.error;
-        return;
-      }
-      if (!result?.token) {
-        oauthError.value = 'OAuth flow completed without a token.';
+      const resultError = claudeOAuthResultError(result);
+      if (resultError) {
+        oauthError.value = resultError;
         return;
       }
       // claudeOAuth.ts persisted the token + connection status to the vault
