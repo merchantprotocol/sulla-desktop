@@ -22,7 +22,8 @@ import paths from '@pkg/utils/paths';
 import * as window from '@pkg/window';
 
 const console = Logging.background;
-const RECONNECT_MS = 5_000;
+const RECONNECT_MIN_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
 const POLL_MS = 3_000;
 const MAX_ACTIVITY = 500;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -130,6 +131,7 @@ export class RemoteSupportService {
   private reconnect?: ReturnType<typeof setTimeout>;
   private poll?: ReturnType<typeof setInterval>;
   private starting = false;
+  private reconnectAttempt = 0;
 
   configureRuntime(runtime: Runtime) { this.runtime = runtime }
 
@@ -144,7 +146,7 @@ export class RemoteSupportService {
   stop() {
     if (this.reconnect) clearTimeout(this.reconnect);
     if (this.poll) clearInterval(this.poll);
-    this.reconnect = undefined; this.poll = undefined;
+    this.reconnect = undefined; this.poll = undefined; this.reconnectAttempt = 0;
     this.socket?.close(); this.socket = undefined;
   }
 
@@ -247,7 +249,7 @@ export class RemoteSupportService {
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(ticket.url);
         const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Support channel connection timed out.')) }, 15_000);
-        socket.once('open', () => { clearTimeout(timeout); this.socket = socket; this.attachSocket(socket); resolve() });
+        socket.once('open', () => { clearTimeout(timeout); this.reconnectAttempt = 0; this.socket = socket; this.attachSocket(socket); resolve() });
         socket.once('error', (error) => { clearTimeout(timeout); reject(error) });
       });
     } catch (error) { console.warn('[RemoteSupport] tool host connection failed:', error); this.scheduleReconnect() }
@@ -270,7 +272,8 @@ export class RemoteSupportService {
 
   private scheduleReconnect() {
     if (this.reconnect || !this.state().remote.grant) return;
-    this.reconnect = setTimeout(() => { this.reconnect = undefined; void this.restore() }, RECONNECT_MS);
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(this.reconnectAttempt++, 5));
+    this.reconnect = setTimeout(() => { this.reconnect = undefined; void this.restore() }, delay);
     this.reconnect.unref?.();
   }
 
