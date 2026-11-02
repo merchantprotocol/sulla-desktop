@@ -387,15 +387,6 @@ export function initIntegrationOAuthEvents(): void {
         const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
         await getModelProviderService().reconcilePrimaryProvider(false, payload.integrationId);
         firstRunTrace('oauth', 'provider reconcile called', { integrationId: payload.integrationId });
-        if (payload.integrationId === 'codex') {
-          const { writeCodexAuthFile, linkCodexHomeIntoVm } = await import('@pkg/agent/util/codexAuthFile');
-          if (!writeCodexAuthFile(tokens)) throw new Error('ChatGPT sign-in did not return usable credentials');
-          // The VM may still be starting during first run. The sign-in is kept;
-          // ensureCodexAuthFile() links it into the VM before the first Codex turn.
-          const linked = await linkCodexHomeIntoVm().catch(() => false);
-          firstRunTrace('codex', 'auth file prepared', { written: true, linked });
-          if (!linked) console.log(`${ LOG_PREFIX } Codex sign-in saved; it will be linked into the VM once it is ready`);
-        }
       }
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);

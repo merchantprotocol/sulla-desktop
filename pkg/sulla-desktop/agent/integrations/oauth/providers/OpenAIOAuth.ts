@@ -57,8 +57,7 @@ class OpenAIOAuthProvider extends OAuthProvider {
       });
 
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        console.error('[OpenAIOAuth] API key exchange failed:', res.status, text);
+        console.error('[OpenAIOAuth] API key exchange failed with status:', res.status);
         return;
       }
 

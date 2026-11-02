@@ -119,6 +119,16 @@ function normalizeTokenExpiry<T extends OAuthTokenSet>(tokens: T): T {
   return tokens;
 }
 
+function refreshFailureReason(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const failure = body as Record<string, unknown>;
+  for (const field of ['error_description', 'reason', 'error', 'message']) {
+    const value = failure[field];
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 300);
+  }
+  return undefined;
+}
+
 // ─── Singleton ────────────────────────────────────────────────────
 
 let instance: OAuthService | null = null;
@@ -301,16 +311,6 @@ export class OAuthService {
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
       firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId, success: true });
-
-      // Codex consumes its OAuth session through its CLI auth file. Materialize
-      // raw-token credentials immediately for first-run and legacy custody.
-      // Container authority already persisted the tokens and returns only
-      // sanitized metadata; its provider.cli bridge must remain opaque.
-      if (integrationId === 'codex') {
-        const { prepareCodexAuthAfterExchange } = await import('../util/codexAuthFile');
-        const prepared = await prepareCodexAuthAfterExchange(tokens, persist && usesContainerVaultAuthority());
-        firstRunTrace('codex', 'credentials prepared', prepared);
-      }
 
       if (!persist) {
         // First run may happen before the vault, Postgres, or Redis exists.
@@ -601,8 +601,7 @@ export class OAuthService {
     firstRunTrace('oauth', 'token exchange response', { integrationId, providerId: cfg.id, status: res.status, success: res.ok });
 
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${ LOG_PREFIX } Token exchange failed (${ res.status }): ${ text }`);
+      throw new Error(`${ LOG_PREFIX } Token exchange failed with status ${ res.status }`);
     }
 
     const json = await res.json() as OAuthTokenSet;
@@ -740,7 +739,8 @@ export class OAuthService {
       injections,
     }));
     if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
-      throw new Error(`${ LOG_PREFIX } Vault-owned token refresh failed`);
+      const reason = refreshFailureReason(result.body);
+      throw new Error(`Token refresh failed: status ${ result.status }${ reason ? ` (${ reason })` : '' }`);
     }
     // The authority persisted the rotated credentials and deliberately
     // returns metadata only. Keep that boundary explicit in the legacy
@@ -754,9 +754,8 @@ export class OAuthService {
   /**
    * Request-time guard for vault mode: refresh before an outbound provider
    * call when the access token is expired or inside the refresh buffer.
-   * Never throws — a failed refresh is logged and retried on the usual
-   * backoff, and the caller's request proceeds (and fails upstream if the
-   * token really is dead).
+   * A failed refresh is retried on the usual backoff and propagated with its
+   * real cause so callers do not continue with a token known to be stale.
    */
   async ensureVaultTokenFresh(integrationId: string, accountId: string): Promise<void> {
     if (!usesContainerVaultAuthority()) return;
@@ -779,6 +778,8 @@ export class OAuthService {
       console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
       if (target) this.scheduleRefreshRetry(integrationId, accountId, target.providerId, target.clientId, '');
       else vaultRefreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`OAuth refresh failed: ${ reason }`, { cause: err });
     }
   }
 

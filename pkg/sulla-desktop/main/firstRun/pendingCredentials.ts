@@ -205,6 +205,14 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
         try {
           firstRunTrace('pending', 'saving sign-in into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           await writeEntry(entry);
+          // First run keeps Codex tokens only in this main-process map. Once
+          // the vault accepts them, materialize the CLI file exactly once and
+          // copy it into the guest before clearing the in-memory token set.
+          if (entry.integrationId === 'codex') {
+            const { prepareCodexAuthAfterExchange } = await import('@pkg/agent/util/codexAuthFile');
+            const prepared = await prepareCodexAuthAfterExchange(entry.values, usesContainerVaultAuthority());
+            firstRunTrace('codex', 'credentials prepared after vault flush', prepared);
+          }
           firstRunTrace('pending', 'sign-in saved into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           if (pending.get(key) !== entry) continue;
           pending.delete(key);
