@@ -133,7 +133,7 @@ export async function performLightweightCheck(): Promise<LightweightCheckResult>
     throw new Error(`Update feed ${ feedUrl } has no valid version`);
   }
   const current = semver.parse(currentVersion, { loose: true });
-  const updateAvailable = current ? semver.neq(latest, current) && (semver.gt(latest, current) || state.channel === 'lts' || !!state.pinnedVersion) : false;
+  const updateAvailable = current ? semver.neq(latest, current) && (semver.gt(latest, current) || !!state.pinnedVersion || (state.channel === 'lts' && semver.prerelease(current) !== null)) : false;
 
   return {
     updateAvailable,

@@ -166,7 +166,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
   updater.logger = console;
   updater.autoDownload = true;
   const channelState = readUpdateChannelState();
-  updater.allowDowngrade = channelState.channel === 'lts' || !!channelState.pinnedVersion;
+  updater.allowDowngrade = !!channelState.pinnedVersion || (channelState.channel === 'lts' && /-/.test(Electron.app.getVersion()));
   updater.autoInstallOnAppQuit = false;
   updater.on('error', (error) => {
     console.debug('update: error:', error);

@@ -118,10 +118,10 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
         <div v-if="updateState && !updateNoticeDismissed && updateState.channel === 'nightly' && updateState.phase === 'downloaded'" class="update-toast nightly-toast">
           <span class="update-icon">☾</span><div><h2>Support moved you to the Nightly channel for a fix</h2><p><b>{{ updateState.availableVersion }}</b> is downloaded and signature-checked.</p><p>Restart takes about a minute. Support reconnects on its own; you won't need to approve again.</p></div><div class="toast-actions"><button @click="updateNoticeDismissed = true">Later</button><button class="primary" @click="installUpdate">↻ Restart to update</button></div>
         </div>
-        <div v-else-if="updateState && !updateNoticeDismissed && updateState.lastUpdateResult?.newVersion === updateState.currentVersion && updateState.lastUpdateResult?.channel === 'nightly'" class="update-toast success-toast">
+        <div v-else-if="updateState && !updateNoticeDismissed && updateState.lastUpdateResult?.newVersion === updateState.currentVersion && updateState.channel === 'nightly' && updateState.lastUpdateResult?.channel === 'nightly'" class="update-toast success-toast">
           <span class="update-icon">✓</span><div><h2>Updated to the fix build</h2><p>You're on <b>Nightly {{ updateState.currentVersion }}</b>. Support reconnected and is checking that everything works.</p></div><div class="toast-actions"><button @click="updateNoticeDismissed = true">Dismiss</button></div>
         </div>
-        <div v-else-if="updateState && !updateNoticeDismissed && updateState.channel === 'lts' && updateState.lastUpdateResult?.channel === 'nightly'" class="update-toast success-toast">
+        <div v-else-if="updateState && !updateNoticeDismissed && updateState.channel === 'lts' && updateState.channel === 'nightly' && updateState.lastUpdateResult?.channel === 'nightly'" class="update-toast success-toast">
           <span class="update-icon">✓</span><div><h2>You're back on LTS</h2><p>The fix stays installed. You'll receive regular LTS updates automatically.</p></div><div class="toast-actions"><button class="primary" @click="updateNoticeDismissed = true">Done</button></div>
         </div>
 
