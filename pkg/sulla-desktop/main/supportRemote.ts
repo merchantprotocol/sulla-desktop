@@ -25,6 +25,7 @@ const console = Logging.background;
 const RECONNECT_MS = 5_000;
 const POLL_MS = 3_000;
 const MAX_ACTIVITY = 500;
+const MAX_EXEC_OUTPUT_BYTES = 1024 * 1024;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const AI_PROVIDERS = new Set(['anthropic', 'claude', 'openai', 'codex', 'google', 'gemini', 'xai', 'grok', 'ollama', 'local']);
@@ -50,6 +51,7 @@ const TOOLS = [
   { name: 'support.ai.retry_connection', description: 'Retry one named Sulla AI provider service.', inputSchema: { type: 'object', properties: { provider: { type: 'string', minLength: 1, maxLength: 64 } }, required: ['provider'], additionalProperties: false }, mutates: true },
   { name: 'support.update.set_channel', description: 'Select a signed Sulla update channel or pinned signed version.', inputSchema: { type: 'object', properties: { channel: { enum: ['lts', 'nightly'] }, pinnedVersion: { type: ['string', 'null'] } }, required: ['channel'], additionalProperties: false }, mutates: true },
   { name: 'support.update.check_and_install', description: 'Check, download, verify, and install a signed Sulla update.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: true },
+  { name: 'support.runtime.exec', description: 'Run an audited command inside the Sulla runtime VM, never on the host Mac.', inputSchema: { type: 'object', properties: { command: { type: 'string', minLength: 1, maxLength: 8192 }, cwd: { type: 'string', minLength: 1, maxLength: 512 }, timeoutSec: { type: 'integer', minimum: 1, maximum: 600 } }, required: ['command'], additionalProperties: false }, mutates: true },
   { name: 'support.update.status', description: 'Read the Sulla update channel and installer status.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
 ] as const;
 
@@ -73,6 +75,7 @@ function plainSummary(tool: string): string {
     'support.update.set_channel': 'Support changed the signed update channel',
     'support.update.check_and_install': 'Support checked and installed a signed update',
     'support.update.status': 'Support checked update status',
+    'support.runtime.exec': 'Support ran a command inside the Sulla runtime VM',
   } as Record<string, string>)[tool] || 'Support ran a Sulla support action';
 }
 function safeInput(value: unknown): JsonObject {
@@ -84,16 +87,18 @@ function safeInput(value: unknown): JsonObject {
   return result;
 }
 function persistActivity(eventId: string, tool: string, input: unknown): RemoteSupportActivity {
-  const activity: RemoteSupportActivity = { id: eventId, tool, summary: plainSummary(tool), inputSummary: safeInput(input), status: 'started', startedAt: now() };
+  const command = tool === 'support.runtime.exec' && input && typeof input === 'object' && typeof (input as JsonObject).command === 'string' ? String((input as JsonObject).command) : undefined;
+  const activity: RemoteSupportActivity = { id: eventId, tool, summary: plainSummary(tool), inputSummary: safeInput(input), ...(command ? { fullCommand: command } : {}), status: 'started', startedAt: now() };
   stateStore().update(state => { state.remote.activity = [activity, ...state.remote.activity.filter(item => item.id !== eventId)].slice(0, MAX_ACTIVITY) });
   broadcast();
   return activity;
 }
-function finishActivity(eventId: string, status: RemoteSupportActivity['status'], started: number) {
+function finishActivity(eventId: string, status: RemoteSupportActivity['status'], started: number, output?: string) {
   stateStore().update((state) => {
     const item = state.remote.activity.find(entry => entry.id === eventId);
     if (!item) return;
     item.status = status; item.completedAt = now(); item.durationMs = Math.max(0, Date.now() - started);
+    if (output !== undefined) item.output = output;
   });
   broadcast();
 }
@@ -293,9 +298,10 @@ export class RemoteSupportService {
     const started = Date.now(); persistActivity(rpc.support.eventId, body.params.name, body.params.arguments);
     try {
       const result = await this.callTool(body.params.name, body.params.arguments);
-      finishActivity(rpc.support.eventId, result.isError ? 'tool_error' : 'succeeded', started); this.reply(frame.id, result);
+      finishActivity(rpc.support.eventId, result.isError ? 'tool_error' : 'succeeded', started, result.content.map(part => part.text).join('\n')); this.reply(frame.id, result);
     } catch (error) {
-      finishActivity(rpc.support.eventId, 'tool_error', started); this.reply(frame.id, textResult({ error: redacted(error instanceof Error ? error.message : String(error)) }, true));
+      const message = redacted(error instanceof Error ? error.message : String(error));
+      finishActivity(rpc.support.eventId, 'tool_error', started, message); this.reply(frame.id, textResult({ error: message }, true));
     }
   }
 
@@ -325,6 +331,13 @@ export class RemoteSupportService {
 
   private async callTool(name: string, raw: unknown): Promise<ToolResult> {
     if (!TOOLS.some(tool => tool.name === name)) throw new Error('Tool is not in the support allowlist.');
+    if (name === 'support.runtime.exec') {
+      const args = exactKeys(raw, ['command', 'cwd', 'timeoutSec']);
+      if (typeof args.command !== 'string' || !args.command.length || Buffer.byteLength(args.command, 'utf8') > 8 * 1024) throw new Error('Command must contain 1 byte to 8 KiB.');
+      if (args.cwd !== undefined && (typeof args.cwd !== 'string' || !args.cwd.length || args.cwd.length > 512)) throw new Error('Working directory must contain 1 to 512 characters.');
+      const timeoutSec = integer(args.timeoutSec, 60, 1, 600);
+      return textResult(await this.execRuntimeCommand(args.command, args.cwd as string | undefined, timeoutSec));
+    }
     if (name === 'support.logs.tail') {
       const args = exactKeys(raw, ['source', 'lines']); const source = args.source; const lines = integer(args.lines, 200, 1, 2000);
       if (!['app', 'runtime', 'containers', 'ai'].includes(String(source))) throw new Error('Invalid log source.');
@@ -381,6 +394,24 @@ export class RemoteSupportService {
       exactKeys(raw, []); const status = supportUpdateApi.status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
     }
     throw new Error('Tool is not in the support allowlist.');
+  }
+
+  private async execRuntimeCommand(command: string, cwd: string | undefined, timeoutSec: number): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; truncated: boolean }> {
+    const child = this.runtimeRequired().executor.spawn({ ...(cwd ? { cwd } : {}) }, 'sh', '-lc', command);
+    let stdout = ''; let stderr = ''; let capturedBytes = 0; let truncated = false; let timedOut = false; let settled = false;
+    const append = (target: 'stdout' | 'stderr', chunk: unknown) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const remaining = Math.max(0, MAX_EXEC_OUTPUT_BYTES - capturedBytes);
+      const accepted = buffer.subarray(0, remaining).toString('utf8');
+      if (target === 'stdout') stdout += accepted; else stderr += accepted;
+      capturedBytes += Math.min(buffer.length, remaining); if (buffer.length > remaining) truncated = true;
+    };
+    child.stdout?.on('data', chunk => append('stdout', chunk)); child.stderr?.on('data', chunk => append('stderr', chunk));
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutSec * 1000); timer.unref?.();
+      const finish = (exitCode: number | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve({ stdout, stderr, exitCode, timedOut, truncated }); };
+      child.once('close', code => finish(code)); child.once('error', (error) => { if (settled) return; settled = true; clearTimeout(timer); reject(error) });
+    });
   }
 
   private appLogTail(lines: number): string {
