@@ -81,7 +81,8 @@ async function replyTicket() {
   if (!currentTicket.value) { return }
   busy.value = true;
   try {
-    state.value = await ipcRenderer.invoke('support:reply-ticket', { ticketId: currentTicket.value.id, body: replyBody.value, attachments: replyFiles.value });
+    const updated = await ipcRenderer.invoke('support:reply-ticket', { ticketId: currentTicket.value.id, body: replyBody.value, attachments: replyFiles.value });
+    const index = state.value!.tickets.findIndex(ticket => ticket.id === updated.id); if (index >= 0) state.value!.tickets[index] = updated;
     replyBody.value = ''; replyFiles.value = [];
   } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false }
 }
