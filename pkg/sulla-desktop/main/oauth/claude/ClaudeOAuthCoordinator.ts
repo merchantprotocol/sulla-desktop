@@ -97,11 +97,9 @@ export class ClaudeOAuthCoordinator {
 
     try {
       const token = await session.adapter.run({
-        onOutput: text => {
-          if (!options.firstRun) {
-            try { event.sender.send('claude-oauth:progress', text) } catch { /* requester closed */ }
-          }
-        },
+        // Terminal output ends with the long-lived token, so it never leaves the
+        // main process. The renderer gets stage text and the final result only.
+        onOutput: () => undefined,
         onAuthorizeUrl: url => {
           clearTimeout(urlTimer);
           session.timers.delete(urlTimer);
