@@ -2,43 +2,100 @@
   "version": 2,
   "families": {
     "integrations": {
-      "categories": ["github", "gdrive", "slack"],
-      "placements": ["desktop", "cloud", "mobile"],
+      "categories": [
+        "github",
+        "gdrive",
+        "slack"
+      ],
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
       "relayable": true
     },
     "files": {
-      "categories": ["files"],
-      "placements": ["desktop", "mobile"],
+      "categories": [
+        "files"
+      ],
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
       "relayable": true
     },
     "vault": {
-      "categories": ["vault"],
-      "placements": ["desktop", "mobile"],
+      "categories": [
+        "vault"
+      ],
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
       "relayable": false
     },
     "memory": {
-      "categories": ["episodic", "memory", "observation"],
-      "placements": ["desktop"],
+      "categories": [
+        "episodic",
+        "memory",
+        "observation"
+      ],
+      "placements": [
+        "desktop"
+      ],
       "relayable": false
     },
     "agents": {
-      "categories": ["agents"],
-      "placements": ["desktop", "cloud", "mobile"],
+      "categories": [
+        "agents"
+      ],
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
       "relayable": true
     },
     "workflows": {
-      "categories": ["workflow"],
-      "placements": ["desktop", "cloud", "mobile"],
+      "categories": [
+        "workflow"
+      ],
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
       "relayable": true
     },
     "desktopRelay": {
-      "categories": ["browser", "calendar", "capture", "docker", "extensions", "secretary", "ui"],
-      "placements": ["desktop"],
+      "categories": [
+        "browser",
+        "calendar",
+        "capture",
+        "docker",
+        "extensions",
+        "secretary",
+        "ui"
+      ],
+      "placements": [
+        "desktop"
+      ],
       "relayable": true
     },
     "desktopLocal": {
-      "categories": ["applescript", "fs", "function", "kubectl", "pg", "redis", "workspace"],
-      "placements": ["desktop"],
+      "categories": [
+        "applescript",
+        "desktop",
+        "fs",
+        "function",
+        "kubectl",
+        "pg",
+        "redis",
+        "workspace"
+      ],
+      "placements": [
+        "desktop"
+      ],
       "relayable": false
     }
   },
@@ -93,6 +150,14 @@
   ],
   "sideEffects": {
     "read": [
+      "desktop/find",
+      "desktop/get",
+      "desktop/guide",
+      "desktop/list_apps",
+      "desktop/list_windows",
+      "desktop/screenshot",
+      "desktop/snapshot",
+      "desktop/wait",
       "docker/docker_images",
       "docker/docker_ps",
       "redis/redis_ttl"
@@ -154,6 +219,10 @@
       "chat/return_contract",
       "chat/route_agent",
       "chat/set_heartbeat",
+      "desktop/act",
+      "desktop/app",
+      "desktop/clipboard",
+      "desktop/permissions",
       "docker/docker_build",
       "docker/docker_exec",
       "docker/docker_pull",
