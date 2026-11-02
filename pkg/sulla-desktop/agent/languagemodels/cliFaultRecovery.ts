@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import {
+  AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited,
+  legacyProviderFailure,
+} from './failures';
+
 export const CLI_RECOVERY_MAX_ATTEMPTS = 2;
 export const CLI_RECOVERY_BACKOFF_MS = 750;
 
@@ -23,12 +28,12 @@ export class CliFaultError extends Error {
   }
 }
 
-export class CliRecoveryExhaustedError extends Error {
+export class CliRecoveryExhaustedError extends CliExhausted {
   readonly cliRecoveryExhausted = true;
   readonly unsafeToFallback: boolean;
 
-  constructor(readonly faultKind: CliFaultKind, message: string, cause: unknown) {
-    super(message, { cause });
+  constructor(readonly faultKind: CliFaultKind, cause: unknown, providerId = 'cli') {
+    super(providerId, { cause });
     this.name = 'CliRecoveryExhaustedError';
     this.unsafeToFallback = Boolean((cause as any)?.unsafeToFallback);
   }
@@ -79,8 +84,10 @@ export function isCliFault(error: unknown): error is CliFaultError {
   return (error as any)?.cliFault === true;
 }
 
-export function isPermanentCliFailure(message: string): boolean {
-  return /unauthorized|invalid api key|credential|quota|usage balance|weekly limit|session limit|rate limit|too many requests/i.test(message);
+export function isPermanentCliFailure(error: unknown, providerId = 'cli'): boolean {
+  const failure = error instanceof ProviderFailure ? error : legacyProviderFailure(providerId, error);
+  return failure instanceof AuthExpired || failure instanceof AuthRevoked ||
+    failure instanceof QuotaExceeded || failure instanceof RateLimited;
 }
 
 export async function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -175,7 +182,7 @@ export async function runWithCliFaultRecovery<T>(
   }
 
   const fault = lastFault ?? new CliFaultError('protocol', 'unknown CLI failure');
-  throw new CliRecoveryExhaustedError(fault.kind, `${ providerName } recovery exhausted: ${ fault.message }`, fault);
+  throw new CliRecoveryExhaustedError(fault.kind, fault, providerName);
 }
 
 function abortError(): Error {

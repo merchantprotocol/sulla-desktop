@@ -16,6 +16,7 @@ import {
 } from './ProviderExecutionTransport';
 import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
@@ -1265,15 +1266,21 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (errored) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
-          reject(new Error(`Codex: ${ msg }`));
+          const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          reject(isPermanentCliFailure(typedFailure) && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('process_exit', `Codex: ${ msg }`, typedFailure, !(activeToolItems.size > 0 || unresolvedTool), Boolean(activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 
         if (code !== 0) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+          const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 
@@ -1286,9 +1293,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (!textCollected.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           log.warn(`[CodexService] runCodex exited with no text (code=${ code }) stderr=${ stderrTail }`);
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+          const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 

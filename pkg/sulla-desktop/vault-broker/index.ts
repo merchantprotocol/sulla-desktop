@@ -32,6 +32,7 @@ import type {
   RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { loopbackOrigin } from '@pkg/utils/instance';
+import { VaultLocked } from '@pkg/agent/languagemodels/failures';
 
 export type {
   BrokerApprovalResponse,
@@ -143,7 +144,7 @@ async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
 export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
   if (!usesContainerVaultAuthority()) throw new Error('Local vault principal is only available in Desktop authority mode');
   const status = await requireConfiguredCredentialBroker().status(signal);
-  if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
+  if (!status.unlocked) throw new VaultLocked('vault', { status: 423 });
   if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
     throw new VaultBrokerError('invalid_caller_identity', 'Vault did not return an authenticated local principal', 503);
   }
@@ -210,46 +211,27 @@ export class LocalVaultBrokerClient {
   }
 
   async status(signal?: AbortSignal): Promise<{ state: string; unlocked: boolean; principalId?: string }> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/status`, {
-      headers: await this.serviceHeaders(false),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request('/v1/broker/status', 'GET', undefined, signal);
     return response.json() as Promise<{ state: string; unlocked: boolean; principalId?: string }>;
   }
 
   async listItems(ctx: ToolExecutionContext, signal?: AbortSignal): Promise<BrokerItemListResponse> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/items`, {
-      method:  'POST',
-      headers: await this.serviceHeaders(true),
-      body:    JSON.stringify({ claims: claimsFromContext(ctx) }),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request('/v1/broker/items', 'POST', { claims: claimsFromContext(ctx) }, signal);
     return response.json() as Promise<BrokerItemListResponse>;
   }
 
   async createItem(ctx: ToolExecutionContext, input: Omit<BrokerVaultItemWriteRequest, 'claims'>, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/items/create`, {
-      method: 'POST', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request('/v1/broker/items/create', 'POST', { ...input, claims: claimsFromContext(ctx) }, signal);
     return response.json() as Promise<BrokerVaultItemWriteResponse>;
   }
 
   async updateItem(ctx: ToolExecutionContext, input: Omit<BrokerVaultItemUpdateRequest, 'claims'>, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/items/${ encodeURIComponent(input.itemId) }`, {
-      method: 'PATCH', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request(`/v1/broker/items/${ encodeURIComponent(input.itemId) }`, 'PATCH', { ...input, claims: claimsFromContext(ctx) }, signal);
     return response.json() as Promise<BrokerVaultItemWriteResponse>;
   }
 
   async setIntegrationCredential(ctx: ToolExecutionContext, input: Omit<BrokerIntegrationCredentialWriteRequest, 'claims' | 'integrationId'> & { integrationId: string }, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(input.integrationId) }/credential`, {
-      method: 'PUT', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request(`/v1/broker/integrations/${ encodeURIComponent(input.integrationId) }/credential`, 'PUT', { ...input, claims: claimsFromContext(ctx) }, signal);
     return response.json() as Promise<BrokerVaultItemWriteResponse>;
   }
 
@@ -264,11 +246,7 @@ export class LocalVaultBrokerClient {
     }
     const url = new URL(`${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/metadata`);
     if (accountId) url.searchParams.set('accountId', accountId);
-    const response = await this.transport(url.toString(), {
-      headers: await this.serviceHeaders(false),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request(`${ url.pathname }${ url.search }`, 'GET', undefined, signal);
     return response.json() as Promise<BrokerIntegrationMetadataResponse>;
   }
 
@@ -280,16 +258,7 @@ export class LocalVaultBrokerClient {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
       throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
     }
-    const response = await this.transport(
-      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/active-account`,
-      {
-        method:  'PUT',
-        headers: await this.serviceHeaders(true),
-        body:    JSON.stringify({ accountId }),
-        signal,
-      },
-    );
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request(`/v1/broker/integrations/${ encodeURIComponent(integrationId) }/active-account`, 'PUT', { accountId }, signal);
     return response.json() as Promise<BrokerIntegrationMetadataResponse>;
   }
 
@@ -316,23 +285,12 @@ export class LocalVaultBrokerClient {
     const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
     if (approvalId) (request as BrokerRelayCreateRequest & { approvalId?: string }).approvalId = approvalId;
     if (params) request.params = params;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/session`, {
-      method:  'POST',
-      headers: await this.serviceHeaders(true),
-      body:    JSON.stringify(request),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request('/v1/broker/relay/session', 'POST', request, signal);
     return response.json() as Promise<BrokerRelayCreateResponse>;
   }
 
   async relayEvents(relayId: string, signal?: AbortSignal): Promise<Response> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, {
-      headers: await this.serviceHeaders(false),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
-    return response;
+    return this.request(`/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, 'GET', undefined, signal);
   }
 
   async * relayEventStream(relayId: string, signal?: AbortSignal): AsyncIterable<VaultRelayEvent> {
@@ -374,24 +332,29 @@ export class LocalVaultBrokerClient {
   }
 
   async relaySend(relayId: string, payload: BrokerRelaySendRequest, signal?: AbortSignal): Promise<void> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }/send`, {
-      method:  'POST',
-      headers: await this.serviceHeaders(true),
-      body:    JSON.stringify(payload),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
+    const response = await this.request(`/v1/broker/relay/${ encodeURIComponent(relayId) }/send`, 'POST', payload, signal);
     await response.body?.cancel();
   }
 
   async closeRelay(relayId: string, signal?: AbortSignal): Promise<void> {
-    const response = await this.transport(`${ this.endpoint }/v1/broker/relay/${ encodeURIComponent(relayId) }`, {
-      method:  'DELETE',
-      headers: await this.serviceHeaders(false),
+    const response = await this.request(`/v1/broker/relay/${ encodeURIComponent(relayId) }`, 'DELETE', undefined, signal);
+    await response.body?.cancel();
+  }
+
+  protected async request(
+    path: string,
+    method: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const response = await this.transport(`${ this.endpoint }${ path }`, {
+      method,
+      headers: await this.serviceHeaders(body !== undefined),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal,
     });
     if (!response.ok) await this.throwRelayResponse(response);
-    await response.body?.cancel();
+    return response;
   }
 
   private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
@@ -420,11 +383,13 @@ export class LocalVaultBrokerClient {
 
   private async throwRelayResponse(response: Response): Promise<never> {
     const body = await errorBody(response);
+    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     throw new VaultBrokerError(body.error, body.message, response.status);
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
     const body = await errorBody(response);
+    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
       throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
     }
@@ -448,21 +413,7 @@ export class LocalVaultApprovalClient {
   }
 
   async approve(operationId: string): Promise<BrokerApprovalResponse> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/approve`, {
-      method:  'POST',
-      headers: {
-        authorization:        `Bearer ${ identity.serviceToken }`,
-        'content-type':       'application/json',
-        'x-sulla-service-id': identity.serviceId,
-      },
-      body: JSON.stringify({ operationId }),
-    });
-    if (!response.ok) {
-      const body = await errorBody(response);
-      throw new VaultBrokerError(body.error, body.message, response.status);
-    }
-    return response.json() as Promise<BrokerApprovalResponse>;
+    return this.request('/v1/broker/approve', 'POST', { operationId });
   }
 
   /** Create the empty vault account a first OAuth sign-in stores its tokens in. Metadata only. */
@@ -470,24 +421,7 @@ export class LocalVaultApprovalClient {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
       throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
     }
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(
-      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/oauth-account`,
-      {
-        method:  'PUT',
-        headers: {
-          authorization:        `Bearer ${ identity.serviceToken }`,
-          'content-type':       'application/json',
-          'x-sulla-service-id': identity.serviceId,
-        },
-        body: JSON.stringify({ accountId, label }),
-      },
-    );
-    if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
-    }
-    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+    return this.request(`/v1/broker/integrations/${ encodeURIComponent(integrationId) }/oauth-account`, 'PUT', { accountId, label });
   }
 
   /** Atomically store an account collected by trusted Desktop UI. No secret is returned. */
@@ -498,24 +432,7 @@ export class LocalVaultApprovalClient {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(input.accountId)) {
       throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
     }
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(
-      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/desktop-account`,
-      {
-        method: 'PUT',
-        headers: {
-          authorization:        `Bearer ${ identity.serviceToken }`,
-          'content-type':       'application/json',
-          'x-sulla-service-id': identity.serviceId,
-        },
-        body: JSON.stringify(input),
-      },
-    );
-    if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
-    }
-    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+    return this.request(`/v1/broker/integrations/${ encodeURIComponent(integrationId) }/desktop-account`, 'PUT', input);
   }
 
   async adoptSullaCloudSession(request: SullaCloudSessionAdoptRequest): Promise<SullaCloudSessionResponse> {
@@ -527,79 +444,40 @@ export class LocalVaultApprovalClient {
   }
 
   async rewrapForAccountPassword(request: AccountPasswordRewrapRequest): Promise<AccountPasswordRewrapResponse> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/account-wrap`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${ identity.serviceToken }`,
-        'content-type': 'application/json',
-        'x-sulla-service-id': identity.serviceId,
-      },
-      body: JSON.stringify(request),
-    });
-    if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
-    }
-    return response.json() as Promise<AccountPasswordRewrapResponse>;
+    return this.request('/v1/broker/sulla-cloud/account-wrap', 'POST', request);
   }
 
   async wrapUserKeyForApprovedDevice(request: VaultDeviceApprovalWrapRequest): Promise<{ wrappedUserKey: unknown }> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/device-approval-wrap`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${ identity.serviceToken }`,
-        'content-type': 'application/json',
-        'x-sulla-service-id': identity.serviceId,
-      },
-      body: JSON.stringify(request),
-    });
-    if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
-    }
-    return response.json() as Promise<{ wrappedUserKey: unknown }>;
+    return this.request('/v1/broker/sulla-cloud/device-approval-wrap', 'POST', request);
   }
 
-  async wrapVaultEnrollment(request:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:unknown}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-wrap',request) as Promise<{wrappedUserKey:unknown}> }
-  async adoptVaultEnrollment(request:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-adopt',request) as Promise<{bundleMac:string;headMac:string}> }
-  async commitVaultEnrollment(requestId:string):Promise<{adopted:true}>{ return this.approvalPost('/v1/broker/sulla-cloud/enrollment-commit',{requestId}) as Promise<{adopted:true}> }
-  private async approvalPost(path:string,body:unknown):Promise<unknown>{ const identity=typeof this.identity==='function'?await this.identity():this.identity; const response=await this.transport(`${this.endpoint}${path}`,{method:'POST',headers:{authorization:`Bearer ${identity.serviceToken}`,'content-type':'application/json','x-sulla-service-id':identity.serviceId},body:JSON.stringify(body)}); if(!response.ok){const error=await errorBody(response);throw new VaultBrokerError(error.error,error.message,response.status)} return response.json() }
+  async wrapVaultEnrollment(request: VaultEnrollmentWrapRequest): Promise<{ wrappedUserKey: unknown }> {
+    return this.request('/v1/broker/sulla-cloud/enrollment-wrap', 'POST', request);
+  }
+
+  async adoptVaultEnrollment(request: VaultEnrollmentAdoptRequest): Promise<{ bundleMac: string; headMac: string }> {
+    return this.request('/v1/broker/sulla-cloud/enrollment-adopt', 'POST', request);
+  }
+
+  async commitVaultEnrollment(requestId: string): Promise<{ adopted: true }> {
+    return this.request('/v1/broker/sulla-cloud/enrollment-commit', 'POST', { requestId });
+  }
 
   async rotateRecoveryKey(): Promise<RecoveryKeyRotateResponse> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/recovery-key/rotate`, {
-      method: 'POST', headers: {
-        authorization: `Bearer ${ identity.serviceToken }`,
-        'content-type': 'application/json', 'x-sulla-service-id': identity.serviceId,
-      }, body: '{}',
-    });
-    if (!response.ok) { const error = await errorBody(response); throw new VaultBrokerError(error.error, error.message, response.status) }
-    return response.json() as Promise<RecoveryKeyRotateResponse>;
+    return this.request('/v1/broker/sulla-cloud/recovery-key/rotate', 'POST', {});
   }
 
   async sullaCloudRequest(request: SullaCloudDesktopRequest): Promise<BrokerExecuteResponse> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/request`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${ identity.serviceToken }`,
-        'content-type': 'application/json',
-        'x-sulla-service-id': identity.serviceId,
-      },
-      body: JSON.stringify(request),
-    });
-    if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
-    }
-    return response.json() as Promise<BrokerExecuteResponse>;
+    return this.request('/v1/broker/sulla-cloud/request', 'POST', request);
   }
 
   private async sullaCloudSession(method: 'PUT' | 'DELETE', body?: SullaCloudSessionAdoptRequest): Promise<unknown> {
+    return this.request('/v1/broker/sulla-cloud/session', method, body);
+  }
+
+  protected async request<T>(path: string, method: string, body?: unknown): Promise<T> {
     const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/session`, {
+    const response = await this.transport(`${ this.endpoint }${ path }`, {
       method,
       headers: {
         authorization: `Bearer ${ identity.serviceToken }`,
@@ -608,11 +486,12 @@ export class LocalVaultApprovalClient {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     if (!response.ok) {
       const error = await errorBody(response);
       throw new VaultBrokerError(error.error, error.message, response.status);
     }
-    return response.json();
+    return response.json() as Promise<T>;
   }
 }
 

@@ -24,6 +24,7 @@ import {
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
@@ -1778,15 +1779,21 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (errored) {
             const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
             log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
-            reject(new Error(`Claude Code: ${ msg }`));
+            const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
+            reject(isPermanentCliFailure(typedFailure) && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('process_exit', `Claude Code: ${ msg }`, typedFailure, !(toolStarts.size > 0 || unresolvedTool), Boolean(toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 
           if (code !== 0) {
             const msg = errorMessage || stderrBuffer.trim().slice(-200) || `claude exited with code ${ code }`;
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+            const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 
@@ -1799,9 +1806,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (!textCollected.trim()) {
             const stderrTail = stderrBuffer.trim().slice(-200);
             log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+            const typedFailure = legacyProviderFailure('claude-code', stderrTail || 'Claude Code returned no output', { exitCode: code });
+            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+              ? typedFailure
+              : new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
             return;
           }
 

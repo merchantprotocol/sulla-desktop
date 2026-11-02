@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import {
+  AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited,
+  RoutingUnavailable, Transient, Unknown, VaultLocked, legacyProviderFailure,
+} from './failures';
+
 export type LLMFailureKind =
   | 'auth'
   | 'quota'
@@ -36,10 +41,9 @@ export function redactLLMFailureMessage(value: unknown): string {
 
 export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const name = (error as any)?.name;
-  const message = redactLLMFailureMessage(error);
-  const lower = `${ name || '' } ${ message }`.toLowerCase();
+  const typed = error instanceof ProviderFailure ? error : legacyProviderFailure('The selected model provider', error);
 
-  if ((error as any)?.cliRecoveryExhausted) {
+  if (typed instanceof CliExhausted || (error as any)?.cliRecoveryExhausted) {
     const unsafe = Boolean((error as any)?.unsafeToFallback);
     return {
       kind:            'unavailable',
@@ -60,7 +64,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (name === 'AbortError' || lower.includes('aborted') || lower.includes('aborterror')) {
+  if (name === 'AbortError') {
     return {
       kind:            'interrupted',
       retryPrimary:    false,
@@ -69,78 +73,39 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (/\b401\b/.test(lower) || lower.includes('unauthorized') || lower.includes('invalid api key')) {
+  if (typed instanceof AuthExpired || typed instanceof AuthRevoked || typed instanceof VaultLocked) {
     return {
       kind:            'auth',
       retryPrimary:    false,
-      fallbackAllowed: true,
-      userMessage:     'The selected model provider rejected its credentials.',
+      fallbackAllowed: false,
+      userMessage:     typed.userMessage,
     };
   }
 
-  if (
-    /\b402\b/.test(lower) ||
-    lower.includes('balance exhausted') ||
-    lower.includes('usage balance') ||
-    lower.includes('weekly limit') ||
-    lower.includes('session limit')
-  ) {
+  if (typed instanceof QuotaExceeded) {
     return {
       kind:            'quota',
       retryPrimary:    false,
       fallbackAllowed: true,
-      userMessage:     'The selected model provider is out of usable quota.',
+      userMessage:     typed.userMessage,
     };
   }
 
-  if (/\b429\b/.test(lower) || lower.includes('rate limit') || lower.includes('too many requests')) {
+  if (typed instanceof RateLimited) {
     return {
       kind:            'rate_limit',
       retryPrimary:    true,
       fallbackAllowed: true,
-      userMessage:     'The selected model provider is rate limited.',
+      userMessage:     typed.userMessage,
     };
   }
 
-  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout') || lower.includes('stalled')) {
-    return {
-      kind:            'timeout',
-      retryPrimary:    true,
-      fallbackAllowed: true,
-      userMessage:     'The selected model provider timed out.',
-    };
-  }
-
-  if (
-    lower.includes('no response') ||
-    lower.includes('empty response') ||
-    lower.includes('returned empty') ||
-    lower.includes('no extractable prompt')
-  ) {
-    return {
-      kind:            'empty',
-      retryPrimary:    true,
-      fallbackAllowed: true,
-      userMessage:     'The selected model provider returned no usable response.',
-    };
-  }
-
-  if (
-    lower.includes('event stream') ||
-    lower.includes('dropped event') ||
-    lower.includes('stream lag') ||
-    lower.includes('exited with code null') ||
-    lower.includes('econnreset') ||
-    lower.includes('econnrefused') ||
-    lower.includes('network') ||
-    lower.includes('service unavailable') ||
-    /\b5\d\d\b/.test(lower)
-  ) {
+  if (typed instanceof Transient || typed instanceof RoutingUnavailable) {
     return {
       kind:            'unavailable',
       retryPrimary:    true,
       fallbackAllowed: true,
-      userMessage:     'The selected model provider was temporarily unavailable.',
+      userMessage:     typed.userMessage,
     };
   }
 
@@ -148,7 +113,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     kind:            'unknown',
     retryPrimary:    false,
     fallbackAllowed: true,
-    userMessage:     'The selected model provider failed.',
+    userMessage:     typed instanceof Unknown ? typed.userMessage : 'The selected model provider failed.',
   };
 }
 
