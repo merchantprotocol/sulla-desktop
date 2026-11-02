@@ -37,7 +37,7 @@
       "relayable": true
     },
     "desktopLocal": {
-      "categories": ["applescript", "fs", "function", "kubectl", "pg", "redis", "workspace"],
+      "categories": ["applescript", "desktop", "fs", "function", "kubectl", "pg", "redis", "workspace"],
       "placements": ["desktop"],
       "relayable": false
     }
@@ -93,6 +93,14 @@
   ],
   "sideEffects": {
     "read": [
+      "desktop/find",
+      "desktop/get",
+      "desktop/guide",
+      "desktop/list_apps",
+      "desktop/list_windows",
+      "desktop/screenshot",
+      "desktop/snapshot",
+      "desktop/wait",
       "docker/docker_images",
       "docker/docker_ps",
       "redis/redis_ttl"
@@ -154,6 +162,10 @@
       "chat/return_contract",
       "chat/route_agent",
       "chat/set_heartbeat",
+      "desktop/act",
+      "desktop/app",
+      "desktop/clipboard",
+      "desktop/permissions",
       "docker/docker_build",
       "docker/docker_exec",
       "docker/docker_pull",
