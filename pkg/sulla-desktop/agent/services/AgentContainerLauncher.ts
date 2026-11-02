@@ -48,7 +48,7 @@ import {
 } from '../languagemodels/ProviderExecutionTransport';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
-import { VaultLocked } from '../languagemodels/failures';
+import { RoutingUnavailable, VaultLocked } from '../languagemodels/failures';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -1303,6 +1303,17 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             if ((error as Error).message !== 'No local vault account is configured for codex') throw error;
             accountId = await getIntegrationService().getActiveAccountId('openai');
             integrationId = 'openai';
+          }
+          // Codex routes ChatGPT plan usage through the chatgpt_account_id
+          // claim the vault extracted at sign-in. Validate it before spawn —
+          // a silently empty header would route the call to the wrong, or no,
+          // account deep inside the container run instead of failing clearly.
+          if (integrationId === 'codex') {
+            const codexMetadata = await getIntegrationService().getMetadataValues('codex', accountId);
+            const hasAccountRoutingClaim = codexMetadata.some(value => value.property === 'chatgpt_account_id' && value.value.trim());
+            if (!hasAccountRoutingClaim) {
+              throw new RoutingUnavailable('codex', { cause: new Error('Codex account is missing its ChatGPT account routing claim') });
+            }
           }
         } else {
           const credential = await claudeCredentialResolver.resolve();
