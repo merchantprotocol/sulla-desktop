@@ -27,6 +27,7 @@ import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
 import { flushPendingCredentials, pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { classifyIntegrationSaveFailure, integrationSaveFailureMessage } from '@pkg/main/integrationSaveFailure';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
@@ -482,7 +483,8 @@ export function initIntegrationOAuthEvents(): void {
         queuePendingCredential({ integrationId, accountId, values, activate: true });
         const flushed = await flushPendingCredentials();
         if (!flushed.flushed.includes(integrationId)) {
-          return { success: false, error: 'The vault is locked or unavailable. Unlock it, then try again.' };
+          const failure = flushed.failures[integrationId] ?? classifyIntegrationSaveFailure(new Error('The account could not be saved.'));
+          return { success: false, error: integrationSaveFailureMessage(integration.name, failure) };
         }
       } else {
         const service = getIntegrationService();
@@ -498,9 +500,7 @@ export function initIntegrationOAuthEvents(): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`${ LOG_PREFIX } Inline connection failed for ${ integrationId }:`, message);
-      return { success: false, error: /locked/i.test(message)
-        ? 'The vault is locked. Unlock it, then try again.'
-        : `Could not save ${ integration.name }. ${ message.replace(/^Error:\s*/i, '') }` };
+      return { success: false, error: integrationSaveFailureMessage(integration.name, classifyIntegrationSaveFailure(error)) };
     }
   });
 
