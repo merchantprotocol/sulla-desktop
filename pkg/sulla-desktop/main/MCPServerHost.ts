@@ -55,6 +55,7 @@ import {
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
+import { firstRunTracePath } from './firstRun/firstRunTrace';
 import { DEFAULT_SESSION_TTL_MS, ToolSessionRegistry, type ToolSession } from './mcpToolSessions';
 import Logging from '@pkg/utils/logging';
 
@@ -250,6 +251,7 @@ export class MCPServerHost {
           ok:             true,
           port:           this.port,
           activeSessions: this.sessions.size,
+          logPaths:       { 'first-run-trace': firstRunTracePath() },
           sessionValid:   session !== null,
           sessionMeta:    session ? {
             conversationId: session.state.metadata.conversationId ?? null,

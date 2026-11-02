@@ -106,7 +106,14 @@ export async function queuePendingCredential(entry: PendingCredential): Promise<
     values:        { ...entry.values },
     activate:      entry.activate,
   };
-  await storeFirstRunCredential(durableEntry);
+  firstRunTrace('pending', 'custody write started', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'started' });
+  try {
+    await storeFirstRunCredential(durableEntry);
+    firstRunTrace('pending', 'Postgres custody write completed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
+  } catch (error) {
+    firstRunTrace('pending', 'Postgres custody write failed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'postgres_write_failed', error });
+    throw error;
+  }
   pending.set(key, durableEntry);
   void clearModelListCaches();
   if (vaultUnlocked && vaultReady) scheduleFlush?.();
@@ -211,6 +218,7 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
         try {
           firstRunTrace('pending', 'saving sign-in into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           await writeEntry(entry);
+          firstRunTrace('pending', 'vault custody confirmed', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
           // First run keeps Codex tokens only in this main-process map. Once
           // the vault accepts them, materialize the CLI file exactly once and
           // copy it into the guest before clearing the in-memory token set.
@@ -225,6 +233,7 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
           // encrypted staging row only after that write (and any required
           // Codex preparation) has confirmed.
           await deleteFirstRunCredential(entry.integrationId, entry.accountId);
+          firstRunTrace('pending', 'Postgres staging row deleted', { integrationId: entry.integrationId, accountId: entry.accountId, status: 'success' });
           pending.delete(key);
           clearValues(entry.values);
           flushed.push(entry.integrationId);
@@ -283,6 +292,7 @@ export function startPendingCredentialFlush(): void {
         }
       });
     }, retryDelayMs);
+    firstRunTrace('pending', 'vault flush retry scheduled', { status: 'scheduled', retryInMs: retryDelayMs, pending: pending.size });
   };
   scheduleFlush = schedule;
   lifecycle.on('vault:state', (unlocked: boolean) => {

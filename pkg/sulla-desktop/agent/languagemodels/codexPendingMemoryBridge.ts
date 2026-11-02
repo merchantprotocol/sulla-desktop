@@ -15,6 +15,7 @@ import {
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
@@ -42,6 +43,7 @@ export async function createCodexPendingMemoryBridge(
   input: { conversationId: string; state?: BaseThreadState },
 ): Promise<ProviderCliBridgeLease> {
   if (!tokens.accessToken) throw new Error('Codex pending-memory bridge requires an access token');
+  firstRunTrace('codex', 'pending-memory bridge started', { providerId: 'codex', accountId: 'first-run', status: 'started' });
 
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
   const deviceId = await getDesktopDeviceId();
@@ -99,12 +101,19 @@ export async function createCodexPendingMemoryBridge(
     }),
   };
 
-  return createProviderCliBridge({
-    context:        renewed(),
-    provider:       'codex',
-    accountId:      'first-run',
-    advertisedHost: new URL(getMCPServerHost().getVmReachableUrl()).hostname,
-    authorize:      renewed,
-    broker,
-  });
+  try {
+    const lease = await createProviderCliBridge({
+      context:        renewed(),
+      provider:       'codex',
+      accountId:      'first-run',
+      advertisedHost: new URL(getMCPServerHost().getVmReachableUrl()).hostname,
+      authorize:      renewed,
+      broker,
+    });
+    firstRunTrace('codex', 'pending-memory bridge ready', { providerId: 'codex', accountId: 'first-run', status: 'success' });
+    return lease;
+  } catch (error) {
+    firstRunTrace('codex', 'pending-memory bridge failed', { providerId: 'codex', accountId: 'first-run', status: 'bridge_start_failed', error });
+    throw error;
+  }
 }

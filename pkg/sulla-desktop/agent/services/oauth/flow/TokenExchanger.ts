@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { issueLocalBrokerContext, requireConfiguredCredentialBroker } from '../../../../vault-broker';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { OAuthProviderConfig, OAuthTokenSet } from '../../../integrations/oauth/OAuthProvider';
 import type { ResolvedTokenCustody } from '../custody/TokenCustody';
@@ -24,6 +25,7 @@ export interface TokenExchangeRequest {
 export class TokenExchanger {
   async exchange(request: TokenExchangeRequest): Promise<OAuthTokenSet> {
     const { custody, config: cfg, clientId, clientSecret, integrationId, accountId } = request;
+    firstRunTrace('oauth', 'token exchange started', { integrationId, providerId: cfg.id, accountId, status: 'started' });
     const body: Record<string, string> = {
       grant_type: 'authorization_code',
       code: request.code,
@@ -50,13 +52,21 @@ export class TokenExchanger {
         credentialScope: { integration_id: integrationId, account_id: accountId },
       });
       const broker = requireConfiguredCredentialBroker();
-      const result = await broker.execute(broker.requestFor(context, {
-        operation: 'oauth.exchange', ref: { integrationId, accountId }, url: cfg.tokenUrl,
-        method: 'POST', headers, body, injections,
-      }));
+      let result;
+      try {
+        result = await broker.execute(broker.requestFor(context, {
+          operation: 'oauth.exchange', ref: { integrationId, accountId }, url: cfg.tokenUrl,
+          method: 'POST', headers, body, injections,
+        }));
+      } catch (error) {
+        firstRunTrace('oauth', 'token exchange failed', { integrationId, providerId: cfg.id, accountId, status: 'broker_error', error });
+        throw error;
+      }
       if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
+        firstRunTrace('oauth', 'token exchange failed', { integrationId, providerId: cfg.id, accountId, status: `http_${ result.status }`, error: 'Vault-owned token exchange failed' });
         throw new Error('[OAuthService] Vault-owned token exchange failed');
       }
+      firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId: cfg.id, accountId, status: `http_${ result.status }` });
       return result.body as OAuthTokenSet;
     }
 
@@ -68,10 +78,20 @@ export class TokenExchanger {
       body.client_id = clientId;
       body.client_secret = clientSecret;
     }
-    const response = await fetch(cfg.tokenUrl, {
-      method: 'POST', headers, body: new URLSearchParams(body).toString(),
-    });
-    if (!response.ok) throw new Error(`[OAuthService] Token exchange failed with status ${ response.status }`);
+    let response: Response;
+    try {
+      response = await fetch(cfg.tokenUrl, {
+        method: 'POST', headers, body: new URLSearchParams(body).toString(),
+      });
+    } catch (error) {
+      firstRunTrace('oauth', 'token exchange failed', { integrationId, providerId: cfg.id, accountId, status: 'network_error', error });
+      throw error;
+    }
+    if (!response.ok) {
+      firstRunTrace('oauth', 'token exchange failed', { integrationId, providerId: cfg.id, accountId, status: `http_${ response.status }`, error: 'Provider rejected token exchange' });
+      throw new Error(`[OAuthService] Token exchange failed with status ${ response.status }`);
+    }
+    firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId: cfg.id, accountId, status: `http_${ response.status }` });
     return await response.json() as OAuthTokenSet;
   }
 }
