@@ -131,7 +131,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
 
     <main v-if="state">
       <div v-if="!signedIn" class="alert warn"><b>Sign in to Sulla Cloud</b><span>Tickets and feedback need your Cloud account. Nothing is queued while signed out.</span></div>
-      <div v-if="state.remote.status === 'connected'" class="connection"><i class="live-dot" /><b>Sulla support is connected</b><span>Inside your Sulla runtime only · reconnects after restarts</span><button @click="remote('end')">End support</button></div>
+      <div v-if="state.remote.status === 'connected'" class="connection"><i class="live-dot" /><b>{{ state.remote.offeredBy || 'Sulla support' }} is connected</b><span>Inside your Sulla runtime only · reconnects after restarts</span><button @click="remote('end')">End support</button></div>
       <div class="page">
         <div v-if="notice" class="notice">{{ notice }}<button @click="notice = ''">×</button></div>
         <div v-if="updateState && !updateNoticeDismissed && updateState.channel === 'nightly' && updateState.phase === 'downloaded'" class="update-toast nightly-toast">
