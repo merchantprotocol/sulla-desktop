@@ -8,8 +8,18 @@ on:
   push:
     tags:
     - 'v*'
-  # Manual dispatch → build artifacts only (release step is tag-gated below)
+  # Manual dispatch can build artifacts only, or publish a signed nightly.
   workflow_dispatch:
+    inputs:
+      publish_channel:
+        description: 'Where to publish this build'
+        type: choice
+        options: [artifacts-only, nightly]
+        default: artifacts-only
+      nightly_version:
+        description: 'Exact nightly semver, e.g. 1.7.6-nightly.20261102.1 (required for nightly)'
+        type: string
+        required: false
 
 defaults:
   run:
@@ -52,6 +62,12 @@ jobs:
       run: |
         if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
           VERSION="${GITHUB_REF_NAME#v}"
+        elif [[ "${{ inputs.publish_channel }}" == "nightly" ]]; then
+          VERSION="${{ inputs.nightly_version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
+            echo "::error::nightly_version must look like 1.7.6-nightly.YYYYMMDD.N"
+            exit 1
+          fi
         else
           BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0)
           VERSION="${BASE#v}-dev.$(git rev-parse --short HEAD)"
@@ -175,7 +191,7 @@ jobs:
   release:
     name: Publish release files
     needs: package
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish_channel == 'nightly'
     runs-on: ubuntu-latest
     # Two ~2.9 GB zips: artifact download, upload in 64 MiB parts and a
     # public HEAD check. Generous, but bounded well under the 6 h job limit.
@@ -217,7 +233,7 @@ jobs:
         RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
       run: |
         set -euo pipefail
-        version="${GITHUB_REF_NAME#v}"
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then version="${GITHUB_REF_NAME#v}"; else version="${{ inputs.nightly_version }}"; fi
         shopt -s nullglob globstar
         files=( artifacts/**/Sulla-Desktop-*-mac.zip artifacts/**/Sulla-Desktop-*-mac.zip.blockmap )
         if (( ${#files[@]} == 0 )); then
@@ -237,14 +253,14 @@ jobs:
         RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
       run: |
         set -euo pipefail
-        version="${GITHUB_REF_NAME#v}"
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then version="${GITHUB_REF_NAME#v}"; else version="${{ inputs.nightly_version }}"; fi
         shopt -s nullglob globstar
         zips=( artifacts/**/Sulla-Desktop-*-mac.zip )
         mkdir -p feed
         node scripts/release/release-feed.mjs manifest \
           --version "$version" \
           --base-url "$RELEASES_BASE_URL" \
-          --notes-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+          --notes-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/v${version}" \
           --out feed/manifest.json \
           "${zips[@]}"
         node scripts/release/release-feed.mjs verify --manifest feed/manifest.json
@@ -254,7 +270,15 @@ jobs:
           node scripts/release/publish-to-releases.mjs "feed/$name" "releases/v${version}/$name" \
             --cache-control 'public, max-age=300'
         done
+        if [[ "${{ inputs.publish_channel }}" == "nightly" ]]; then
+          # Publish the manifest first and electron-updater feed last, so clients
+          # never see a feed whose immutable release files are incomplete.
+          node scripts/release/publish-to-releases.mjs feed/latest.json channels/nightly/latest.json --cache-control no-cache
+          node scripts/release/publish-to-releases.mjs feed/latest-mac.yml channels/nightly/latest-mac.yml --cache-control no-cache
+          echo "Published nightly ${version}: ${RELEASES_BASE_URL%/}/channels/nightly/latest-mac.yml"
+        fi
     - name: Write release notes header
+      if: startsWith(github.ref, 'refs/tags/')
       run: |
         set -euo pipefail
         version="${GITHUB_REF_NAME#v}"
@@ -270,6 +294,7 @@ jobs:
     # The zips stay out of the release (GitHub caps assets at 2 GiB). It is a
     # draft: publishing it promotes this version to the update channel.
     - name: Create draft release
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
       with:
         draft: true

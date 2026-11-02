@@ -6,11 +6,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import yazl from 'yazl';
+
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { getCurrentAccessToken, isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import paths from '@pkg/utils/paths';
 import { createWindow, getWindow, webRoot } from '@pkg/window';
 
@@ -38,11 +41,16 @@ function cleanText(input: unknown, max: number) {
   if (!value || value.length > max) { throw new Error(`Text must be between 1 and ${ max } characters.`) }
   return value;
 }
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const attachmentTypes: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.txt': 'text/plain', '.log': 'text/plain', '.pdf': 'application/pdf', '.zip': 'application/zip' };
 function attachments(input: unknown): SupportAttachment[] {
   if (!Array.isArray(input) || input.length > 10) { throw new Error('Choose up to 10 attachments.') }
   return input.map((item) => {
     if (!item || typeof item.path !== 'string' || typeof item.name !== 'string' || typeof item.size !== 'number') { throw new Error('Invalid attachment.') }
-    return { path: item.path, name: path.basename(item.name).slice(0, 255), size: Math.max(0, item.size) };
+    const file = { path: item.path, name: path.basename(item.name).slice(0, 255), size: Math.max(0, item.size) };
+    if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`${ file.name } is larger than 25 MB.`);
+    if (!attachmentTypes[path.extname(file.name).toLowerCase()]) throw new Error(`${ file.name } is not a supported file type.`);
+    return file;
   });
 }
 function id(prefix: string) { return `${ prefix }-${ Date.now().toString(36).toUpperCase() }` }
@@ -59,7 +67,7 @@ async function cloudRequest(pathname: string, init: RequestInit = {}): Promise<a
   const token = await getCurrentAccessToken();
   if (!token) throw new Error('Sign in to Sulla Cloud to use Support Center tickets and feedback.');
   const response = await fetch(`${ CLOUD_API_BASE }/support${ pathname }`, {
-    ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ token }`, ...(init.headers || {}) },
+    ...init, headers: { Authorization: `Bearer ${ token }`, ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(init.headers || {}) },
     signal: AbortSignal.timeout(20_000),
   });
   const body = await response.json().catch(() => ({}));
@@ -67,15 +75,47 @@ async function cloudRequest(pathname: string, init: RequestInit = {}): Promise<a
   return body;
 }
 
+function remoteAttachment(value: any): SupportAttachment { return { path: '', name: String(value?.file_name || value?.fileName || 'attachment'), size: Number(value?.size_bytes || value?.sizeBytes || 0) } }
+function remoteMessage(value: any): any {
+  return { id: String(value.id), createdAt: value.created_at || value.createdAt, body: value.message || '', sender: value.sender === 'admin' ? 'support' : 'user', attachments: (value.attachments || []).map(remoteAttachment) };
+}
 function remoteTicket(value: any): any {
-  const replies = Array.isArray(value?.replies) ? value.replies : [];
-  return { id: String(value.id), createdAt: value.created_at || value.createdAt, subject: value.subject || '', body: value.message || value.last_message || '', attachments: [], replies: replies.map((reply: any) => ({ id: String(reply.id), createdAt: reply.created_at || reply.createdAt, body: reply.message || '', attachments: [] })) };
+  const replies = Array.isArray(value?.replies) ? value.replies.map(remoteMessage) : [];
+  const first = replies[0];
+  return { id: String(value.id), createdAt: value.created_at || value.createdAt, subject: value.subject || '', status: value.status || 'open', body: first?.body || value.message || value.last_message || '', attachments: first?.attachments || [], replies: first ? replies.slice(1) : replies };
+}
+async function uploadAttachments(input: unknown): Promise<any[]> {
+  const files = attachments(input);
+  return Promise.all(files.map(async(file) => {
+    const bytes = await fs.promises.readFile(file.path);
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: attachmentTypes[path.extname(file.name).toLowerCase()] }), file.name);
+    return (await cloudRequest('/attachments', { method: 'POST', body: form })).attachment;
+  }));
+}
+function redact(value: string): string { return value.replace(/(bearer|token|api[_-]?key|password)\s*[:=]\s*\S+/gi, '$1=[redacted]') }
+async function createLogBundle(state: SupportState): Promise<Buffer> {
+  const zip = new yazl.ZipFile();
+  for (const [source, names] of Object.entries(logTopics)) for (const name of state.logging.sources[source] ? names : []) {
+    const text = readTail(path.join(paths.logs, name), 2 * 1024 * 1024); if (text) zip.addBuffer(Buffer.from(redact(text)), `${ source }/${ name }`);
+  }
+  zip.end(); const chunks: Buffer[] = []; for await (const chunk of zip.outputStream) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks);
+}
+
+
+async function uploadLogAttachment(): Promise<any> {
+  const bytes = await createLogBundle(store().read());
+  if (bytes.length > MAX_ATTACHMENT_BYTES) throw new Error('The selected logs are larger than 25 MB. Turn off sources and try again.');
+  const form = new FormData(); form.append('file', new Blob([bytes], { type: 'application/zip' }), 'sulla-support-logs.zip');
+  return (await cloudRequest('/attachments', { method: 'POST', body: form })).attachment;
 }
 
 function registerHandlers() {
   if (registered) { return } registered = true;
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
   ipcMain.handle('support:cloud-status', async(event) => { authorize(event); return { signedIn: await isCloudSignedIn() } });
+  ipcMain.handle('support:update-status', (event) => { authorize(event); return updateManager.getState() });
+  ipcMain.handle('support:update-install', async(event) => { authorize(event); await updateManager.installUpdate() });
   ipcMain.handle('support:set-privacy', async(event, key: unknown, enabled: unknown) => {
     authorize(event); if (!['errorReports', 'metricsConsent', 'autoAttachLogs'].includes(String(key)) || typeof enabled !== 'boolean') throw new Error('Invalid privacy setting.');
     if (key === 'metricsConsent') await cloudRequest('/metrics-consent', { method: 'PUT', body: JSON.stringify({ agreed: enabled }) });
@@ -90,24 +130,37 @@ function registerHandlers() {
     authorize(event); const state = store().read();
     return Object.entries(logTopics).flatMap(([source, names]) => state.logging.sources[source] ? names.map(name => ({ source, name, text: readTail(path.join(paths.logs, name)) })).filter(x => x.text) : []);
   });
+  ipcMain.handle('support:download-logs', async(event) => {
+    const win = authorize(event); const result = await dialog.showSaveDialog(win, { defaultPath: `sulla-support-logs-${ new Date().toISOString().slice(0, 10) }.zip`, filters: [{ name: 'ZIP archive', extensions: ['zip'] }] });
+    if (result.canceled || !result.filePath) return false; await fs.promises.writeFile(result.filePath, await createLogBundle(store().read()), { mode: 0o600 }); return true;
+  });
+  ipcMain.handle('support:send-logs', async(event, ticketId: unknown) => {
+    authorize(event); const attachment = await uploadLogAttachment();
+    if (typeof ticketId === 'string' && ticketId) {
+      await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }/reply`, { method: 'POST', body: JSON.stringify({ message: 'Diagnostic logs attached from Sulla Desktop.', attachments: [attachment] }) });
+      return remoteTicket((await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }`)).ticket);
+    }
+    const result = await cloudRequest('/tickets', { method: 'POST', body: JSON.stringify({ subject: 'Diagnostic logs from Sulla Desktop', message: 'I am sending these redacted logs to Sulla support.', attachments: [attachment] }) });
+    return remoteTicket((await cloudRequest(`/tickets/${ encodeURIComponent(result.ticket.id) }`)).ticket);
+  });
   ipcMain.handle('support:choose-files', async(event) => {
-    const win = authorize(event); const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] });
+    const win = authorize(event); const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Support files', extensions: ['png', 'jpg', 'jpeg', 'webp', 'txt', 'log', 'pdf', 'zip'] }] });
     if (result.canceled) { return [] }
-    return result.filePaths.slice(0, 10).map(file => ({ path: file, name: path.basename(file), size: fs.statSync(file).size }));
+    return attachments(result.filePaths.slice(0, 10).map(file => ({ path: file, name: path.basename(file), size: fs.statSync(file).size })));
   });
   ipcMain.handle('support:add-feedback', async(event, input: any) => {
-    authorize(event); const body = cleanText(input?.body, 10_000); await cloudRequest('/feedback', { method: 'POST', body: JSON.stringify({ message: body, attachments: [] }) });
+    authorize(event); const body = cleanText(input?.body, 10_000); const uploaded = await uploadAttachments(input?.attachments); if (store().read().privacy.autoAttachLogs) uploaded.push(await uploadLogAttachment()); await cloudRequest('/feedback', { method: 'POST', body: JSON.stringify({ message: body, attachments: uploaded }) });
     const message = { id: id('FB'), createdAt: new Date().toISOString(), body, attachments: attachments(input?.attachments) };
     return store().update(state => { state.feedback.unshift(message) });
   });
-  ipcMain.handle('support:tickets', async(event) => { authorize(event); const result = await cloudRequest('/tickets'); return (result.tickets || []).map(remoteTicket) });
+  ipcMain.handle('support:tickets', async(event) => { authorize(event); const result = await cloudRequest('/tickets'); return Promise.all((result.tickets || []).map(async(ticket: any) => remoteTicket((await cloudRequest(`/tickets/${ encodeURIComponent(ticket.id) }`)).ticket))) });
   ipcMain.handle('support:create-ticket', async(event, input: any) => {
-    authorize(event); const subject = cleanText(input?.subject, 160); const body = cleanText(input?.body, 10_000); const result = await cloudRequest('/tickets', { method: 'POST', body: JSON.stringify({ subject, message: body, attachments: [] }) });
+    authorize(event); const subject = cleanText(input?.subject, 160); const body = cleanText(input?.body, 10_000); const uploaded = await uploadAttachments(input?.attachments); if (store().read().privacy.autoAttachLogs) uploaded.push(await uploadLogAttachment()); const result = await cloudRequest('/tickets', { method: 'POST', body: JSON.stringify({ subject, message: body, attachments: uploaded }) });
     const ticket = { ...remoteTicket(result.ticket), subject, body, attachments: attachments(input?.attachments) }; return store().update(state => { state.tickets.unshift(ticket) });
   });
   ipcMain.handle('support:reply-ticket', async(event, input: any) => {
-    authorize(event); const ticketId = cleanText(input?.ticketId, 80); const body = cleanText(input?.body, 10_000); await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }/reply`, { method: 'POST', body: JSON.stringify({ message: body, attachments: [] }) });
-    return store().update((state) => { const ticket = state.tickets.find(item => item.id === ticketId); if (ticket) ticket.replies.push({ id: id('REPLY'), createdAt: new Date().toISOString(), body, attachments: [] }); });
+    authorize(event); const ticketId = cleanText(input?.ticketId, 80); const body = cleanText(input?.body, 10_000); const uploaded = await uploadAttachments(input?.attachments); if (store().read().privacy.autoAttachLogs) uploaded.push(await uploadLogAttachment()); await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }/reply`, { method: 'POST', body: JSON.stringify({ message: body, attachments: uploaded }) });
+    return remoteTicket((await cloudRequest(`/tickets/${ encodeURIComponent(ticketId) }`)).ticket);
   });
   ipcMain.handle('support:remote', (event, action: unknown) => {
     authorize(event); if (!['request', 'approve', 'end', 'reset'].includes(String(action))) { throw new Error('Invalid support action.') }
@@ -119,6 +172,14 @@ function registerHandlers() {
       else if (action === 'reset') { state.remote = { status: 'idle' } }
       else { throw new Error('That support transition is not available.') }
     });
+  });
+}
+
+export function initSupportCenterIpc() {
+  if (ipcMain.listenerCount('support:open') > 0) return;
+  ipcMain.on('support:open', (event, section: unknown) => {
+    const trusted = ['first-run', 'main-agent'].some(name => event.sender === getWindow(name as any)?.webContents);
+    if (trusted) openSupportCenter(typeof section === 'string' ? section : 'home');
   });
 }
 

@@ -18,7 +18,7 @@ import {
   openDocker, openMain, openPreferences, getWindow, openUrlInApp,
 } from '@pkg/window';
 import { openProcessManager } from '@pkg/window/processManager';
-import { openSupportCenter } from '@pkg/window/supportCenter';
+import { initSupportCenterIpc, openSupportCenter } from '@pkg/window/supportCenter';
 import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.mainmenu;
@@ -62,6 +62,7 @@ export function setUserLoggedIn(unlocked: boolean): void {
 }
 
 export default function buildApplicationMenu(): void {
+  initSupportCenterIpc();
   const menuItems: MenuItem[] = getApplicationMenu();
   const menu = Menu.buildFromTemplate(menuItems);
 
