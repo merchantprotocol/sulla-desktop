@@ -161,6 +161,15 @@ function registerHandlers() {
     if (result.canceled) { return [] }
     return attachments(result.filePaths.slice(0, 10).map(file => ({ path: file, name: path.basename(file), size: fs.statSync(file).size })));
   });
+  ipcMain.handle('support:attach-paths', (event, input: unknown) => {
+    authorize(event);
+    if (!Array.isArray(input) || input.length > 10 || input.some(item => typeof item !== 'string' || !path.isAbsolute(item))) throw new Error('Choose up to 10 files.');
+    return attachments(input.map((file: string) => {
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) throw new Error(`${ path.basename(file) } is not a file.`);
+      return { path: file, name: path.basename(file), size: stat.size };
+    }));
+  });
   ipcMain.handle('support:add-feedback', async(event, input: any) => {
     authorize(event); const body = cleanText(input?.body, 10_000); const uploaded = await uploadAttachments(input?.attachments); if (store().read().privacy.autoAttachLogs) uploaded.push(await uploadLogAttachment()); await cloudRequest('/feedback', { method: 'POST', body: JSON.stringify({ message: body, attachments: uploaded }) });
     const message = { id: id('FB'), createdAt: new Date().toISOString(), body, attachments: attachments(input?.attachments) };
