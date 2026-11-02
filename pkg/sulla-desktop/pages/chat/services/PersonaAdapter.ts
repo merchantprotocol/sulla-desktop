@@ -46,6 +46,8 @@ export interface PersonaAdapterOptions {
   tabId?:              string;
   agentTabContractId?: string;
   agentTabThreadId?:   string;
+  supportSessionId?:    string;
+  supportToolNames?:    string[];
 }
 
 export class PersonaAdapter {
@@ -103,6 +105,7 @@ export class PersonaAdapter {
     opts: PersonaAdapterOptions = {},
   ) {
     this.tabId = opts.tabId;
+    (this as any)._supportOptions = opts;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
       this.controller.artifacts.value.list.filter(artifact => artifact.persistent).map(artifact => artifact.id),
@@ -319,6 +322,15 @@ export class PersonaAdapter {
   }
 
   // ─── Intents dispatched by the controller ──────────────────────────
+  private supportSessionMetadata():Record<string, unknown> {
+    const options = (this as any)._supportOptions as PersonaAdapterOptions | undefined;
+    return options?.supportSessionId ? {
+      supportSessionId: options.supportSessionId,
+      allowedToolNames: options.supportToolNames || [],
+      conversationContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
+    } : {};
+  }
+
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
     const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
@@ -355,6 +367,7 @@ export class PersonaAdapter {
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);

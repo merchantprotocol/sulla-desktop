@@ -174,6 +174,8 @@ const props = defineProps<{
   /** Whether this tab is the currently visible tab. Suppresses keyboard
    *  shortcut handlers on background (visibility:hidden) tabs. */
   isActive?: boolean;
+  supportSessionId?: string;
+  supportToolNames?: string[];
 }>();
 
 // ─── Emits (to BrowserTab for URL opening) ─────────────────────────
@@ -325,7 +327,16 @@ const adapter = new PersonaAdapter(controller, {
   tabId:              props.tabId,
   agentTabContractId: props.agentTabContractId,
   agentTabThreadId:   props.agentTabThreadId,
+  supportSessionId:    props.supportSessionId,
+  supportToolNames:    props.supportToolNames,
 });
+const onSupportPrompt = (event:Event) => {
+  const detail = (event as CustomEvent<{tabId?:string;text?:string}>).detail;
+  if (!props.supportSessionId || detail?.tabId !== props.tabId || !detail.text) return;
+  void adapter.send(detail.text, []);
+};
+window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
+onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
 const subAgentRailVisible = ref(false);
 
 // Side panels can be tucked away to a tab on the edge; the choice
