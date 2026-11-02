@@ -130,6 +130,8 @@ export function providerFailureFromHttp(providerId: string, status: number, caus
 export function legacyProviderFailure(providerId: string, value: unknown, options?: ProviderFailureOptions): ProviderFailure {
   const message = (value instanceof Error ? value.message : String(value ?? '')).toLowerCase();
   const make = (Failure: FailureConstructor) => new Failure(providerId, { ...options, cause: options?.cause ?? value });
+  const coded = value as { code?: unknown; status?: unknown } | null;
+  if (coded && typeof coded === 'object' && (coded.code === 'vault_locked' || coded.status === 423)) return new VaultLocked('vault', { status: 423, cause: value });
   if (/timeout|timed out|etimedout|stalled/.test(message)) return make(TimedOut);
   if (/no response|empty response|returned empty|no extractable prompt/.test(message)) return make(EmptyResponse);
   if (message.includes('workspace routing discovery failed')) return make(RoutingUnavailable);
