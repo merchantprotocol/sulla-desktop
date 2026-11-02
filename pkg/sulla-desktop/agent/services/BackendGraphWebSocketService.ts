@@ -14,6 +14,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { RunActivity } from './RunActivity';
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
@@ -62,6 +63,11 @@ export class BackendGraphWebSocketService {
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
+  private suspendedRuns = new Set<string>();
+  private resumeContexts = new Map<string, {
+    channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
+    overrideAgentId?: string; inputSource?: string;
+  }>();
   private subscribedChannels = new Set<string>();
   private conversationContainers = new Map<string, {
     provider: string;
@@ -140,7 +146,10 @@ export class BackendGraphWebSocketService {
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
+    for (const key of this.activeAborts.keys()) releaseChatActivity(`graph:${ key }`);
     this.activeAborts.clear();
+    this.suspendedRuns.clear();
+    this.resumeContexts.clear();
     for (const [, record] of this.conversationContainers) {
       clearTimeout(record.idleTimer);
       record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
@@ -148,6 +157,33 @@ export class BackendGraphWebSocketService {
     }
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
+  }
+
+  /** Stamp only runs actually in flight when macOS suspends. */
+  handleSuspend(): void {
+    this.suspendedRuns = new Set(this.activeAborts.keys());
+    console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
+  }
+
+  /** Abort sockets that crossed sleep, then continue their threads automatically. */
+  handleResume(): void {
+    const interrupted = [...this.suspendedRuns];
+    this.suspendedRuns.clear();
+    for (const key of interrupted) {
+      const abort = this.activeAborts.get(key);
+      const context = this.resumeContexts.get(key);
+      if (!abort || !context) continue;
+      console.log(`[BackendGraphWS] Aborting and continuing chat thread ${ context.threadId } after system resume`);
+      abort.abort();
+      setTimeout(() => {
+        void this.dispatchToAgent(
+          context.channelId, context.triggerType,
+          'Continue from where you stopped after the computer resumed. Preserve and process any queued messages.',
+          context.threadId, context.scopedWorkflowId, context.overrideAgentId, context.inputSource,
+          { source: 'system_resume', inputSource: 'system' },
+        ).catch(err => console.error('[BackendGraphWS] Failed to continue chat after resume:', err));
+      }, 0);
+    }
   }
 
   private async conversationContainer(
@@ -603,6 +639,10 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      this.resumeContexts.set(abortKey, {
+        channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
+      });
+      acquireChatActivity(`graph:${ abortKey }`);
       for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
         await markCompletionDelivered(String(jobId));
       }
@@ -723,6 +763,8 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         this.activeAborts.delete(abortKey);
+        this.resumeContexts.delete(abortKey);
+        releaseChatActivity(`graph:${ abortKey }`);
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this

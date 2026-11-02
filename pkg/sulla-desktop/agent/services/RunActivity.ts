@@ -10,11 +10,14 @@
  * states inherit their parent's keys. Dead-run detection reads this instead
  * of a lease timer, which keeps renewing whether or not the agent does work.
  */
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
+
 const lastActivity = new Map<string, number>();
 
 export const RunActivity = {
   begin(key: string): void {
     lastActivity.set(key, Date.now());
+    acquireChatActivity(`run:${ key }`);
   },
 
   touch(metadata: any): void {
@@ -38,6 +41,7 @@ export const RunActivity = {
 
   end(key: string): void {
     lastActivity.delete(key);
+    releaseChatActivity(`run:${ key }`);
   },
 };
 
