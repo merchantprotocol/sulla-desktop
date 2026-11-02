@@ -3,8 +3,8 @@ name: Update feed
 
 # Promotes a release to the update channel in the releases bucket
 # (https://releases.sulladesktop.com, see docs/releasing.md):
-#   channels/latest/latest.json     manifest for the website and installers
-#   channels/latest/latest-mac.yml  electron-updater feed the app reads
+#   channels/latest/latest.json     LTS manifest for the website and installers
+#   channels/latest/latest-mac.yml  LTS electron-updater feed
 #
 # Runs when a release is published. The Package workflow already uploaded the
 # zips and releases/v<version>/latest.json; this job checks every zip is there
@@ -23,6 +23,11 @@ on:
       tag:
         description: 'Release tag to promote, e.g. v1.7.0'
         required: true
+      channel:
+        description: 'Channel to promote'
+        type: choice
+        options: [latest, nightly]
+        default: latest
       rehash:
         description: 'Download the zips from the bucket and rebuild releases/v<version>/latest.json'
         type: boolean
@@ -53,6 +58,7 @@ jobs:
       RELEASES_UPLOAD_URL: ${{ vars.RELEASES_UPLOAD_URL }}
       RELEASES_BASE_URL: ${{ vars.RELEASES_BASE_URL }}
       TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      CHANNEL: ${{ inputs.channel || 'latest' }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -145,7 +151,7 @@ jobs:
         status=0
         node scripts/release/release-feed.mjs check-newer \
           --manifest feed/manifest.json \
-          --current-url "${RELEASES_BASE_URL%/}/channels/latest/latest.json" || status=$?
+          --current-url "${RELEASES_BASE_URL%/}/channels/${CHANNEL}/latest.json" || status=$?
         if (( status == 3 )); then
           echo "::error::${TAG} is older than the version on the channel. Run this workflow by hand with allow_older to roll back."
         fi
@@ -155,17 +161,17 @@ jobs:
         RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
       run: |
         set -euo pipefail
-        node scripts/release/publish-to-releases.mjs feed/channel/latest.json channels/latest/latest.json --cache-control no-cache
-        node scripts/release/publish-to-releases.mjs feed/channel/latest-mac.yml channels/latest/latest-mac.yml --cache-control no-cache
-        echo "Promoted ${TAG}: ${RELEASES_BASE_URL%/}/channels/latest/latest-mac.yml"
+        node scripts/release/publish-to-releases.mjs feed/channel/latest.json channels/${CHANNEL}/latest.json --cache-control no-cache
+        node scripts/release/publish-to-releases.mjs feed/channel/latest-mac.yml channels/${CHANNEL}/latest-mac.yml --cache-control no-cache
+        echo "Promoted ${TAG}: ${RELEASES_BASE_URL%/}/channels/${CHANNEL}/latest-mac.yml"
     - name: Verify the live feed and downloaded zips
       run: |
         set -euo pipefail
         base="${RELEASES_BASE_URL%/}"
         curl -fsSL --retry 5 --retry-all-errors -H 'Cache-Control: no-cache' \
-          -o feed/live.json "$base/channels/latest/latest.json?verify=${GITHUB_RUN_ID}"
+          -o feed/live.json "$base/channels/${CHANNEL}/latest.json?verify=${GITHUB_RUN_ID}"
         curl -fsSL --retry 5 --retry-all-errors -H 'Cache-Control: no-cache' \
-          -o feed/live.yml "$base/channels/latest/latest-mac.yml?verify=${GITHUB_RUN_ID}"
+          -o feed/live.yml "$base/channels/${CHANNEL}/latest-mac.yml?verify=${GITHUB_RUN_ID}"
         TAG="$TAG" node - <<'NODE'
         const fs = require('fs');
         const manifest = JSON.parse(fs.readFileSync('feed/live.json', 'utf8'));

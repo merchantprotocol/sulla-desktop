@@ -23,6 +23,7 @@ import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import yaml from 'yaml';
 
 import { updateEvents } from './UpdateManager';
+import { readUpdateChannelState, recordPendingUpdate } from './channelState';
 
 import { Settings } from '@pkg/config/settings';
 import mainEvent from '@pkg/main/mainEvents';
@@ -87,6 +88,13 @@ export function installQueuedUpdate(): void {
 
     return;
   }
+  if (!updateState.downloaded || !updateState.info?.version) {
+    console.warn('[update] installQueuedUpdate: no checksum-verified download is pending');
+    return;
+  }
+  // electron-updater emits update-downloaded only after its DownloadedUpdateHelper
+  // has validated the artifact against latest-mac.yml's sha512.
+  recordPendingUpdate(updateState.info.version);
   requestUpdateRestart(() => {
     // isSilent=false keeps the normal installer UI; forceRunAfter=true makes
     // Squirrel.Mac launch the installed version even when updater defaults differ.
@@ -128,6 +136,13 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
       throw ex;
     }
     const options: GenericServerOptions = yaml.parse(fileContents);
+    const channelState = readUpdateChannelState();
+    const configured = new URL(options.url.endsWith('/') ? options.url : `${ options.url }/`);
+    options.url = channelState.pinnedVersion
+      ? new URL(`../../releases/v${ channelState.pinnedVersion }/`, configured).toString()
+      : channelState.channel === 'nightly'
+        ? new URL('../nightly/', configured).toString()
+        : configured.toString();
 
     switch (os.platform()) {
     case 'darwin':
@@ -150,6 +165,8 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
 
   updater.logger = console;
   updater.autoDownload = true;
+  const channelState = readUpdateChannelState();
+  updater.allowDowngrade = !!channelState.pinnedVersion || (channelState.channel === 'lts' && /-/.test(Electron.app.getVersion()));
   updater.autoInstallOnAppQuit = false;
   updater.on('error', (error) => {
     console.debug('update: error:', error);
@@ -214,6 +231,22 @@ mainEvent.on('settings-update', (settings: Settings) => {
     doInitialUpdateCheck();
   }
 });
+
+
+/** Drop the cached updater so a changed channel/feed takes effect immediately. */
+export function reconfigureUpdater(): void {
+  if (updateTimer) timers.clearTimeout(updateTimer);
+  updateTimer = undefined as unknown as NodeJS.Timeout;
+  autoUpdater?.removeAllListeners();
+  autoUpdater = undefined as unknown as AppUpdater;
+  state = State.UNCONFIGURED;
+  updateState.configured = false;
+  updateState.available = false;
+  updateState.downloaded = false;
+  updateState.error = undefined;
+  updateState.info = undefined;
+  updateState.progress = undefined;
+}
 
 /**
  * Set up the updater and, when enabled, start checking for updates.
@@ -303,3 +336,6 @@ async function triggerUpdateCheck() {
   }
   updateTimer = timers.setTimeout(triggerUpdateCheck, updateInterval);
 }
+
+export { supportUpdateApi } from './UpdateManager';
+export type { UpdateChannel, UpdateChannelSetter } from './channelState';
