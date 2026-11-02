@@ -367,6 +367,22 @@ const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
   [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/commit$/, ['POST']],
   [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}$/, ['GET']],
   [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['PUT']],
+  // Support Center (user side): tickets, feedback, uploads, consent, timeline.
+  [/^\/support\/(?:tickets|unread)$/, ['GET']],
+  [/^\/support\/(?:tickets|feedback|timeline|attachments)$/, ['POST']],
+  [/^\/support\/metrics-consent$/, ['PUT']],
+  [/^\/support\/tickets\/[A-Za-z0-9_-]{1,200}$/, ['GET']],
+  [/^\/support\/tickets\/[A-Za-z0-9_-]{1,200}\/reply$/, ['POST']],
+  // Remote support (user side): request, approve, grant check, status, end, device-channel host ticket.
+  [/^\/support\/sessions$/, ['POST']],
+  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}$/, ['GET']],
+  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/grant$/, ['GET']],
+  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:approve|end|device-status)$/, ['POST']],
+  [/^\/device-tools\/tickets$/, ['POST']],
+  // Remote support (supporter side): Workers enforces super-admin + accepted-by-caller on each route.
+  [/^\/super-admin\/support\/sessions$/, ['GET']],
+  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/events$/, ['GET']],
+  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:rpc|end|extend)$/, ['POST']],
   // Files catalog and just-in-time content stay scoped to the registered Desktop.
   [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}$/, ['PUT']],
   [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests$/, ['GET']],
@@ -2274,7 +2290,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       injections: [], responseType: input.responseType ?? 'json',
     };
     const { credential, item } = await this.withCredentialQueue(request.ref, () => this.freshSullaCloudAccessToken(request, true));
-    const allowedHeaders = new Set(['accept', 'content-type', 'x-sulla-timestamp', 'x-sulla-device-signature']);
+    const allowedHeaders = new Set(['accept', 'content-type', 'x-sulla-timestamp', 'x-sulla-device-signature', 'x-sulla-support-token']);
     const headers = Object.fromEntries(Object.entries(input.headers ?? {})
       .filter(([name, value]) => allowedHeaders.has(name.toLowerCase()) && typeof value === 'string'));
     headers.authorization = `Bearer ${ credential }`;

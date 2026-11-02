@@ -78,4 +78,24 @@ describe('local authority Sulla Cloud Desktop routes', () => {
       expect(localAuthorityTestHooks.allowsSullaCloudDesktopRequest(method, path)).toBe(false);
     }
   });
+  test('allows only the exact Support routes and methods', () => {
+    for (const [method, path] of [
+      ['GET', '/support/tickets'], ['POST', '/support/tickets'], ['GET', '/support/tickets/t-1'], ['POST', '/support/tickets/t-1/reply'],
+      ['GET', '/support/unread'], ['POST', '/support/feedback'], ['POST', '/support/attachments'], ['PUT', '/support/metrics-consent'],
+      ['POST', '/support/timeline'], ['POST', '/support/sessions'], ['GET', '/support/sessions/s-1'], ['GET', '/support/sessions/s-1/grant'],
+      ['POST', '/support/sessions/s-1/approve'], ['POST', '/support/sessions/s-1/end'], ['POST', '/support/sessions/s-1/device-status'],
+      ['POST', '/device-tools/tickets'], ['GET', '/super-admin/support/sessions'], ['GET', '/super-admin/support/sessions/s-1/events'],
+      ['POST', '/super-admin/support/sessions/s-1/rpc'], ['POST', '/super-admin/support/sessions/s-1/end'], ['POST', '/super-admin/support/sessions/s-1/extend'],
+    ]) {
+      expect(localAuthorityTestHooks.allowsSullaCloudDesktopRequest(method, path)).toBe(true);
+    }
+    for (const [method, path] of [
+      ['DELETE', '/support/tickets/t-1'], ['GET', '/support/attachments/a-1'], ['POST', '/support/sessions/s-1/grant'],
+      ['GET', '/super-admin/support/inbox'], ['GET', '/super-admin/support/users/u-1'], ['POST', '/super-admin/support/sessions/s-1/accept'],
+      ['POST', '/super-admin/users'], ['POST', '/device-tools/d-1/rpc'], ['GET', '/support/sessions/../../devices/register'],
+    ]) {
+      expect(localAuthorityTestHooks.allowsSullaCloudDesktopRequest(method, path)).toBe(false);
+    }
+  });
 });
+
