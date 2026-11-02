@@ -68,6 +68,7 @@ import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
+import { configureRemoteSupportRuntime, startRemoteSupport } from '@pkg/main/supportRemote';
 import { startInstallPing } from '@pkg/main/installPing';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSecretaryModeStateIpc } from '@pkg/main/secretaryModeState';
@@ -159,6 +160,7 @@ function getStartupProgressHub() {
   return getStartupProgressHubInstance(snapshot => window.send('startup-progress', snapshot));
 }
 const k8smanager = newK8sManager();
+configureRemoteSupportRuntime(k8smanager);
 const firstRunCoordinator = new FirstRunCoordinator();
 
 let cfg: settings.Settings;
@@ -513,6 +515,7 @@ function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
 }
 
 Electron.app.whenReady().then(() => {
+  startRemoteSupport();
   if (isFirstRunTestInstance()) Electron.app.dock?.setBadge('TEST');
   const session = Electron.session.defaultSession;
 

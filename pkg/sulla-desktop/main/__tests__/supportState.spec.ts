@@ -14,9 +14,9 @@ describe('SupportStateStore', () => {
   test('starts vault-independently and persists state atomically', () => {
     const store = new SupportStateStore(directory);
     expect(store.read().remote.status).toBe('idle');
-    store.update(state => { state.remote = { status: 'waiting', requestedAt: 'now' }; state.logging.sources.ai = false });
+    store.update(state => { state.remote = { status: 'waiting', requestedAt: 'now', activity: [] }; state.logging.sources.ai = false });
     const state = new SupportStateStore(directory).read();
-    expect(state.remote).toEqual({ status: 'waiting', requestedAt: 'now' });
+    expect(state.remote).toEqual({ status: 'waiting', requestedAt: 'now', activity: [] });
     expect(state.logging.sources.ai).toBe(false);
     expect(fs.statSync(store.filePath).mode & 0o777).toBe(0o600);
   });
@@ -32,9 +32,17 @@ describe('SupportStateStore', () => {
   test('an authenticated offer requires a waiting request and never grants access', () => {
     const store = new SupportStateStore(directory);
     expect(store.noteRemoteOffer('Jonathon', new Date('2026-11-01T12:00:00.000Z')).remote.status).toBe('idle');
-    store.update(state => { state.remote = { status: 'waiting', requestedAt: 'now' } });
+    store.update(state => { state.remote = { status: 'waiting', requestedAt: 'now', activity: [] } });
     expect(store.noteRemoteOffer('Jonathon', new Date('2026-11-01T12:00:00.000Z')).remote).toEqual({
-      status: 'approval', requestedAt: 'now', offeredAt: '2026-11-01T12:00:00.000Z', offeredBy: 'Jonathon',
+      status: 'approval', requestedAt: 'now', offeredAt: '2026-11-01T12:00:00.000Z', offeredBy: 'Jonathon', activity: [],
     });
+  });
+  test('ending support removes the local grant before any network work', () => {
+    const store = new SupportStateStore(directory);
+    store.update(state => { state.remote = { status: 'connected', activity: [], grant: { sessionId: 'session', token: 'secret', deviceId: 'device', expiresAt: '2026-11-03T12:00:00.000Z' } } });
+    const ended = store.clearGrant('ended_by_user', new Date('2026-11-02T12:00:00.000Z'));
+    expect(ended.remote.status).toBe('ended');
+    expect(ended.remote.grant).toBeUndefined();
+    expect(ended.remote.endedAt).toBe('2026-11-02T12:00:00.000Z');
   });
 });

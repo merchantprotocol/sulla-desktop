@@ -17,6 +17,7 @@
   >
     <the-title ref="title" />
     <NoAiConnectedBanner />
+    <SupportConnectedBanner />
     <main
       ref="body"
       class="body"
@@ -37,6 +38,7 @@ import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
+import SupportConnectedBanner from '@pkg/components/SupportConnectedBanner.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -48,6 +50,7 @@ export default {
     ActionMenu,
     TheTitle,
     NoAiConnectedBanner,
+    SupportConnectedBanner,
   },
 
   setup() {
@@ -144,6 +147,7 @@ export default {
   grid-template:
     "title"
     "no-ai"
+    "support"
     "body"    1fr
     "status-bar";
   background-color: var(--body-bg);
