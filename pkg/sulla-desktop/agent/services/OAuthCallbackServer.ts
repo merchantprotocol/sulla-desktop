@@ -15,6 +15,15 @@ export interface OAuthCallbackResult {
   state: string;
 }
 
+export class OAuthCallbackPortInUseError extends Error {
+  readonly code = 'port_in_use' as const;
+
+  constructor(readonly port: number) {
+    super(`OAuth callback port ${ port } is already in use by another process`);
+    this.name = 'OAuthCallbackPortInUseError';
+  }
+}
+
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Authorization Successful</title>
 <style>
@@ -151,7 +160,7 @@ export async function startOAuthCallbackServer(
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', (err) => {
       if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE' && opts.fixedPort) {
-        rejectListen(new Error(`OAuth callback port ${ listenPort } is already in use`));
+        rejectListen(new OAuthCallbackPortInUseError(listenPort));
       } else {
         rejectListen(new Error(`OAuth callback server failed to listen on port ${ listenPort }: ${ err.message }`));
       }

@@ -398,13 +398,16 @@ export function initIntegrationOAuthEvents(): void {
       console.error(`${ LOG_PREFIX } OAuth failed for ${ payload?.integrationId }:`, errMsg);
 
       const lower = errMsg.toLowerCase();
-      const reason: OAuthFailureReason = lower.includes('already in use') || lower.includes('eaddrinuse') ? 'busy-port'
+      const typedCode = err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code || '') : '';
+      const reason: OAuthFailureReason = typedCode === 'port_in_use' || lower.includes('already in use') || lower.includes('eaddrinuse') ? 'busy-port'
         : lower.includes('window closed') || lower.includes('cancel') ? 'user-closed'
           : lower.includes('could not access any models') ? 'no-access'
         : lower.includes('timed out') || lower.includes('timeout') ? 'timeout'
           : lower.includes('offline') || lower.includes('network') || lower.includes('fetch') ? 'offline'
             : lower.includes('vm') && lower.includes('ready') ? 'vm-not-ready' : 'provider-error';
-      const error = reason === 'busy-port' ? `Another app is using ${ payload.integrationId === 'codex' ? "ChatGPT's" : "Grok's" } sign-in port. Quit it and try again.`
+      const error = reason === 'busy-port' ? (typedCode === 'port_in_use'
+        ? errMsg.replace(/^OAuth callback port /, 'Sign-in port ')
+        : `Another app is using ${ payload.integrationId === 'codex' ? "ChatGPT's" : "Grok's" } sign-in port. Quit it and try again.`)
         : reason === 'no-access' ? `Your ${ payload.integrationId === 'grok' ? 'Grok' : 'AI' } plan cannot use the API.`
           : reason === 'user-closed' ? 'Sign-in was closed.'
         : reason === 'timeout' ? 'Sign-in took too long. Try again.'

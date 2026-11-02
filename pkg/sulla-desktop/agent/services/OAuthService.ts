@@ -7,12 +7,9 @@
 // Handles: authorize URL generation, code exchange, token storage (DB-backed),
 // automatic refresh, and revocation.
 
-import crypto from 'crypto';
-
-import { BrowserWindow, shell } from 'electron';
-
 import { getIntegrationService } from './IntegrationService';
-import { startOAuthCallbackServer } from './OAuthCallbackServer';
+import { OAuthFlowSession } from './oauth/flow/OAuthFlowSession';
+import { TokenExchanger } from './oauth/flow/TokenExchanger';
 import { REFRESH_RETRY_DELAY_MS, refreshRetryDelayMs } from './oauthRefreshRetry';
 import { CustodyResolver } from './oauth/custody/CustodyResolver';
 import { isRawTokenCustody, type RawTokenCustody, type ResolvedTokenCustody, type TokenCustody } from './oauth/custody/TokenCustody';
@@ -23,7 +20,6 @@ import {
 } from '../../vault-broker';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
-import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
@@ -127,15 +123,15 @@ export function getOAuthService(): OAuthService {
 // ─── Service ──────────────────────────────────────────────────────
 
 export class OAuthService {
-  private readonly activeFlows = new Map<string, () => void>();
+  private readonly activeFlows = new Map<string, OAuthFlowSession>();
   private readonly custodyResolver = new CustodyResolver();
   private readonly scheduler = new RefreshScheduler();
+  private readonly tokenExchanger = new TokenExchanger();
 
   cancelFlow(integrationId: string): boolean {
-    const cancel = this.activeFlows.get(integrationId);
-    if (!cancel) return false;
-    cancel();
-    return true;
+    const entries = [...this.activeFlows].filter(([key]) => key.startsWith(`${ integrationId }::`));
+    for (const [, session] of entries) session.cancel();
+    return entries.length > 0;
   }
 
   // ── Initiate OAuth flow ───────────────────────────────────────
@@ -168,16 +164,8 @@ export class OAuthService {
     firstRunTrace('oauth', 'provider flow started', { integrationId, providerId, accountId, persist });
     const custody = this.custodyResolver.resolve({ firstRun: !persist });
     const provider = getOAuthProvider(providerId);
-    if (!provider) {
-      throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
-    }
+    if (!provider) throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     const cfg = provider.config;
-    // A retry owns this provider's one sign-in slot. Tear down the old window
-    // and callback listener before binding its fixed port again.
-    this.activeFlows.get(integrationId)?.();
-    // Resolve effective client_id (built-in takes precedence for public clients).
-    // Providers with registrationEndpoint can fill this after the callback
-    // server starts, because DCR needs the actual redirect_uri for this flow.
     let effectiveClientId = cfg.builtInClientId || clientId;
     if (custody.kind === 'vault' && !effectiveClientId) {
       const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
@@ -185,243 +173,72 @@ export class OAuthService {
       effectiveClientId = values.oauth_client_id || values.client_id || '';
     }
     const effectiveClientSecret = custody.kind === 'vault' || cfg.clientAuthMethod === 'none' ? '' : clientSecret;
+    const flowKey = `${ integrationId }::${ accountId }`;
+    this.activeFlows.get(flowKey)?.cancel();
 
-    // Generate CSRF state
-    const state = crypto.randomBytes(24).toString('hex');
-
-    // Generate PKCE verifier/challenge if required
-    let codeVerifier: string | undefined;
-    let codeChallenge: string | undefined;
-    if (cfg.usePKCE) {
-      codeVerifier = crypto.randomBytes(64).toString('base64url');
-      codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    }
-
-    // Start callback server (with optional fixed port/path)
-    const { redirectUri, codePromise, shutdown } = await startOAuthCallbackServer({
-      expectedState:        state,
-      fixedPort:            cfg.fixedCallbackPort,
-      callbackPath:         cfg.fixedCallbackPath,
-      useLocalhostHostname: cfg.useLocalhostHostname ?? !!cfg.fixedCallbackPort,
+    const session = new OAuthFlowSession({
+      requesterId: accountId,
+      integrationId,
+      providerId,
+      config: cfg,
+      buildAuthorizeUrl: async({ redirectUri, state, codeChallenge }) => {
+        if (!effectiveClientId && cfg.registrationEndpoint) {
+          const registration = await this.registerDynamicClient(custody, cfg, redirectUri, integrationId, accountId);
+          effectiveClientId = registration.clientId;
+          if (custody.kind !== 'vault') {
+            await getIntegrationService().setIntegrationValue({
+              integration_id: integrationId,
+              account_id: accountId,
+              property: 'oauth_client_id',
+              value: effectiveClientId,
+            });
+          }
+        }
+        if (!effectiveClientId) throw new Error(`${ LOG_PREFIX } Missing client_id for OAuth provider ${ providerId }`);
+        return provider.buildAuthorizeUrl(effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
+      },
     });
-    console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
-
-    let authWindow: BrowserWindow | null = null;
-    let codeSource: Promise<{ code: string }> = codePromise;
-    const cancel = () => {
-      shutdown();
-      if (authWindow && !authWindow.isDestroyed()) authWindow.destroy();
-    };
-    this.activeFlows.set(integrationId, cancel);
+    this.activeFlows.set(flowKey, session);
 
     try {
-      if (!effectiveClientId && cfg.registrationEndpoint) {
-        const registration = await this.registerDynamicClient(custody, cfg, redirectUri, integrationId, accountId);
-        effectiveClientId = registration.clientId;
-        if (custody.kind !== 'vault') {
-          const integrationService = getIntegrationService();
-          await integrationService.setIntegrationValue({
-            integration_id: integrationId,
-            account_id:     accountId,
-            property:       'oauth_client_id',
-            value:          effectiveClientId,
-          });
-        }
-        console.log(`${ LOG_PREFIX } Registered OAuth client for ${ integrationId }/${ accountId }`);
+      const authorization = await session.authorize();
+      if (!authorization.ok) {
+        const error = new Error(authorization.message) as Error & { code?: string; owner?: string; port?: number };
+        error.code = authorization.code;
+        error.owner = authorization.owner;
+        error.port = authorization.port;
+        throw error;
       }
-
-      if (!effectiveClientId) {
-        throw new Error(`${ LOG_PREFIX } Missing client_id for OAuth provider ${ providerId }`);
-      }
-
-      // Build authorize URL
-      const authorizeUrl = this.buildAuthorizeUrl(cfg, effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
-
-      if (cfg.openInEmbeddedWindow) {
-        firstRunTrace('oauth', 'auth window opened', { integrationId, providerId, embedded: true });
-        // Render the sign-in page inside Sulla Desktop rather than handing off
-        // to the host's default browser. Required for providers whose tokens
-        // are materialized for an in-VM consumer (e.g. Codex's
-        // ~/.codex/auth.json) — an external browser would finish the handshake
-        // outside Sulla and the in-VM tool would never see the credentials.
-        console.log(`${ LOG_PREFIX } Opening embedded auth window for ${ cfg.name }...`);
-        // Read the code straight off the redirect inside our own window. The
-        // localhost server stays as the fallback, but the hop through
-        // localhost can miss (localhost resolving to ::1 while the server is
-        // on 127.0.0.1), and the user then only sees a 5-minute timeout.
-        let deliver!: (result: { code: string }) => void;
-        let fail!: (err: Error) => void;
-        const intercepted = new Promise<{ code: string }>((resolve, reject) => { deliver = resolve; fail = reject });
-        const expected = new URL(redirectUri);
-        authWindow = this.openEmbeddedAuthWindow(authorizeUrl, cfg.name, (target) => {
-          let url: URL;
-          try { url = new URL(target) } catch { return false }
-          const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-          if (!loopback || url.port !== expected.port || url.pathname !== expected.pathname) return false;
-          const error = url.searchParams.get('error');
-          if (error) {
-            fail(new Error(`OAuth error: ${ url.searchParams.get('error_description') || error }`));
-            return true;
-          }
-          const code = url.searchParams.get('code');
-          if (!code || url.searchParams.get('state') !== state) return false;
-          console.log(`${ LOG_PREFIX } Intercepted callback in the auth window`);
-          firstRunTrace('oauth', 'callback intercepted', { integrationId, providerId, source: 'window' });
-          deliver({ code });
-          return true;
-        });
-        intercepted.catch(() => { /* surfaced through the race below */ });
-        codePromise.catch(() => { /* superseded once the window delivers */ });
-        codeSource = Promise.race([codePromise, intercepted]);
-      } else {
-        firstRunTrace('oauth', 'auth window opened', { integrationId, providerId, embedded: false });
-        console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
-        await shell.openExternal(authorizeUrl);
-      }
-
-      // Wait for the user to complete authorization. The localhost callback
-      // server captures the code regardless of which browser rendered the page;
-      // when we own the window, also treat the user closing it as a cancel.
-      const { code } = await this.awaitAuthorizationCode(codeSource, authWindow);
-      shutdown(); // free the fixed callback port as soon as the code is in hand
-      console.log(`${ LOG_PREFIX } Received authorization code`);
       firstRunTrace('oauth', 'callback received', { integrationId, providerId });
-
-      // Exchange code for tokens
-      const tokens = normalizeTokenExpiry(
-        await this.exchangeCode(
-          custody,
-          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId, persist,
-        ),
-      );
-      if (cfg.registrationEndpoint) {
-        tokens.oauth_client_id = effectiveClientId;
-      }
-      console.log(`${ LOG_PREFIX } Token exchange successful`);
+      const tokens = normalizeTokenExpiry(await this.tokenExchanger.exchange({
+        custody, config: cfg, clientId: effectiveClientId, clientSecret: effectiveClientSecret,
+        code: authorization.code, redirectUri: authorization.redirectUri,
+        codeVerifier: authorization.codeVerifier, integrationId, accountId, useVault: persist,
+      }));
+      if (cfg.registrationEndpoint) tokens.oauth_client_id = effectiveClientId;
       firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId, success: true });
 
       await custody.store({ integrationId, accountId, providerId }, tokens);
       if (custody.kind === 'memory') {
-        // First run may happen before the vault, Postgres, or Redis exists.
         firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'pending' });
         return tokens;
       }
       if (custody.kind === 'vault') {
-        // Metadata is not a token set; provider hooks cannot observe it.
         this.scheduleRefresh(custody, integrationId, accountId, providerId, effectiveClientId, '', tokens);
         return tokens;
       }
 
       await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
-      firstRunTrace('oauth', 'credentials persisted', { integrationId, providerId });
-
-      // Mark integration as connected
-      const integrationService = getIntegrationService();
-      await integrationService.setConnectionStatus(integrationId, true, accountId);
-
-      // Schedule proactive refresh
+      await getIntegrationService().setConnectionStatus(integrationId, true, accountId);
       this.scheduleRefresh(custody, integrationId, accountId, providerId, effectiveClientId, effectiveClientSecret, tokens);
-
       firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'persisted' });
       return tokens;
-    } catch (err) {
-      shutdown();
-      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: false, error: err instanceof Error ? err.message : String(err) });
-      throw err;
+    } catch (error) {
+      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
     } finally {
-      if (this.activeFlows.get(integrationId) === cancel) this.activeFlows.delete(integrationId);
-      // Always tear down the in-app window we opened — on success (after the
-      // brief callback "you can close this" page) and on any error/cancel.
-      if (authWindow && !authWindow.isDestroyed()) {
-        authWindow.destroy();
-        firstRunTrace('oauth', 'auth window closed', { integrationId, providerId });
-      }
+      if (this.activeFlows.get(flowKey) === session) this.activeFlows.delete(flowKey);
     }
-  }
-
-  // ── Embedded auth window (in-app browser) ─────────────────────
-
-  /** Open the authorize URL in a Sulla-owned Electron window. */
-  private openEmbeddedAuthWindow(url: string, providerName: string, onUrl?: (url: string) => boolean): BrowserWindow {
-    // Contained: no hand-offs to other apps, popups stay in Sulla, and the
-    // code can only come back through our localhost callback server.
-    const win = createContainedAuthWindow({
-      width:     820,
-      height:    720,
-      title:     `Sign in — ${ providerName }`,
-      partition: 'persist:integration-oauth',
-      logPrefix: LOG_PREFIX,
-      onUrl,
-    });
-    win.loadURL(url).catch((err) => {
-      console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);
-    });
-    return win;
-  }
-
-  /**
-   * Resolve with the captured auth code. When an embedded window is in use,
-   * a manual close of that window rejects as a user cancellation so the flow
-   * doesn't hang on a promise that will never resolve.
-   */
-  private awaitAuthorizationCode(
-    codePromise: Promise<{ code: string }>,
-    authWindow: BrowserWindow | null,
-  ): Promise<{ code: string }> {
-    if (!authWindow) {
-      return codePromise;
-    }
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      codePromise.then(
-        (res) => {
-          if (settled) return;
-          settled = true;
-          resolve(res);
-        },
-        (err) => {
-          if (settled) return;
-          settled = true;
-          reject(err);
-        },
-      );
-      authWindow.on('closed', () => {
-        if (settled) return;
-        settled = true;
-        reject(new Error(`${ LOG_PREFIX } Sign-in window closed before authorization completed`));
-      });
-    });
-  }
-
-  // ── Build authorize URL ───────────────────────────────────────
-
-  private buildAuthorizeUrl(
-    cfg: OAuthProviderConfig,
-    clientId: string,
-    redirectUri: string,
-    state: string,
-    extraScopes: string[],
-    codeChallenge?: string,
-  ): string {
-    const sep = cfg.scopeSeparator ?? ' ';
-    const allScopes = [...cfg.scopes, ...extraScopes];
-
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id:     clientId,
-      redirect_uri:  redirectUri,
-      scope:         allScopes.join(sep),
-      state,
-      ...cfg.extraAuthorizeParams,
-    });
-
-    // PKCE code_challenge
-    if (codeChallenge) {
-      params.set('code_challenge', codeChallenge);
-      params.set('code_challenge_method', 'S256');
-    }
-
-    return `${ cfg.authorizeUrl }?${ params.toString() }`;
   }
 
   // ── Dynamic Client Registration ───────────────────────────────
@@ -498,97 +315,6 @@ export class OAuthService {
     }
 
     return { clientId: json.client_id };
-  }
-
-  // ── Exchange auth code for tokens ─────────────────────────────
-
-  private async exchangeCode(
-    custody: ResolvedTokenCustody,
-    cfg: OAuthProviderConfig,
-    clientId: string,
-    clientSecret: string,
-    code: string,
-    redirectUri: string,
-    codeVerifier?: string,
-    integrationId?: string,
-    accountId?: string,
-    useVault = true,
-  ): Promise<OAuthTokenSet> {
-    const body: Record<string, string> = {
-      grant_type:   'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      ...cfg.extraTokenParams,
-    };
-
-    // PKCE code_verifier
-    if (codeVerifier) {
-      body.code_verifier = codeVerifier;
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept:         'application/json',
-      'User-Agent':   'Sulla-Desktop/1.0',
-    };
-
-    if (custody.kind === 'vault' && useVault) {
-      if (!integrationId || !accountId) throw new Error(`${ LOG_PREFIX } OAuth exchange is missing its vault scope`);
-      const injections = cfg.clientAuthMethod === 'header'
-        ? [{ field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const }]
-        : cfg.clientAuthMethod === 'none'
-          ? []
-          : [
-            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
-            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
-          ];
-      if (cfg.clientAuthMethod === 'none') body.client_id = clientId;
-      const context = await issueLocalBrokerContext({
-        agentId:         'oauth-exchange',
-        podId:           'desktop-main',
-        credentialScope: { integration_id: integrationId, account_id: accountId },
-      });
-      const broker = requireConfiguredCredentialBroker();
-      const result = await broker.execute(broker.requestFor(context, {
-        operation: 'oauth.exchange',
-        ref:       { integrationId, accountId },
-        url:       cfg.tokenUrl,
-        method:    'POST',
-        headers,
-        body,
-        injections,
-      }));
-      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
-        throw new Error(`${ LOG_PREFIX } Vault-owned token exchange failed`);
-      }
-      return result.body as OAuthTokenSet;
-    }
-
-    if (cfg.clientAuthMethod === 'header') {
-      const basic = Buffer.from(`${ clientId }:${ clientSecret }`).toString('base64');
-      headers.Authorization = `Basic ${ basic }`;
-    } else if (cfg.clientAuthMethod === 'none') {
-      // Public client — only send client_id, no secret
-      body.client_id = clientId;
-    } else {
-      body.client_id = clientId;
-      body.client_secret = clientSecret;
-    }
-
-    const res = await fetch(cfg.tokenUrl, {
-      method:  'POST',
-      headers,
-      body:    new URLSearchParams(body).toString(),
-    });
-    firstRunTrace('oauth', 'token exchange response', { integrationId, providerId: cfg.id, status: res.status, success: res.ok });
-
-    if (!res.ok) {
-      throw new Error(`${ LOG_PREFIX } Token exchange failed with status ${ res.status }`);
-    }
-
-    const json = await res.json() as OAuthTokenSet;
-
-    return normalizeTokenExpiry(json);
   }
 
   // ── Refresh tokens ────────────────────────────────────────────

@@ -16,7 +16,6 @@ import { initAgentsIpc } from './agentsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initCloudConnectionEvents } from './cloud/cloudLifecycle';
-import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
@@ -96,7 +95,6 @@ export function initSullaEvents(): void {
   initChatArtifactsIpc();
   initChatHeartbeatIpc();
   initClaudeOAuthEvents();
-  initOpenAIOAuthEvents();
   initIntegrationOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
