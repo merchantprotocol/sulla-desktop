@@ -13,7 +13,6 @@ import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
 
 const REF_RE = /^@[a-z0-9]+:e\d+$/;
-const SAFE_TOKEN_RE = /^[A-Za-z0-9_.:/ -]+$/;
 const BLOCKED = ['keychain access', '1password', 'bitwarden', 'localhost:4777'];
 const SESSION = 'sulla-desktop';
 const knownSnapshots = new Map<string, string>();
@@ -89,7 +88,8 @@ export class DesktopWorker extends BaseTool {
     const tool = this.name;
     const app = typeof input.app === 'string' ? input.app : undefined;
     let action = tool;
-    let response: ToolResponse;
+    let response: ToolResponse | undefined;
+    let auditedApp = app;
     try {
       const args: string[] = [];
       if (input.headed === true) args.push('--headed');
@@ -106,7 +106,7 @@ export class DesktopWorker extends BaseTool {
       case 'find': { const target = validateText(input.app, 'app', true)!; const denied = await ensureAllowedWindow(target, input.window_id); if (denied) { response = denied; break; }
         args.push('find', '--app', target); flag(args, '--window-id', validateText(input.window_id, 'window_id')); for (const k of ['role','name','value','text','description','native_id'] as const) flag(args, `--${ k.replace('_','-') }`, validateText(input[k], k)); if (input.root) args.push('--root', validateRef(input.root)); flag(args, '--limit', input.limit); break; }
       case 'get': args.push('get', validateRef(input.ref)); flag(args, '--property', validateText(input.property, 'property')); break;
-      case 'act': { const ref = validateRef(input.ref); const owner = knownSnapshots.get(snapshotId(ref)); if (!owner || isBlockedDesktopTarget(owner)) { response = refusal(); break; }
+      case 'act': { const ref = validateRef(input.ref); const owner = knownSnapshots.get(snapshotId(ref)); auditedApp = owner; if (!owner || isBlockedDesktopTarget(owner)) { response = refusal(); break; }
         const map: Record<string,string> = { double_click:'double-click', right_click:'right-click', set_value:'set-value', scroll_to:'scroll-to' }; const cmd = map[input.action] ?? input.action; if (!['click','double-click','right-click','type','set-value','clear','focus','select','toggle','check','uncheck','expand','collapse','scroll','scroll-to','press'].includes(cmd)) throw new Error('Unsupported desktop action.'); action = cmd;
         if (cmd === 'press') { args.push('press', validateText(input.keys, 'keys', true)!); flag(args, '--app', owner); }
         else { args.push(cmd, ref); if (cmd === 'type') args.push(validateText(input.text, 'text', true)!); if (cmd === 'set-value' || cmd === 'select') args.push(validateText(input.value, 'value', true)!); flag(args, '--direction', validateText(input.direction, 'direction')); flag(args, '--amount', input.amount); } break; }
@@ -118,9 +118,9 @@ export class DesktopWorker extends BaseTool {
       case 'guide': { const desktop=await run(['skills','get','desktop']); if (!desktop.response.successBoolean) { response=desktop.response; break; } const platform=await run(['skills','get','platform']); response={ successBoolean: platform.response.successBoolean, responseString: `${ desktop.response.responseString }\n\n${ platform.response.responseString }` }; break; }
       default: throw new Error(`Unknown desktop tool: ${ tool }`);
       }
-      if (!response!) response = (await run(args, tool === 'wait' ? 35_000 : 15_000)).response;
+      if (!response) response = (await run(args, tool === 'wait' ? 35_000 : 15_000)).response;
     } catch (error) { response = { successBoolean: false, responseString: (error as Error).message }; }
-    await audit(tool, app, action, response.successBoolean, Date.now() - started);
+    await audit(tool, auditedApp, action, response.successBoolean, Date.now() - started);
     return response;
   }
 }
