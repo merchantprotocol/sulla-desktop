@@ -561,6 +561,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
     } catch (error) {
       if (error instanceof ManagedServicesReconciliationCancelled) throw error;
+      // Keep the real cause: the user-facing message stays short, but the
+      // trace and log must say why (for example a tool that cannot run on
+      // this Mac's CPU), or every engine failure looks the same.
+      console.error('[sulla-runtime] engine start failed after Docker-ready:', error);
+      firstRunTrace('vm', 'engine start failed after Docker-ready', { status: 'failure', error });
       await this.stopSullaRuntime().catch(cleanupError => console.error('[sulla-runtime] cleanup after a failed start failed:', cleanupError));
       throw error instanceof SullaRuntimeBootError ? error : new SullaRuntimeBootError('docker', 'Sulla\'s container engine didn\'t answer.');
     }

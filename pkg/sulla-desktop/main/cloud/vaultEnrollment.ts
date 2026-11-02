@@ -71,10 +71,17 @@ export async function gateVaultCreation():Promise<EnrollmentDisposition>{
  const userId=await getCurrentUserId();
  if(!userId)throw new Error('enrollment_requires_cloud_session');
  if(preparedForUserId!==userId){preparedForUserId=userId;prepared=null;activeRequest=null;}
- prepared??=state().then(async s=>{
-  if(s.state==='approval_available'||s.state==='waiting_for_approver')await openRequest(s);
-  return s;
- });
+ // Never cache a failure: a lookup made before the vault broker or network
+ // is answering would otherwise fail every later retry for the whole run
+ // (seen on a fresh iMac first run: vault creation refused for minutes).
+ if(!prepared){
+  const lookup=state().then(async s=>{
+   if(s.state==='approval_available'||s.state==='waiting_for_approver')await openRequest(s);
+   return s;
+  });
+  prepared=lookup;
+  lookup.catch(()=>{if(prepared===lookup)prepared=null;});
+ }
  const s=await prepared;
  if(s.state==='no_vault')return'create';
  if(s.state==='trusted')return'trusted';

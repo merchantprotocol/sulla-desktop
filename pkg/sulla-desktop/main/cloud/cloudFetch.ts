@@ -5,6 +5,7 @@
 
 import { getConfiguredApprovalClient, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
 
+import { getPendingCredential } from '../firstRun/pendingCredentials';
 import { getCurrentAccessToken, isCloudSignedIn } from '../sullaCloudAuth';
 
 const CLOUD_ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
@@ -26,8 +27,13 @@ export async function cloudRequest(method: string, path: string, options: {
   responseType?: 'json' | 'text';
 } = {}): Promise<Response> {
   if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Sulla Cloud path must be relative');
-  if (!usesContainerVaultAuthority()) {
-    const token = await getCurrentAccessToken();
+  // First run holds the Cloud session in main-process memory until the vault
+  // exists. The vault broker can only use a session stored in the vault, so
+  // routing these calls through it deadlocks vault creation (it must ask Cloud
+  // whether a vault already exists). Use the in-memory session directly.
+  const firstRunToken = usesContainerVaultAuthority() ? getPendingCredential('sulla-cloud')?.values.access_token : undefined;
+  if (!usesContainerVaultAuthority() || firstRunToken) {
+    const token = firstRunToken || await getCurrentAccessToken();
     if (!token) throw new Error('Not signed in to Sulla Cloud');
     return fetch(`${ CLOUD_ORIGIN }${ path }`, {
       method,
