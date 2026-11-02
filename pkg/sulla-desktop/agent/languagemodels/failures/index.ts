@@ -65,6 +65,27 @@ export class Transient extends ProviderFailure {
   }
 }
 
+export class TimedOut extends ProviderFailure {
+  readonly retryable = true;
+  constructor(providerId: string, options?: ProviderFailureOptions) {
+    super(providerId, `${ providerLabel(providerId) } timed out. Try again.`, ...values(options));
+  }
+}
+
+export class EmptyResponse extends ProviderFailure {
+  readonly retryable = true;
+  constructor(providerId: string, options?: ProviderFailureOptions) {
+    super(providerId, `${ providerLabel(providerId) } returned no usable response. Try again.`, ...values(options));
+  }
+}
+
+export class Interrupted extends ProviderFailure {
+  readonly retryable = false;
+  constructor(providerId: string, options?: ProviderFailureOptions) {
+    super(providerId, 'The prior model run was interrupted.', ...values(options));
+  }
+}
+
 export class RoutingUnavailable extends ProviderFailure {
   readonly retryable = true;
   constructor(providerId: string, options?: ProviderFailureOptions) {
@@ -109,12 +130,14 @@ export function providerFailureFromHttp(providerId: string, status: number, caus
 export function legacyProviderFailure(providerId: string, value: unknown, options?: ProviderFailureOptions): ProviderFailure {
   const message = (value instanceof Error ? value.message : String(value ?? '')).toLowerCase();
   const make = (Failure: FailureConstructor) => new Failure(providerId, { ...options, cause: options?.cause ?? value });
+  if (/timeout|timed out|etimedout|stalled/.test(message)) return make(TimedOut);
+  if (/no response|empty response|returned empty|no extractable prompt/.test(message)) return make(EmptyResponse);
   if (message.includes('workspace routing discovery failed')) return make(RoutingUnavailable);
   if (/revoked|forbidden|access denied/.test(message)) return make(AuthRevoked);
-  if (/expired|unauthorized|invalid api key|not logged in|sign.?in required|credential/.test(message)) return make(AuthExpired);
+  if (/unauthorized|invalid api key|expired token|not logged in|sign.?in required|\b401\b/.test(message)) return make(AuthExpired);
   if (/quota|usage balance|weekly limit|session limit|balance exhausted/.test(message)) return make(QuotaExceeded);
   if (/rate limit|too many requests/.test(message)) return make(RateLimited);
-  if (/timeout|timed out|stalled|econnreset|econnrefused|network|service unavailable|\b5\d\d\b/.test(message)) return make(Transient);
+  if (/event stream|dropped event|stream lag|exited with code null|econnreset|econnrefused|network|service unavailable|\b5\d\d\b/.test(message)) return make(Transient);
   return make(Unknown);
 }
 

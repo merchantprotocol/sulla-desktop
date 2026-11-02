@@ -1288,6 +1288,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // a different endpoint than chat completion.
       // Only fall back to a backup the owner actually has: no backup set means no fallback.
       const hasBackup = !!(await getSecondaryProviderId().catch(() => ''));
+      let fallbackAttempted = false;
       firstRunTrace('chat', 'fallback evaluated', { provider: primaryName, model: primaryId, recoveryKind: recovery.kind, hasBackup, fallbackAllowed: recovery.fallbackAllowed });
       if (recovery.fallbackAllowed && hasBackup && await SullaSettingsModel.get('fallbackEnabled', true)) {
         try {
@@ -1308,6 +1309,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               `(provider=${ secondaryName }, model=${ secondaryModel || '(default)' }) — skipping fallback`,
             );
           } else {
+            fallbackAttempted = true;
             const initialized = await secondary.initialize();
             throwIfAborted(abortSignal);
             if (!initialized || !secondary.isAvailable()) {
@@ -1360,6 +1362,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       // Propagate the error so the chat UI can display it to the user
       firstRunTrace('chat', 'provider call ended', { success: false, provider: primaryName, model: primaryId, error: lastErrMsg, fallbackError: fallbackErrMsg });
+      console.error(
+        `[${ this.name }:BaseNode] Provider recovery exhausted ` +
+        `(primary=${ primaryName }/${ primaryId || '(default)' }, fallbackAttempted=${ fallbackAttempted }): ` +
+        `primaryError=${ lastErrMsg }, fallbackError=${ fallbackErrMsg || '(none)' }`,
+      );
       if (lastErr instanceof ProviderFailure) throw lastErr;
       throw new Error(recovery.userMessage, { cause: lastErr });
     } finally {
