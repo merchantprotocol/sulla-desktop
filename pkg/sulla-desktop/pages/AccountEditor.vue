@@ -584,8 +584,8 @@ import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { claudeOAuthResultError } from '@pkg/utils/claudeOAuthContract';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
   integrationId:    string;

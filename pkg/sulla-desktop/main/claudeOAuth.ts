@@ -26,9 +26,9 @@ import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace, scrubText } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { isClaudeHost, isClaudeOAuthCallbackUrl } from '@pkg/utils/claudeOAuthContract';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
-import { isClaudeHost, isClaudeOAuthCallbackUrl } from '@pkg/utils/claudeOAuthContract';
 import * as window from '@pkg/window';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
