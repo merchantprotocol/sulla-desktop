@@ -5,9 +5,7 @@
 
 // OpenAI Codex OAuth 2.0 provider — PKCE public client flow.
 //
-// Same official Codex CLI OAuth app as OpenAIOAuth, but with a different
-// purpose: instead of exchanging the id_token for a metered platform API key,
-// the full token set is written to ~/.codex/auth.json so the `codex` CLI in
+// The full token set is written to ~/.codex/auth.json so the `codex` CLI in
 // the Sulla VM runs against the user's ChatGPT Plus/Pro subscription — no API
 // billing. onTokenReceived also fires on every scheduled refresh, which keeps
 // the auth file current from the host side.
