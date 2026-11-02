@@ -32,7 +32,6 @@ import type {
   RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
 import { loopbackOrigin } from '@pkg/utils/instance';
-import { VaultLocked } from '@pkg/agent/languagemodels/failures';
 
 export type {
   BrokerApprovalResponse,
@@ -144,7 +143,7 @@ async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
 export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
   if (!usesContainerVaultAuthority()) throw new Error('Local vault principal is only available in Desktop authority mode');
   const status = await requireConfiguredCredentialBroker().status(signal);
-  if (!status.unlocked) throw new VaultLocked('vault', { status: 423 });
+  if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
   if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
     throw new VaultBrokerError('invalid_caller_identity', 'Vault did not return an authenticated local principal', 503);
   }
@@ -383,13 +382,11 @@ export class LocalVaultBrokerClient {
 
   private async throwRelayResponse(response: Response): Promise<never> {
     const body = await errorBody(response);
-    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     throw new VaultBrokerError(body.error, body.message, response.status);
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
     const body = await errorBody(response);
-    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
       throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
     }
@@ -486,7 +483,6 @@ export class LocalVaultApprovalClient {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (response.status === 423) throw new VaultLocked('vault', { status: response.status });
     if (!response.ok) {
       const error = await errorBody(response);
       throw new VaultBrokerError(error.error, error.message, response.status);
