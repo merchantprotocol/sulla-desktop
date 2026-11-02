@@ -13,7 +13,7 @@ import paths from '@pkg/utils/paths';
 import { OutputParser } from './OutputParser';
 
 const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t devpts devpts /dev/pts -o newinstance,ptmxmode=0666,mode=0620,gid=5; }';
-const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 1000, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
+const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios, time\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 1000, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            if data.endswith(b\"\\n\"):\n                body = data[:-1].replace(b\"\\n\", b\"\\r\")\n                if body:\n                    os.write(fd, body)\n                time.sleep(0.3)\n                os.write(fd, b\"\\r\")\n            else:\n                os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 export class ClaudeCliUnavailableError extends Error {}
 
@@ -27,9 +27,10 @@ export class ClaudeSetupTokenAdapter {
   private process: pty.IPty | null = null;
   private parser = new OutputParser();
   private enterTimer: ReturnType<typeof setTimeout> | null = null;
+  private enterRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private authorizeUrlSeen = false;
-  private codeSent = false;
-  private enterSent = false;
+  private enterAttempts = 0;
+  private outputSequence = 0;
   private settled = false;
   private exitCode: number | null = null;
 
@@ -70,6 +71,7 @@ export class ClaudeSetupTokenAdapter {
       }
       firstRunTrace('claude', 'PTY spawned');
       this.process.onData((chunk) => {
+        this.outputSequence++;
         const parsed = this.parser.push(chunk);
 
         callbacks.onOutput(OutputParser.clean(chunk));
@@ -81,7 +83,6 @@ export class ClaudeSetupTokenAdapter {
           this.authorizeUrlSeen = true;
           callbacks.onAuthorizeUrl(parsed.authorizeUrl);
         }
-        if (this.codeSent && !this.enterSent && /\*{20,}/.test(parsed.text)) this.sendEnter();
         if (parsed.token) finish(undefined, parsed.token);
       });
       this.process.onExit(({ exitCode }) => {
@@ -98,7 +99,6 @@ export class ClaudeSetupTokenAdapter {
   submitCode(codeAndState: string): void {
     if (!this.process) throw new Error('Claude setup-token is not running.');
     this.process.write(codeAndState);
-    this.codeSent = true;
     this.enterTimer = setTimeout(() => this.sendEnter(), 400);
   }
 
@@ -108,7 +108,9 @@ export class ClaudeSetupTokenAdapter {
     if (!this.settled && this.process) this.traceOutputTail('stopped before the CLI finished');
     this.settled = true;
     if (this.enterTimer) clearTimeout(this.enterTimer);
+    if (this.enterRetryTimer) clearTimeout(this.enterRetryTimer);
     this.enterTimer = null;
+    this.enterRetryTimer = null;
     try { this.process?.kill() } catch { /* already exited */ }
     this.process = null;
   }
@@ -134,11 +136,20 @@ export class ClaudeSetupTokenAdapter {
   }
 
   private sendEnter(): void {
-    if (this.enterSent || !this.process) return;
-    this.enterSent = true;
+    if (!this.process || this.enterAttempts >= 3) return;
+    this.enterAttempts++;
     if (this.enterTimer) clearTimeout(this.enterTimer);
+    if (this.enterRetryTimer) clearTimeout(this.enterRetryTimer);
     this.enterTimer = null;
+    this.enterRetryTimer = null;
+    firstRunTrace('claude', 'Enter sent', { attempt: this.enterAttempts });
     this.process.write('\r');
+
+    const outputSequence = this.outputSequence;
+    this.enterRetryTimer = setTimeout(() => {
+      this.enterRetryTimer = null;
+      if (!this.settled && this.outputSequence === outputSequence) this.sendEnter();
+    }, 3_000);
   }
 
   private runGuestCommand(args: string[], timeoutMs: number): Promise<string> {
