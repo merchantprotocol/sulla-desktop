@@ -137,7 +137,7 @@ describe('codexAuthFile', () => {
     expect(saved.tokens.refresh_token).toBe('refresh-token');
   });
 
-  it('accepts metadata-only vault exchange results without writing or linking credentials', async() => {
+  it('declines GuestAuthFile custody when the vault authority owns the token, instead of lying that a guest is authenticated', async() => {
     containerAuthority = true;
     const { codexAuthPath, ensureCodexAuthFile, prepareCodexAuthAfterExchange } = await import('../codexAuthFile');
 
@@ -145,7 +145,7 @@ describe('codexAuthFile', () => {
       token_type: 'Bearer',
       expires_at: Date.now() + 60 * 60 * 1000,
     }, true)).resolves.toEqual({ custody: 'vault-bridge', written: false, linked: false });
-    await expect(ensureCodexAuthFile()).resolves.toBe(true);
+    await expect(ensureCodexAuthFile()).resolves.toBe(false);
 
     expect(fs.existsSync(codexAuthPath())).toBe(false);
     expect(ensureFreshTokensMock).not.toHaveBeenCalled();
