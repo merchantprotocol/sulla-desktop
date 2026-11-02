@@ -18,10 +18,27 @@
  * Paths are derived in-process so every Electron process uses the same
  * platform conventions without an external management binary.
  */
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { requestedInstance } from '@pkg/utils/instance';
+
+/**
+ * Directory holding the app's extraResources. Packaged apps keep them one
+ * level down (macOS: Contents/Resources/resources). An unpackaged run's
+ * resourcesPath already is the repo's resources folder. Decide by what exists,
+ * not by the folder name: macOS's packaged folder is "Resources", which a
+ * case-insensitive name check mistook for the unpackaged layout, so every
+ * packaged Mac build looked for its icons one level too high and quit at
+ * startup.
+ */
+function resolveResourcesDir(): string {
+  if (!process.resourcesPath) return path.join(process.cwd(), 'resources');
+  const nested = path.join(process.resourcesPath, 'resources');
+
+  return fs.existsSync(nested) ? nested : process.resourcesPath;
+}
 
 
 export interface Paths {
@@ -97,14 +114,7 @@ function getDefaultPaths(): Partial<Paths> {
   switch (process.platform) {
   case 'darwin': {
     const appHome = path.join(home, 'Library', 'Application Support', `sulla-desktop${ instanceSuffix }`);
-    // Packaged apps put extraResources under Contents/Resources/resources,
-    // while Electron's unpackaged process.resourcesPath already ends in /resources.
-    // Avoid appending a second resources segment in the latter case.
-    const resources = process.resourcesPath
-      ? path.basename(process.resourcesPath).toLowerCase() === 'resources'
-        ? process.resourcesPath
-        : path.join(process.resourcesPath, 'resources')
-      : path.join(process.cwd(), 'resources');
+    const resources = resolveResourcesDir();
 
     return {
       appHome,
@@ -127,11 +137,7 @@ function getDefaultPaths(): Partial<Paths> {
     const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
     const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
     const appHome = path.join(dataHome, `sulla-desktop${ instanceSuffix }`);
-    const resources = process.resourcesPath
-      ? path.basename(process.resourcesPath).toLowerCase() === 'resources'
-        ? process.resourcesPath
-        : path.join(process.resourcesPath, 'resources')
-      : path.join(process.cwd(), 'resources');
+    const resources = resolveResourcesDir();
 
     return {
       appHome,

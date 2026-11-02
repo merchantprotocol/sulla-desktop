@@ -380,8 +380,8 @@ export interface IpcMainInvokeEvents {
   'system-prompt-edits:deny':         (id: string) => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord | null;
 
   /** Claude Code OAuth flow */
-  'claude-oauth:start':  (options?: { firstRun?: boolean }) => { success?: boolean; token?: string; error?: string };
-  'claude-oauth:cancel': () => void;
+  'claude-oauth:start':  (options?: { firstRun?: boolean }) => import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult;
+  'claude-oauth:cancel': () => import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult;
 
   /** Generic integration OAuth flow — runs in main so embedded auth windows (Codex, Grok) can construct BrowserWindow */
   'integration-oauth:start': (payload: {
