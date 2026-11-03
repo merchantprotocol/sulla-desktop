@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { verifyHead, type ManifestEnvelope, type ManifestPlain, type SyncHead } from './envelope.js';
+import { verifyHead, type ManifestEnvelope, type ManifestPlain, type NamespaceManifestPlain, type SyncHead } from './envelope.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
-const MANIFEST_FIELDS = ['v', 'path', 'mime', 'size', 'mtime', 'sha256', 'chunks', 'deleted', 'parentVersionId'];
+const REQUIRED_MANIFEST_FIELDS = ['v', 'path', 'mime', 'size', 'mtime', 'sha256', 'chunks', 'deleted', 'parentVersionId'];
+const GOAL_M_FIELDS = ['itemId', 'name', 'parentFolderId'];
+const MANIFEST_FIELDS = [...REQUIRED_MANIFEST_FIELDS, 'kind', ...GOAL_M_FIELDS];
 const MAX_PLAIN_CHUNK_BYTES = 4 * 1024 * 1024;
 
 export class CloudSyncIntegrityError extends Error {
@@ -74,19 +76,58 @@ export function assertCollectionPath(path:unknown):asserts path is string {
 }
 
 /** Strict manifest validation: unknown fields reject, and a newer `v` asks the user to update Sulla. */
-export function parseManifestPlain(value:unknown):ManifestPlain {
+export function validateNamespaceManifest(value:unknown):string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'namespace_object';
+  const v = value as Record<string, any>;
+  const required = ['v','itemId','kind','name','parentFolderId','mime','size','mtime','sha256','chunks','deleted','parentVersionId','operation'];
+  const allowed = new Set([...required, 'restoredFromVersionId']);
+  const own = (key:string) => Object.prototype.hasOwnProperty.call(v, key);
+  if (!required.every(own) || Object.keys(v).some(key => !allowed.has(key))) return 'namespace_fields';
+  if (v.v !== 2 || !isUuid(v.itemId)) return 'namespace_identity';
+  if (v.kind !== 'file' && v.kind !== 'folder') return 'namespace_kind';
+  if (typeof v.name !== 'string' || !v.name.length || v.name.length > 1024 || /[\0/]/.test(v.name)) return 'namespace_name';
+  if (v.parentFolderId !== null && (!isUuid(v.parentFolderId) || v.parentFolderId === v.itemId)) return 'namespace_parent';
+  if (v.parentVersionId !== null && !isUuid(v.parentVersionId)) return 'namespace_parent_version';
+  if (v.mime !== null && (typeof v.mime !== 'string' || v.mime.length > 255)) return 'namespace_mime';
+  if (!Number.isSafeInteger(v.size) || v.size < 0 || !Number.isSafeInteger(v.mtime) || v.mtime < 0) return 'namespace_numbers';
+  if (v.sha256 !== null && !isHex64(v.sha256)) return 'namespace_sha256';
+  if (!Array.isArray(v.chunks) || v.chunks.length > 4096 || v.chunks.some((chunk:unknown) => !Array.isArray(chunk) || chunk.length !== 2 || !isHex64(chunk[0]) || !Number.isSafeInteger(chunk[1]) || chunk[1] < 0)) return 'namespace_chunks';
+  if (typeof v.deleted !== 'boolean' || !['create','content','metadata','delete','restore'].includes(v.operation)) return 'namespace_operation';
+  if (v.kind === 'folder' && (v.size !== 0 || v.sha256 !== null || v.mime !== null || v.chunks.length !== 0)) return 'namespace_folder_payload';
+  if (v.deleted && (v.operation !== 'delete' || v.size !== 0 || v.sha256 !== null || v.chunks.length !== 0)) return 'namespace_tombstone';
+  if (!v.deleted && v.operation === 'delete') return 'namespace_tombstone';
+  if (!v.deleted && v.kind === 'file' && v.chunks.reduce((total:number, chunk:[string, number]) => total + chunk[1], 0) !== v.size) return 'namespace_chunk_size';
+  if (v.operation === 'restore' ? !isUuid(v.restoredFromVersionId) : own('restoredFromVersionId')) return 'namespace_restore_source';
+  if (v.operation === 'create' ? v.parentVersionId !== null : v.parentVersionId === null) return 'namespace_base_required';
+  return null;
+}
+
+export function parseManifestPlain(value:unknown, remote?:Pick<RemoteVersion, 'fileId' | 'parentVersionId' | 'deleted' | 'chunkIds'>):ManifestPlain | NamespaceManifestPlain {
   if (!value || typeof value !== 'object' || Array.isArray(value)) integrity('manifest invalid');
   const manifest = value as Record<string, any>;
-  if (typeof manifest.v === 'number' && manifest.v > 1) {
+  if (manifest.v === 2) {
+    const error = validateNamespaceManifest(manifest);
+    if (error) integrity(error);
+    return manifest as NamespaceManifestPlain;
+  }
+  if (typeof manifest.v === 'number' && manifest.v > 2) {
     throw Object.assign(new CloudSyncIntegrityError('This backup was written by a newer Sulla. Update Sulla to read it.'), { status: 409 });
   }
-  if (Object.keys(manifest).some(key => !MANIFEST_FIELDS.includes(key)) || MANIFEST_FIELDS.some(key => !(key in manifest))) integrity('manifest fields invalid');
+  if (Object.keys(manifest).some(key => !MANIFEST_FIELDS.includes(key)) || REQUIRED_MANIFEST_FIELDS.some(key => !(key in manifest))) integrity('manifest fields invalid');
   if (manifest.v !== 1) integrity('manifest version invalid');
+  const goalM = GOAL_M_FIELDS.some(key => key in manifest);
+  if (goalM && !GOAL_M_FIELDS.every(key => key in manifest)) integrity('manifest identity fields invalid');
   assertCollectionPath(manifest.path);
-  if (typeof manifest.mime !== 'string' || manifest.mime.length > 255) integrity('manifest mime invalid');
+  if (manifest.kind !== undefined && manifest.kind !== 'file' && manifest.kind !== 'folder') integrity('manifest kind invalid');
+  if (goalM) {
+    if (!isUuid(manifest.itemId) || (remote && manifest.itemId !== remote.fileId)) integrity('manifest item id invalid');
+    if (typeof manifest.name !== 'string' || !manifest.name.length || manifest.name.length > 1024 || /[\0/]/.test(manifest.name) || manifest.path.split('/').at(-1) !== manifest.name) integrity('manifest name invalid');
+    if (manifest.parentFolderId !== null && (!isUuid(manifest.parentFolderId) || manifest.parentFolderId === manifest.itemId)) integrity('manifest parent folder invalid');
+  }
+  if (manifest.mime !== null && (typeof manifest.mime !== 'string' || manifest.mime.length > 255)) integrity('manifest mime invalid');
   if (!Number.isSafeInteger(manifest.size) || manifest.size < 0) integrity('manifest size invalid');
   if (typeof manifest.mtime !== 'string' || !Number.isFinite(Date.parse(manifest.mtime))) integrity('manifest mtime invalid');
-  if (!HEX64.test(manifest.sha256)) integrity('manifest sha256 invalid');
+  if (manifest.sha256 !== null && !HEX64.test(manifest.sha256)) integrity('manifest sha256 invalid');
   if (typeof manifest.deleted !== 'boolean') integrity('manifest deleted flag invalid');
   if (manifest.parentVersionId !== null && !isUuid(manifest.parentVersionId)) integrity('manifest parent invalid');
   if (!Array.isArray(manifest.chunks)) integrity('manifest chunks invalid');
@@ -100,7 +141,35 @@ export function parseManifestPlain(value:unknown):ManifestPlain {
   }
   if (total !== manifest.size) integrity('manifest size does not match its chunks');
   if (manifest.deleted && manifest.chunks.length) integrity('deleted manifest has content');
-  return manifest as ManifestPlain;
+  if (manifest.kind === 'folder' && (manifest.size !== 0 || manifest.chunks.length !== 0 || (goalM && (manifest.mime !== null || manifest.sha256 !== null)))) integrity('folder manifest has content');
+  if (manifest.kind !== 'folder' && (manifest.mime === null || manifest.sha256 === null)) integrity('file manifest metadata invalid');
+  if (remote && goalM) {
+    if (manifest.parentVersionId !== remote.parentVersionId) integrity('cloud parent does not match manifest');
+    if (manifest.deleted !== remote.deleted) integrity('cloud deleted flag does not match manifest');
+    if (manifest.chunks.length !== remote.chunkIds.length || manifest.chunks.some((chunk:[string, number], index:number) => chunk[0] !== remote.chunkIds[index])) integrity('manifest chunk-list mismatch');
+  }
+  // Mobile and Web shipped the additive Goal-M identity namespace while retaining v:1.
+  // Project it to the unchanged Desktop v1 materialization shape only after validating
+  // every additive field and its authenticated outer commit bindings.
+  return {
+    v: 1,
+    path: manifest.path,
+    kind: manifest.kind,
+    mime: manifest.mime ?? 'application/x-directory',
+    size: manifest.size,
+    mtime: new Date(manifest.mtime).toISOString(),
+    sha256: manifest.sha256 ?? '0'.repeat(64),
+    chunks: manifest.chunks,
+    deleted: manifest.deleted,
+    parentVersionId: manifest.parentVersionId,
+  };
+}
+
+export function assertNamespaceCommitBinding(remote:RemoteVersion, manifest:NamespaceManifestPlain):void {
+  if (manifest.itemId !== remote.fileId) integrity('namespace_item_id');
+  if (manifest.parentVersionId !== remote.parentVersionId) integrity('namespace_base_version');
+  if (manifest.deleted !== remote.deleted) integrity('namespace_deleted');
+  if (manifest.chunks.length !== remote.chunkIds.length || manifest.chunks.some((chunk, index) => chunk[0] !== remote.chunkIds[index])) integrity('namespace_chunk_binding');
 }
 
 export interface RemoteVersion {

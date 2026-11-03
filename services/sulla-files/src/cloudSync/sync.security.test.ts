@@ -5,12 +5,13 @@
 
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { sealManifest, signHead, stateHash, type ManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
+import { sealManifest, signHead, stateHash, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import { CloudPuller, type ApplyRemoteInput, type ForkLocalInput, type LocalFileState, type PullRepository } from './pull.js';
 import { commitStateHash } from './push.js';
-import { parseManifestPlain, type RemoteVersion } from './validation.js';
+import { parseManifestPlain, validateNamespaceManifest, type RemoteVersion } from './validation.js';
 
 const COLLECTION = '0b6f0c32-4d1e-4c8a-9a59-2f9f6d1e0a11';
 const DEVICE = 'laptop';
@@ -29,6 +30,7 @@ class MemoryRepository implements PullRepository {
   conflicts = 0;
   writes = 0;
   savedHead?:SyncHead;
+  folders = new Map<string, { path:string; versionId:string; deleted:boolean }>();
 
   async cloudHeads() { return [...this.heads.values()] }
   async hasLocalVersion(versionId:string) { return this.versions.has(versionId) }
@@ -58,6 +60,12 @@ class MemoryRepository implements PullRepository {
     this.heads.set(remote.fileId, { fileId: remote.fileId, versionId: remote.versionId, deleted: remote.deleted });
     this.journal.push({ fileId: remote.fileId, versionId: remote.versionId, op: remote.deleted ? 'delete' : 'put' });
   }
+  async applyRemoteFolderVersion(input:ApplyRemoteInput) {
+    this.writes += 1;
+    this.folders.set(input.remote.fileId, { path: input.manifest.path, versionId: input.remote.versionId, deleted: input.manifest.deleted });
+    this.cloudVersions.add(input.remote.versionId);
+    this.heads.set(input.remote.fileId, { fileId: input.remote.fileId, versionId: input.remote.versionId, deleted: input.remote.deleted });
+  }
   async recordCloudHead(_collectionId:string, remote:RemoteVersion) {
     this.writes += 1;
     this.cloudVersions.add(remote.versionId);
@@ -66,6 +74,10 @@ class MemoryRepository implements PullRepository {
   async saveVerifiedHead(_collectionId:string, head:SyncHead) {
     this.writes += 1;
     this.savedHead = head;
+  }
+  async cloudFolderPath(_collectionId:string, fileId:string) {
+    const folder = this.folders.get(fileId);
+    return folder && !folder.deleted ? folder.path : null;
   }
 }
 
@@ -87,14 +99,86 @@ function manifestFor(path:string, parentVersionId:string | null, content:string)
   };
 }
 
-async function remoteVersion(root:Uint8Array, fileId:string, versionId:string, parentVersionId:string | null, seq:number, content:string) {
-  const manifest = manifestFor('notes.txt', parentVersionId, content);
+async function remoteVersion(root:Uint8Array, fileId:string, versionId:string, parentVersionId:string | null, seq:number, content:string, path='notes.txt') {
+  const manifest = manifestFor(path, parentVersionId, content);
   return {
     fileId, versionId, parentVersionId, deleted: false, seq, deviceId: 'other-device', createdAt: NOW.toISOString(),
     manifest: await sealManifest(root, COLLECTION, 1, fileId, versionId, manifest),
     chunkIds: manifest.chunks.map(([id]) => id),
   };
 }
+
+test('a new remote file is added locally, including its remote parent folder, and is marked known to Cloud',async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const fileId=randomUUID();
+  const versionId=randomUUID();
+  const remote=await remoteVersion(root,fileId,versionId,null,1,'from phone','Phone folder/new file.txt');
+  const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq:1,stateHash:await stateHash([{fileId,versionId,deleted:false}]),prevMac:''});
+
+  const result=await puller(repository,[{versions:[remote],head}]).pull({collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null},root);
+
+  assert.equal(result.applied,1);
+  assert.equal(repository.files.get(fileId)?.path,'Phone folder/new file.txt');
+  assert.equal(repository.files.get(fileId)?.current,versionId);
+  assert.equal(await repository.isCloudVersion(versionId),true,'the pulled version cannot become an upload candidate');
+});
+
+test('encrypted folder create, rename, and delete apply without content download or upload candidates', async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const fileId=randomUUID();
+  let parent:string|null=null;
+  let priorMac='';
+  let state={ collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null as SyncHead|null };
+  let materializeCalls=0;
+  const content={ async materialize(){ materializeCalls++; throw new Error('folders have no payload'); } };
+  for (const [seq,path,deleted] of [[1,'Phone folder',false],[2,'Renamed folder',false],[3,'Renamed folder',true]] as const) {
+    const versionId=randomUUID();
+    const manifest:ManifestPlain={v:1,kind:'folder',path,mime:'application/x-directory',size:0,mtime:NOW.toISOString(),sha256:createHash('sha256').update(Buffer.alloc(0)).digest('hex'),chunks:[],deleted,parentVersionId:parent};
+    const remote={fileId,versionId,parentVersionId:parent,deleted,seq,deviceId:'mobile',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,fileId,versionId,manifest),chunkIds:[]};
+    const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq,stateHash:await stateHash([{fileId,versionId,deleted}]),prevMac:priorMac});
+    await new CloudPuller({changes:async()=>({versions:[remote],head})},repository,content,DEVICE,()=>NOW).pull(state,root);
+    state={collectionId:COLLECTION,keyVersion:1,lastSeq:seq,head}; parent=versionId; priorMac=head.mac;
+  }
+  assert.equal(materializeCalls,0);
+  assert.deepEqual(repository.folders.get(fileId),{path:'Renamed folder',versionId:parent,deleted:true});
+  assert.equal(repository.files.size,0,'folder metadata is not invented as a zero-byte file');
+  assert.equal(repository.journal.length,0,'a pulled folder cannot enter the file upload journal');
+});
+
+test('Goal N shared namespace validator accepts the additive KAT exactly', () => {
+  const kat = JSON.parse(readFileSync(new URL('./__fixtures__/files-sync-namespace-v2-kat.json', import.meta.url), 'utf8'));
+  for (const vector of kat.valid) assert.equal(validateNamespaceManifest(vector.manifest), null, vector.label);
+  for (const vector of kat.invalid) assert.equal(validateNamespaceManifest(vector.manifest), vector.reason, vector.label);
+});
+
+test('Goal N namespace KAT pulls a nested encrypted file once without changing the v1 envelope', async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const folderId='00000000-0000-4000-8000-000000000002';
+  const fileId='00000000-0000-4000-8000-000000000001';
+  const folderVersion=randomUUID(), fileVersion=randomUUID();
+  const folder:NamespaceManifestPlain={v:2,itemId:folderId,kind:'folder',name:'Folder',parentFolderId:null,mime:null,size:0,mtime:1,sha256:null,chunks:[],deleted:false,parentVersionId:null,operation:'create'};
+  const file:NamespaceManifestPlain={v:2,itemId:fileId,kind:'file',name:'Renamed.txt',parentFolderId:folderId,mime:'text/plain',size:5,mtime:2,sha256:'b'.repeat(64),chunks:[['a'.repeat(64),5]],deleted:false,parentVersionId:null,operation:'create'};
+  const versions=[
+    {fileId:folderId,versionId:folderVersion,parentVersionId:null,deleted:false,seq:1,deviceId:'phone',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,folderId,folderVersion,folder),chunkIds:[]},
+    {fileId,versionId:fileVersion,parentVersionId:null,deleted:false,seq:2,deviceId:'phone',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,fileId,fileVersion,file),chunkIds:['a'.repeat(64)]},
+  ];
+  const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq:2,stateHash:await stateHash([{fileId:folderId,versionId:folderVersion,deleted:false},{fileId,versionId:fileVersion,deleted:false}]),prevMac:''});
+  const content={async materialize(_collectionId:string,_keyVersion:number,_root:Uint8Array,manifest:ManifestPlain){return {chunkIds:manifest.chunks.map(([id])=>id),chunks:manifest.chunks.map(([id,size])=>({id,size,storedSize:size}))}}};
+  const puller=new CloudPuller({changes:async()=>({versions,head})},repository,content,DEVICE,()=>NOW);
+
+  const first=await puller.pull({collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null},root);
+  assert.equal(first.applied,2);
+  assert.equal(repository.folders.get(folderId)?.path,'Folder');
+  assert.equal(repository.files.get(fileId)?.path,'Folder/Renamed.txt');
+  const writes=repository.writes;
+  const second=await new CloudPuller({changes:async()=>({versions:[],head})},repository,content,DEVICE,()=>NOW)
+    .pull({collectionId:COLLECTION,keyVersion:1,lastSeq:2,head},root);
+  assert.equal(second.applied,0);
+  assert.equal(repository.writes,writes+1,'repeat pull only saves the already-verified head');
+});
 
 /** Collection where file F was pushed at seq 1 as V0, plus a valid seq-1 head. */
 async function fixture() {
@@ -265,6 +349,35 @@ test('a zero-byte chunk remains invalid when the manifest declares non-empty con
     v: 1, path: 'not-empty.txt', mime: 'text/plain', size: 1, mtime: NOW.toISOString(),
     sha256: 'b'.repeat(64), chunks: [['a'.repeat(64), 0]], deleted: false, parentVersionId: null,
   }), /chunk size invalid/);
+});
+
+test('actual Mobile and Web Goal-M v1 manifests project safely after outer binding', () => {
+  const fileId = randomUUID(), folderId = randomUUID();
+  const fileChunk = 'a'.repeat(64);
+  const file = parseManifestPlain({
+    // Web vault-core prepareFileVersion output: additive identity fields on v1.
+    v:1, itemId:fileId, name:'page.html', parentFolderId:folderId, path:'Parent/page.html', kind:'file',
+    mime:'text/html', size:4, mtime:NOW.toISOString(), sha256:'b'.repeat(64), chunks:[[fileChunk, 4]],
+    deleted:false, parentVersionId:null,
+  }, { fileId, parentVersionId:null, deleted:false, chunkIds:[fileChunk] });
+  assert.deepEqual(file, {
+    v:1, path:'Parent/page.html', kind:'file', mime:'text/html', size:4, mtime:NOW.toISOString(),
+    sha256:'b'.repeat(64), chunks:[[fileChunk, 4]], deleted:false, parentVersionId:null,
+  });
+
+  const folder = parseManifestPlain({
+    // Mobile FilesPreviewModule.swift manifest: empty folders use nullable payload metadata.
+    v:1, itemId:folderId, name:'Parent', parentFolderId:null, path:'Parent', kind:'folder',
+    mime:null, size:0, mtime:NOW.toISOString(), sha256:null, chunks:[], deleted:false, parentVersionId:null,
+  }, { fileId:folderId, parentVersionId:null, deleted:false, chunkIds:[] });
+  assert.deepEqual(folder, {
+    v:1, path:'Parent', kind:'folder', mime:'application/x-directory', size:0, mtime:NOW.toISOString(),
+    sha256:'0'.repeat(64), chunks:[], deleted:false, parentVersionId:null,
+  });
+  assert.throws(() => parseManifestPlain({
+    v:1, itemId:randomUUID(), name:'Parent', parentFolderId:null, path:'Parent', kind:'folder',
+    mime:null, size:0, mtime:NOW.toISOString(), sha256:null, chunks:[], deleted:false, parentVersionId:null,
+  }, { fileId:folderId, parentVersionId:null, deleted:false, chunkIds:[] }), /manifest item id invalid/);
 });
 
 async function legacyParentPull(manifestParent:string | null) {

@@ -26,6 +26,8 @@ export type SubkeyPurpose = 'chunk-id' | 'chunk' | 'manifest' | 'head' | 'info';
 export interface ManifestPlain {
   v:1;
   path:string;
+  /** Missing means file for v1 compatibility. */
+  kind?:'file' | 'folder';
   mime:string;
   size:number;
   mtime:string;
@@ -33,6 +35,24 @@ export interface ManifestPlain {
   chunks:Array<[string, number]>;
   deleted:boolean;
   parentVersionId:string | null;
+}
+
+/** Goal N's additive plaintext namespace. The surrounding crypto envelope stays v1. */
+export interface NamespaceManifestPlain {
+  v:2;
+  itemId:string;
+  kind:'file' | 'folder';
+  name:string;
+  parentFolderId:string | null;
+  mime:string | null;
+  size:number;
+  mtime:number;
+  sha256:string | null;
+  chunks:Array<[string, number]>;
+  deleted:boolean;
+  parentVersionId:string | null;
+  operation:'create' | 'content' | 'metadata' | 'delete' | 'restore';
+  restoredFromVersionId?:string;
 }
 
 export interface ManifestEnvelope {
@@ -220,7 +240,7 @@ export async function sealManifest(
   keyVersion:number,
   fileId:string,
   versionId:string,
-  manifest:ManifestPlain,
+  manifest:ManifestPlain | NamespaceManifestPlain,
   fixedNonce?:Uint8Array,
 ):Promise<ManifestEnvelope> {
   assertUuid(fileId, 'fileId');

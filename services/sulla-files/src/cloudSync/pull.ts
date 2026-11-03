@@ -6,8 +6,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ChangesPage } from './cloudApi.js';
-import { openManifest, stateHash, type ManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
+import { openManifest, stateHash, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import {
+  assertNamespaceCommitBinding,
   assertRemoteMatchesManifest,
   CloudSyncIntegrityError,
   conflictPath,
@@ -66,9 +67,13 @@ export interface PullRepository {
   forkLocalVersion(input:ForkLocalInput):Promise<void>;
   /** Apply a remote version onto its original fileId and record it as the file's cloud head. */
   applyRemoteVersion(input:ApplyRemoteInput):Promise<void>;
+  /** Apply an explicit empty-folder object (v1 manifests without kind remain files). */
+  applyRemoteFolderVersion?(input:ApplyRemoteInput):Promise<void>;
   /** Record a cloud head for a version that is already present locally. */
   recordCloudHead(collectionId:string, remote:RemoteVersion):Promise<void>;
   saveVerifiedHead(collectionId:string, head:SyncHead):Promise<void>;
+  /** Stable path of a previously materialized encrypted folder identity. */
+  cloudFolderPath?(collectionId:string, fileId:string):Promise<string | null>;
 }
 
 export interface RemoteContentSource {
@@ -150,6 +155,7 @@ export class CloudPuller {
   private async openAll(state:PullState, root:Uint8Array, versions:RemoteVersion[]):Promise<OpenedVersion[]> {
     const opened:OpenedVersion[] = [];
     const batchParents = new Map<string, string | null>();
+    const folderPaths = new Map<string, string>();
     for (const remote of versions) {
       let plain:unknown;
       try {
@@ -157,16 +163,44 @@ export class CloudPuller {
       } catch {
         throw new CloudSyncIntegrityError('cloud manifest failed authentication');
       }
-      let manifest = parseManifestPlain(plain);
+      const parsed = parseManifestPlain(plain, remote);
+      let manifest = parsed.v === 2
+        ? await this.normalizeNamespaceManifest(state.collectionId, remote, parsed, folderPaths)
+        : parsed;
       if (manifest.parentVersionId !== remote.parentVersionId && remote.parentVersionId &&
           await this.isLegacyCloudAncestor(remote.parentVersionId, manifest.parentVersionId, batchParents)) {
         manifest = { ...manifest, parentVersionId: remote.parentVersionId };
       }
       assertRemoteMatchesManifest(remote, manifest);
       batchParents.set(remote.versionId, manifest.parentVersionId);
+      if (manifest.kind === 'folder' && !manifest.deleted) folderPaths.set(remote.fileId, manifest.path);
       opened.push({ remote, manifest });
     }
     return opened;
+  }
+
+  private async normalizeNamespaceManifest(collectionId:string, remote:RemoteVersion, manifest:NamespaceManifestPlain, folderPaths:Map<string, string>):Promise<ManifestPlain> {
+    assertNamespaceCommitBinding(remote, manifest);
+    let parentPath:string | null = null;
+    if (manifest.parentFolderId) {
+      parentPath = folderPaths.get(manifest.parentFolderId) ?? await this.repository.cloudFolderPath?.(collectionId, manifest.parentFolderId) ?? null;
+      if (!parentPath) throw new CloudSyncIntegrityError('namespace parent folder is unavailable');
+    }
+    const path = parentPath ? `${ parentPath }/${ manifest.name }` : manifest.name;
+    const mtime = new Date(manifest.mtime);
+    if (!Number.isFinite(mtime.getTime())) throw new CloudSyncIntegrityError('namespace modification time is invalid');
+    return {
+      v: 1,
+      path,
+      kind: manifest.kind,
+      mime: manifest.mime ?? (manifest.kind === 'folder' ? 'application/x-directory' : 'application/octet-stream'),
+      size: manifest.size,
+      mtime: mtime.toISOString(),
+      sha256: manifest.sha256 ?? '0'.repeat(64),
+      chunks: manifest.chunks,
+      deleted: manifest.deleted,
+      parentVersionId: manifest.parentVersionId,
+    };
   }
 
   /**
@@ -225,6 +259,11 @@ export class CloudPuller {
     const materializedManifest = manifest.size === 0 && manifest.chunks.length === 1 && manifest.chunks[0][1] === 0
       ? { ...manifest, chunks: [] }
       : manifest;
+    if (manifest.kind === 'folder') {
+      if (!this.repository.applyRemoteFolderVersion) throw new CloudSyncIntegrityError('folder sync is unavailable');
+      await this.repository.applyRemoteFolderVersion({ collectionId: state.collectionId, remote, manifest, content: null, remoteDeviceLabel: (remote.deviceId ?? 'cloud').slice(0, 8) });
+      return forked ? 'forked' : 'applied';
+    }
     const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, materializedManifest);
     await this.repository.applyRemoteVersion({
       collectionId: state.collectionId,

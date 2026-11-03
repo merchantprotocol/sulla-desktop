@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 
 import type { FilesIdentity } from '../auth.js';
-import { assertStoredFilePath, ensureStoredFileParents, lockStoredNamespace, StoredNamespaceConflict } from '../storedNamespace.js';
+import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, lockStoredNamespace, StoredNamespaceConflict } from '../storedNamespace.js';
 import type { Envelope } from '../crypto.js';
 import type { StateEntry, SyncHead } from './envelope.js';
 import type { ApplyRemoteInput, ForkLocalInput, LocalFileState, PullRepository } from './pull.js';
@@ -456,6 +456,52 @@ export class PgCloudSyncRepository implements PullRepository {
     });
   }
 
+  async applyRemoteFolderVersion(input:ApplyRemoteInput):Promise<void> {
+    const { collectionId, remote, manifest } = input;
+    await transaction(this.db, async client => {
+      await lockStoredNamespace(client, collectionId);
+      const prior = (await client.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 FOR UPDATE', [collectionId, remote.fileId])).rows[0];
+      if (manifest.deleted) {
+        // Delete only this stable identity. Descendants are independent encrypted items and remain visible.
+        if (prior?.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2 AND id=$3', [collectionId, prior.path, remote.fileId]);
+      } else {
+        const path = await this.freeFolderPath(client, collectionId, manifest.path, remote.fileId, input.remoteDeviceLabel, !prior?.path);
+        if (prior?.path && prior.path !== path) {
+          // Create only the destination's parents. Creating `path` itself first makes the
+          // subtree move collide with file_folders(collection_id,path)'s unique key.
+          await ensureStoredFileParents(client, collectionId, path, this.actor);
+          await this.moveStoredSubtree(client, collectionId, prior.path, path);
+        } else {
+          await ensureStoredFileParents(client, collectionId, `${ path }/.folder`, this.actor);
+        }
+        const existing = (await client.query('SELECT id::text AS id FROM file_folders WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
+        if (existing && existing.id !== remote.fileId) {
+          // Parent synthesis has no Cloud identity. Adopt it rather than replacing the UUID.
+          const claimed = (await client.query('SELECT 1 FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 AND deleted=FALSE', [collectionId, existing.id])).rowCount;
+          if (claimed) throw new StoredNamespaceConflict('A different folder identity already occupies the synchronized path');
+          await client.query('UPDATE file_folders SET id=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId, path, remote.fileId]);
+        } else if (!existing) {
+          await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id) VALUES($1,$2,$3,'user',$4)`,
+            [remote.fileId, collectionId, path, this.actor.userId]);
+        }
+        await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
+          ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,
+        [collectionId, remote.fileId, remote.versionId, path, false]);
+      }
+      if (manifest.deleted) {
+        await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,TRUE)
+          ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=COALESCE(EXCLUDED.path,files_cloud_folders.path),deleted=TRUE,updated_at=NOW()`,
+        [collectionId, remote.fileId, remote.versionId, prior?.path ?? null]);
+      }
+      await this.upsertCloudHead(client, collectionId, remote.fileId, remote.versionId, manifest.deleted, remote.seq);
+    });
+  }
+
+  async cloudFolderPath(collectionId:string, fileId:string):Promise<string | null> {
+    const row = (await this.db.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2', [collectionId, fileId])).rows[0];
+    return typeof row?.path === 'string' ? row.path : null;
+  }
+
   async applyRemoteVersion(input:ApplyRemoteInput):Promise<void> {
     try {
       await transaction(this.db, client => this.applyRemote(client, input, input.remote.fileId, input.remote.versionId));
@@ -568,5 +614,37 @@ export class PgCloudSyncRepository implements PullRepository {
       }
     }
     throw new StoredNamespaceConflict('No free path is available for a synced file');
+  }
+
+
+  private async freeFolderPath(client:pg.PoolClient, collectionId:string, wanted:string, sameFolderId:string, label:string, mayAdoptSynthetic:boolean):Promise<string> {
+    for (const candidate of [wanted, conflictPath(wanted, label), conflictPath(wanted, `${ label }-2`)]) {
+      try {
+        await assertStoredFolderPath(client, collectionId, candidate);
+        const occupant = (await client.query('SELECT id::text AS id FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, candidate])).rows[0];
+        if (!occupant || occupant.id === sameFolderId) return candidate;
+        const claimed = (await client.query('SELECT 1 FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 AND deleted=FALSE', [collectionId, occupant.id])).rowCount;
+        if (!claimed && candidate === wanted && mayAdoptSynthetic) return candidate;
+      } catch (error) {
+        if (!(error instanceof StoredNamespaceConflict)) throw error;
+      }
+    }
+    throw new StoredNamespaceConflict('No free path is available for a synced folder');
+  }
+
+  private async moveStoredSubtree(client:pg.PoolClient, collectionId:string, from:string, to:string):Promise<void> {
+    const token = `.cloud-folder-move-${ randomUUID() }`;
+    await client.query(`UPDATE file_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
+    await client.query(`UPDATE files SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
+    await client.query(`UPDATE files_cloud_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
+    await client.query(`UPDATE file_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
+    await client.query(`UPDATE files SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
+    await client.query(`UPDATE files_cloud_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
   }
 }
