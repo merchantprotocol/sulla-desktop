@@ -243,6 +243,7 @@ onBeforeUnmount(() => {
           <component
             :is="sectionComponent"
             v-else
+            @go="go"
           />
         </div>
       </main>

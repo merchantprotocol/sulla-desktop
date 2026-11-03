@@ -56,18 +56,29 @@ export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAg
 }
 
 /**
- * Where a new chat lands when the human picked no agent and Reflex has no
- * confident route: always Sulla. The human picks custom agents themselves.
+ * Where a new chat lands when the human picked no agent and Reflex has no confident route: the
+ * New chats default (Preferences → AI models → Defaults). An agent default routes to that agent (Sulla
+ * if it's gone or turned off); a model default routes to Sulla carrying that model choice for the thread.
  */
 export async function resolveDefaultRouteAgent(): Promise<RoutableAgent> {
-  const { getModelDefaults, resolveDefaultChoice } = await import('../languagemodels/modelDefaults');
-  const resolved = await resolveDefaultChoice((await getModelDefaults()).chat);
-  return { ...(resolved.agent || SULLA_ROUTE), ...(resolved.modelChoice ? { modelChoice: resolved.modelChoice } : {}) };
+  try {
+    const { getModelDefaults, resolveDefaultChoice } = await import('../languagemodels/modelDefaults');
+    const resolved = await resolveDefaultChoice((await getModelDefaults()).chat);
+    return { ...resolved.agent, ...(resolved.modelChoice ? { modelChoice: resolved.modelChoice } : {}) };
+  } catch (err) {
+    console.warn('[ChatAgentRouting] New chats default unavailable; using Sulla:', err);
+    return { ...SULLA_ROUTE };
+  }
 }
 
-/** Shared state mutation used by both the route_agent tool and first-message dispatch. */
+/**
+ * Shared state mutation used by both the route_agent tool and first-message dispatch. A route that
+ * carries a model choice stores it on the thread; any other route clears it, so the new agent's own
+ * Model setting applies.
+ */
 export function applyThreadAgentRoute(state: BaseThreadState, agent: RoutableAgent): void {
   (state.metadata as any).routedAgentId = agent.graphAgentId;
   (state.metadata as any).routedAgentSourceId = agent.agentId;
   if (agent.modelChoice) (state.metadata as any).modelChoice = agent.modelChoice;
+  else delete (state.metadata as any).modelChoice;
 }

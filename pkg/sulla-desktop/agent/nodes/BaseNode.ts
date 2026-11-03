@@ -17,6 +17,7 @@ import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
+import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
 import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
 import { ProviderFailure } from '../languagemodels/failures';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
@@ -515,9 +516,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const explicitModel = String((state.metadata as any).agent?.model || '').trim();
     const agentId = resolveAgentIdentity(state.metadata);
     const definition = agentId ? await agentDefinitionService.findBySlug(agentId).catch(() => null) : null;
-    const choice: AgentModelChoice = explicitProvider && explicitModel && !['primary', 'secondary', 'subconscious'].includes(explicitModel)
-      ? { mode: 'pin', provider: explicitProvider, model: explicitModel }
-      : definition?.model_choice || { mode: 'list' };
+    // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
+    // own Model setting > the list.
+    const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
     this.routingPinned = choice.mode === 'pin';
     this.routingCandidates = await modelRouter.resolve(target, choice);
     if (this.routingCandidates.length) {

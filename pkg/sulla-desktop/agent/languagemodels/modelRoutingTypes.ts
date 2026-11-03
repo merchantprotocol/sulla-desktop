@@ -39,12 +39,18 @@ export interface RoutingProviderInfo {
  models: { id: string; label: string }[];
 }
 
-export interface ModelRoutingState {
+/** The part of the routing state the human edits (and Reset restores). */
+export interface EditableRoutingState {
  agentsList: RoutingRow[];
  subconsciousList: RoutingRow[];
  classes: Record<ModelClass, ClassModel[]>;
  followProviderOrder: Record<ModelClass, boolean>;
+}
+
+export interface ModelRoutingState extends EditableRoutingState {
  providers: RoutingProviderInfo[];
+ /** What each Reset link restores. The UI disables a Reset link while its section already equals this. */
+ recommended?: EditableRoutingState;
 }
 
 /** How an agent picks its model. Default is { mode: 'list' }. */
@@ -55,7 +61,7 @@ export type AgentModelChoice =
 
 /** IPC channel names (ipcRenderer.invoke / ipcMain.handle, and one push event). */
 export const MODEL_ROUTING_IPC = {
- get: 'model-routing:get', // () => ModelRoutingState
+ get: 'model-routing:get', // () => ModelRoutingState (with `recommended`)
  set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'>>) => ModelRoutingState
  reset: 'model-routing:reset', // (target: { section: 'agents'|'subconscious'|'classes'; class?: ModelClass }) => ModelRoutingState
  status: 'model-routing:status', // main → renderer push: RoutingProviderInfo[] whenever a provider's status changes

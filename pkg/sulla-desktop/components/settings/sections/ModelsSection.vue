@@ -7,12 +7,13 @@
 <script setup lang="ts">
 /**
  * Preferences → AI models. Approved mockup: Projects/sulla-desktop/mockups/model-routing.
- * Cards: Agents → Subconscious agents → Models in each class → How a request is routed → Request settings.
+ * Cards: Defaults → Agents → Subconscious agents → Models in each class → How a request is routed → Request settings.
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import PrefMore from '../PrefMore.vue';
 import PrefRow from '../PrefRow.vue';
+import DefaultsCard from './modelRouting/DefaultsCard.vue';
 import ModelClasses from './modelRouting/ModelClasses.vue';
 import RouteTrace from './modelRouting/RouteTrace.vue';
 import RoutingIcon from './modelRouting/RoutingIcon.vue';
@@ -180,6 +181,13 @@ onBeforeUnmount(() => {
       Loading your provider lists…
     </div>
     <template v-else>
+      <DefaultsCard
+        :state="state"
+        :now="now"
+        @saved="flashSaved"
+        @error="error = $event"
+        @toast="toast"
+      />
       <RoutingList
         list-key="agents"
         title="Agents"
@@ -408,6 +416,49 @@ onBeforeUnmount(() => {
   .mr-hint > span:not(.mr-i) { flex: 1; min-width: 0; color: var(--text); }
   .mr-hint > span b { font-weight: 600; }
 
+  /* Defaults (new chats, heartbeat) */
+  .mr-def .set { align-items: flex-start; padding: 15px 18px; }
+  .mr-def .set .l b { display: flex; align-items: center; gap: 7px; }
+  .mr-def .set .l b .mr-i { color: var(--dim); }
+  .mr-resolve { margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--dim); }
+  .mr-def .set .l .mr-resolve b { display: inline; font-size: 12px; color: var(--text); font-weight: 600; }
+  .mr-wt { color: var(--warn-ink); }
+  .mr-def .set .c { flex-direction: column; align-items: flex-end; gap: 8px; max-width: 100%; }
+  .mr-defctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+  .mr-defctl .sel { max-width: 100%; }
+  .mr-dd {
+    display: inline-flex; align-items: center; gap: 8px; height: 30px; width: 220px; max-width: 100%; padding: 0 9px 0 5px;
+    border: 1px solid var(--line-2); border-radius: 8px; background: var(--card-solid); font-size: 12.5px; color: var(--text); text-align: left;
+    transition: border-color var(--t-instant) var(--ease-std), transform var(--t-instant) var(--ease-std);
+  }
+  .mr-dd:hover { border-color: var(--accent-line); }
+  .mr-dd:active { transform: scale(.97); }
+  .mr-dd[aria-expanded="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .mr-dd-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .mr-dd > .mr-i { width: 14px; height: 14px; color: var(--dim); transform: rotate(90deg); transition: transform var(--t-std) var(--ease-std); }
+  .mr-dd[aria-expanded="true"] > .mr-i { transform: rotate(-90deg); }
+  .mr-av {
+    width: 20px; height: 20px; flex: none; border-radius: 6px; display: grid; place-items: center; background: var(--ink-05);
+    color: var(--muted); font-size: 10px; font-weight: 650;
+  }
+  .mr-av.me { background: var(--accent-soft); color: var(--accent-2); }
+  .mr-ddp {
+    position: absolute; z-index: 40; width: 360px; max-width: calc(100vw - 24px); border-radius: 12px; background: var(--card-solid);
+    box-shadow: var(--shadow-lg), 0 0 0 1px var(--line); overflow-y: auto; padding: 4px 0; outline: 0;
+    animation: mr-pop var(--t-std) var(--ease-enter);
+  }
+  .mr-ddh { padding: 8px 14px 3px; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .mr-ddi { display: flex; width: 100%; align-items: flex-start; gap: 10px; padding: 7px 14px; border: 0; background: none; text-align: left; font-size: 12.5px; color: var(--text); }
+  .mr-ddi .mr-av { margin-top: 1px; }
+  .mr-ddi > span:not(.mr-av):not(.mr-i) { flex: 1; min-width: 0; }
+  .mr-ddi b { display: block; font-weight: 600; }
+  .mr-ddi small { display: block; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .mr-ddi > .mr-i { width: 14px; height: 14px; margin-top: 3px; color: var(--accent-2); visibility: hidden; }
+  .mr-ddi[aria-selected="true"] > .mr-i { visibility: visible; }
+  .mr-ddi:hover, .mr-ddi:focus-visible { outline: 0; box-shadow: none; background: var(--accent-soft); }
+  .mr-ddi:hover b, .mr-ddi:focus-visible b { color: var(--accent-2); }
+  .mr-ddsep { height: 1px; margin: 4px 0; background: var(--line); }
+
   /* Models in each class */
   .mr-cats { list-style: none; margin: 0; padding: 0; }
   .mr-cat + .mr-cat { box-shadow: inset 0 1px 0 var(--line); }
@@ -550,6 +601,11 @@ onBeforeUnmount(() => {
     .mr-prow > .mr-rank { display: none; }
     select.sel.mr-sel-sm { width: 112px; }
   }
+  @media (max-width: 1000px) {
+    .mr-def .set { flex-direction: column; align-items: stretch; gap: 10px; }
+    .mr-def .set .c { align-items: flex-start; }
+    .mr-defctl { justify-content: flex-start; }
+  }
   @media (max-width: 720px) {
     .mr-cat-in { padding: 0 12px 14px; }
     .mr-cat-h { padding: 12px 14px; }
@@ -578,5 +634,6 @@ onBeforeUnmount(() => {
 }
 
 @keyframes mr-in { to { opacity: 1; transform: none; } }
+@keyframes mr-pop { from { opacity: 0; transform: translateY(-4px) scale(.985); } }
 @keyframes mr-in-next { to { opacity: .6; transform: none; } }
 </style>

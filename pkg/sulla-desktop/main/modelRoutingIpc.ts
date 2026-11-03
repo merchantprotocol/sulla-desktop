@@ -5,11 +5,11 @@
 
 import { BrowserWindow, ipcMain } from 'electron';
 import { MODEL_ROUTING_IPC, type ModelRoutingState } from '../agent/languagemodels/modelRoutingTypes';
-import { modelRouter } from '../agent/languagemodels/modelRouter';
+import { modelRouter, recommendedState } from '../agent/languagemodels/modelRouter';
 import { getIntegrationService } from '../agent/services/IntegrationService';
 
 async function state(): Promise<ModelRoutingState> {
-  return { ...(await modelRouter.getEditableState()), providers: await modelRouter.providerInfo() };
+  return { ...(await modelRouter.getEditableState()), providers: await modelRouter.providerInfo(), recommended: recommendedState() };
 }
 
 export function initModelRoutingIpc(): void {

@@ -547,7 +547,8 @@ export class BackendGraphWebSocketService {
         const prediction = await routeChatAgent(message, threadId);
         const predictedAgent = prediction ? await resolveFrontDoorAgent(prediction.agentId) : null;
         const routedAgent = predictedAgent ?? await resolveDefaultRouteAgent();
-        if (routedAgent.graphAgentId !== defaultAgentId) {
+        // A model default keeps Sulla but still has to be stored on the thread.
+        if (routedAgent.graphAgentId !== defaultAgentId || routedAgent.modelChoice) {
           agentId = routedAgent.graphAgentId;
           newRoute = { prediction: predictedAgent ? prediction : null, agent: routedAgent };
         }
@@ -570,18 +571,20 @@ export class BackendGraphWebSocketService {
         // Persist before execution so a renderer refresh or process interruption
         // cannot lose the sticky route chosen for this thread.
         await saveThreadState(state);
-        this.wsService.send(channelId, {
-          type: 'agent_routed',
-          data: {
-            threadId,
-            agentId:    newRoute.agent.agentId,
-            name:       newRoute.agent.name,
-            confidence: newRoute.prediction?.confidence ?? null,
-            decisionId: newRoute.prediction?.decisionId ?? null,
-            reason:     newRoute.prediction ? 'reflex' : 'default',
-          },
-          timestamp: Date.now(),
-        });
+        if (newRoute.agent.graphAgentId !== defaultAgentId) {
+          this.wsService.send(channelId, {
+            type: 'agent_routed',
+            data: {
+              threadId,
+              agentId:    newRoute.agent.agentId,
+              name:       newRoute.agent.name,
+              confidence: newRoute.prediction?.confidence ?? null,
+              decisionId: newRoute.prediction?.decisionId ?? null,
+              reason:     newRoute.prediction ? 'reflex' : 'default',
+            },
+            timestamp: Date.now(),
+          });
+        }
       }
 
       // A support tab supplies an opaque session id every turn. Resolve the
