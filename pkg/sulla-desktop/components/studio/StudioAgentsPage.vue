@@ -6,18 +6,32 @@
 -->
 <template>
   <div class="studio-page">
-    <StudioTopbar :crumbs="active ? ['Custom Agents', active.name || 'New agent'] : ['Custom Agents']" v-model:search="search" search-placeholder="Search custom agents" @crumb="closeDetail"><template #actions><button v-if="!active" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
+    <StudioTopbar
+      ref="topbarRef"
+      :crumbs="active ? ['Agents', active.name || 'New agent'] : ['Agents']"
+      v-model:search="search"
+      :search-placeholder="innerTab === 'dir' ? 'Search name, slug, when to call, model…' : 'Search custom agents'"
+      @crumb="closeDetail"
+    ><template #actions><button v-if="!active" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
     <div class="studio-content">
       <template v-if="!active">
-        <div class="tb"><h1>Custom Agents</h1><span>Agents stored in Sulla, including ones installed from Use Cases · {{ agents.length }} agents</span></div>
-        <div class="filters"><button :class="{ on: provider === 'all' }" @click="provider = 'all'">All {{ agents.length }}</button><button v-for="p in providers" :key="p.name" :class="{ on: provider === p.name }" @click="provider = p.name">{{ p.name }} {{ p.count }}</button></div>
-        <div v-if="error" class="banner error"><div>{{ error }}</div><button class="btn sm" @click="load">Try again</button></div>
-        <div v-else-if="loading" class="card empty">Loading custom agents…</div>
-        <div v-else-if="filtered.length === 0" class="card empty"><b>Nothing here yet.</b><span>{{ search ? 'No agents match your search.' : 'Create an agent to get started.' }}</span></div>
-        <div v-else class="card"><table><thead><tr><th>Agent</th><th>Model</th><th>Skills</th><th>Source</th><th></th></tr></thead><tbody><tr v-for="agent in filtered" :key="agent.id" class="click" @click="openAgent(agent)"><td><div class="name"><span class="fi blue">◉</span><div><b>{{ agent.name }}</b><small>{{ agent.description || 'No description' }}</small></div></div></td><td>{{ modelLabel(agent) }}</td><td>{{ skillsFor(agent).length }}</td><td>{{ sourceLabel(agent.sourceKind) }}</td><td class="right"><button class="btn sm" @click.stop="openAgent(agent)">Edit</button></td></tr></tbody></table></div>
+        <div class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span></div>
+        <div class="seg-tabs" ref="tabsRef">
+          <i ref="tabIndRef" />
+          <button :class="{ on: innerTab === 'dir' }" @click="selectTab('dir')">Directory</button>
+          <button :class="{ on: innerTab === 'manage' }" @click="selectTab('manage')">Manage</button>
+        </div>
+        <AgentDirectoryTab v-if="innerTab === 'dir'" :agents="agents" :loading="loading" v-model:search="search" @edit="openAgent" />
+        <template v-else>
+          <div class="filters"><button :class="{ on: provider === 'all' }" @click="provider = 'all'">All {{ agents.length }}</button><button v-for="p in providers" :key="p.name" :class="{ on: provider === p.name }" @click="provider = p.name">{{ p.name }} {{ p.count }}</button></div>
+          <div v-if="error" class="banner error"><div>{{ error }}</div><button class="btn sm" @click="load">Try again</button></div>
+          <div v-else-if="loading" class="card empty">Loading custom agents…</div>
+          <div v-else-if="filtered.length === 0" class="card empty"><b>Nothing here yet.</b><span>{{ search ? 'No agents match your search.' : 'Create an agent to get started.' }}</span></div>
+          <div v-else class="card"><table><thead><tr><th>Agent</th><th>Model</th><th>Skills</th><th>Source</th><th></th></tr></thead><tbody><tr v-for="agent in filtered" :key="agent.id" class="click" @click="openAgent(agent)"><td><div class="name"><span class="fi blue">◉</span><div><b>{{ agent.name }}</b><small>{{ agent.description || 'No description' }}</small></div></div></td><td>{{ modelLabel(agent) }}</td><td>{{ skillsFor(agent).length }}</td><td>{{ sourceLabel(agent.sourceKind) }}</td><td class="right"><button class="btn sm" @click.stop="openAgent(agent)">Edit</button></td></tr></tbody></table></div>
+        </template>
       </template>
       <template v-else>
-        <button class="back" @click="closeDetail">‹ Custom Agents</button>
+        <button class="back" @click="closeDetail">‹ Agents</button>
         <div class="card hero"><span class="fi blue big">◉</span><div><h1>{{ form.name || 'New agent' }}</h1><p>{{ form.description || 'Configure a custom agent.' }}</p><div class="meta"><span>{{ modelLabel(active) }}</span><span>{{ activeSkills.length }} skills</span><span>{{ active.id ? sourceLabel(active.sourceKind) : 'You' }}</span></div></div><div class="acts"><button class="btn pri" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button></div></div>
         <div v-if="detailMessage" class="banner" :class="{ error: detailError }"><div>{{ detailMessage }}</div></div>
         <div class="dgrid"><div><div class="tabs"><button :class="{ on: tab === 'profile' }" @click="tab = 'profile'">Profile</button><button :class="{ on: tab === 'prompt' }" @click="tab = 'prompt'">Prompt</button></div><div v-if="tab === 'profile'" class="card box"><div class="frow"><div class="field"><label>Name</label><input v-model="form.name"></div><div class="field"><label>Slug</label><input v-model="form.slug" class="mono" :readonly="!!active.id"></div></div><div class="field"><label>Description</label><textarea v-model="form.description" rows="3" /></div><div class="field"><label>{{ active.model ? 'Pinned model' : 'Model slot' }}</label><input v-if="active.model" :value="`${active.provider ?? ''} / ${active.model}`" readonly class="mono"><select v-else v-model="form.modelSlot"><option value="primary">Primary</option><option value="secondary">Secondary</option><option value="subconscious">Subconscious</option></select></div><div class="field"><label>Skills</label><div><span v-for="skill in activeSkills" :key="skill" class="chipx">{{ skill }}</span><span v-if="activeSkills.length === 0" class="tag">No skills configured</span></div></div></div><div v-else class="card box"><h2>System prompt</h2><textarea v-model="form.prompt" class="editor" /></div></div>
@@ -29,13 +43,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import AgentDirectoryTab from './AgentDirectoryTab.vue';
 import StudioTopbar from './StudioTopbar.vue';
 
 type Agent = AgentDefinitionResponse; type Manifest = Awaited<ReturnType<typeof ipcRenderer.invoke<'agent-definitions:export'>>>;
 const agents = ref<Agent[]>([]); const manifests = ref(new Map<string, Manifest>()); const search = ref(''); const provider = ref('all'); const loading = ref(true); const error = ref(''); const active = ref<Agent | null>(null); const tab = ref<'profile'|'prompt'>('profile'); const saving = ref(false); const publishing = ref(false); const detailMessage = ref(''); const detailError = ref(false);
+const innerTab = ref<'dir' | 'manage'>('dir');
+const topbarRef = ref<InstanceType<typeof StudioTopbar> | null>(null);
+const tabsRef = ref<HTMLElement | null>(null);
+const tabIndRef = ref<HTMLElement | null>(null);
+
+function moveTabIndicator() {
+  const on = tabsRef.value?.querySelector<HTMLButtonElement>('button.on');
+  if (!on || !tabIndRef.value) return;
+  tabIndRef.value.style.width = `${ on.offsetWidth }px`;
+  tabIndRef.value.style.transform = `translateX(${ on.offsetLeft }px)`;
+}
+function selectTab(next: 'dir' | 'manage') { innerTab.value = next; nextTick(moveTabIndicator); }
+watch(innerTab, () => nextTick(moveTabIndicator));
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== '/' || active.value || innerTab.value !== 'dir') return;
+  const target = e.target as HTMLElement;
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+  e.preventDefault();
+  topbarRef.value?.focusSearch();
+}
+onMounted(() => { document.addEventListener('keydown', onKeydown); window.addEventListener('resize', moveTabIndicator); nextTick(moveTabIndicator); });
+onBeforeUnmount(() => { document.removeEventListener('keydown', onKeydown); window.removeEventListener('resize', moveTabIndicator); });
 const form = reactive({ slug: '', name: '', description: '', provider: '', modelSlot: 'secondary' as 'primary'|'secondary'|'subconscious', prompt: '' });
 const providers = computed(() => Array.from(new Set(agents.value.map(a => a.provider).filter(Boolean) as string[])).sort().map(name => ({ name, count: agents.value.filter(a => a.provider === name).length })));
 const filtered = computed(() => { const q = search.value.trim().toLowerCase(); return agents.value.filter(a => (provider.value === 'all' || a.provider === provider.value) && (!q || `${a.name} ${a.description} ${a.slug} ${a.provider} ${a.modelSlot}`.toLowerCase().includes(q))); });
@@ -46,7 +84,7 @@ function modelLabel(agent: Agent | null) { return agent?.model ? `${agent.provid
 function sourceLabel(source: string) { return source === 'local' ? 'You' : source === 'builtin' || source === 'built-in' ? 'Built-in' : source || '—'; }
 async function load() { loading.value = true; error.value = ''; try { agents.value = await ipcRenderer.invoke('agent-definitions:list'); const pairs = await Promise.all(agents.value.map(async a => [a.slug, await ipcRenderer.invoke('agent-definitions:export', a.slug)] as const).map(p => p.catch(() => null))); manifests.value = new Map(pairs.filter((x): x is readonly [string, Manifest] => x !== null)); } catch (e) { error.value = e instanceof Error ? e.message : String(e); } finally { loading.value = false; } }
 function openAgent(agent: Agent) { active.value = agent; Object.assign(form, { slug: agent.slug, name: agent.name, description: agent.description, provider: agent.provider ?? '', modelSlot: agent.modelSlot ?? 'secondary', prompt: agent.prompt }); tab.value = 'profile'; detailMessage.value = ''; }
-function newAgent() { active.value = { id: '', slug: '', name: '', description: '', provider: null, model: null, modelSlot: 'secondary', prompt: '', sourceKind: 'local', marketplaceVersion: null, status: 'production', enabled: true, runLocation: 'vm' }; Object.assign(form, { slug: '', name: '', description: '', provider: '', modelSlot: 'secondary', prompt: '' }); tab.value = 'profile'; detailMessage.value = ''; }
+function newAgent() { active.value = { id: '', slug: '', name: '', description: '', provider: null, model: null, modelSlot: 'secondary', prompt: '', sourceKind: 'local', marketplaceVersion: null, status: 'production', enabled: true, runLocation: 'vm', whenToCall: '', whenNotToCall: '', send: '', returns: '', costTier: null, canCall: [], isBuiltin: false, frontDoor: null, updatedAt: '', type: null }; Object.assign(form, { slug: '', name: '', description: '', provider: '', modelSlot: 'secondary', prompt: '' }); tab.value = 'profile'; detailMessage.value = ''; }
 function closeDetail() { active.value = null; detailMessage.value = ''; }
 async function save() { if (!active.value || !form.name.trim() || !form.slug.trim()) { detailError.value = true; detailMessage.value = 'Name and slug are required.'; return; } saving.value = true; detailMessage.value = ''; try { if (active.value.id) await ipcRenderer.invoke('agent-definitions:update', active.value.id, { name: form.name, description: form.description, modelSlot: form.modelSlot, prompt: form.prompt }); else await ipcRenderer.invoke('agent-definitions:create', { slug: form.slug, name: form.name, description: form.description, modelSlot: form.modelSlot, prompt: form.prompt }); await load(); const saved = agents.value.find(a => a.slug === form.slug); if (saved) openAgent(saved); detailError.value = false; detailMessage.value = 'Saved.'; } catch (e) { detailError.value = true; detailMessage.value = e instanceof Error ? e.message : String(e); } finally { saving.value = false; } }
 async function exportAgent() { if (!active.value) return; const manifest = await ipcRenderer.invoke('agent-definitions:export', active.value.slug); const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${active.value.slug}.json`; a.click(); URL.revokeObjectURL(url); }
@@ -57,4 +95,9 @@ onMounted(load);
 
 <style scoped lang="scss">
 @import '@pkg/assets/styles/studio-ui.scss';
+
+.seg-tabs { position: relative; display: inline-flex; gap: 2px; margin-bottom: 16px; padding: 3px; border: 1px solid var(--uc-line); border-radius: 10px; background: var(--uc-paper); }
+.seg-tabs button { position: relative; z-index: 1; padding: 5px 14px; border: 0; border-radius: 7px; background: transparent; color: var(--uc-muted); font: inherit; cursor: pointer; transition: color 160ms ease; }
+.seg-tabs button.on { color: var(--uc-text); font-weight: 500; }
+.seg-tabs i { position: absolute; top: 3px; bottom: 3px; left: 0; border-radius: 7px; background: var(--uc-card); box-shadow: var(--uc-shadow), inset 0 0 0 1px var(--uc-line); transition: transform 240ms cubic-bezier(.22, 1, .36, 1), width 240ms cubic-bezier(.22, 1, .36, 1); }
 </style>

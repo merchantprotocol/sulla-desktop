@@ -110,6 +110,18 @@ export interface AgentDefinitionResponse {
   status:             string;
   enabled:            boolean;
   runLocation:        'vm' | 'container';
+  /** Directory card fields (migration 0110_add_agent_directory_fields). */
+  whenToCall:         string;
+  whenNotToCall:      string;
+  send:               string;
+  returns:            string;
+  costTier:           import('@pkg/agent/database/models/AgentDefinitionModel').AgentCostTier | null;
+  canCall:            string[];
+  isBuiltin:          boolean;
+  frontDoor:          boolean | null;
+  updatedAt:          string;
+  /** config.type ('lead' | 'planner' | 'worker' | 'designer' | ...): the other half of the Manager/Worker split, alongside canCall. */
+  type:               string | null;
 }
 
 export interface AgentConversationSummary {
@@ -199,6 +211,16 @@ export function initAgentsIpc(): void {
       status:             a.status,
       enabled:            a.enabled,
       runLocation:        a.run_location,
+      whenToCall:         a.when_to_call,
+      whenNotToCall:      a.when_not_to_call,
+      send:               a.send,
+      returns:            a.returns,
+      costTier:           a.cost_tier,
+      canCall:            a.can_call,
+      isBuiltin:          a.is_builtin,
+      frontDoor:          a.front_door,
+      updatedAt:          toIso(a.updated_at),
+      type:               typeof a.config?.type === 'string' ? a.config.type : null,
     }));
   });
 
