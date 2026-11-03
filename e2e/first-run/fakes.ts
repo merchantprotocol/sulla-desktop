@@ -21,10 +21,11 @@ export async function startFakeServer(mode: FakeMode = 'new-user') {
       if (!existing) { res.writeHead(404, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'not_found' })); return; }
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ authVersion: 2, kdf: kdf() })); return;
     }
+    if (req.url === '/auth/email/register' && existing) { res.writeHead(409, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'account_exists' })); return; }
     if ((req.url === '/auth/email/register' && !existing) || (req.url === '/auth/email/login' && existing)) {
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(session())); return;
     }
-    if (req.url === '/oauth') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ success: true })); return; }
+    if (req.url === '/oauth') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ oauth_token: 'synthetic-oauth-token', access_token: 'synthetic-access-token', refresh_token: 'synthetic-refresh-token' })); return; }
     if (req.url === '/vault/write') { res.writeHead(204); res.end(); return; }
     res.writeHead(404, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: existing ? 'account_exists' : 'not_found' }));
   });
@@ -32,5 +33,5 @@ export async function startFakeServer(mode: FakeMode = 'new-user') {
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return { url, requests, close: () => new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())) };
 }
-function kdf() { return { alg: 'argon2id13', salt: 'ZmFrZS1zYWx0', memoryBytes: 67_108_864, ops: 3 }; }
+function kdf() { return { alg: 'argon2id13', salt: 'MDEyMzQ1Njc4OWFiY2RlZg', memoryBytes: 67_108_864, ops: 3 }; }
 function session() { return { contractor: { id: 'test-user', email: 'person@example.test', phone: '', business_name: null, name: 'Test' }, accessToken: 'synthetic-access-token', refreshToken: 'synthetic-refresh-token' }; }
