@@ -21,6 +21,7 @@ on:
     paths:
       - 'pkg/sulla-desktop/pages/FirstRun*'
       - 'pkg/sulla-desktop/main/firstRun/**'
+      - 'pkg/sulla-desktop/main/tray.ts'
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
       - 'pkg/sulla-desktop/main/*OAuth.ts'
       - 'background.ts'
