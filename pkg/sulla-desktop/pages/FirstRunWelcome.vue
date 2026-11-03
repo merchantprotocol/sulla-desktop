@@ -418,7 +418,7 @@ async function finishSetup(allowMarketing: boolean) {
 }
 
 .error-text {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 
 /* Form input styling */
@@ -429,20 +429,20 @@ async function finishSetup(allowMarketing: boolean) {
 }
 
 .input-error {
-  border-color: var(--border-error);
+  border-color: var(--status-error);
 }
 
 /* Recovery key display */
 .recovery-key-box {
   padding: 1rem 1.5rem;
-  border: 2px dashed var(--border-strong);
+  border: 2px dashed var(--border-default-strong);
   border-radius: 0.5rem;
   background-color: var(--bg-surface-alt);
   text-align: center;
   user-select: all;
 
   code {
-    color: var(--accent-primary);
+    color: var(--accent);
     letter-spacing: 0.15em;
   }
 }
@@ -458,16 +458,16 @@ async function finishSetup(allowMarketing: boolean) {
 }
 
 .btn-primary {
-  background-color: var(--accent-primary);
+  background-color: var(--accent);
   color: var(--text-on-accent);
 
   &:hover {
-    background-color: var(--accent-primary-hover);
+    background-color: var(--accent-hover);
   }
 }
 
 .link-btn {
-  color: var(--accent-primary);
+  color: var(--accent);
   background: none;
   border: none;
   padding: 0;
@@ -479,7 +479,7 @@ async function finishSetup(allowMarketing: boolean) {
 }
 
 input[type="checkbox"]:checked {
-  accent-color: var(--accent-primary);
+  accent-color: var(--accent);
 }
 
 /* Hover effects */
@@ -488,107 +488,107 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: var(--border-strong);
+  border-color: var(--border-default-strong);
   background-color: var(--bg-surface-alt);
 }
 
-.theme-noir .heading-text,
-.theme-noir .secondary-text,
-.theme-noir .label-text {
-  color: var(--nx-read-2);
+.heading-text,
+.secondary-text,
+.label-text {
+  color: var(--text-primary);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 {
+.max-w-lg.mx-0.p-6 {
   --fr-account-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 > form::before,
-.theme-noir .max-w-lg.mx-0.p-6 > div::before {
+.max-w-lg.mx-0.p-6 > form::before,
+.max-w-lg.mx-0.p-6 > div::before {
   content: "ACCOUNT & VAULT";
   display: block;
   margin-top: 5px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: var(--nx-accent-2);
+  color: var(--accent);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 h2 {
+.max-w-lg.mx-0.p-6 h2 {
   margin: 7px 0 8px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: var(--font-display);
   font-size: 34px;
   line-height: 1.08;
   font-weight: 600;
   letter-spacing: -.02em;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
 }
 
-.theme-noir .secondary-text {
+.secondary-text {
   font-size: 14px;
   line-height: 1.6;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 :deep(fieldset) {
+.max-w-lg.mx-0.p-6 :deep(fieldset) {
   padding: 14px 16px 4px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4%, transparent);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 4%, transparent);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 :deep(legend) {
+.max-w-lg.mx-0.p-6 :deep(legend) {
   padding: 0 7px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 label:not(.flex) {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+.max-w-lg.mx-0.p-6 label:not(.flex) {
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
-.theme-noir .form-input {
+.form-input {
   min-height: 40px;
   padding: 0 13px;
   border-color: transparent;
   border-radius: 12px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .62);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
-  color: var(--nx-read-1);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .62);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  color: var(--text-primary);
   outline: none;
   transition: box-shadow .2s ease, background .2s ease;
 }
 
-.theme-noir .form-input:hover {
+.form-input:hover {
   border-color: transparent;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .72);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 20%, transparent);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .72);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 20%, transparent);
 }
 
-.theme-noir .form-input:focus {
+.form-input:focus {
   border-color: transparent;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .78);
-  box-shadow: inset 0 0 0 1px var(--nx-accent-2), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 18%, transparent), 0 0 18px color-mix(in srgb, var(--nx-accent) 12%, transparent);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .78);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.theme-noir .form-input.input-error {
-  box-shadow: inset 0 0 0 1px var(--nx-danger), 0 0 0 3px color-mix(in srgb, var(--nx-danger) 10%, transparent);
+.form-input.input-error {
+  box-shadow: inset 0 0 0 1px var(--status-error), 0 0 0 3px color-mix(in srgb, var(--status-error) 10%, transparent);
 }
 
-.theme-noir .error-text { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
+.error-text { color: rgb(from var(--status-error) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"] {
+.max-w-lg.mx-0.p-6 input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -596,88 +596,88 @@ input:hover, select:hover {
   appearance: none;
   border: 0;
   border-radius: 11px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
   cursor: pointer;
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
+.max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--nx-read-2);
+  background: var(--text-primary);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--fr-account-spring), background .2s ease;
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked {
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 42%, transparent);
+.max-w-lg.mx-0.p-6 input[type="checkbox"]:checked {
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-.theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]:checked::after {
+.max-w-lg.mx-0.p-6 input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-.theme-noir .recovery-key-box {
+.recovery-key-box {
   border: 0;
   border-radius: 16px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .62);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 30%, transparent), 0 0 28px color-mix(in srgb, var(--nx-accent) 8%, transparent);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .62);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.theme-noir .recovery-key-box code {
-  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
-  text-shadow: 0 0 12px color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
+.recovery-key-box code {
+  color: rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16));
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.theme-noir .btn-primary {
+.btn-primary {
   min-height: 40px;
   padding-inline: 20px;
   border-radius: 20px;
   color: #fff;
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 34%, transparent);
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: transform .58s var(--fr-account-spring), box-shadow .2s ease;
 }
 
-.theme-noir .btn-primary:hover {
-  background: linear-gradient(180deg, rgb(from var(--nx-accent-2) calc(r + 8) calc(g + 10) calc(b + 9)), var(--nx-accent));
-  box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 48%, transparent);
+.btn-primary:hover {
+  background: linear-gradient(180deg, rgb(from var(--accent) calc(r + 8) calc(g + 10) calc(b + 9)), var(--accent));
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
-.theme-noir .btn-primary:active { transform: scale(.95); }
+.btn-primary:active { transform: scale(.95); }
 
-.theme-noir .btn-back {
+.btn-back {
   min-height: 40px;
   padding-inline: 18px;
   border-radius: 20px;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
   background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
 }
 
-.theme-noir .link-btn {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+.link-btn {
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: rgb(from var(--nx-accent-2) calc(r + 34) calc(g - 4) calc(b - 3));
+  color: rgb(from var(--accent) calc(r + 34) calc(g - 4) calc(b - 3));
   text-decoration: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .max-w-lg.mx-0.p-6 input[type="checkbox"]::after,
-  .theme-noir .btn-primary {
+  .max-w-lg.mx-0.p-6 input[type="checkbox"]::after,
+  .btn-primary {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
+.max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 .vault-step { width: min(780px, calc(100vw - 5rem)); }

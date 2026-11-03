@@ -369,13 +369,13 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 .page-root {
   height: 100vh;
   min-height: 0;
-  background: var(--bg-page, var(--body-bg, #f7f8fa));
-  color: var(--text-primary, var(--body-text, #0f172a));
+  background: var(--bg-page, var(--body-bg));
+  color: var(--text-primary, var(--body-text));
 }
 
 .page-root.dark {
-  background: var(--bg-page, #0d1117);
-  color: var(--text-primary, #e6edf3);
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 /* ---- step bar ---- */
@@ -392,7 +392,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
 }
 
 .fr-step-n {
@@ -403,22 +403,22 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   place-items: center;
   font-size: 12px;
   font-weight: 800;
-  background: var(--bg-surface-alt, #eef2f6);
-  color: var(--text-muted, #64748b);
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
 }
 
-.dark .fr-step-n { background: var(--bg-surface-alt, #1c2128); }
+.dark .fr-step-n { background: var(--bg-surface-alt); }
 
-.fr-step.is-active { color: var(--text-primary, #0f172a); }
-.dark .fr-step.is-active { color: var(--text-primary, #e6edf3); }
+.fr-step.is-active { color: var(--text-primary); }
+.dark .fr-step.is-active { color: var(--text-primary); }
 
 .fr-step.is-active .fr-step-n,
 .fr-step.is-done .fr-step-n {
-  background: var(--accent-primary, #3d7fa0);
+  background: var(--accent);
   color: #fff;
 }
 
-.fr-step.is-done { color: var(--text-secondary, #475569); }
+.fr-step.is-done { color: var(--text-secondary); }
 
 /* ---- background setup progress ---- */
 .fr-setup {
@@ -428,24 +428,24 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   justify-content: center;
   padding: 8px 24px;
   font-size: 12.5px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 .fr-setup-track {
   width: 140px;
   height: 5px;
   border-radius: 99px;
-  background: var(--bg-surface-hover, #e2e8f0);
+  background: var(--bg-surface-hover);
   overflow: hidden;
   flex: none;
 }
 
-.dark .fr-setup-track { background: var(--bg-surface-hover, #262d36); }
+.dark .fr-setup-track { background: var(--bg-surface-hover); }
 
 .fr-setup-bar {
   height: 100%;
   border-radius: 99px;
-  background: var(--accent-primary, #3d7fa0);
+  background: var(--accent);
   transition: width .4s ease;
 }
 
@@ -459,7 +459,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 .fr-resuming {
   text-align: center;
   font-size: 14px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 /* ---- stage: the step sits directly on the page, centered ---- */
@@ -498,42 +498,42 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 
 /* Noir is opt-in: the first-run window uses the saved theme when one exists,
  * while a fresh install keeps useTheme's existing Protocol Dark fallback. */
-.theme-noir .page-root {
+.page-root {
   height: 100vh;
   min-height: 0;
   --fr-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background:
-    radial-gradient(90% 64% at 50% -8%, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 60%),
-    radial-gradient(52% 44% at 0% 100%, color-mix(in srgb, var(--nx-accent) 8%, transparent), transparent 72%),
-    var(--nx-paper);
-  color: var(--nx-read-2);
+    radial-gradient(90% 64% at 50% -8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
+    radial-gradient(52% 44% at 0% 100%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%),
+    var(--bg-surface);
+  color: var(--text-primary);
 }
 
-.theme-noir .fr-steps {
+.fr-steps {
   gap: 6px;
 }
 
-.theme-noir .fr-step {
+.fr-step {
   position: relative;
   height: 34px;
   gap: 8px;
   padding: 0 13px 0 8px;
   border-radius: 17px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .045em;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
   transition: color .2s ease, background .58s var(--fr-spring), box-shadow .58s var(--fr-spring), transform .58s var(--fr-spring);
 }
 
-.theme-noir .fr-step.is-active {
-  color: var(--nx-read-1);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), 0 0 20px color-mix(in srgb, var(--nx-accent) 18%, transparent);
+.fr-step.is-active {
+  color: var(--text-primary);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 50%, transparent), 0 0 20px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.theme-noir .fr-step.is-active::before {
+.fr-step.is-active::before {
   content: "";
   position: absolute;
   left: -1px;
@@ -541,78 +541,78 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   width: 3px;
   height: 18px;
   border-radius: 3px;
-  background: var(--nx-accent-2);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 90%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 90%, transparent);
 }
 
-.theme-noir .fr-step.is-done { color: var(--nx-read-3); }
+.fr-step.is-done { color: var(--text-muted); }
 
-.theme-noir .fr-step-n {
+.fr-step-n {
   width: 20px;
   height: 20px;
   border-radius: 10px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--nx-read-4);
-  background: var(--nx-hair);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  color: var(--text-muted);
+  background: var(--border-subtle);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
-.theme-noir .fr-step.is-active .fr-step-n,
-.theme-noir .fr-step.is-done .fr-step-n {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 24%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 10px color-mix(in srgb, var(--nx-accent) 20%, transparent);
+.fr-step.is-active .fr-step-n,
+.fr-step.is-done .fr-step-n {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-.theme-noir .fr-setup {
+.fr-setup {
   padding: 9px 24px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--nx-read-4);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .34);
-  border-bottom: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 6%, transparent);
+  color: var(--text-muted);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .34);
+  border-bottom: 1px solid color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 6%, transparent);
 }
 
-.theme-noir .fr-setup-track {
+.fr-setup-track {
   height: 4px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
 }
 
-.theme-noir .fr-setup-bar {
-  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 50%, transparent);
+.fr-setup-bar {
+  background: linear-gradient(90deg, var(--accent), var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
-.theme-noir .fr-stage {
+.fr-stage {
   padding: 0 16px;
 }
 
-.theme-noir .fr-card {
+.fr-card {
   max-width: 820px;
 }
 
-.theme-noir .fr-pane-enter-active,
-.theme-noir .fr-pane-leave-active {
+.fr-pane-enter-active,
+.fr-pane-leave-active {
   transition: opacity .34s ease, transform .58s var(--fr-spring), filter .34s ease;
 }
 
-.theme-noir .fr-pane-enter-from {
+.fr-pane-enter-from {
   opacity: 0;
   transform: translateY(10px) scale(.985);
   filter: blur(8px);
 }
 
-.theme-noir .fr-pane-leave-to {
+.fr-pane-leave-to {
   opacity: 0;
   transform: translateY(-6px) scale(.99);
   filter: blur(5px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .fr-step,
-  .theme-noir .fr-pane-enter-active,
-  .theme-noir .fr-pane-leave-active {
+  .fr-step,
+  .fr-pane-enter-active,
+  .fr-pane-leave-active {
     transition-duration: .01ms;
   }
 }
@@ -625,8 +625,8 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   gap: 14px;
   padding: 10px 24px;
   font-size: 13px;
-  color: var(--text-error, #b91c1c);
-  background: var(--bg-error, #fef2f2);
+  color: var(--status-error);
+  background: var(--status-error-soft);
 }
 
 .fr-failure-btn {
@@ -634,8 +634,8 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   padding: 6px 14px;
   border-radius: 8px;
   font-weight: 600;
-  background: var(--accent-primary, #3d7fa0);
-  color: var(--text-on-accent, #fff);
+  background: var(--accent);
+  color: var(--text-on-accent);
 
   &:disabled { opacity: .6; cursor: wait; }
 }
@@ -644,7 +644,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   padding: 8px 24px;
   text-align: center;
   font-size: 13px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 .fr-locked {

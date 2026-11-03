@@ -30,20 +30,20 @@ export function applyMonacoTheme(isDark: boolean): void {
   const base = isDark ? 'vs-dark' : 'vs';
 
   // -- Read live CSS variables --------------------------------------------------
-  const editorBg = cssVar('--editor-bg', isDark ? '#1e1e2e' : '#f0f0f0');
+  const editorBg = cssVar('--bg-page', isDark ? '#1e1e2e' : '#f0f0f0');
   const textPrimary = cssVar('--text-primary', isDark ? '#ffffff' : '#0d0d0d');
   const textSecondary = cssVar('--text-secondary', isDark ? '#94a3b8' : '#64748b');
   const textMuted = cssVar('--text-muted', isDark ? '#cbd5e1' : '#94a3b8');
   const bgSurface = cssVar('--bg-surface', isDark ? '#1e293b' : '#f8fafc');
   const bgSurfaceAlt = cssVar('--bg-surface-alt', isDark ? '#334155' : '#f1f5f9');
   const borderDefault = cssVar('--border-default', isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0');
-  const accentPrimary = cssVar('--accent-primary', isDark ? '#38bdf8' : '#0ea5e9');
-  const textError = cssVar('--text-error', isDark ? '#f87171' : '#dc2626');
-  const textWarning = cssVar('--text-warning', isDark ? '#fbbf24' : '#d97706');
-  const textSuccess = cssVar('--text-success', isDark ? '#4ade80' : '#16a34a');
-  const textInfo = cssVar('--text-info', isDark ? '#38bdf8' : '#0284c7');
-  const editorBorder = cssVar('--editor-border', isDark ? '#334155' : '#cbd5e1');
-  const selectionBg = cssVar('--terminal-selection-bg', isDark ? 'rgba(59,130,246,0.5)' : 'rgba(59,130,246,0.25)');
+  const accentPrimary = cssVar('--accent', isDark ? '#38bdf8' : '#0ea5e9');
+  const textError = cssVar('--status-error', isDark ? '#f87171' : '#dc2626');
+  const textWarning = cssVar('--status-warning', isDark ? '#fbbf24' : '#d97706');
+  const textSuccess = cssVar('--status-success', isDark ? '#4ade80' : '#16a34a');
+  const textInfo = cssVar('--status-info', isDark ? '#38bdf8' : '#0284c7');
+  const editorBorder = cssVar('--border-default', isDark ? '#334155' : '#cbd5e1');
+  const selectionBg = cssVar('--bg-selected', isDark ? 'rgba(59,130,246,0.5)' : 'rgba(59,130,246,0.25)');
 
   // -- Define the theme ---------------------------------------------------------
   monaco.editor.defineTheme(THEME_NAME, {

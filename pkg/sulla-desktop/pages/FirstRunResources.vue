@@ -392,7 +392,7 @@ const saveResourcesAndContinue = async() => {
 .vue-slider :deep(.vue-slider-process) {
   position: absolute;
   height: 100%;
-  background: var(--accent-primary);
+  background: var(--accent);
   border-radius: 3px;
   top: 0;
   left: 0;
@@ -418,7 +418,7 @@ const saveResourcesAndContinue = async() => {
   width: 20px;
   height: 20px;
   background: var(--bg-surface);
-  border: 2px solid var(--accent-primary);
+  border: 2px solid var(--accent);
   border-radius: 50%;
   cursor: grab;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -428,7 +428,7 @@ const saveResourcesAndContinue = async() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: var(--accent-primary);
+  background: var(--accent);
   cursor: grab;
 }
 
@@ -450,7 +450,7 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: var(--border-strong);
+  border-color: var(--border-default-strong);
   background-color: var(--bg-surface-alt);
 }
 
@@ -492,7 +492,7 @@ input:hover, select:hover {
 }
 
 .fr-border-error {
-  border-color: var(--border-error);
+  border-color: var(--status-error);
 }
 
 .fr-muted {
@@ -500,13 +500,13 @@ input:hover, select:hover {
 }
 
 .fr-error {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 
 .fr-error-box {
-  background-color: var(--bg-error);
-  border-color: var(--border-error);
-  color: var(--text-error);
+  background-color: var(--status-error-soft);
+  border-color: var(--status-error);
+  color: var(--status-error);
 }
 
 .fr-btn-toggle {
@@ -528,10 +528,10 @@ input:hover, select:hover {
 
 .fr-btn-primary {
   color: var(--text-on-accent);
-  background-color: var(--accent-primary);
+  background-color: var(--accent);
 
   &:hover {
-    background-color: var(--accent-primary-hover);
+    background-color: var(--accent-hover);
   }
 }
 
@@ -541,7 +541,7 @@ input:hover, select:hover {
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--accent-primary, #3d7fa0);
+  color: var(--accent);
   margin-top: 8px;
 }
 
@@ -551,13 +551,13 @@ input:hover, select:hover {
   font-weight: 800;
   letter-spacing: -.02em;
   margin: 10px 0 12px;
-  color: var(--text-primary, #0f172a);
+  color: var(--text-primary);
 }
 
 .frw-lead {
   font-size: 16px;
   line-height: 1.6;
-  color: var(--text-secondary, #475569);
+  color: var(--text-secondary);
   max-width: 620px;
 }
 
@@ -572,15 +572,15 @@ input:hover, select:hover {
     flex-direction: column;
     gap: 4px;
     padding: 14px;
-    border: 1px solid var(--border-default, #e2e8f0);
+    border: 1px solid var(--border-default);
     border-radius: 12px;
-    background: var(--bg-surface-alt, #f8fafc);
+    background: var(--bg-surface-alt);
     font-size: 13.5px;
-    color: var(--text-secondary, #475569);
+    color: var(--text-secondary);
   }
 
   b {
-    color: var(--text-primary, #0f172a);
+    color: var(--text-primary);
     font-size: 14.5px;
   }
 }
@@ -593,8 +593,8 @@ input:hover, select:hover {
   place-items: center;
   font-size: 12px;
   font-weight: 800;
-  color: var(--accent-primary, #3d7fa0);
-  background: var(--bg-surface-hover, #e4f0f6);
+  color: var(--accent);
+  background: var(--bg-surface-hover);
   margin-bottom: 4px;
 }
 
@@ -604,19 +604,19 @@ input:hover, select:hover {
   gap: 16px;
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px dashed var(--border-default, #cbd5e1);
+  border: 1px dashed var(--border-default);
   font-size: 13.5px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 
   > div { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 
-  b { color: var(--text-primary, #0f172a); font-size: 14px; }
+  b { color: var(--text-primary); font-size: 14px; }
 }
 
 .frw-link {
   background: none;
   border: none;
-  color: var(--accent-primary, #3d7fa0);
+  color: var(--accent);
   font-weight: 700;
   cursor: pointer;
   font-size: 14px;
@@ -636,7 +636,7 @@ input:hover, select:hover {
   font-weight: 700;
   font-size: 15px;
   color: #fff;
-  background: var(--accent-primary, #3d7fa0);
+  background: var(--accent);
   border: none;
   cursor: pointer;
 
@@ -645,13 +645,13 @@ input:hover, select:hover {
 
 .frw-trust {
   font-size: 13px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 .frw-link {
   font-size: 14px;
   font-weight: 600;
-  color: var(--accent-primary, #3d7fa0);
+  color: var(--accent);
   background: none;
   border: none;
   cursor: pointer;
@@ -659,143 +659,143 @@ input:hover, select:hover {
   &:disabled { opacity: .5; cursor: wait; }
 }
 
-.theme-noir .frw {
+.frw {
   --frw-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw-eyebrow {
+.frw-eyebrow {
   margin-top: 5px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: var(--nx-accent-2);
+  color: var(--accent);
 }
 
-.theme-noir .frw-title {
+.frw-title {
   max-width: 650px;
   margin: 9px 0 12px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: var(--font-display);
   font-size: clamp(38px, 5vw, 52px);
   line-height: 1.02;
   font-weight: 600;
   letter-spacing: -.025em;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
   text-wrap: balance;
-  text-shadow: 0 0 34px color-mix(in srgb, var(--nx-accent) 18%, transparent);
+  text-shadow: 0 0 34px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.theme-noir .frw-lead {
+.frw-lead {
   max-width: 680px;
   font-size: 15px;
   line-height: 1.65;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-how {
+.frw-how {
   gap: 10px;
   margin: 26px 0 18px;
 }
 
-.theme-noir .frw-how > div {
+.frw-how > div {
   min-height: 142px;
   gap: 6px;
   padding: 16px;
   border-color: transparent;
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
-  color: var(--nx-read-4);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-muted);
   transition: transform .58s var(--frw-spring), background .22s ease, box-shadow .22s ease;
 }
 
-.theme-noir .frw-how > div:hover {
+.frw-how > div:hover {
   transform: translateY(-3px);
-  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
 }
 
-.theme-noir .frw-how b {
-  color: var(--nx-read-1);
+.frw-how b {
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 600;
 }
 
-.theme-noir .frw-num {
+.frw-num {
   width: 28px;
   height: 28px;
   margin-bottom: 6px;
   border-radius: 14px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
-  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 15%, transparent);
+  color: rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
-.theme-noir .frw-resources {
+.frw-resources {
   padding: 16px 18px;
   border: 0;
   border-radius: 18px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  color: var(--nx-read-4);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 3%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-resources b {
-  color: var(--nx-read-1);
+.frw-resources b {
+  color: var(--text-primary);
   font-weight: 600;
 }
 
-.theme-noir .frw-link {
+.frw-link {
   height: 30px;
   padding: 0 13px;
   border-radius: 15px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .06em;
-  color: var(--nx-read-2);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .45);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  color: var(--text-primary);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .45);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw-link:active { transform: scale(.94); }
+.frw-link:active { transform: scale(.94); }
 
-.theme-noir .fr-fieldset {
+.fr-fieldset {
   margin-top: 14px;
   padding: 14px 16px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent);
-  color: var(--nx-read-2);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw :deep(.vue-slider-rail) {
+.frw :deep(.vue-slider-rail) {
   height: 5px;
   border-radius: 3px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
-.theme-noir .frw :deep(.vue-slider-process) {
-  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 45%, transparent);
+.frw :deep(.vue-slider-process) {
+  background: linear-gradient(90deg, var(--accent), var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.theme-noir .frw :deep(.vue-slider-dot-handle) {
-  background: var(--nx-read-2);
-  box-shadow: inset 0 0 0 2px var(--nx-accent-2), 0 0 14px color-mix(in srgb, var(--nx-accent) 55%, transparent);
+.frw :deep(.vue-slider-dot-handle) {
+  background: var(--text-primary);
+  box-shadow: inset 0 0 0 2px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
+.frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
 
-.theme-noir .frw input[type="checkbox"] {
+.frw input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -803,77 +803,77 @@ input:hover, select:hover {
   appearance: none;
   border: 0;
   border-radius: 11px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
   cursor: pointer;
   transition: background .25s ease, box-shadow .25s ease;
 }
 
-.theme-noir .frw input[type="checkbox"]::after {
+.frw input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--nx-read-2);
+  background: var(--text-primary);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--frw-spring), background .2s ease;
 }
 
-.theme-noir .frw input[type="checkbox"]:checked {
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 40%, transparent);
+.frw input[type="checkbox"]:checked {
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.theme-noir .frw input[type="checkbox"]:checked::after {
+.frw input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-.theme-noir .frw-muted { color: var(--nx-read-4); }
+.frw-muted { color: var(--text-muted); }
 
-.theme-noir .frw-actions { margin-top: 22px; }
+.frw-actions { margin-top: 22px; }
 
-.theme-noir .frw-btn {
+.frw-btn {
   min-height: 42px;
   padding: 0 22px;
   border-radius: 21px;
   font-size: 14px;
   font-weight: 600;
   color: #fff;
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--nx-accent) 34%, transparent);
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: inset 0 0 0 .5px rgb(from var(--text-primary) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw-btn:hover {
+.frw-btn:hover {
   filter: none;
-  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--nx-accent) 48%, transparent);
+  box-shadow: inset 0 0 0 .5px rgb(from var(--text-primary) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
-.theme-noir .frw-btn:active { transform: scale(.95); }
+.frw-btn:active { transform: scale(.95); }
 
-.theme-noir .frw-trust {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+.frw-trust {
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .frw-how > div,
-  .theme-noir .frw-link,
-  .theme-noir .frw input[type="checkbox"]::after,
-  .theme-noir .frw-btn {
+  .frw-how > div,
+  .frw-link,
+  .frw input[type="checkbox"]::after,
+  .frw-btn {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .frw-how > div:hover {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+.frw-how > div:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
-.theme-noir-light .frw input[type="checkbox"]::after {
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
+.frw input[type="checkbox"]::after {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 </style>

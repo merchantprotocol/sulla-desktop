@@ -140,7 +140,7 @@ export default defineComponent({
         language:             'plaintext',
         theme:                props.isDark ? 'vs-dark' : 'vs',
         fontSize:             13,
-        fontFamily:           '"JetBrains Mono", "Fira Code", Menlo, Monaco, "Courier New", monospace',
+        fontFamily:           'var(--font-mono), "Fira Code", Menlo, Monaco, "Courier New", monospace',
         fontLigatures:        true,
         lineNumbers:          'on',
         minimap:              { enabled: false },
@@ -209,7 +209,7 @@ export default defineComponent({
   flex-shrink: 0;
   background: var(--bg-surface-alt, var(--bg-surface));
   border-bottom: 1px solid var(--border-default);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -220,7 +220,7 @@ export default defineComponent({
 }
 
 .dirty-dot {
-  color: var(--accent-primary, #5096b3);
+  color: var(--accent);
   font-size: 10px;
   line-height: 1;
 }
@@ -237,7 +237,7 @@ export default defineComponent({
 .save-btn {
   flex-shrink: 0;
   padding: 3px 10px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
   border-radius: 4px;
   border: 1px solid var(--border-default);
@@ -250,7 +250,7 @@ export default defineComponent({
 .save-btn:hover:not(:disabled) {
   background: var(--accent-dim, rgba(80, 150, 179, 0.15));
   border-color: var(--accent-border, rgba(80, 150, 179, 0.4));
-  color: var(--accent-primary, #5096b3);
+  color: var(--accent);
 }
 
 .save-btn:disabled {
@@ -261,7 +261,7 @@ export default defineComponent({
 .file-editor-error {
   padding: 12px 16px;
   font-size: 13px;
-  color: var(--danger, #e05b5b);
+  color: var(--danger);
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
 }
@@ -274,60 +274,60 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.theme-noir .file-editor-root {
-  background: var(--nx-paper);
-  color: var(--nx-read-2);
+.file-editor-root {
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 
-.theme-noir .file-editor-bar {
+.file-editor-bar {
   height: 44px;
   padding: 0 14px;
   gap: 9px;
   background: color-mix(in srgb, var(--bg-surface-alt) 78%, transparent);
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow) 17.7778%, transparent);
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .file-editor-name {
-  color: var(--nx-read-1);
+.file-editor-name {
+  color: var(--text-primary);
   font-weight: 600;
 }
 
-.theme-noir .dirty-dot {
-  color: var(--nx-warning);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--nx-warning) 70%, transparent);
+.dirty-dot {
+  color: var(--status-warning);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--status-warning) 70%, transparent);
 }
 
-.theme-noir .file-editor-path {
-  color: var(--nx-read-4);
-  font-family: ui-monospace, 'SF Mono', monospace;
+.file-editor-path {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
-.theme-noir .save-btn {
+.save-btn {
   height: 30px;
   padding: 0 14px;
-  color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-hair-strong) 31.25%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--border-subtle-strong) 31.25%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle-strong) 75%, transparent);
   border-radius: 15px;
   transition: transform 0.45s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }
 
-.theme-noir .save-btn:hover:not(:disabled) {
-  color: var(--nx-read-1);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 32%, transparent), color-mix(in srgb, var(--nx-accent) 16%, transparent));
-  border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
+.save-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 32%, transparent), color-mix(in srgb, var(--accent) 16%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   transform: translateY(-1px);
 }
 
-.theme-noir .file-editor-error {
-  color: var(--nx-danger);
-  background: color-mix(in srgb, var(--nx-danger) 6%, transparent);
-  border-color: color-mix(in srgb, var(--nx-danger) 22%, transparent);
+.file-editor-error {
+  color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 6%, transparent);
+  border-color: color-mix(in srgb, var(--status-error) 22%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .save-btn { transition-duration: 0.01ms; }
+  .save-btn { transition-duration: 0.01ms; }
 }
 </style>

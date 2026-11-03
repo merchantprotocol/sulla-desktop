@@ -16,7 +16,7 @@
   --sec: #3a7fa0;
   --row: #2f9e83;
   --mod: #4c5866;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace
+  --mono: var(--font-mono)
 }
 
 .shb-root * {
