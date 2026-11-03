@@ -10,6 +10,8 @@ import { deviceMessage, getDevicePublicKey, signDeviceMessageExact } from '@pkg/
 import { getOrCreateSupportDeviceId, readEnrolledSupportDeviceId } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore } from '@pkg/main/supportState';
 
+function stateStore() { return new SupportStateStore(app.getPath('userData')) }
+
 const ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
 let preferredIdentity: string | null = null;
 function identities(): string[] { return [...new Set([preferredIdentity, readEnrolledSupportDeviceId(), stateStore().read().supportIdentity?.guestDeviceId, getOrCreateSupportDeviceId()].filter((value):value is string=>!!value))] }
