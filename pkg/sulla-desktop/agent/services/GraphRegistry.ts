@@ -1672,6 +1672,9 @@ export function nextMessageId(): string {
 }
 
 async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<AgentGraphState> {
+  const { getModelDefaults, resolveDefaultChoice } = await import('../languagemodels/modelDefaults');
+  const heartbeatDefault = await resolveDefaultChoice((await getModelDefaults()).heartbeat);
+  wsChannel = heartbeatDefault.agent?.graphAgentId || wsChannel;
   const heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
 
   // Resolve provider to model/local flags
@@ -1732,6 +1735,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
       iterations:           0,
       revisionCount:        0,
       maxIterationsReached: false,
+      ...(heartbeatDefault.modelChoice ? { modelChoice: heartbeatDefault.modelChoice } : {}),
       memory:               {
         knowledgeBaseContext: '',
         chatSummariesContext: '',

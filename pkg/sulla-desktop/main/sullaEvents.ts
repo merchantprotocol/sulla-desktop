@@ -14,6 +14,7 @@ import * as path from 'path';
 import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initAgentsIpc } from './agentsIpc';
 import { initModelRoutingIpc } from './modelRoutingIpc';
+import { initModelDefaultsIpc } from './modelDefaultsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initCloudConnectionEvents } from './cloud/cloudLifecycle';
@@ -92,6 +93,7 @@ export function initSullaEvents(): void {
   initTabsIpc();
   initAgentsIpc();
   initModelRoutingIpc();
+  initModelDefaultsIpc();
   initConversationHistoryIpc();
   initBookmarksIpc();
   initChatMessagesIpc();

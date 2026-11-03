@@ -7,6 +7,7 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { isFrontDoorAgent } from './AgentDirectoryService';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
 
 /** The built-in Sulla persona. Always available; the last-resort front door. */
 export const SULLA_ROUTE_AGENT_ID = 'sulla';
@@ -19,6 +20,7 @@ export interface RoutableAgent {
   /** Agent ID used to construct the graph. */
   graphAgentId: string;
   name:         string;
+  modelChoice?: AgentModelChoice;
 }
 
 const SULLA_ROUTE: RoutableAgent = { agentId: SULLA_ROUTE_AGENT_ID, graphAgentId: DEFAULT_ROUTE_GRAPH_AGENT_ID, name: 'Sulla' };
@@ -58,11 +60,14 @@ export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAg
  * confident route: always Sulla. The human picks custom agents themselves.
  */
 export async function resolveDefaultRouteAgent(): Promise<RoutableAgent> {
-  return { ...SULLA_ROUTE };
+  const { getModelDefaults, resolveDefaultChoice } = await import('../languagemodels/modelDefaults');
+  const resolved = await resolveDefaultChoice((await getModelDefaults()).chat);
+  return { ...(resolved.agent || SULLA_ROUTE), ...(resolved.modelChoice ? { modelChoice: resolved.modelChoice } : {}) };
 }
 
 /** Shared state mutation used by both the route_agent tool and first-message dispatch. */
 export function applyThreadAgentRoute(state: BaseThreadState, agent: RoutableAgent): void {
   (state.metadata as any).routedAgentId = agent.graphAgentId;
   (state.metadata as any).routedAgentSourceId = agent.agentId;
+  if (agent.modelChoice) (state.metadata as any).modelChoice = agent.modelChoice;
 }
