@@ -29,7 +29,7 @@ jest.unstable_mockModule('@pkg/utils/logging', () => {
 });
 jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
-  default:    { sullaRuntime: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
+  default:    { sullaRuntime: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp', appHome: '/tmp' },
 }));
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
 

@@ -5,16 +5,17 @@
 
 import { describe, expect, jest, test } from '@jest/globals';
 
-import { getProviderExecutionTransport, remoteKillConfirmed } from '../ProviderExecutionTransport';
-
 // The guest transport runs `<sullaRuntime> exec -- sh -c <kill>`; stand in a
-// binary that exits 0 (kill confirmed) or 1 (not confirmed).
+// binary that exits 0 (kill confirmed) or 1 (not confirmed). Jest runs in ESM
+// mode here, so mocks must be registered before a dynamic import.
 let mockRuntime = '/bin/true';
-jest.mock('@pkg/utils/paths', () => ({
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
-  default:    { get sullaRuntime() { return mockRuntime }, sullaHome: '/tmp' },
+  default:    { get sullaRuntime() { return mockRuntime }, sullaHome: '/tmp', appHome: '/tmp' },
 }));
-jest.mock('electron', () => ({ __esModule: true, default: {} }));
+jest.unstable_mockModule('electron', () => ({ __esModule: true, default: {} }));
+
+const { getProviderExecutionTransport, remoteKillConfirmed } = await import('../ProviderExecutionTransport');
 
 const request = (confirm: boolean) => ({
   context: { runtime: 'guest', provider: 'claude-code', conversationId: 'synthetic' } as any,
