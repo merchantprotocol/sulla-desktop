@@ -434,6 +434,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
+  'sulla-cloud-memory:list-pending':          () => Array<{ id: string; generation: number | string; record: Record<string, unknown>; source_device_id: string }>;
+  'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
   'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
 
