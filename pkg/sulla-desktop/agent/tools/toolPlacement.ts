@@ -8,26 +8,23 @@
  * mandatory. `placements` lists the hosts that are *eligible* to run a tool:
  * a host only offers a tool when it is eligible here AND it implements it.
  *
- * The three type aliases below mirror `packages/agent-core/src/types.ts`
- * (T1, PR #1720) character for character; a test fails if they drift. Import
- * them from agent-core once that package is on main.
+ * Placement types come directly from the portable core so Desktop and mobile
+ * consumers cannot silently drift. This remains a type-only import because the
+ * tools service image intentionally copies Desktop agent code without packages.
  */
 
+import type {
+  ToolCredential,
+  ToolPlacement,
+  ToolPlacementMetadata,
+  ToolSideEffect,
+} from '../../../../packages/agent-core/src/types';
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
 import policy from './tool-placement-policy.json';
 
 import type { ToolOperation } from './base';
 
-export type ToolSideEffect = 'read' | 'write' | 'irreversible';
-export type ToolPlacement = 'desktop' | 'cloud' | 'mobile';
-export type ToolCredential = 'none' | { integration: string } | { vaultItem: true };
-
-export interface ToolPlacementMetadata {
-  placements: ToolPlacement[];
-  relayable:  boolean;
-  sideEffect: ToolSideEffect;
-  credential: ToolCredential;
-}
+export type { ToolCredential, ToolPlacement, ToolPlacementMetadata, ToolSideEffect };
 
 /** The fields of a `ToolManifest` that placement reads. */
 export interface PlacementManifest {

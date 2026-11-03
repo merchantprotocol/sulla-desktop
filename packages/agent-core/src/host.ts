@@ -9,7 +9,7 @@
  * these and passes them in.
  */
 
-import type { ChatMessage, ToolResult, ToolSpec, Usage } from './types.js';
+import type { ChatMessage, FinishReason, ToolCall, ToolResult, ToolSpec, Usage } from './types.js';
 
 /**
  * The subset of AbortSignal the core reads. Pass a real AbortSignal where
@@ -80,6 +80,13 @@ export interface ToolInvocationContext {
 export interface ToolHost {
   invoke(call: { id: string; name: string; args: Record<string, unknown> }, ctx: ToolInvocationContext): Promise<ToolResult>;
   /**
+   * Resume an invocation whose durable checkpoint says it may already have
+   * started. The host must return the cached result for `call.id`, or execute
+   * it atomically exactly once. When absent, core fails closed instead of
+   * risking a duplicate side effect.
+   */
+  resumeInvocation?(call: { id: string; name: string; args: Record<string, unknown> }, ctx: ToolInvocationContext): Promise<ToolResult>;
+  /**
    * Asks a human to approve a call that `needsApproval` (irreversible, or
    * `requiresApproval` set by the host). Hosts without a way to ask must
    * leave this out; the core then refuses those calls. `ctx.signal` aborts
@@ -98,6 +105,13 @@ export interface TurnCheckpoint {
   iteration: number;
   messages:  ChatMessage[];
   usage:     Usage;
+  /** `model` is a safe next-model boundary; `tools` has pending calls. */
+  phase: 'model' | 'tools';
+  pendingToolCalls?: ToolCall[];
+  nextToolIndex?: number;
+  finishReason?: FinishReason;
+  /** Set before invoking a tool and cleared only after its result is durable. */
+  inFlightToolCallId?: string;
 }
 
 /**
