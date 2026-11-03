@@ -6,10 +6,10 @@
 -->
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
+    class="app-titlebar relative flex flex-none items-end justify-between pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
-    <div class="relative flex shrink-0 items-center pb-1">
+    <div class="relative flex shrink-0 items-center self-stretch">
       <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
@@ -1329,6 +1329,11 @@ function handleTabContextMenuAction(
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
+  /* One surface for the whole bar: the logo, the tab strip and the right-hand
+     controls share the tab strip's glass background and a single bottom
+     border that runs edge to edge. */
+  background: linear-gradient(var(--bg-glass), var(--bg-glass)), var(--bg-page);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .app-titlebar a,
@@ -1741,9 +1746,9 @@ function handleTabContextMenuAction(
   height: 43px;
   padding: 3px 5px 5px;
   margin-left: 14px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
-  border-bottom: 1px solid var(--border-default);
-  backdrop-filter: blur(10px);
+  /* The background and bottom border live on .app-titlebar so they span the
+     full width instead of stopping where the tabs begin. */
+  background: transparent;
 }
 
 .app-titlebar .tab-scroll-container {
@@ -1767,10 +1772,6 @@ function handleTabContextMenuAction(
   pointer-events: none;
   z-index: 0;
   transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
-}
-
-.app-titlebar .tab-scroll-wrapper {
-  background: var(--bg-glass);
 }
 
 .app-titlebar .tab-active-indicator {
