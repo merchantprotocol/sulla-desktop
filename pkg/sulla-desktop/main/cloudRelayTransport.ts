@@ -14,6 +14,7 @@
  */
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
 import {
   issueLocalBrokerContext,
   requireConfiguredCredentialBroker,
@@ -41,7 +42,8 @@ export interface VaultRelayDeps {
   broker:       () => Pick<LocalVaultBrokerClient, 'status' | 'createRelay' | 'relayEventStream' | 'relaySend' | 'closeRelay'>;
   issueContext: (accountId: string, signal: AbortSignal) => Promise<ToolExecutionContext>;
   /** Metadata only: account ids/labels, never values. */
-  listAccounts: () => Promise<{ account_id: string; active: boolean; connected: boolean }[]>;
+  listAccounts:   () => Promise<{ account_id: string; active: boolean; connected: boolean }[]>;
+  restoreSession: () => Promise<boolean>;
 }
 
 export function cloudRelayUsesVault(): boolean {
@@ -56,7 +58,8 @@ const defaultDeps: VaultRelayDeps = {
     credentialScope: { integration_id: SULLA_CLOUD_INTEGRATION_ID, account_id: accountId },
     signal,
   }),
-  listAccounts: () => getIntegrationService().getAccounts(SULLA_CLOUD_INTEGRATION_ID),
+  listAccounts:   () => getIntegrationService().getAccounts(SULLA_CLOUD_INTEGRATION_ID),
+  restoreSession: () => getVaultKeyService().initialize(),
 };
 
 export function classifyRelayFailure(error: unknown): RelayFailureKind {
@@ -148,8 +151,9 @@ export class VaultRelaySocket implements RelaySocketLike {
     const signal = this.abort.signal;
     try {
       const broker = this.deps.broker();
-      const status = await broker.status(signal);
-      if (!status.unlocked) throw new VaultRelaySetupError('vault_locked', 'Vault is locked');
+      let status = await broker.status(signal);
+      if (!status.unlocked && await this.deps.restoreSession()) status = await broker.status(signal);
+      if (!status.unlocked) throw new VaultRelaySetupError('vault_locked', 'Signed-in vault session could not be restored');
       const accounts = await this.deps.listAccounts();
       const account = accounts.find(entry => entry.account_id === this.room) ??
         accounts.find(entry => entry.active) ?? accounts[0];

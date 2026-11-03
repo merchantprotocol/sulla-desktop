@@ -66,6 +66,7 @@ const broker = {
 
 const log = { log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() };
 const mockAuth = { getCurrentAccessToken: jest.fn(async() => { throw new Error('token read must not happen in vault mode') }) };
+const restoreSession = jest.fn(async() => { broker.unlocked = true; return true });
 
 mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': {
@@ -78,6 +79,7 @@ mockModules({
   '@pkg/agent/services/WebSocketClientService': { getWebSocketClientService: () => ({ connect: jest.fn(), send: jest.fn(), onMessage: jest.fn() }) },
   '@pkg/main/ipcMain':                          { getIpcMainProxy: jest.fn() },
   '@pkg/main/sullaCloudAuth':                   mockAuth,
+  '@pkg/agent/services/VaultKeyService':         { getVaultKeyService: () => ({ initialize: restoreSession }) },
   '@pkg/main/deviceIdentity':                   { getDesktopDeviceId: jest.fn(async() => 'desktop-1') },
   '@pkg/main/sync/syncMirror':                  {
     claudeMessageExists: jest.fn(async() => false),
@@ -115,6 +117,7 @@ describe('DesktopRelayClient via the vault relay broker', () => {
     broker.unlocked = true;
     broker.createError = null;
     broker.streams = [];
+    restoreSession.mockClear();
     broker.relaySend.mockResolvedValue(undefined);
     client = new DesktopRelayClient();
   });
@@ -178,23 +181,15 @@ describe('DesktopRelayClient via the vault relay broker', () => {
     );
   });
 
-  it('waits on a locked vault with a short fixed poll and connects after unlock', async() => {
+  it('silently restores a signed-in vault before opening the relay', async() => {
     broker.unlocked = false;
     await client.setPairedUserId(ROOM);
     await jest.advanceTimersByTimeAsync(0);
 
-    expect(broker.createRelay).not.toHaveBeenCalled();
-    expect(client.getStatus().lastError).toMatch(/Vault is locked/);
-    // Two minutes locked: polls every 5s, never escalates, logs once.
-    await jest.advanceTimersByTimeAsync(120_000);
-    expect(broker.status.mock.calls.length).toBeGreaterThanOrEqual(20);
-    expect(broker.createRelay).not.toHaveBeenCalled();
-    expect(warnings().filter(line => line.includes('Vault is locked'))).toHaveLength(1);
-
-    broker.unlocked = true;
-    await jest.advanceTimersByTimeAsync(5_100);
+    expect(restoreSession).toHaveBeenCalledTimes(1);
     expect(broker.createRelay).toHaveBeenCalledTimes(1);
     expect(client.getStatus().connected).toBe(true);
+    expect(client.getStatus().lastError).toBe('');
   });
 
   it('backs off exponentially on a broker denial, capped at 5 minutes, logging one line', async() => {

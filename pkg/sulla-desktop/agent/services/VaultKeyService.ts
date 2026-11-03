@@ -135,6 +135,13 @@ export class VaultKeyService {
     void getDesktopVaultClient().lock().catch(error => console.error('[VaultKeyService] Container lock acknowledgement failed:', error));
   }
 
+  /** Logout boundary: lock the container, then remove the OS-wrapped auto-unlock session. */
+  async clearSignedInSession(): Promise<void> {
+    getDesktopVaultClient().markLocked();
+    await getDesktopVaultClient().lock();
+    await fs.promises.rm(this.masterKeyPath, { force: true });
+  }
+
   async setupFromMasterPassword(_password: string): Promise<{ recoveryKey: string }> { throw this.humanUiRequired() }
   async changePassword(_current: string, _next: string): Promise<never> { throw this.humanUiRequired() }
   async recoverFromRecoveryKey(_key: string): Promise<boolean> { throw this.humanUiRequired() }

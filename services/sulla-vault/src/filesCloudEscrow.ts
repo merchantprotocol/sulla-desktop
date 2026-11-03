@@ -62,7 +62,7 @@ export class FilesCloudEscrowService {
         this.audit?.emit({subjectKind:'vault-secret',subjectId:state.vault_id,action:'files_cloud_escrow_key_wrapped',actor:'sulla-vault',result:'allowed',requestId,meta:{vaultEpoch:String(vaultEpoch)}});
         return {vaultId:state.vault_id,vaultEpoch,transport};
       } finally { ek.fill(0) }
-    }).catch(error=>{ if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423,'Unlock Passwords to back up Files.'); throw error });
+    }).catch(error=>{ if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423,'The signed-in encryption session could not be restored.'); throw error });
   }
   private clearRestoredCloudKey():void { this.restoredCloudKey?.userKey.fill(0); this.restoredCloudKey=undefined }
   async unlockCloud(password:string):Promise<{unlocked:true;expiresAt:number}> {
@@ -88,7 +88,7 @@ export class FilesCloudEscrowService {
   async restoreKey(requestId:string,recipientPublicKey:string){
     if(!UUID.test(requestId)||typeof recipientPublicKey!=='string'||recipientPublicKey.length>256)throw new FilesCloudEscrowError('invalid_request',400);
     const cached=this.restoredCloudKey;
-    if(!cached||cached.expiresAt<=Date.now()){this.clearRestoredCloudKey();throw new FilesCloudEscrowError('cloud_vault_locked',423,'Unlock the Cloud vault to restore this Files collection.');}
+    if(!cached||cached.expiresAt<=Date.now()){this.clearRestoredCloudKey();throw new FilesCloudEscrowError('cloud_vault_locked',423,'Sign in to Sulla Cloud again to restore this Files collection.');}
     const ek=await deriveFilesEscrowKey(cached.userKey,cached.vaultId,cached.vaultEpoch);
     try { return {vaultId:cached.vaultId,vaultEpoch:cached.vaultEpoch,transport:await transportWrap(ek,recipientPublicKey,requestId,cached.vaultId,cached.vaultEpoch)}; }
     finally { ek.fill(0); this.clearRestoredCloudKey() }
