@@ -50,10 +50,16 @@ jobs:
       - name: Install JavaScript dependencies
         run: yarn install --frozen-lockfile --ignore-platform --ignore-scripts
       - name: Run focused Desktop session and relay restore tests
+        shell: bash
         run: |
+          set -o pipefail
           yarn test:unit:jest --runInBand \
             pkg/sulla-desktop/agent/services/__tests__/VaultKeyService.session.test.ts \
-            pkg/sulla-desktop/main/__tests__/desktopRelayVault.spec.ts
+            pkg/sulla-desktop/main/__tests__/desktopRelayVault.spec.ts 2>&1 | tee "${RUNNER_TEMP}/vault-session-jest.log" || {
+              detail=$(tail -n 80 "${RUNNER_TEMP}/vault-session-jest.log" | tail -c 6000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+              echo "::error title=Focused vault session tests failed::${detail}"
+              exit 1
+            }
       - name: Run focused Files Cloud escrow restore tests
         run: |
           yarn esbuild services/sulla-vault/src/filesCloudEscrow.security.test.ts \
