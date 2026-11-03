@@ -133,6 +133,8 @@ async function migrateLegacy(): Promise<EditableState> {
 }
 
 export class ModelRouter {
+  /** Optional provider-service source; tests inject one because ESM jest has no `require`. */
+  constructor(private readonly providerService?: () => any) {}
   private health = new Map<string, Health>();
   private loadedHealth = false;
   private listeners = new Set<() => void>();
@@ -232,7 +234,7 @@ export class ModelRouter {
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
   private async liveProviders(): Promise<Map<string, { connected: boolean; models: { id: string; label: string }[] }>> {
-    const mps = (() => { try { return require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
+    const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
     let available = new Map<string, boolean>();
     try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), provider.connected === true])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
