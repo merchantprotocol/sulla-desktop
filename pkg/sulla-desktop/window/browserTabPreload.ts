@@ -31,6 +31,7 @@ import { ipcRenderer } from 'electron';
 
 import { buildGuestBridgeScript } from '../agent/scripts/injected/GuestBridgePreload';
 import { shouldFallbackToRootScroll } from './browserScrollFallback';
+import { DEFAULT_THEME_ID } from '../config/theme';
 
 const IPC_CHANNEL = 'browser-tab-view:bridge-event';
 const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
@@ -157,13 +158,14 @@ function applyThemeToPage(theme: string): void {
   if (!IS_FILE_URL) return;
   const root = document.documentElement;
   const isLight = typeof theme === 'string' && theme.includes('-light');
+  [...root.classList].filter(name => name.startsWith('theme-')).forEach(name => root.classList.remove(name));
   root.classList.remove('dark', 'light');
-  root.classList.add(isLight ? 'light' : 'dark');
+  root.classList.add(isLight ? 'light' : 'dark', `theme-${ theme }`);
 }
 
 // Apply on load — async IPC call, resolves before first meaningful paint
-ipcRenderer.invoke('sulla-settings-get', 'theme', 'noir-dark')
-  .then((theme: unknown) => applyThemeToPage(String(theme || 'noir-dark')))
+ipcRenderer.invoke('sulla-settings-get', 'theme', DEFAULT_THEME_ID)
+  .then((theme: unknown) => applyThemeToPage(String(theme || DEFAULT_THEME_ID)))
   .catch(() => IS_FILE_URL && document.documentElement.classList.add('dark'));
 
 // Listen for live theme changes pushed from the main process
