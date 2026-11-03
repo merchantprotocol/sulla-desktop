@@ -34,10 +34,20 @@ import { requestedInstance } from '@pkg/utils/instance';
  * startup.
  */
 function resolveResourcesDir(): string {
-  if (!process.resourcesPath) return path.join(process.cwd(), 'resources');
+  const repoResources = path.join(process.cwd(), 'resources');
+
+  if (!process.resourcesPath) return repoResources;
   const nested = path.join(process.resourcesPath, 'resources');
 
-  return fs.existsSync(nested) ? nested : process.resourcesPath;
+  if (fs.existsSync(nested)) return nested;
+  // An unpackaged `electron .` run reports Electron's own dist/resources
+  // (default_app.asar only), not the repo's. Use the checkout's resources
+  // folder when resourcesPath holds none of the app's assets.
+  if (!fs.existsSync(path.join(process.resourcesPath, 'icons')) && fs.existsSync(path.join(repoResources, 'icons'))) {
+    return repoResources;
+  }
+
+  return process.resourcesPath;
 }
 
 
