@@ -91,7 +91,7 @@ export class CloudPusher {
     const collectionId = sync.collectionId;
     // Chunks stored under another collection are re-sealed but not mapped, so P4 never evicts them on our word.
     const mapChunks = item.chunkCollectionId === collectionId;
-    const keys = await this.keyring.keys(item.chunkCollectionId);
+    const keys = item.namespace?.kind === 'folder' ? null : await this.keyring.keys(item.chunkCollectionId);
     const whole = createHash('sha256');
     const chunks:Array<[string, number]> = [];
     const declared = new Map<string, { id:string; cipherBytes:number; cipherSha256:string }>();
@@ -102,7 +102,7 @@ export class CloudPusher {
       const meta = await this.repository.chunkSize(item.chunkCollectionId, localId);
       if (!meta) throw new Error('Local chunk metadata is missing');
       const encrypted = await this.store.getBounded(item.chunkCollectionId, localId, meta.storedSize, meta.storedSize);
-      const plain = await decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, localId, meta.size);
+      const plain = await decryptAndVerifyChunk(encrypted, keys!.data, keys!.dedup, localId, meta.size);
       try {
         whole.update(plain);
         total += plain.length;
@@ -133,9 +133,9 @@ export class CloudPusher {
     const digest = whole.digest('hex');
     const manifestPlain:ManifestPlain | ReturnType<typeof serializeNamespaceEvent> = item.namespace
       ? serializeNamespaceEvent({
-          itemId: item.fileId, kind: 'file', name: item.namespace.name, parentFolderId: item.namespace.parentFolderId,
+          itemId:item.fileId, kind:item.namespace.kind, name: item.namespace.name, parentFolderId: item.namespace.parentFolderId,
           mime: item.mime, size: total, mtime: Math.trunc(new Date(item.mtime).getTime()), sha256: digest,
-          chunks, deleted: item.deleted, parentVersionId: item.parentVersionId, operation: item.namespace.operation,
+          chunks, deleted: item.deleted, parentVersionId:item.parentVersionId, operation:item.namespace.operation, restoredFromVersionId:item.namespace.restoredFromVersionId,
         })
       : {
           v: 1, path: item.path, mime: item.mime, size: total, mtime: item.mtime, sha256: digest,
@@ -158,6 +158,7 @@ export class CloudPusher {
       staged: [...staged],
       uploadId: null,
       present: [],
+      namespaceKind:item.namespace?.kind,
     };
   }
 }

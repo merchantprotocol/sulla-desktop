@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Files namespace v2 plaintext contract. These helpers run only after a client
  * opens a manifest. The Worker must never receive or call them with plaintext.

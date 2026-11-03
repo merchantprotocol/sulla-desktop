@@ -34,6 +34,7 @@ export interface UploadSession {
   uploadId:string | null;
   /** Declared chunks the server already held when the upload opened. */
   present:string[];
+  namespaceKind?:'file'|'folder';
 }
 
 export interface SyncRow {
@@ -74,7 +75,7 @@ export interface PushCandidate {
   chunkIds:string[];
   size:number;
   mtime:string;
-  namespace?: { name:string; parentFolderId:string|null; operation:NamespaceOperation };
+  namespace?: { kind:'file'|'folder'; name:string; parentFolderId:string|null; operation:NamespaceOperation; restoredFromVersionId?:string };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -312,39 +313,42 @@ export class PgCloudSyncRepository implements PullRepository {
     return Number(row?.last_push_seq ?? 0);
   }
 
-  /** The earliest journal entry whose version is still its file's current version and is unknown to Cloud. */
+  /** The earliest current file or folder namespace version unknown to Cloud. */
   async nextPushCandidate(collectionId:string, cursor:number):Promise<PushCandidate | null> {
-    const row = (await this.db.query(`SELECT j.op,j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
-        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,
+    const row = (await this.db.query(`SELECT * FROM (
+      SELECT j.op,j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
+        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,NULL::uuid AS restored_from_version_id,
         regexp_replace(f.path,'^.*/','') AS item_name,
-        COALESCE((SELECT ff.id::text FROM file_folders ff WHERE ff.collection_id=f.collection_id AND ff.path=regexp_replace(f.path,'/[^/]+$','') AND ff.deleted_at IS NULL LIMIT 1),
-          (SELECT cf.file_id::text FROM files_cloud_folders cf WHERE cf.collection_id=f.collection_id AND cf.path=regexp_replace(f.path,'/[^/]+$','') AND cf.deleted=FALSE LIMIT 1)) AS parent_folder_id
+        CASE WHEN strpos(f.path,'/')=0 THEN NULL ELSE COALESCE((SELECT ff.id::text FROM file_folders ff WHERE ff.collection_id=f.collection_id AND ff.path=regexp_replace(f.path,'/[^/]+$','') AND ff.deleted_at IS NULL LIMIT 1),
+          (SELECT cf.file_id::text FROM files_cloud_folders cf WHERE cf.collection_id=f.collection_id AND cf.path=regexp_replace(f.path,'/[^/]+$','') AND cf.deleted=FALSE LIMIT 1)) END AS parent_folder_id,
+        'file'::text AS item_kind
       FROM journal j
       JOIN files f ON f.id=j.file_id AND f.current_version_id=j.version_id
       JOIN file_versions v ON v.id=j.version_id
       LEFT JOIN manifests m ON m.hash=v.manifest_hash
       LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
       LEFT JOIN files_cloud_skips k ON k.version_id=v.id
-      WHERE j.collection_id=$1 AND (j.seq>$2 OR k.retry_at<=NOW())
-        AND (k.version_id IS NULL OR k.retry_at<=NOW())
+      WHERE j.collection_id=$1 AND (j.seq>$2 OR k.retry_at<=NOW()) AND (k.version_id IS NULL OR k.retry_at<=NOW())
         AND NOT EXISTS(SELECT 1 FROM files_cloud_versions cv WHERE cv.version_id=v.id)
-      ORDER BY (k.version_id IS NOT NULL), j.seq LIMIT 1`, [collectionId, cursor])).rows[0];
+      UNION ALL
+      SELECT fj.op,fj.seq,fj.folder_id::text,fj.path,''::text,fj.version_id::text,fj.parent_version_id::text,
+        fj.deleted,fj.collection_id::text,0,fj.at,NULL,NULL,fj.restored_from_version_id,regexp_replace(fj.path,'^.*/',''),
+        CASE WHEN strpos(fj.path,'/')=0 THEN NULL ELSE (SELECT parent.id::text FROM file_folders parent WHERE parent.collection_id=fj.collection_id
+          AND parent.path=regexp_replace(fj.path,'/[^/]+$','') AND parent.deleted_at IS NULL LIMIT 1) END, 'folder'::text
+      FROM files_folder_journal fj
+      JOIN file_folders f ON f.id=fj.folder_id AND f.namespace_version_id=fj.version_id
+      WHERE fj.collection_id=$1 AND fj.seq>$2
+        AND NOT EXISTS(SELECT 1 FROM files_cloud_folder_versions cv WHERE cv.version_id=fj.version_id)
+    ) candidates ORDER BY seq LIMIT 1`, [collectionId, cursor])).rows[0];
     if (!row) return null;
     const mtime = row.mtime_ms !== null && row.mtime_ms !== undefined ? new Date(Number(row.mtime_ms)) : new Date(row.created_at);
+    const folder = row.item_kind === 'folder';
     return {
-      journalSeq: Number(row.seq),
-      fileId: row.file_id,
-      path: row.path,
-      mime: row.mime,
-      versionId: row.version_id,
-      parentVersionId: row.parent_version_id ?? null,
-      deleted: Boolean(row.deleted),
-      chunkCollectionId: row.chunk_collection_id,
-      chunkIds: row.deleted ? [] : (row.chunk_ids ?? []),
-      size: row.deleted ? 0 : Number(row.size),
-      mtime: mtime.toISOString(),
-      namespace: { name: String(row.item_name), parentFolderId: row.parent_folder_id ?? null,
-        operation: row.deleted ? 'delete' : row.op === 'rename' ? 'metadata' : row.parent_version_id ? 'content' : 'create' },
+      journalSeq:Number(row.seq), fileId:row.file_id, path:row.path, mime:row.mime, versionId:row.version_id,
+      parentVersionId:row.parent_version_id ?? null, deleted:Boolean(row.deleted), chunkCollectionId:row.chunk_collection_id,
+      chunkIds:folder || row.deleted ? [] : (row.chunk_ids ?? []), size:folder || row.deleted ? 0 : Number(row.size), mtime:mtime.toISOString(),
+      namespace:{ kind:folder ? 'folder' : 'file', name:String(row.item_name), parentFolderId:row.parent_folder_id ?? null,
+        restoredFromVersionId:row.restored_from_version_id ?? undefined, operation:row.deleted ? 'delete' : row.op === 'rename' || row.op === 'metadata' ? 'metadata' : row.op === 'restore' ? 'restore' : row.parent_version_id ? 'content' : 'create' },
     };
   }
 
@@ -394,7 +398,10 @@ export class PgCloudSyncRepository implements PullRepository {
 
   async finishCommit(collectionId:string, session:UploadSession, head:SyncHead):Promise<void> {
     await transaction(this.db, async client => {
-      await client.query(`INSERT INTO files_cloud_versions(version_id,collection_id,file_id,pushed_seq) VALUES($1,$2,$3,$4)
+      if (session.namespaceKind === 'folder') {
+        await client.query(`INSERT INTO files_cloud_folder_versions(version_id,collection_id,folder_id,pushed_seq) VALUES($1,$2,$3,$4)
+          ON CONFLICT(version_id) DO UPDATE SET pushed_seq=EXCLUDED.pushed_seq`, [session.versionId,collectionId,session.fileId,head.seq]);
+      } else await client.query(`INSERT INTO files_cloud_versions(version_id,collection_id,file_id,pushed_seq) VALUES($1,$2,$3,$4)
         ON CONFLICT(version_id) DO UPDATE SET pushed_seq=EXCLUDED.pushed_seq`, [session.versionId, collectionId, session.fileId, head.seq]);
       await this.upsertCloudHead(client, collectionId, session.fileId, session.versionId, session.deleted, head.seq);
       await client.query(`UPDATE file_sync_cursors SET last_push_seq=GREATEST(last_push_seq,$2) WHERE collection_id=$1 AND device_id='cloud'`,
@@ -467,10 +474,11 @@ export class PgCloudSyncRepository implements PullRepository {
     const { collectionId, remote, manifest } = input;
     await transaction(this.db, async client => {
       await lockStoredNamespace(client, collectionId);
+      await client.query("SELECT set_config('sulla_files.cloud_pull','on',TRUE)");
       const prior = (await client.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 FOR UPDATE', [collectionId, remote.fileId])).rows[0];
       if (manifest.deleted) {
         // Delete only this stable identity. Descendants are independent encrypted items and remain visible.
-        if (prior?.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2 AND id=$3', [collectionId, prior.path, remote.fileId]);
+        if (prior?.path) await client.query('UPDATE file_folders SET deleted_at=NOW(),namespace_parent_version_id=namespace_version_id,namespace_version_id=$4,updated_at=NOW() WHERE collection_id=$1 AND path=$2 AND id=$3', [collectionId,prior.path,remote.fileId,remote.versionId]);
       } else {
         const path = await this.freeFolderPath(client, collectionId, manifest.path, remote.fileId, input.remoteDeviceLabel, !prior?.path);
         if (prior?.path && prior.path !== path) {
@@ -486,10 +494,12 @@ export class PgCloudSyncRepository implements PullRepository {
           // Parent synthesis has no Cloud identity. Adopt it rather than replacing the UUID.
           const claimed = (await client.query('SELECT 1 FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 AND deleted=FALSE', [collectionId, existing.id])).rowCount;
           if (claimed) throw new StoredNamespaceConflict('A different folder identity already occupies the synchronized path');
-          await client.query('UPDATE file_folders SET id=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId, path, remote.fileId]);
+          await client.query('UPDATE file_folders SET id=$3,namespace_parent_version_id=namespace_version_id,namespace_version_id=$4,deleted_at=NULL,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId,path,remote.fileId,remote.versionId]);
+        } else if (existing) {
+          await client.query('UPDATE file_folders SET namespace_parent_version_id=namespace_version_id,namespace_version_id=$3,deleted_at=NULL,updated_at=NOW() WHERE id=$1 AND collection_id=$2', [remote.fileId,collectionId,remote.versionId]);
         } else if (!existing) {
-          await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id) VALUES($1,$2,$3,'user',$4)`,
-            [remote.fileId, collectionId, path, this.actor.userId]);
+          await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id,namespace_version_id) VALUES($1,$2,$3,'user',$4,$5)`,
+            [remote.fileId,collectionId,path,this.actor.userId,remote.versionId]);
         }
         await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
           ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,
