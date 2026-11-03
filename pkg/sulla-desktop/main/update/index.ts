@@ -136,10 +136,12 @@ function stageSquirrelUpdate(targetVersion: string): Promise<void> {
       nativeUpdater.removeListener('update-downloaded', onDownloaded);
       nativeUpdater.removeListener('error', onError);
       if (error) {
-        const message = error.message || String(error);
+        const message = (error.message || String(error)).split('\n', 1)[0]
+          .replace(/https?:\/\/\S+/g, '').trim().slice(0, 240)
+          || 'Squirrel could not stage the update.';
         console.error(`[update] squirrel staging failed: ${ message }`);
         const channelState = recordUpdateFailure(targetVersion, message);
-        updateState.error = error;
+        updateState.error = new Error(message);
         updateState.downloaded = false;
         window.send('update-state', updateState);
         updateEvents.emit('raw-state', updateState);
@@ -281,23 +283,33 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
   updater.on('update-downloaded', (info) => {
     console.debug('update: downloaded:', info);
     updateState.info = info;
-    updateState.downloaded = os.platform() !== 'darwin';
     updateState.error = undefined;
     // Prevent the updater from downloading the update again; it will clobber
-    // the existing download. On macOS the authenticated local proxy remains
-    // alive while Squirrel copies the verified zip into its own cache.
+    // the existing download.
     updater.autoDownload = false;
+
+    if (os.platform() !== 'darwin') {
+      if (state === State.DOWNLOADING) state = State.UPDATE_PENDING;
+      updateState.downloaded = true;
+      window.send('update-state', updateState);
+      updateEvents.emit('raw-state', updateState);
+      return;
+    }
+
+    // Keep the authenticated local proxy alive and do not offer restart until
+    // Squirrel has copied the verified zip into its own cache.
+    updateState.downloaded = false;
     window.send('update-state', updateState);
     updateEvents.emit('raw-state', updateState);
-
     stageSquirrelUpdate(info.version).then(() => {
-      if (state === State.DOWNLOADING) state = State.UPDATE_PENDING;
+      state = State.UPDATE_PENDING;
       updateState.downloaded = true;
       updateState.error = undefined;
       window.send('update-state', updateState);
       updateEvents.emit('raw-state', updateState);
     }).catch(() => {
       state = State.ERROR;
+      squirrelStagingPromise = undefined;
     });
   });
 

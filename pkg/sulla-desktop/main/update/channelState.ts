@@ -88,7 +88,6 @@ export function reconcileCompletedUpdate(): UpdateChannelState {
   return state;
 }
 
-
 /** Persist an installer failure so local and remote Support can explain why no restart occurred. */
 export function recordUpdateFailure(targetVersion: string, error: string): UpdateChannelState {
   const state = readUpdateChannelState();
