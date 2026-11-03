@@ -22,6 +22,7 @@ const remoteMessage = ref('');
 const busy = ref(false);
 const notice = ref('');
 const signedIn = ref(true);
+const supportEmail = ref('');
 const unread = ref(0);
 const feedbackBody = ref('');
 const feedbackFiles = ref<Attachment[]>([]);
@@ -61,11 +62,18 @@ function fromHash() { navigate(location.hash.slice(1).split('?')[0]) }
 async function refresh() {
   state.value = await ipcRenderer.invoke('support:state');
   updateState.value = await ipcRenderer.invoke('support:update-status');
-  signedIn.value = (await ipcRenderer.invoke('support:cloud-status')).signedIn;
+  const supportStatus = await ipcRenderer.invoke('support:cloud-status');
+  signedIn.value = !!(supportStatus.enrolled || supportStatus.guest);
+  supportEmail.value = supportStatus.email || supportEmail.value;
   if (signedIn.value) {
     try { [state.value.tickets, unread.value] = await Promise.all([ipcRenderer.invoke('support:tickets'), ipcRenderer.invoke('support:unread')]); } catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
   }
   if (!selectedTicket.value && state.value?.tickets[0]) { selectedTicket.value = state.value.tickets[0].id }
+}
+async function registerSupport() {
+  busy.value=true; notice.value='';
+  try { await ipcRenderer.invoke('support:register-guest',supportEmail.value); notice.value='This Mac is registered for support.'; await refresh() }
+  catch(error){ notice.value=error instanceof Error?error.message:String(error) } finally { busy.value=false }
 }
 async function loadLogs() { logs.value = await ipcRenderer.invoke('support:logs') }
 async function setSource(key: string, enabled: boolean) { try { state.value = await ipcRenderer.invoke('support:set-source', key, enabled); await loadLogs() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } }
@@ -146,7 +154,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
     </aside>
 
     <main v-if="state">
-      <div v-if="!signedIn" class="alert warn"><b>Sign in to Sulla Cloud</b><span>Tickets and feedback need your Cloud account. Nothing is queued while signed out.</span></div>
+      <div v-if="!signedIn" class="alert warn"><div><b>Register this Mac for support</b><span>Enter an email so support can answer you. This works even when Sulla setup, the vault, or the runtime is unavailable.</span></div><input v-model="supportEmail" type="email" placeholder="you@example.com"><button :disabled="busy || !supportEmail.includes('@')" @click="registerSupport">Register</button></div>
       <div v-if="state.remote.status === 'connected'" class="connection"><i class="live-dot" /><b>{{ state.remote.offeredBy || 'Sulla support' }} is connected</b><span>Inside your Sulla runtime only · reconnects after restarts</span><button @click="remote('end')">End support</button></div>
       <div class="page">
         <div v-if="notice" class="notice">{{ notice }}<button @click="notice = ''">×</button></div>
@@ -186,7 +194,7 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
             <label>What would you like us to know?</label><textarea v-model="feedbackBody" maxlength="10000" placeholder="Tell us what happened or what could work better…" />
             <label>Attachments</label><button class="drop" :class="{ over: dragging }" @click="choose('feedback')" @dragenter.prevent="dragging = true" @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="dropFiles('feedback', $event)"><b>＋</b><span>Drop files or <strong>choose files</strong></span></button>
             <div class="files"><div v-for="(file, index) in feedbackFiles" :key="file.path"><span class="fileicon">{{ file.name.split('.').pop()?.slice(0, 4).toUpperCase() }}</span><div><b>{{ file.name }}</b><small>{{ size(file.size) }}</small></div><button @click="remove('feedback', index)">×</button></div></div>
-            <div class="actions"><small>Sent securely to Sulla Cloud. No vault access.</small><a class="button" href="#home">Cancel</a><button class="primary" :disabled="busy || !feedbackBody.trim() || !signedIn" @click="submitFeedback">Send feedback</button></div>
+            <div class="actions"><small>Sent directly to Sulla support. No vault or runtime access.</small><a class="button" href="#home">Cancel</a><button class="primary" :disabled="busy || !feedbackBody.trim() || !signedIn" @click="submitFeedback">Send feedback</button></div>
           </div></div>
         </section>
 

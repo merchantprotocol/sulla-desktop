@@ -49,6 +49,7 @@ export interface SupportState {
     activity: RemoteSupportActivity[];
   };
   privacy: { errorReports: boolean; metricsConsent: boolean; autoAttachLogs: boolean };
+  supportIdentity?: { guestDeviceId: string; email: string };
 }
 
 const DEFAULT_SOURCES = { desktop: true, runtime: true, containers: true, ai: true };

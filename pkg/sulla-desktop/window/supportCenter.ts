@@ -12,8 +12,7 @@ import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
 import { remoteSupportService } from '@pkg/main/supportRemote';
-import { cloudRequest as cloudFetchRequest } from '@pkg/main/cloud/cloudFetch';
-import { isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
+import { registerGuestSupport, supportCloudRequest, supportWhoAmI } from '@pkg/main/support/supportCloud';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import paths from '@pkg/utils/paths';
 import { createWindow, getWindow, webRoot } from '@pkg/window';
@@ -65,21 +64,8 @@ function readTail(file: string, maxBytes = 96 * 1024) {
 }
 
 async function cloudRequest(pathname: string, init: RequestInit = {}): Promise<any> {
-  if (!await isCloudSignedIn()) throw new Error('Sign in to Sulla Cloud to use Support Center tickets and feedback.');
-  // Go through cloudFetch so vault-mode installs get the token injected by the
-  // vault (getCurrentAccessToken() is intentionally empty there).
-  const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
-  let body: any = init.body ?? undefined;
-  if (body instanceof FormData) {
-    const encoded = new Response(body);
-    headers['content-type'] = encoded.headers.get('content-type') || 'multipart/form-data';
-    body = Buffer.from(await encoded.arrayBuffer());
-  } else if (body !== undefined) {
-    headers['content-type'] = headers['content-type'] || 'application/json';
-  }
-  headers.accept = 'application/json';
-  const response = await cloudFetchRequest(init.method || 'GET', `/support${ pathname }`, { headers, body });
-  const payload = await response.json().catch(() => ({}));
+  const response = await supportCloudRequest(init.method || 'GET', `/support${ pathname }`, init);
+  const payload = await response.json().catch(() => ({})) as any;
   if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `Support request failed (${ response.status }).`);
   return payload;
 }
@@ -126,7 +112,8 @@ function registerHandlers() {
     if (event.sender === main?.webContents) openSupportCenter('remote');
   });
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
-  ipcMain.handle('support:cloud-status', async(event) => { authorize(event); return { signedIn: await isCloudSignedIn() } });
+  ipcMain.handle('support:cloud-status', async(event) => { authorize(event); try { return await supportWhoAmI() } catch { return { enrolled:false,guest:false } } });
+  ipcMain.handle('support:register-guest', async(event,email:unknown) => { authorize(event); return registerGuestSupport(cleanText(email,254), require('node:os').hostname(), app.getVersion()) });
   ipcMain.handle('support:update-status', (event) => { authorize(event); return updateManager.getState() });
   ipcMain.handle('support:update-install', async(event) => { authorize(event); await updateManager.installUpdate() });
   ipcMain.handle('support:set-privacy', async(event, key: unknown, enabled: unknown) => {
