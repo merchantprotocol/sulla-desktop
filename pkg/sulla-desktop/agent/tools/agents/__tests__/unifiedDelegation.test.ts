@@ -71,7 +71,7 @@ jest.unstable_mockModule('../../../services/AgentDefinitionService', () => ({
 }));
 jest.unstable_mockModule('../../../services/ChatAgentRouting', () => ({
   SULLA_DESKTOP_CHANNEL_ID: 'sulla-desktop',
-  resolveRoutableAgent:     async(id: string) => (id === 'missing' ? null : { agentId: id, graphAgentId: id, name: id === 'account-manager' ? 'Account Manager' : 'Project Manager' }),
+  resolveRoutableAgent:     async(id: string) => (id === 'missing' ? null : { agentId: id, graphAgentId: id, name: id === 'account-manager' ? 'Product Owner' : 'Project Manager' }),
   applyThreadAgentRoute:    (state: any, agent: any) => { state.metadata.routedAgentId = agent.graphAgentId },
 }));
 jest.unstable_mockModule('../../../services/RunActivity', () => ({
