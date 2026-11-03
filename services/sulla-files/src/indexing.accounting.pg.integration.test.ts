@@ -9,7 +9,7 @@ import test from 'node:test';
 import pg from 'pg';
 
 import { migrate } from './db.js';
-import { reconcileIndexingAccounting } from './indexing.js';
+import { lockIndexingEligibility, reconcileIndexingAccounting } from './indexing.js';
 
 const databaseUrl = process.env.SULLA_FILES_INDEX_ACCOUNTING_TEST_URL;
 const databaseName = databaseUrl ? new URL(databaseUrl).pathname.slice(1) : '';
@@ -232,6 +232,93 @@ integration('protecting a file behind an in-flight index lock purges text, chunk
       (SELECT count(*)::int FROM file_search_vectors WHERE chunk_id=$2) vectors,
       (SELECT count(*)::int FROM file_index_jobs WHERE file_id=$1) jobs`, [fileId, chunkId])).rows[0];
     assert.deepEqual(counts, { search_text: 0, chunks: 0, vectors: 0, jobs: 0 });
+  } finally {
+    await db.end();
+  }
+});
+
+
+integration('collection exclusion committed first is visible after the indexing scope lock wait', async() => {
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+  try {
+    await migrate(db);
+    await db.query('TRUNCATE collections CASCADE');
+    const collectionId = (await db.query(`INSERT INTO collections
+      (owner_user_id,name,kind,home,explorer_path,encrypted_data_key,dedup_key_ciphertext,compatibility_state)
+      VALUES('scope-owner','Scope ordering','knowledge','desktop-only','scope-ordering','{}','{}','native') RETURNING id`)).rows[0].id;
+    const fileId = (await db.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime)
+      VALUES($1,'scope.fixture','user','scope-owner','text/plain') RETURNING id`, [collectionId])).rows[0].id;
+    const versionId = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,size,created_by_type,created_by_id,device_id)
+      VALUES($1,$2,1,'user','scope-owner','scope-device') RETURNING id`, [fileId, collectionId])).rows[0].id;
+    await db.query('UPDATE files SET current_version_id=$2,size=1 WHERE id=$1', [fileId, versionId]);
+
+    const invalidator = await db.connect();
+    const indexer = await db.connect();
+    try {
+      await invalidator.query('BEGIN');
+      await invalidator.query("UPDATE collections SET system_area='logs' WHERE id=$1", [collectionId]);
+      await indexer.query('BEGIN');
+      let finished = false;
+      const eligibility = lockIndexingEligibility(indexer, fileId).then(row => { finished = true; return row });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(finished, false, 'index persistence waits behind an in-flight collection exclusion');
+      await invalidator.query('COMMIT');
+      assert.equal((await eligibility).system_area, 'logs', 'fresh post-wait eligibility sees the committed exclusion');
+      await indexer.query('COMMIT');
+    } catch (error) {
+      await invalidator.query('ROLLBACK').catch(() => undefined);
+      await indexer.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      invalidator.release();
+      indexer.release();
+    }
+  } finally {
+    await db.end();
+  }
+});
+
+integration('index persistence committed first serializes collection exclusion and its trigger purges late derivatives', async() => {
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+  try {
+    await migrate(db);
+    await db.query('TRUNCATE collections CASCADE');
+    const collectionId = (await db.query(`INSERT INTO collections
+      (owner_user_id,name,kind,home,explorer_path,encrypted_data_key,dedup_key_ciphertext,compatibility_state)
+      VALUES('scope-owner','Writer ordering','knowledge','desktop-only','writer-ordering','{}','{}','native') RETURNING id`)).rows[0].id;
+    const fileId = (await db.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime)
+      VALUES($1,'writer.fixture','user','scope-owner','text/plain') RETURNING id`, [collectionId])).rows[0].id;
+    const versionId = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,size,created_by_type,created_by_id,device_id)
+      VALUES($1,$2,1,'user','scope-owner','scope-device') RETURNING id`, [fileId, collectionId])).rows[0].id;
+    await db.query('UPDATE files SET current_version_id=$2,size=1 WHERE id=$1', [fileId, versionId]);
+
+    const indexer = await db.connect();
+    try {
+      await indexer.query('BEGIN');
+      const eligible = await lockIndexingEligibility(indexer, fileId);
+      assert.equal(eligible.system_area, null);
+      await indexer.query(`INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,'writer.fixture','late synthetic text')
+        ON CONFLICT(file_id) DO UPDATE SET search_text=EXCLUDED.search_text`, [fileId]);
+      await indexer.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
+        VALUES($1,$2,0,'late synthetic chunk')`, [fileId, versionId]);
+      let excluded = false;
+      const exclude = db.query("UPDATE collections SET system_area='logs' WHERE id=$1", [collectionId]).then(() => { excluded = true });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(excluded, false, 'collection exclusion waits behind final index persistence');
+      await indexer.query('COMMIT');
+      await exclude;
+    } catch (error) {
+      await indexer.query('ROLLBACK');
+      throw error;
+    } finally {
+      indexer.release();
+    }
+
+    assert.deepEqual((await db.query(`SELECT
+      (SELECT count(*)::int FROM file_search_text WHERE file_id=$1) search_text,
+      (SELECT count(*)::int FROM file_search_chunks WHERE file_id=$1) chunks,
+      (SELECT count(*)::int FROM file_index_jobs WHERE file_id=$1) jobs`, [fileId])).rows[0],
+    { search_text: 0, chunks: 0, jobs: 0 });
   } finally {
     await db.end();
   }

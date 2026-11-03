@@ -51,6 +51,17 @@ jobs:
         env:
           SULLA_FILES_INDEX_ACCOUNTING_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
           SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
+      - name: Prove recording transcript privacy races
+        run: |
+          set -o pipefail
+          node --test services/sulla-files/dist/recordingEnrichment.pg.integration.test.js 2>&1 | tee /tmp/recording-privacy-test.log || {
+            message="$(tail -80 /tmp/recording-privacy-test.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')"
+            echo "::error::$message"
+            exit 1
+          }
+        env:
+          SULLA_FILES_RECORDING_PRIVACY_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
+          SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
   image:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
