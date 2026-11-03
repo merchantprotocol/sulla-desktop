@@ -49,6 +49,43 @@ describe('ModelRouter', () => {
     await expect(new ModelRouter().resolve('agents')).resolves.toEqual([{ provider: 'claude-code', model: 'sonnet' }]);
   });
 
+  it('skips a list row whose class has no model for its provider instead of changing class', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    connected.add('claude-code'); connected.add('codex');
+    settings.set('modelRouting', {
+      agentsList: [
+        { provider: 'claude-code', class: 'coding', enabled: true }, // coding is empty: skipped, never moved to standard
+        { provider: 'codex', class: 'standard', enabled: true },
+      ],
+      subconsciousList: [],
+      classes: { frontier: [], standard: [{ provider: 'claude-code', model: 'sonnet' }, { provider: 'codex', model: 'codex-x' }], fast: [], coding: [], local: [] },
+      followProviderOrder: {},
+    });
+    await expect(new ModelRouter().resolve('agents')).resolves.toEqual([{ provider: 'codex', model: 'codex-x' }]);
+  });
+
+  it('an agent asking for an empty class walks the fallback chain (coding → standard → frontier, local → none)', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    connected.add('claude-code'); connected.add('ollama');
+    settings.set('modelRouting', {
+      agentsList: [], subconsciousList: [],
+      classes: { frontier: [{ provider: 'claude-code', model: 'opus' }], standard: [], fast: [], coding: [], local: [] },
+      followProviderOrder: {},
+    });
+    const router = new ModelRouter();
+    await expect(router.resolve('agents', { mode: 'class', class: 'coding' })).resolves.toEqual([{ provider: 'claude-code', model: 'opus' }]);
+    await expect(router.resolve('agents', { mode: 'class', class: 'local' })).resolves.toEqual([]);
+  });
+
+  it('a class reset restores the recommended models and turns provider order back on', async() => {
+    const { ModelRouter, recommendedState } = await import('../modelRouter');
+    const router = new ModelRouter();
+    await router.set({ classes: { ...recommendedState().classes, coding: [] }, followProviderOrder: { ...recommendedState().followProviderOrder, coding: false } });
+    const next = await router.reset({ section: 'classes', class: 'coding' });
+    expect(next.classes.coding).toEqual(recommendedState().classes.coding);
+    expect(next.followProviderOrder.coding).toBe(true);
+  });
+
   it('keeps a pin exact and never adds an online fallback', async() => {
     const { ModelRouter } = await import('../modelRouter');
     connected.add('claude-code'); connected.add('codex');

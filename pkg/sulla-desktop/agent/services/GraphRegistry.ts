@@ -1672,33 +1672,33 @@ export function nextMessageId(): string {
 }
 
 async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<AgentGraphState> {
-  const heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
+  // Who runs the heartbeat comes from Preferences → AI models → Defaults (it replaces the old
+  // heartbeatProvider / heartbeatModelId settings, which are migrated on first read). An agent default
+  // runs as that agent with its own Model setting; a model default runs as Sulla on that model choice.
+  // The channel stays the heartbeat channel either way.
+  const { getModelDefaults, resolveDefaultChoice, HEARTBEAT_AGENT_ID } = await import('../languagemodels/modelDefaults');
+  const { isSullaRoute } = await import('./ChatAgentRouting');
+  const heartbeatDefault = await getModelDefaults()
+    .then(defaults => resolveDefaultChoice(defaults.heartbeat))
+    .catch((err) => {
+      console.warn('[GraphRegistry] Heartbeat default unavailable; using the heartbeat channel agent:', err);
+      return null;
+    });
+  // The Heartbeat agent and Sulla (including a model default, which Sulla runs) keep the built-in
+  // heartbeat identity, so the shipped default behaves exactly as before; a model default only changes the
+  // model. Picking any other agent runs the heartbeat as that agent.
+  const builtIn = !heartbeatDefault || heartbeatDefault.agent.agentId === HEARTBEAT_AGENT_ID || isSullaRoute(heartbeatDefault.agent.agentId);
+  const heartbeatAgentId = builtIn ? wsChannel : heartbeatDefault!.agent.graphAgentId;
 
-  // Resolve provider to model/local flags
-  let llmModel: string;
-  let llmLocal: boolean;
-
-  if (heartbeatProvider === 'default') {
-    llmModel = await getCurrentModel();
-    llmLocal = false;
-  } else {
-    llmLocal = false;
-    try {
-      const { getIntegrationService } = await import('./IntegrationService');
-      const integrationService = getIntegrationService();
-      const values = await integrationService.getFormValues(heartbeatProvider);
-      const modelVal = values.find((v: { property: string; value: string }) => v.property === 'model');
-      llmModel = modelVal?.value || '';
-    } catch {
-      llmModel = await SullaSettingsModel.get('remoteModel', '');
-    }
-  }
+  // Informational only: BaseNode resolves the real model through the model router.
+  const llmModel: string = await getCurrentModel();
+  const llmLocal = false;
 
   const now = Date.now();
   const threadId = `heartbeat_${ now }`;
 
-  // Load agent config for the heartbeat channel (dreaming-protocol)
-  const agentConfig = await loadAgentConfig(wsChannel);
+  // Load agent config for the agent that runs the heartbeat
+  const agentConfig = await loadAgentConfig(heartbeatAgentId);
 
   // Pre-resolve the heartbeat's native tool schemas. Setting both `llmTools`
   // (top-level, read by normalizedChat) and `allowedToolNames` (metadata,
@@ -1719,7 +1719,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
       action:               'use_tools',
       threadId,
       wsChannel,
-      agentId:              wsChannel,
+      agentId:              heartbeatAgentId,
       cycleComplete:        false,
       waitingForUser:       false,
       isSubAgent:           false,
@@ -1732,6 +1732,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
       iterations:           0,
       revisionCount:        0,
       maxIterationsReached: false,
+      ...(heartbeatDefault?.modelChoice ? { modelChoice: heartbeatDefault.modelChoice } : {}),
       memory:               {
         knowledgeBaseContext: '',
         chatSummariesContext: '',

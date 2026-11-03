@@ -6,8 +6,8 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  applyFollowOrder, availability, choiceLabel, classNow, classOptions, classSummary, fallbackChain, modelsForProvider, moveItem, orderedClassModels,
-  providerName, resolveChoice, resolvedModel, rowChip, sortByProviderOrder, traceClass, traceRoute,
+  applyFollowOrder, availability, choiceLabel, classIsRecommended, classNow, classOptions, classSummary, defaultResolution, fallbackChain, listIsRecommended,
+  modelsForProvider, moveItem, orderedClassModels, providerName, resolveChoice, resolvedModel, rowChip, sortByProviderOrder, traceClass, traceRoute,
 } from './routingLogic';
 import type { ModelClass, ModelRoutingState, RoutingProviderInfo } from '@pkg/agent/languagemodels/modelRoutingTypes';
 
@@ -200,5 +200,72 @@ describe('summaries and labels', () => {
     expect(resolveChoice(makeState(), { mode: 'list' }, NOW)).toEqual({ model: 'claude-opus-5-5', text: 'through Claude Code (Agents row 1, Frontier)' });
     expect(resolveChoice(makeState(), { mode: 'class', class: 'coding' }, NOW).text).toBe('through Claude Code (Coding is empty, so it uses Standard)');
     expect(resolveChoice(makeState(), { mode: 'pin', provider: 'openai', model: 'gpt-5.5' }, NOW).warn).toBe(true);
+  });
+});
+
+describe('list rows skip; only a class request falls back (backend modelRouter.resolve agrees)', () => {
+  test('a row whose class has no model for its provider is skipped, not moved to another class', () => {
+    const s = makeState({ agentsList: [{ provider: 'claude-code', class: 'coding', enabled: true }, { provider: 'codex', class: 'frontier', enabled: true }] });
+    expect(resolvedModel(s, s.agentsList[0])).toBeUndefined();
+    const t = traceRoute(s, 'agents', NOW);
+    expect(t.steps.map(x => [x.kind, x.row.provider])).toEqual([['missing', 'claude-code'], ['use', 'codex']]);
+    expect(t.chosen?.model?.model).toBe('gpt-5.5');
+  });
+  test('an agent asking for that same empty class falls back to Standard', () => {
+    expect(traceClass(makeState(), 'coding', NOW).chosen).toEqual({ provider: 'claude-code', model: 'claude-sonnet-5-5' });
+  });
+});
+
+describe('reset links', () => {
+  const recommended = () => {
+    const s = makeState();
+    return { agentsList: s.agentsList.map(r => ({ ...r })), subconsciousList: s.subconsciousList.map(r => ({ ...r })), classes: JSON.parse(JSON.stringify(s.classes)), followProviderOrder: follow(true) };
+  };
+  test('a list equal to its default disables Reset; any order, class or toggle change enables it', () => {
+    const s = makeState({ recommended: recommended() });
+    expect(listIsRecommended(s, 'agents')).toBe(true);
+    expect(listIsRecommended(s, 'subconscious')).toBe(true);
+    expect(listIsRecommended({ ...s, agentsList: moveItem(s.agentsList, 0, 1) }, 'agents')).toBe(false);
+    expect(listIsRecommended({ ...s, subconsciousList: s.subconsciousList.map((r, i) => i === 1 ? { ...r, enabled: true } : r) }, 'subconscious')).toBe(false);
+  });
+  test('without the backend recommended state Reset stays enabled', () => {
+    expect(listIsRecommended(makeState(), 'agents')).toBe(false);
+    expect(classIsRecommended(makeState(), 'frontier')).toBe(false);
+  });
+  test('a following class compares in provider order; custom order or a removed model enables Reset', () => {
+    const rec = recommended();
+    rec.classes.frontier = [...rec.classes.frontier].reverse(); // the backend stores catalog order; the page shows provider order
+    const s = makeState({ recommended: rec });
+    expect(classIsRecommended(s, 'frontier')).toBe(true);
+    expect(classIsRecommended({ ...s, followProviderOrder: { ...follow(true), frontier: false } }, 'frontier')).toBe(false);
+    expect(classIsRecommended({ ...s, classes: { ...s.classes, frontier: s.classes.frontier.slice(1) } }, 'frontier')).toBe(false);
+  });
+});
+
+describe('defaults line', () => {
+  test('an agent on the Agents list shows the model and provider it uses right now', () => {
+    expect(defaultResolution(makeState(), 'Account Manager', { mode: 'list' }, true, NOW))
+      .toEqual({ agent: 'Account Manager', uses: 'Agents list', model: 'Opus 5.5', text: 'via Claude Code right now', warn: false });
+  });
+  test('follows provider status: a cooling provider moves the line to the next row', () => {
+    const s = withStatus(makeState(), 'claude-code', { status: 'cooling', coolingUntil: LATER });
+    expect(defaultResolution(s, 'Sulla', { mode: 'list' }, false, NOW)).toMatchObject({ model: 'GPT-5.5', text: 'via OpenAI Codex right now' });
+  });
+  test('a pinned model has no fallback and waits while its provider cools down', () => {
+    const pin = { mode: 'pin', provider: 'claude-code', model: 'claude-haiku-5-5' } as const;
+    expect(defaultResolution(makeState(), 'Haiku Worker', pin, true, NOW)).toMatchObject({ uses: 'its pinned model', model: 'Haiku 5.5', text: 'via Claude Code right now (no fallback)', warn: false });
+    const cooling = withStatus(makeState(), 'claude-code', { status: 'cooling', coolingUntil: LATER });
+    const r = defaultResolution(cooling, 'Sulla', pin, false, NOW);
+    expect(r.uses).toBe('a pinned model');
+    expect(r.text).toMatch(/^waits for Claude Code until .+ \(no fallback\)$/);
+    expect(r.warn).toBe(true);
+    expect(defaultResolution(makeState(), 'Sulla', { mode: 'pin', provider: 'openai', model: 'gpt-5.5' }, false, NOW)).toMatchObject({ text: 'OpenAI isn’t connected', warn: true });
+  });
+  test('a class choice says when it falls back', () => {
+    expect(defaultResolution(makeState(), 'Sulla', { mode: 'class', class: 'coding' }, false, NOW))
+      .toEqual({ agent: 'Sulla', uses: 'Class: Coding', model: 'Sonnet 5.5', text: 'via Claude Code right now (Coding is empty, so Standard)', warn: false });
+  });
+  test('nothing can run', () => {
+    expect(defaultResolution(makeState({ agentsList: [] }), 'Sulla', { mode: 'list' }, false, NOW)).toMatchObject({ text: 'nothing can run right now', warn: true });
   });
 });

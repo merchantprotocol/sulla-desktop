@@ -15,8 +15,8 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue';
 import RoutingIcon from './RoutingIcon.vue';
 import { animateIn, animateOut, flip, placePopover, rowByKey, startDrag } from './routingDom';
 import {
-  addModelGroups, availability, CLASS_DESCRIPTIONS, CLASS_FALLBACK, CLASS_LABELS, classNow, classSummary, emptyClassText, modelKey, modelName,
-  orderedClassModels, providerChip, providerLetter, providerName, sortByProviderOrder,
+  addModelGroups, availability, CLASS_DESCRIPTIONS, CLASS_FALLBACK, CLASS_LABELS, classIsRecommended, classNow, classSummary, emptyClassText, modelKey,
+  modelName, orderedClassModels, providerChip, providerLetter, providerName, sortByProviderOrder,
 } from './routingLogic';
 import { MODEL_CLASSES, type ClassModel, type ModelClass, type ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
 
@@ -206,6 +206,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
                 <button
                   type="button"
                   class="link mr-link"
+                  :disabled="classIsRecommended(state, c)"
+                  :title="classIsRecommended(state, c) ? 'Already on the recommended models' : undefined"
                   @click="emit('reset', c)"
                 >
                   Reset to recommended

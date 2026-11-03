@@ -5,11 +5,11 @@
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
-import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type ModelClass, type ModelRoutingState, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
+import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelClass, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { PROVIDER_FACTORIES } from './index';
 
 export type ModelCandidate = { provider: string; model: string };
-type EditableState = Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'>;
+export type EditableState = EditableRoutingState;
 type Health = { status: 'cooling'|'error'; until: number; lastError: string };
 
 const SETTING = 'modelRouting';
@@ -18,6 +18,9 @@ const fallback: Partial<Record<ModelClass, ModelClass>> = { frontier: 'standard'
 const localProviders = new Set(['ollama']);
 const subscriptionProviders = new Set(['claude-code', 'codex']);
 const providerOrder = Object.keys(PROVIDER_FACTORIES);
+
+/** True for a provider id in the AI Infrastructure catalog (connected or not). */
+export function isKnownProvider(id: string): boolean { return providerOrder.includes(id) }
 
 // Deliberately static: defaults must not change underneath an installation when a
 // provider changes its discovery endpoint. Unknown providers/models remain editable.
@@ -37,6 +40,19 @@ export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, s
 function strongest(provider: string): ModelClass {
   const table = DEFAULT_MODELS[provider] || {};
   return (['frontier', 'standard', 'fast', 'coding', 'local'] as ModelClass[]).find(c => table[c]?.length) || (localProviders.has(provider) ? 'local' : 'standard');
+}
+
+/** fast/coding/frontier → standard, standard → frontier, local → none; stops before repeating a class. */
+export function classFallbackChain(cls: ModelClass): ModelClass[] {
+  const chain: ModelClass[] = [cls];
+  for (let next = fallback[cls]; next && !chain.includes(next); next = fallback[next]) chain.push(next);
+  return chain;
+}
+
+/** The model list an agent asking for `cls` walks: the first non-empty class along its fallback chain. */
+export function classWithFallback(classes: Record<ModelClass, ClassModel[]>, cls: ModelClass): ClassModel[] {
+  for (const c of classFallbackChain(cls)) if (classes[c]?.length) return classes[c];
+  return [];
 }
 
 function emptyClasses(): Record<ModelClass, ClassModel[]> {
@@ -142,8 +158,15 @@ export class ModelRouter {
     const current = await this.getEditableState(); const defaults = recommendedState();
     if (target.section === 'agents') current.agentsList = defaults.agentsList;
     else if (target.section === 'subconscious') current.subconsciousList = defaults.subconsciousList;
-    else if (target.class) current.classes[target.class] = defaults.classes[target.class];
-    else current.classes = defaults.classes;
+    // A class reset restores the recommended models in provider order (the UI says so), so it turns
+    // "Follow provider order" back on too.
+    else if (target.class) {
+      current.classes[target.class] = defaults.classes[target.class];
+      current.followProviderOrder[target.class] = defaults.followProviderOrder[target.class];
+    } else {
+      current.classes = defaults.classes;
+      current.followProviderOrder = defaults.followProviderOrder;
+    }
     return this.set(current);
   }
 
@@ -195,8 +218,12 @@ export class ModelRouter {
     const state = await this.getEditableState();
     const live = await this.liveProviders();
     if (choice.mode === 'pin') return live.get(choice.provider)?.connected ? [{ provider: choice.provider, model: choice.model }] : [];
-    const pickClass = (cls: ModelClass): ClassModel[] => state.classes[cls].length ? state.classes[cls] : (fallback[cls] ? state.classes[fallback[cls]!] : []);
-    const source = choice.mode === 'class' ? pickClass(choice.class) : (target === 'subconscious' ? state.subconsciousList : state.agentsList).filter(row => row.enabled).flatMap(row => pickClass(row.class).filter(item => item.provider === row.provider).slice(0, 1));
+    // A list row uses its provider's first model in the row's own class. If that class has no model for the
+    // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
+    // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
+    const source = choice.mode === 'class'
+      ? classWithFallback(state.classes, choice.class)
+      : (target === 'subconscious' ? state.subconsciousList : state.agentsList).filter(row => row.enabled).flatMap(row => state.classes[row.class].filter(item => item.provider === row.provider).slice(0, 1));
     const result: ModelCandidate[] = [];
     for (const item of source) if (live.get(item.provider)?.connected && !await this.isUnavailable(item.provider) && !result.some(x => x.provider === item.provider && x.model === item.model)) result.push(item);
     return result;

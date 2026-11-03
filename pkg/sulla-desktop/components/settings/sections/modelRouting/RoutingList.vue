@@ -16,7 +16,7 @@ import PrefToggle from '../../PrefToggle.vue';
 import RoutingIcon from './RoutingIcon.vue';
 import { animateIn, animateOut, flip, nudge, placePopover, rowByKey, startDrag } from './routingDom';
 import {
-  addRowGroups, availability, CLASS_LABELS, classOptions, findProvider, modelName, providerChip, providerKind, providerLetter, providerName,
+  addRowGroups, availability, CLASS_LABELS, classOptions, findProvider, listIsRecommended, modelName, providerChip, providerKind, providerLetter, providerName,
   resolvedModel, rowChip, rowKey, shortModelName, timeLeft, type RoutingListKey,
 } from './routingLogic';
 import type { ModelClass, ModelRoutingState, RoutingRow } from '@pkg/agent/languagemodels/modelRoutingTypes';
@@ -51,6 +51,8 @@ const connected = computed(() => props.state.providers.filter(p => p.connected))
 const disconnected = computed(() => props.state.providers.filter(p => !p.connected));
 const offShown = computed(() => offOpen.value ? disconnected.value : disconnected.value.slice(0, 5));
 const groups = computed(() => addRowGroups(props.state, props.rows));
+/** Reset is disabled while the list already equals the default. */
+const atDefault = computed(() => listIsRecommended(props.state, props.listKey));
 
 function label(row: RoutingRow) { return `${ providerName(props.state, row.provider) } · ${ CLASS_LABELS[row.class] }`; }
 function resolvedName(row: RoutingRow) { const m = resolvedModel(props.state, row); return m ? shortModelName(modelName(props.state, m.provider, m.model)) : ''; }
@@ -145,6 +147,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
         <button
           type="button"
           class="link mr-link"
+          :disabled="atDefault"
+          :title="atDefault ? 'Already the default' : undefined"
           @click="emit('reset')"
         >
           {{ resetLabel }}

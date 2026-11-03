@@ -355,3 +355,72 @@ export function resolveChoice(state: ModelRoutingState, choice: AgentModelChoice
   if (t.waits.length) return { text: `waiting for ${ providerName(state, t.waits[0].provider) } at ${ formatClock(findProvider(state, t.waits[0].provider)?.coolingUntil) }`, warn: true };
   return { text: `no model in ${ CLASS_LABELS[choice.class] } can run`, warn: true };
 }
+
+// ── Reset links ───────────────────────────────────────────────────────────
+
+export function sameRows(a: readonly RoutingRow[], b: readonly RoutingRow[]): boolean {
+  return a.length === b.length && a.every((r, i) => r.provider === b[i].provider && r.class === b[i].class && r.enabled === b[i].enabled);
+}
+
+/** True when a list already equals what its Reset link restores (the link is disabled then). */
+export function listIsRecommended(state: ModelRoutingState, list: RoutingListKey): boolean {
+  if (!state.recommended) return false;
+  return list === 'agents' ? sameRows(state.agentsList, state.recommended.agentsList) : sameRows(state.subconsciousList, state.recommended.subconsciousList);
+}
+
+/**
+ * True when a class already equals the recommended models in provider order. While a class follows
+ * provider order its saved order is re-sorted with the Agents list, so the order is compared after sorting.
+ */
+export function classIsRecommended(state: ModelRoutingState, modelClass: ModelClass): boolean {
+  const rec = state.recommended;
+  if (!rec) return false;
+  if (state.followProviderOrder[modelClass] !== rec.followProviderOrder[modelClass]) return false;
+  return state.followProviderOrder[modelClass]
+    ? sameModels(sortByProviderOrder(state, state.classes[modelClass]), sortByProviderOrder(state, rec.classes[modelClass]))
+    : sameModels(state.classes[modelClass], rec.classes[modelClass]);
+}
+
+// ── Defaults (new chats, heartbeat) ───────────────────────────────────────
+
+export interface DefaultResolution {
+  /** Who runs it: the chosen agent, or Sulla for a model default. */
+  agent:  string;
+  /** "Agents list", "Class: Coding", "its pinned model" or "a pinned model". */
+  uses:   string;
+  /** Short model name in bold, when something can run. */
+  model?: string;
+  /** The rest of the line: "via Claude Code right now (no fallback)", "waits for … until 6:40 PM" … */
+  text:   string;
+  warn:   boolean;
+}
+
+/**
+ * The live "→ Account Manager · uses Agents list → Opus 5.5 via Claude Code right now" line under a
+ * Defaults row, from the same routing state and router rules as the rest of the page.
+ */
+export function defaultResolution(state: ModelRoutingState, agent: string, choice: AgentModelChoice, ownChoice: boolean, now = Date.now()): DefaultResolution {
+  if (choice.mode === 'pin') {
+    const uses = ownChoice ? 'its pinned model' : 'a pinned model';
+    const name = providerName(state, choice.provider); const p = findProvider(state, choice.provider);
+    if (!p?.connected) return { agent, uses, text: `${ name } isn’t connected`, warn: true };
+    const a = availability(state, choice.provider, now);
+    if (a.kind === 'cool') return { agent, uses, text: `waits for ${ name } until ${ formatClock(p.coolingUntil) } (no fallback)`, warn: true };
+    if (!a.ok) return { agent, uses, text: `${ name }: ${ a.why ?? 'Error' } (no fallback)`, warn: true };
+    return { agent, uses, model: shortModelName(modelName(state, choice.provider, choice.model)), text: `via ${ name } right now (no fallback)`, warn: false };
+  }
+  if (choice.mode === 'list') {
+    const t = traceRoute(state, 'agents', now);
+    if (t.chosen?.model) return { agent, uses: 'Agents list', model: shortModelName(modelName(state, t.chosen.model.provider, t.chosen.model.model)), text: `via ${ providerName(state, t.chosen.row.provider) } right now`, warn: false };
+    if (t.waits.length) return { agent, uses: 'Agents list', text: `waits for ${ providerName(state, t.waits[0].row.provider) } until ${ formatClock(findProvider(state, t.waits[0].row.provider)?.coolingUntil) }`, warn: true };
+    return { agent, uses: 'Agents list', text: 'nothing can run right now', warn: true };
+  }
+  const uses = `Class: ${ CLASS_LABELS[choice.class] }`;
+  const t = traceClass(state, choice.class, now);
+  if (t.chosen) {
+    const via = t.via ? ` (${ CLASS_LABELS[choice.class] } is empty, so ${ CLASS_LABELS[t.via] })` : '';
+    return { agent, uses, model: shortModelName(modelName(state, t.chosen.provider, t.chosen.model)), text: `via ${ providerName(state, t.chosen.provider) } right now${ via }`, warn: false };
+  }
+  if (t.waits.length) return { agent, uses, text: `waits for ${ providerName(state, t.waits[0].provider) } until ${ formatClock(findProvider(state, t.waits[0].provider)?.coolingUntil) }`, warn: true };
+  return { agent, uses, text: 'nothing can run right now', warn: true };
+}

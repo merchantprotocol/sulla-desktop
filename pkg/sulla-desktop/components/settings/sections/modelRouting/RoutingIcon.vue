@@ -21,6 +21,8 @@ const PATHS: Record<string, string> = {
   info:  '<circle cx="8" cy="8" r="5.5"/><path d="M8 7.5v3.5M8 5.2v.01"/>',
   clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
   plus:  '<path d="M8 3.5v9M3.5 8h9"/>',
+  chat:  '<path d="M3 4.5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 13 4.5v5a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5V11h.5"/>',
+  heart: '<path d="M8 13s-5-3-5-6.5A2.7 2.7 0 0 1 8 5a2.7 2.7 0 0 1 5 1.5C13 10 8 13 8 13Z"/>',
 };
 const svg = computed(() => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ PATHS[props.name] ?? '' }</svg>`);
 </script>
