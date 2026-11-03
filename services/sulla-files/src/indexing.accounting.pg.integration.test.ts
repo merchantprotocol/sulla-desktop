@@ -163,10 +163,8 @@ integration('restart reconciliation preserves current derivatives when removing 
     const v2 = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,size,created_by_type,created_by_id,device_id)
       VALUES($1,$2,$3,2,'user','version-owner','version-device') RETURNING id`, [fileId, collectionId, v1])).rows[0].id;
     await db.query('UPDATE files SET current_version_id=$2,size=2,extraction_status=\'indexed\',extraction_reason_code=\'text_extracted\',extraction_reason=\'Text indexed locally.\',extracted_at=NOW() WHERE id=$1', [fileId, v2]);
-    await db.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,finished_at)
-      VALUES($1,$2,'indexed','text_extracted','Text indexed locally.',NOW())`, [fileId, v2]);
-    await db.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,finished_at)
-      VALUES($1,$2,'indexed','text_extracted','Text indexed locally.',NOW())`, [fileId, v1]);
+    await db.query(`UPDATE file_index_jobs SET status='indexed',reason_code='text_extracted',reason='Text indexed locally.',finished_at=NOW()
+      WHERE version_id=ANY($1::uuid[])`, [[v1, v2]]);
     await db.query(`INSERT INTO file_search_text(file_id,path,search_text)
       VALUES($1,'version-mismatch.fixture','current version text')`, [fileId]);
     await db.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
