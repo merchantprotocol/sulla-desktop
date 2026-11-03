@@ -267,7 +267,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 .agent-card.clickable { cursor: pointer; }
 .agent-card.clickable:hover { border-color: var(--accent); }
 .card-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
+.status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--border-strong); }
 .is-running .status-dot { background: var(--accent); animation: chat-pulse 1.4s ease-in-out infinite; }
 .is-done .status-dot { background: var(--status-success); }
 .is-failed .status-dot { background: var(--status-error); }

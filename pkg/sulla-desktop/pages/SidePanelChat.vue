@@ -441,7 +441,7 @@ onUnmounted(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--border-strong);
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 
@@ -457,7 +457,7 @@ onUnmounted(() => {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--text-primary);
+  background: currentColor;
   margin-left: 2px;
   animation: cursor-blink 1s step-end infinite;
   vertical-align: text-bottom;

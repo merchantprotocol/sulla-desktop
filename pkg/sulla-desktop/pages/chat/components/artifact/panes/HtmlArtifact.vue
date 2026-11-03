@@ -96,6 +96,8 @@ const THEME_VARIABLES = [
 const THEME_ALIASES: Record<string, string[]> = {
   '--bg': ['--bg-page'], '--surface-1': ['--bg-surface'], '--surface-2': ['--bg-surface-alt'],
   '--surface-3': ['--bg-surface-hover'], '--text': ['--text-primary'],
+  // Agent-authored reports use a lighter two-step muted scale than the host app.
+  '--text-muted': ['--text-secondary'], '--text-dim': ['--text-muted'],
   '--border': ['--border-default'], '--border-muted': ['--border-subtle'],
   '--info': ['--status-info'], '--success': ['--status-success'], '--warning': ['--status-warning'],
   '--danger': ['--status-error'], '--green': ['--status-success'], '--green-bright': ['--status-success'],
@@ -119,7 +121,7 @@ function refreshTheme(): void {
     ? [getComputedStyle(root)]
     : [getComputedStyle(source), getComputedStyle(root)];
   const declarations = THEME_VARIABLES.flatMap((name) => {
-    const value = themeValue(styles, [name, ...(THEME_ALIASES[name] ?? [])]);
+    const value = themeValue(styles, [...(THEME_ALIASES[name] ?? []), name]);
 
     return value ? [`${ name }: ${ value };`] : [];
   });
@@ -147,14 +149,20 @@ onMounted(() => {
 
 const THEME_FALLBACK_CSS = `
   :root {
-    --bg: var(--bg-page); --surface-1: var(--bg-surface); --surface-2: var(--bg-surface-alt);
-    --surface-3: var(--bg-surface-hover); --text: var(--text-primary);
-    --border: var(--border-default); --border-muted: var(--border-subtle);
-    --info: var(--status-info); --success: var(--status-success); --warning: var(--status-warning);
-    --danger: var(--status-error); --green: var(--status-success); --green-bright: var(--status-success);
+    color-scheme: light;
+    --bg: #f7f8fa; --surface-1: #ffffff; --surface-2: #f1f3f5; --surface-3: #e9ecef;
+    --text: #1a2332; --text-muted: #5f6b7a; --text-dim: #8a94a3;
+    --accent: #5096b3; --accent-hover: #3f819e; --accent-dim: rgba(80, 150, 179, 0.12);
+    --accent-border: rgba(80, 150, 179, 0.35); --accent-glow: rgba(80, 150, 179, 0.22);
+    --border: #d5dae0; --border-muted: #e5e8ec;
+    --success: #238636; --warning: #9a6700; --danger: #cf222e; --info: #0969da;
+    --green: #238636; --green-bright: #2da44e;
+    --font-display: Georgia, 'Times New Roman', serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   html, body {
-    margin: 0; background: transparent; color: var(--text-primary);
+    margin: 0; background: transparent; color: var(--text);
     font-family: var(--font-body); overflow-wrap: break-word; word-wrap: break-word;
   }
   img, table, pre { max-width: 100%; }

@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
 }
 .thumb {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--text-muted); transition: transform 0.15s, background 0.15s;
+  background: var(--bg-elevated); transition: transform 0.15s, background 0.15s;
 }
 .heartbeat-switch.enabled .track { background: var(--accent); border-color: var(--accent); }
 .heartbeat-switch.enabled .thumb { transform: translateX(14px); background: var(--bg); }

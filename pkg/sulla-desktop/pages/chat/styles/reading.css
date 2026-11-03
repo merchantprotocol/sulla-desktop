@@ -191,8 +191,8 @@
   height: 20px;
   place-items: center;
   border-radius: 50%;
-  color: var(--bg-surface-alt);
-  background: linear-gradient(135deg, var(--text-muted), var(--accent));
+  color: var(--text-on-accent);
+  background: linear-gradient(135deg, #a8c0dc, var(--accent));
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
   font: 700 11px var(--font-display);
   letter-spacing: 0;
@@ -461,8 +461,8 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
-  color: var(--bg-surface-alt);
-  background: linear-gradient(135deg, var(--text-secondary), var(--accent));
+  color: var(--text-on-accent);
+  background: linear-gradient(135deg, #8aa6c8, var(--accent));
   font: 700 11px var(--font-display);
 }
 .subagent .head::before {

@@ -139,7 +139,7 @@ const kind = computed(() => {
 .file-glyph.image { color:var(--accent);background:var(--accent-dim) }
 .file-glyph.video,.file-glyph.pdf { color:var(--status-warning);background:var(--status-error-soft) }
 .file-glyph.audio { color:var(--status-success);background:var(--status-success-soft) }
-.file-glyph.code { color:var(--text-secondary);background:color-mix(in srgb,var(--text-muted) 12%,transparent) }
-.file-glyph.archive { color:var(--text-muted);background:color-mix(in srgb,var(--text-muted) 11%,transparent) }
+.file-glyph.code { color:var(--text-secondary);background:var(--bg-surface-alt) }
+.file-glyph.archive { color:var(--text-muted);background:var(--bg-surface-alt) }
 .file-glyph.folder { color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 15%,transparent) }
 </style>

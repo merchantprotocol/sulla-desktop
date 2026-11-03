@@ -279,7 +279,7 @@ function scrollToBottom(el: any) {
   margin-bottom: 6px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-muted, var(--bg-overlay));
+  color: var(--text-muted);
   font-style: italic;
   border-left: 2px solid var(--accent-dim);
   border-radius: 0 4px 4px 0;
@@ -324,7 +324,7 @@ function scrollToBottom(el: any) {
 }
 .thinking-inline.expanded .ti-stream::before,
 .thinking-inline.expanded .ti-stream::after { display: none; }
-.thinking-inline.expanded .ti-thought { color: var(--text-muted, var(--bg-overlay)); }
+.thinking-inline.expanded .ti-thought { color: var(--text-muted); }
 .thinking-inline.expanded .ti-stem { animation: none; opacity: 0.2; }
 .thinking-inline.expanded .ti-label { color: var(--accent-glow); }
 </style>

@@ -622,7 +622,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 .hints span::before {
   content: ""; display: inline-block; width: 1px; height: 9px;
-  background: var(--text-dim); margin-right: 14px; vertical-align: -1px;
+  background: var(--border-default); margin-right: 14px; vertical-align: -1px;
 }
 .hints span:first-child::before { display: none; }
 .hints kbd {
@@ -782,8 +782,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   height: 24px;
   flex: 0 0 24px;
   border-radius: 50%;
-  color: var(--bg-surface-alt);
-  background: linear-gradient(135deg, var(--text-muted), var(--accent));
+  color: var(--text-on-accent);
+  background: linear-gradient(135deg, #a8c0dc, var(--accent));
   font-size: 11px;
   font-weight: 700;
 }

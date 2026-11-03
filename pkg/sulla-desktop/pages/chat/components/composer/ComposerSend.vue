@@ -97,7 +97,7 @@ function activate(): void {
   width: 11px;
   height: 11px;
   border-radius: 3px;
-  background: var(--text-primary);
+  background: currentColor;
   opacity: 0;
   transform: scale(0.4);
   transition: opacity 0.2s, transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
