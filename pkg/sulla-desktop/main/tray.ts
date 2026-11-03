@@ -20,6 +20,7 @@ import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
 import { createTrayPanel, toggleTrayPanel, sendPanelState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import { updateManager } from '@pkg/main/update/UpdateManager';
+import { openSupportCenter } from '@pkg/window/supportCenter';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
@@ -109,7 +110,7 @@ export class Tray {
           label: 'Get Support',
           icon:  path.join(paths.resources, 'icons', 'help-circle-16.png'),
           click() {
-            openUrlInApp('https://sulladesktop.com/support');
+            openSupportCenter('home');
           },
         },
         {
