@@ -452,14 +452,7 @@
 }
 
 /* Routines Home */
-.theme-nord-light .routines-home {
-  background: linear-gradient(135deg, #eceff4 0%, #e5e9f0 60%, #eceff4 100%) !important;
-  color: var(--text-primary, #2e3440) !important;
-}
 
-.theme-nord-light .routines-home .canvas {
-  background: transparent !important;
-}
 
 /* Tabs */
 .theme-nord-light .tab {

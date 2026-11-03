@@ -30,16 +30,16 @@ defineProps<{
   padding: 2px 9px 2px 7px;
   border-radius: 999px;
   border: 1px solid var(--border-default);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
+  background: var(--bg-page);
+  color: var(--text-primary);
   font-size: 11.5px;
   white-space: nowrap;
 
   svg { width: 13px; height: 13px; flex: none; }
   &.server {
-    border-color: var(--border-accent);
-    background: var(--bg-accent);
-    color: var(--text-accent);
+    border-color: var(--border-default);
+    background: var(--bg-page);
+    color: var(--text-primary);
   }
 }
 </style>

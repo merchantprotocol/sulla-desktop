@@ -495,14 +495,7 @@
 }
 
 /* Routines Home */
-.theme-noir-light .routines-home {
-  background: linear-gradient(135deg, #f4f7fb 0%, #eef2f8 60%, #e4eaf4 100%) !important;
-  color: var(--text-primary, #1a2332) !important;
-}
 
-.theme-noir-light .routines-home .canvas {
-  background: transparent !important;
-}
 
 .theme-noir-light .bracket {
   border-color: rgba(80, 150, 179, 0.25) !important;

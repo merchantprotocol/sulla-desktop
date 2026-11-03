@@ -453,14 +453,7 @@
 }
 
 /* Routines Home */
-.theme-default-light .routines-home {
-  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%) !important;
-  color: var(--text-primary, #0d0d0d) !important;
-}
 
-.theme-default-light .routines-home .canvas {
-  background: transparent !important;
-}
 
 .theme-default-light .bracket {
   border-color: rgba(100, 116, 139, 0.3) !important;

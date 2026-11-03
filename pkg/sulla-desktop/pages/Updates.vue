@@ -462,9 +462,9 @@ export default defineComponent({
 <style lang="scss" scoped>
   .updates-root {
     min-height: 100vh;
-    background: #0d1117;
-    color: #c9d1d9;
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
     display: flex;
     align-items: stretch;
     justify-content: stretch;
@@ -481,7 +481,7 @@ export default defineComponent({
     display: flex;
     align-items: center;
     padding-bottom: 20px;
-    border-bottom: 1px solid #21262d;
+    border-bottom: 1px solid var(--border-default);
   }
 
   .updates-brand {
@@ -494,23 +494,23 @@ export default defineComponent({
     width: 44px;
     height: 44px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #1e3a4f, #0d1117);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
+    border: 1px solid var(--border-default);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #6ab0cc;
+    color: var(--text-primary);
 
     &.icon-success {
-      color: #3fb950;
-      border-color: #1a4a24;
-      background: linear-gradient(135deg, #0d2f17, #0d1117);
+      color: var(--text-primary);
+      border-color: var(--border-default);
+      background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
     }
 
     &.icon-error {
-      color: #f85149;
-      border-color: #5a1f1f;
-      background: linear-gradient(135deg, #3d1212, #0d1117);
+      color: var(--text-primary);
+      border-color: var(--border-default);
+      background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
     }
   }
 
@@ -520,17 +520,17 @@ export default defineComponent({
   }
 
   .updates-title {
-    font-family: 'Playfair Display', serif;
+    font-family: var(--font-display), serif;
     font-size: 20px;
     font-weight: 600;
-    color: #f0f6fc;
+    color: var(--text-primary);
     margin: 0;
     letter-spacing: 0.02em;
   }
 
   .updates-subtitle {
     font-size: 11px;
-    color: #8b949e;
+    color: var(--text-primary);
     margin: 2px 0 0;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -551,22 +551,22 @@ export default defineComponent({
   }
 
   .state-headline {
-    font-family: 'Playfair Display', serif;
+    font-family: var(--font-display), serif;
     font-size: 26px;
     font-weight: 600;
-    color: #f0f6fc;
+    color: var(--text-primary);
     margin: 18px 0 8px;
   }
 
   .state-sub {
     font-size: 13px;
-    color: #b1bac4;
+    color: var(--text-primary);
     line-height: 1.5;
     margin: 0;
   }
 
   .error-text {
-    color: #f85149;
+    color: var(--text-primary);
   }
 
   .state-actions {
@@ -579,7 +579,7 @@ export default defineComponent({
 
   .btn-primary,
   .btn-secondary {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-mono), ui-monospace, monospace;
     font-size: 12px;
     font-weight: 500;
     padding: 10px 20px;
@@ -590,13 +590,13 @@ export default defineComponent({
   }
 
   .btn-primary {
-    background: linear-gradient(180deg, #6ab0cc, #5096b3);
-    border: 1px solid #5096b3;
-    color: #0d1117;
+    background: linear-gradient(180deg, var(--bg-surface), var(--bg-surface));
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
 
     &:hover:not(:disabled) {
-      background: linear-gradient(180deg, #7dc0dc, #6ab0cc);
-      box-shadow: 0 0 12px rgba(106, 176, 204, 0.3);
+      background: linear-gradient(180deg, var(--bg-surface), var(--bg-surface));
+      box-shadow: 0 0 12px var(--border-subtle);
     }
 
     &:disabled {
@@ -605,33 +605,33 @@ export default defineComponent({
     }
 
     &.btn-install {
-      background: linear-gradient(180deg, #3fb950, #2ea043);
-      border-color: #2ea043;
-      color: #0d1117;
+      background: linear-gradient(180deg, var(--bg-surface), var(--bg-surface));
+      border-color: var(--border-default);
+      color: var(--text-primary);
 
       &:hover:not(:disabled) {
-        background: linear-gradient(180deg, #4fc960, #3fb950);
-        box-shadow: 0 0 12px rgba(63, 185, 80, 0.3);
+        background: linear-gradient(180deg, var(--bg-surface), var(--bg-surface));
+        box-shadow: 0 0 12px var(--border-subtle);
       }
     }
   }
 
   .btn-secondary {
     background: transparent;
-    border: 1px solid #30363d;
-    color: #c9d1d9;
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
 
     &:hover {
-      background: #161b22;
-      border-color: #484f58;
+      background: var(--bg-surface);
+      border-color: var(--border-default);
     }
   }
 
   .spinner {
     width: 48px;
     height: 48px;
-    border: 3px solid #21262d;
-    border-top-color: #6ab0cc;
+    border: 3px solid var(--border-default);
+    border-top-color: var(--border-default);
     border-radius: 50%;
     margin: 0 auto 8px;
     animation: spin 0.9s linear infinite;
@@ -645,17 +645,17 @@ export default defineComponent({
     width: 72px;
     height: 72px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #0d2f17, #1a4a24);
-    border: 2px solid #3fb950;
-    color: #3fb950;
+    background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
+    border: 2px solid var(--border-default);
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0 auto;
-    box-shadow: 0 0 20px rgba(63, 185, 80, 0.15);
+    box-shadow: 0 0 20px var(--border-subtle);
 
     &.ready {
-      box-shadow: 0 0 24px rgba(63, 185, 80, 0.35);
+      box-shadow: 0 0 24px var(--border-subtle);
     }
   }
 
@@ -663,14 +663,14 @@ export default defineComponent({
     width: 72px;
     height: 72px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #3d1212, #5a1f1f);
-    border: 2px solid #f85149;
-    color: #f85149;
+    background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
+    border: 2px solid var(--border-default);
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0 auto;
-    box-shadow: 0 0 20px rgba(248, 81, 73, 0.15);
+    box-shadow: 0 0 20px var(--border-subtle);
   }
 
   .info-badge {
@@ -679,9 +679,9 @@ export default defineComponent({
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.15em;
-    color: #6ab0cc;
-    background: rgba(106, 176, 204, 0.1);
-    border: 1px solid rgba(106, 176, 204, 0.3);
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     padding: 4px 12px;
     border-radius: 12px;
   }
@@ -690,16 +690,16 @@ export default defineComponent({
     margin: 20px auto 0;
     max-width: 440px;
     padding: 12px 16px;
-    border: 1px solid rgba(227, 179, 65, 0.4);
-    background: rgba(227, 179, 65, 0.08);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
     border-radius: 6px;
     font-size: 12px;
-    color: #e3b341;
+    color: var(--text-primary);
     line-height: 1.6;
     text-align: left;
 
     strong {
-      color: #f0c653;
+      color: var(--text-primary);
       font-weight: 600;
     }
   }
@@ -711,17 +711,17 @@ export default defineComponent({
 
   .progress-bar {
     height: 8px;
-    background: #161b22;
-    border: 1px solid #21262d;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #5096b3, #6ab0cc);
+    background: linear-gradient(90deg, var(--bg-surface), var(--bg-surface));
     transition: width 0.3s ease;
-    box-shadow: 0 0 8px rgba(106, 176, 204, 0.4);
+    box-shadow: 0 0 8px var(--border-subtle);
   }
 
   .progress-meta {
@@ -729,7 +729,7 @@ export default defineComponent({
     justify-content: space-between;
     margin-top: 8px;
     font-size: 11px;
-    color: #8b949e;
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
 
@@ -739,16 +739,16 @@ export default defineComponent({
     max-width: 440px;
     max-height: 180px;
     overflow-y: auto;
-    border: 1px solid #21262d;
+    border: 1px solid var(--border-default);
     border-radius: 6px;
     padding: 12px 16px;
-    background: #0a0d13;
+    background: var(--bg-surface);
 
     h3 {
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.12em;
-      color: #8b949e;
+      color: var(--text-primary);
       margin: 0 0 8px;
       font-weight: 600;
     }
@@ -756,7 +756,7 @@ export default defineComponent({
 
   .notes-body {
     font-size: 12px;
-    color: #c9d1d9;
+    color: var(--text-primary);
     line-height: 1.6;
 
     :deep(p) {
@@ -769,7 +769,7 @@ export default defineComponent({
     }
 
     :deep(code) {
-      background: #161b22;
+      background: var(--bg-surface);
       padding: 1px 5px;
       border-radius: 3px;
       font-size: 11px;
@@ -778,9 +778,9 @@ export default defineComponent({
 
   .updates-footer {
     padding-top: 12px;
-    border-top: 1px solid #21262d;
+    border-top: 1px solid var(--border-default);
     font-size: 10px;
-    color: #6e7681;
+    color: var(--text-primary);
     text-transform: uppercase;
     letter-spacing: 0.1em;
     text-align: center;
@@ -788,58 +788,58 @@ export default defineComponent({
 </style>
 
 <style lang="scss" scoped>
-.theme-noir .updates-root {
-  background: radial-gradient(70% 55% at 50% 42%, color-mix(in srgb, var(--nx-accent) 909.0909%, transparent), transparent 70%), var(--nx-paper);
-  color: var(--nx-read-2);
+.updates-root {
+  background: radial-gradient(70% 55% at 50% 42%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%), var(--bg-page);
+  color: var(--text-secondary);
 }
-.theme-noir .updates-window { padding: 30px 36px 22px; }
-.theme-noir .updates-header,
-.theme-noir .updates-footer { border-color: var(--nx-hair); }
-.theme-noir .updates-icon {
+.updates-window { padding: 30px 36px 22px; }
+.updates-header,
+.updates-footer { border-color: var(--border-subtle); }
+.updates-icon {
   border: 0;
   border-radius: 14px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 500%, transparent), color-mix(in srgb, var(--nx-accent) 2500%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 357.1429%, transparent), 0 0 24px color-mix(in srgb, var(--nx-accent) 555.5556%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 20%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 28%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.theme-noir .updates-title { color: var(--nx-read-1); font-size: 22px; letter-spacing: -.01em; }
-.theme-noir .updates-subtitle { color: var(--nx-accent-2); }
-.theme-noir .state-block {
+.updates-title { color: var(--text-primary); font-size: 22px; letter-spacing: -.01em; }
+.updates-subtitle { color: var(--accent-hover); }
+.state-block {
   max-width: 500px;
   padding: 30px;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 177.7778%, transparent), 0 28px 70px color-mix(in srgb, var(--shadow) 321.4286%, transparent);
+  background: color-mix(in srgb, var(--border-subtle) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 56.25%, transparent), 0 28px 70px color-mix(in srgb, var(--border-subtle) 31.1111%, transparent);
   animation: updates-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
 }
-.theme-noir .state-headline { color: var(--nx-read-1); font-size: 30px; letter-spacing: -.02em; }
-.theme-noir .state-sub { color: var(--nx-read-3); }
-.theme-noir .btn-primary,
-.theme-noir .btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
-.theme-noir .btn-primary { color: var(--nx-paper); box-shadow: 0 0 20px color-mix(in srgb, var(--nx-accent) 384.6154%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 500%, transparent); }
-.theme-noir .btn-primary:hover:not(:disabled),
-.theme-noir .btn-secondary:hover { transform: translateY(-2px); }
-.theme-noir .btn-secondary { border-color: color-mix(in srgb, var(--nx-hair-strong) 114.2857%, transparent); color: var(--nx-read-3); background: color-mix(in srgb, var(--bg-surface-alt) 250%, transparent); }
-.theme-noir .release-notes,
-.theme-noir .dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-surface-alt) 172.4138%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
-.theme-noir .progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-surface-alt) 138.8889%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent); }
-.theme-noir .progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
-.theme-noir .progress-fill::after {
+.state-headline { color: var(--text-primary); font-size: 30px; letter-spacing: -.02em; }
+.state-sub { color: var(--text-muted); }
+.btn-primary,
+.btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
+.btn-primary { color: var(--text-on-accent); box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 26%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 20%, transparent); }
+.btn-primary:hover:not(:disabled),
+.btn-secondary:hover { transform: translateY(-2px); }
+.btn-secondary { border-color: color-mix(in srgb, var(--border-subtle) 87.5%, transparent); color: var(--text-muted); background: color-mix(in srgb, var(--bg-page) 40%, transparent); }
+.release-notes,
+.dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-page) 58%, transparent); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-page) 72%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 62.5%, transparent); }
+.progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
+.progress-fill::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--nx-read-1) 172.4138%, transparent) 50%, transparent 75%);
+  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--text-primary) 58%, transparent) 50%, transparent 75%);
   transform: translateX(-100%);
   animation: updates-noir-shimmer 1.7s ease-in-out infinite;
 }
-.theme-noir .info-badge { color: var(--nx-accent-2); background: color-mix(in srgb, var(--nx-accent) 1000%, transparent); border-color: color-mix(in srgb, var(--nx-accent-2) 357.1429%, transparent); }
-.theme-noir .footer-version { color: var(--nx-read-5); }
+.info-badge { color: var(--accent-hover); background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent-hover) 28%, transparent); }
+.footer-version { color: var(--text-dim); }
 @keyframes updates-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes updates-noir-shimmer { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .state-block,
-  .theme-noir .progress-fill::after,
-  .theme-noir .spinner { animation: none; }
-  .theme-noir .btn-primary,
-  .theme-noir .btn-secondary { transition: none; }
+  .state-block,
+  .progress-fill::after,
+  .spinner { animation: none; }
+  .btn-primary,
+  .btn-secondary { transition: none; }
 }
 </style>
