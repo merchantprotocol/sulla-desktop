@@ -18,6 +18,7 @@ const { currentTheme, currentScheme, setScheme, setTheme } = useTheme();
 
 // Preview swatches: accent and surface for the light half, then the dark half.
 const SCHEMES: { scheme: ThemeScheme, label: string, light: [string, string], dark: [string, string] }[] = [
+  { scheme: 'studio', label: 'Studio', light: ['oklch(33% 0 0)', 'oklch(100% 0 0)'], dark: ['oklch(33% 0 0)', 'oklch(97.8% 0 0)'] },
   { scheme: 'noir', label: 'Noir', light: ['#3a7fa0', '#ffffff'], dark: ['#5096b3', '#070d1a'] },
   { scheme: 'protocol', label: 'Protocol', light: ['#0ea5e9', '#ffffff'], dark: ['#5096b3', '#161b22'] },
   { scheme: 'ocean', label: 'Ocean', light: ['#0e7490', '#f0fbff'], dark: ['#22d3ee', '#0b2530'] },
