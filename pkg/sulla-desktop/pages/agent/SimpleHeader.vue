@@ -98,9 +98,9 @@ defineProps<{
 .sh-header {
   -webkit-app-region: drag;
   app-region: drag;
-  background: var(--bg-header, var(--body-bg, #ffffff));
+  background: var(--bg-header, var(--body-bg));
   backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border-default, var(--header-border, #e5e7eb));
+  border-bottom: 1px solid var(--border-default-default, var(--header-border));
 
   button {
     -webkit-app-region: no-drag;
@@ -109,45 +109,45 @@ defineProps<{
 }
 
 .sh-theme-toggle {
-  background: var(--bg-surface-hover, var(--input-bg, #f3f4f6));
-  --tw-ring-color: var(--border-default, var(--header-border, #e5e7eb));
-  color: var(--text-primary, var(--body-text, #1f2937));
+  background: var(--bg-surface-hover, var(--input-bg));
+  --tw-ring-color: var(--border-default-default, var(--header-border));
+  color: var(--text-primary, var(--body-text));
 }
 
 .sh-quit-btn {
-  color: var(--text-secondary, var(--muted, #4b5563));
-  background: var(--bg-surface-hover, var(--input-bg, #f3f4f6));
-  --tw-ring-color: var(--border-default, var(--header-border, #e5e7eb));
+  color: var(--text-secondary, var(--muted));
+  background: var(--bg-surface-hover, var(--input-bg));
+  --tw-ring-color: var(--border-default-default, var(--header-border));
 
   &:hover {
-    background: var(--bg-surface-alt, #e5e7eb);
-    color: var(--text-primary, var(--body-text, #1f2937));
+    background: var(--bg-surface-alt);
+    color: var(--text-primary, var(--body-text));
   }
 
   &:active {
-    background: var(--bg-surface-alt, #d1d5db);
+    background: var(--bg-surface-alt);
   }
 }
 
 .dark .sh-header {
-  background: var(--bg-header, rgba(13, 17, 23, 0.8));
-  border-bottom-color: var(--border-default, #30363d);
+  background: var(--bg-header);
+  border-bottom-color: var(--border-default-default);
 }
 
 .dark .sh-theme-toggle {
-  background: var(--bg-surface-hover, #21262d);
-  --tw-ring-color: var(--border-default, #30363d);
-  color: var(--text-primary, #e6edf3);
+  background: var(--bg-surface-hover);
+  --tw-ring-color: var(--border-default-default);
+  color: var(--text-primary);
 }
 
 .dark .sh-quit-btn {
-  color: var(--text-secondary, #8b949e);
-  background: var(--bg-surface-hover, #21262d);
-  --tw-ring-color: var(--border-default, #30363d);
+  color: var(--text-secondary);
+  background: var(--bg-surface-hover);
+  --tw-ring-color: var(--border-default-default);
 
   &:hover {
-    background: var(--bg-surface-alt, #30363d);
-    color: var(--text-primary, #e6edf3);
+    background: var(--bg-surface-alt);
+    color: var(--text-primary);
   }
 }
 </style>

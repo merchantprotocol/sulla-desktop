@@ -680,6 +680,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .recovery-key-card{display:grid;gap:12px;width:100%}.recovery-key-card>div{display:grid;gap:3px}.recovery-key-card small{color:var(--muted)}
-.new-recovery-key{padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--body-bg)}
+.new-recovery-key{padding:14px;border:1px solid var(--border-default);border-radius:10px;background:var(--body-bg)}
 .new-recovery-key code{display:block;padding:12px;margin:8px 0;font-size:15px;overflow-wrap:anywhere}.recovery-actions,.recovery-foot{display:flex!important;gap:8px;align-items:center;flex-wrap:wrap}.recovery-foot{justify-content:space-between}
 </style>

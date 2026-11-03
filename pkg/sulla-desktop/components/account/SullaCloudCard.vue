@@ -429,10 +429,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .account-card {
   padding: 20px;
-  background: var(--bg-surface-alt, #161b22);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default-default);
   border-radius: 12px;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -442,13 +442,13 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-default, #21262d);
+  border-bottom: 1px solid var(--border-default-default);
 }
 
 .account-card-icon {
   width: 18px;
   height: 18px;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
 }
 
 .account-card-title {
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 6px;
@@ -477,9 +477,9 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 10px 14px;
   font-size: 14px;
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-primary, #e6edf3);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -487,20 +487,20 @@ onBeforeUnmount(() => {
 }
 
 .account-input:focus {
-  border-color: var(--accent-primary, #38bdf8);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .account-hint {
   font-size: 12px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   line-height: 1.5;
   margin: 0 0 10px;
 }
 
 .account-error {
   font-size: 12px;
-  color: #f85149;
+  color: var(--status-error);
   margin: 0 0 10px;
 }
 
@@ -508,8 +508,8 @@ onBeforeUnmount(() => {
   padding: 10px 20px;
   font-size: 13px;
   font-weight: 600;
-  background: var(--accent-primary, #38bdf8);
-  color: var(--bg-surface, #0d1117);
+  background: var(--accent);
+  color: var(--bg-surface);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -517,7 +517,7 @@ onBeforeUnmount(() => {
 }
 
 .account-save-btn:hover:not(:disabled) {
-  background: #7dd3fc;
+  background: var(--accent-hover);
 }
 
 .account-save-btn:disabled {
@@ -530,16 +530,16 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 500;
   background: transparent;
-  color: var(--accent-primary, #38bdf8);
-  border: 1px solid var(--border-default, #21262d);
+  color: var(--accent);
+  border: 1px solid var(--border-default-default);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 
 .account-action-btn:hover:not(:disabled) {
-  background: rgba(56, 189, 248, 0.06);
-  border-color: var(--accent-primary, #38bdf8);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: var(--accent);
 }
 
 .account-action-btn:disabled {
@@ -555,25 +555,25 @@ onBeforeUnmount(() => {
 }
 
 .account-status-on {
-  background: #3fb950;
+  background: var(--status-success);
   box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
 }
 
 .account-status-off {
-  background: var(--text-muted, #484f58);
+  background: var(--text-muted);
 }
 
 .account-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  color: var(--text-primary, #e6edf3);
-  background: var(--bg-surface, #0d1117);
+  color: var(--text-primary);
+  background: var(--bg-surface);
   padding: 1px 6px;
   border-radius: 4px;
 }
 
 .account-relay-state {
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
 }
 
 .account-tabs {
@@ -581,8 +581,8 @@ onBeforeUnmount(() => {
   gap: 4px;
   margin-bottom: 14px;
   padding: 4px;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default-default);
   border-radius: 8px;
 }
 
@@ -592,7 +592,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 500;
   background: transparent;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -600,12 +600,12 @@ onBeforeUnmount(() => {
 }
 
 .account-tab:hover {
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 
 .account-tab-active {
-  background: var(--bg-surface-alt, #161b22);
-  color: var(--accent-primary, #38bdf8);
+  background: var(--bg-surface-alt);
+  color: var(--accent);
 }
 
 .account-btn-row {
@@ -624,16 +624,16 @@ onBeforeUnmount(() => {
   padding: 12px 20px;
   font-size: 14px;
   font-weight: 600;
-  background: #000;
-  color: #fff;
-  border: 1px solid #000;
+  background: currentColor;
+  color: var(--text-on-accent);
+  border: 1px solid currentColor;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .account-apple-btn:hover:not(:disabled) {
-  background: #1a1a1a;
+  background: var(--bg-page);
 }
 
 .account-apple-btn:disabled {
@@ -647,81 +647,81 @@ onBeforeUnmount(() => {
   margin-top: -2px;
 }
 
-.theme-noir .account-card {
+.account-card {
   padding: 24px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-default-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .account-card-header {
-  border-color: var(--nx-hair);
+.account-card-header {
+  border-color: var(--border-default-default);
 }
 
-.theme-noir .account-card-title {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.account-card-title {
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 1.15rem;
   font-weight: 500;
 }
 
-.theme-noir .account-card-icon {
-  color: var(--nx-accent-2);
+.account-card-icon {
+  color: var(--accent-hover);
 }
 
-.theme-noir .account-label {
+.account-label {
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.12em;
 }
 
-.theme-noir .account-input {
+.account-input {
   min-height: 40px;
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .account-input:focus {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
+.account-input:focus {
+  border-color: color-mix(in srgb, var(--accent-hover) 42%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
-.theme-noir .account-hint,
-.theme-noir .account-relay-state {
-  color: var(--nx-read-4);
+.account-hint,
+.account-relay-state {
+  color: var(--text-muted);
 }
 
-.theme-noir .account-tabs {
-  border-color: var(--nx-hair);
+.account-tabs {
+  border-color: var(--border-default-default);
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
-.theme-noir .account-tab {
+.account-tab {
   border-radius: 999px;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
-.theme-noir .account-tab-active {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
-  color: var(--nx-read-2);
+.account-tab-active {
+  border: 1px solid color-mix(in srgb, var(--accent-hover) 25%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  color: var(--text-primary);
 }
 
-.theme-noir .account-save-btn {
+.account-save-btn {
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--nx-accent) 18%, transparent);
-  color: var(--nx-paper);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--bg-surface);
 }
 
-.theme-noir .account-action-btn {
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
+.account-action-btn {
+  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
   border-radius: 10px;
   color: var(--text-info);
 }

@@ -836,7 +836,7 @@ onUnmounted(() => {
   padding: 0 10px;
   font-size: var(--fs-body-sm);
   background: var(--bg-surface-alt);
-  border-top: 1px solid var(--border-default);
+  border-top: 1px solid var(--border-default-default);
   color: var(--text-secondary);
   flex-shrink: 0;
   user-select: none;
@@ -908,7 +908,7 @@ onUnmounted(() => {
 }
 .footer-progress-bar-fill {
   height: 100%;
-  background: var(--accent-primary);
+  background: var(--accent);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -924,5 +924,5 @@ onUnmounted(() => {
 </style>
 
 <style scoped>
-.extension-permission-prompt{position:fixed;z-index:9500;right:24px;bottom:44px;width:390px;padding:17px 19px;background:var(--surface-1);border:1px solid var(--accent-border);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.45)}.extension-permission-prompt .prompt-kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--accent);margin-bottom:8px}.extension-permission-prompt p{color:var(--text-muted);font-size:13px;line-height:1.45}.extension-permission-prompt code{display:block;color:var(--text-dim);margin:8px 0 14px}.extension-permission-prompt>div:last-child{display:flex;justify-content:flex-end;gap:8px}.extension-permission-prompt button{border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--text);padding:7px 12px}.extension-permission-prompt button.allow{background:var(--accent);color:white;border-color:var(--accent)}
+.extension-permission-prompt{position:fixed;z-index:9500;right:24px;bottom:44px;width:390px;padding:17px 19px;background:var(--bg-surface);border:1px solid var(--accent-border);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.45)}.extension-permission-prompt .prompt-kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--accent);margin-bottom:8px}.extension-permission-prompt p{color:var(--text-muted);font-size:13px;line-height:1.45}.extension-permission-prompt code{display:block;color:var(--text-dim);margin:8px 0 14px}.extension-permission-prompt>div:last-child{display:flex;justify-content:flex-end;gap:8px}.extension-permission-prompt button{border:1px solid var(--border-default);border-radius:7px;background:transparent;color:var(--text);padding:7px 12px}.extension-permission-prompt button.allow{background:var(--accent);color:white;border-color:var(--accent)}
 </style>

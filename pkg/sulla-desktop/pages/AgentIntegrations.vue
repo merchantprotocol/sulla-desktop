@@ -24,7 +24,7 @@
         >
           <button
             type="button"
-            class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+            class="flex items-center gap-1.5 text-xs [color:var(--text-dim)] hover:[color:var(--text-primary)] transition-colors"
             @click="$emit('back-to-vault')"
           >
             <svg
@@ -50,7 +50,7 @@
                   <p class="inline bg-linear-to-r from-sky-200 via-sky-400 to-sky-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                     Native Integrations.
                   </p>
-                  <p class="mt-3 text-2xl tracking-tight text-slate-400">
+                  <p class="mt-3 text-2xl tracking-tight [color:var(--text-dim)]">
                     Connect your favorite tools and services with Sulla.
                   </p>
                 </div>
@@ -71,9 +71,9 @@
                       v-model="search"
                       type="text"
                       placeholder="Search integrations"
-                      class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-400/30 dark:text-slate-100 dark:ring-white/5 dark:ring-inset integrations-search-input"
+                      class="h-11 w-full rounded-lg [background:var(--bg-surface)]/95 pr-4 pl-12 text-sm [color:var(--bg-page)] ring-1 [--tw-ring-color:var(--border-default-subtle)] focus:outline-none focus:ring-2 focus:ring-sky-400/30 dark:[color:var(--bg-surface-hover)] dark:[--tw-ring-color:var(--bg-surface)]/5 dark:ring-inset integrations-search-input"
                     >
-                    <kbd class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 font-medium text-slate-400 md:block dark:text-slate-500">
+                    <kbd class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 font-medium [color:var(--text-dim)] md:block dark:[color:var(--text-muted)]">
                       <kbd class="font-sans">⌘</kbd><kbd class="font-sans">K</kbd>
                     </kbd>
                   </div>
@@ -89,7 +89,7 @@
               <!-- Category Sidebar -->
               <nav class="hidden md:block w-48 shrink-0">
                 <div class="sticky top-6">
-                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider [color:var(--text-dim)] dark:[color:var(--text-muted)]">
                     Categories
                   </h3>
                   <ul class="space-y-0.5">
@@ -135,7 +135,7 @@
               <!-- Mobile category select -->
               <div class="md:hidden mb-4 w-full">
                 <select
-                  class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  class="w-full rounded-lg border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--bg-page)] dark:[border-color:var(--border-default-strong)] dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface-hover)]"
                   :value="activeCategory ?? ''"
                   @change="activeCategory = ($event.target as HTMLSelectElement).value || null"
                 >
@@ -158,7 +158,7 @@
                 <template v-if="isSearching">
                   <div
                     v-if="searchResultsByCategory.length === 0"
-                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:[color:var(--bg-surface)]/60"
                   >
                     No integrations found.
                   </div>
@@ -170,9 +170,9 @@
                       v-for="group in searchResultsByCategory"
                       :key="group.category"
                     >
-                      <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider [color:var(--text-muted)] dark:[color:var(--text-dim)]">
                         {{ group.category }}
-                        <span class="ml-1.5 text-xs font-normal tabular-nums text-slate-400 dark:text-slate-500">{{ group.integrations.length }}</span>
+                        <span class="ml-1.5 text-xs font-normal tabular-nums [color:var(--text-dim)] dark:[color:var(--text-muted)]">{{ group.integrations.length }}</span>
                       </h3>
                       <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
                         <div
@@ -201,9 +201,9 @@
                                 >
                                   <div
                                     class="h-2 w-2 rounded-full integration-status-dot"
-                                    :class="integration.connected ? 'bg-[#5096b3] integration-status-connected' : 'bg-gray-300 integration-status-offline'"
+                                    :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : '[background:var(--text-secondary)] integration-status-offline'"
                                   />
-                                  <span class="text-xs text-slate-500 dark:text-slate-400">
+                                  <span class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
                                     {{ integration.connected ? 'Connected' : 'Disconnected' }}
                                   </span>
                                 </div>
@@ -216,7 +216,7 @@
                                   </span>
                                   <span
                                     v-if="integration.comingSoon"
-                                    class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
+                                    class="inline-flex items-center rounded-full [background:var(--text-dim)] [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
                                   >
                                     COMING SOON
                                   </span>
@@ -224,11 +224,11 @@
                               </div>
                             </div>
 
-                            <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+                            <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-2">
                               {{ integration.name }}
                             </h3>
 
-                            <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
+                            <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-4 line-clamp-2">
                               {{ integration.description }}
                             </p>
 
@@ -237,7 +237,7 @@
                                 {{ integration.category }}
                               </span>
 
-                              <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                              <div class="flex items-center gap-2 text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
                                 <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
                               </div>
                             </div>
@@ -265,7 +265,7 @@
                 <template v-else>
                   <div
                     v-if="categoryLoading"
-                    class="flex h-40 items-center justify-center text-sm text-slate-400 dark:text-slate-500"
+                    class="flex h-40 items-center justify-center text-sm [color:var(--text-dim)] dark:[color:var(--text-muted)]"
                   >
                     <svg
                       class="animate-spin -ml-1 mr-2 h-4 w-4"
@@ -291,7 +291,7 @@
                   </div>
                   <div
                     v-else-if="filteredIntegrations.length === 0"
-                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:text-white/60"
+                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:[color:var(--bg-surface)]/60"
                   >
                     No integrations found.
                   </div>
@@ -326,9 +326,9 @@
                             >
                               <div
                                 class="h-2 w-2 rounded-full integration-status-dot"
-                                :class="integration.connected ? 'bg-[#5096b3] integration-status-connected' : 'bg-gray-300 integration-status-offline'"
+                                :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : '[background:var(--text-secondary)] integration-status-offline'"
                               />
-                              <span class="text-xs text-slate-500 dark:text-slate-400">
+                              <span class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
                                 {{ integration.connected ? 'Connected' : 'Disconnected' }}
                               </span>
                             </div>
@@ -341,7 +341,7 @@
                               </span>
                               <span
                                 v-if="integration.comingSoon"
-                                class="inline-flex items-center rounded-full bg-gray-400 text-white text-xs px-2 py-0.5 font-medium"
+                                class="inline-flex items-center rounded-full [background:var(--text-dim)] [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
                               >
                                 COMING SOON
                               </span>
@@ -349,11 +349,11 @@
                           </div>
                         </div>
 
-                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+                        <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-2">
                           {{ integration.name }}
                         </h3>
 
-                        <p class="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">
+                        <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-4 line-clamp-2">
                           {{ integration.description }}
                         </p>
 
@@ -362,7 +362,7 @@
                             {{ integration.category }}
                           </span>
 
-                          <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                          <div class="flex items-center gap-2 text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
                             <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
                           </div>
                         </div>
@@ -745,17 +745,17 @@ onMounted(async() => {
 }
 
 .integrations-back-bar {
-  background: var(--surface-1);
-  border-color: var(--border);
+  background: var(--bg-surface);
+  border-color: var(--border-default);
 }
 
 .integration-card {
   background: var(--surface-2);
-  border-color: var(--border);
+  border-color: var(--border-default);
 }
 
 .integration-card:hover {
-  border-color: var(--border-muted);
+  border-color: var(--border-default-muted);
 }
 
 .integration-icon-bg {
@@ -768,8 +768,8 @@ onMounted(async() => {
 }
 
 .integration-btn-primary {
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
 .integration-btn-primary:hover {
@@ -783,7 +783,7 @@ onMounted(async() => {
 
 .sidebar-item-active {
   background: var(--surface-2);
-  color: var(--accent-primary);
+  color: var(--accent);
 }
 
 .sidebar-item-inactive {
@@ -796,7 +796,7 @@ onMounted(async() => {
 }
 
 .sidebar-count-active {
-  color: var(--accent-primary);
+  color: var(--accent);
 }
 
 .sidebar-count-inactive {
@@ -804,8 +804,8 @@ onMounted(async() => {
 }
 
 .integration-badge-beta {
-  background: var(--accent-primary);
-  color: #fff;
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
 .integrations-search-input {
@@ -824,146 +824,146 @@ onMounted(async() => {
   display: none;
 }
 
-.theme-noir .page-root {
+.page-root {
   background:
-    radial-gradient(circle at 68% -12%, color-mix(in srgb, var(--nx-accent) 9%, transparent), transparent 34%),
-    var(--nx-paper);
-  color: var(--nx-read-2);
+    radial-gradient(circle at 68% -12%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 34%),
+    var(--bg-surface);
+  color: var(--text-primary);
 }
 
-.theme-noir .integrations-hero,
-.theme-noir .integrations-body {
+.integrations-hero,
+.integrations-body {
   background: transparent;
 }
 
-.theme-noir .integrations-hero {
-  border-bottom: 1px solid var(--nx-hair);
+.integrations-hero {
+  border-bottom: 1px solid var(--border-default-default);
 }
 
-.theme-noir .integrations-hero > div {
+.integrations-hero > div {
   padding-top: 3rem;
   padding-bottom: 3rem;
 }
 
-.theme-noir .integrations-eyebrow {
+.integrations-eyebrow {
   display: block;
   margin-bottom: 7px;
-  color: var(--nx-accent-2);
+  color: var(--accent-hover);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
   letter-spacing: 0.14em;
 }
 
-.theme-noir .integrations-hero .font-display {
+.integrations-hero .font-display {
   background: none;
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 3.15rem;
   font-weight: 600;
   letter-spacing: -0.035em;
 }
 
-.theme-noir .integrations-hero .text-2xl {
-  color: var(--nx-read-3);
+.integrations-hero .text-2xl {
+  color: var(--text-secondary);
   font-size: 0.875rem;
   letter-spacing: 0;
 }
 
-.theme-noir .integrations-search-input {
+.integrations-search-input {
   min-height: 44px;
-  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent), 0 14px 38px color-mix(in srgb, var(--shadow) 20%, transparent);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .integrations-search-input:focus {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 40%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent), 0 16px 42px color-mix(in srgb, var(--shadow) 22.2222%, transparent);
+.integrations-search-input:focus {
+  border-color: color-mix(in srgb, var(--accent-hover) 40%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent), 0 16px 42px color-mix(in srgb, var(--shadow) 22.2222%, transparent);
 }
 
-.theme-noir .integrations-body nav h3,
-.theme-noir .integrations-body h3.uppercase {
-  color: var(--nx-accent-2);
+.integrations-body nav h3,
+.integrations-body h3.uppercase {
+  color: var(--accent-hover);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
   letter-spacing: 0.14em;
 }
 
-.theme-noir .sidebar-item-active {
+.sidebar-item-active {
   position: relative;
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-hover) 22%, transparent);
   border-radius: 999px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 18%, transparent), color-mix(in srgb, var(--nx-accent) 5%, transparent));
-  color: var(--nx-read-2);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--nx-accent) 8%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 5%, transparent));
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.theme-noir .sidebar-item-active::before {
+.sidebar-item-active::before {
   position: absolute;
   left: -5px;
   width: 3px;
   height: 20px;
   border-radius: 3px;
-  background: var(--nx-accent-2);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 60%, transparent);
+  background: var(--accent-hover);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-hover) 60%, transparent);
   content: '';
 }
 
-.theme-noir .sidebar-item-inactive {
-  color: var(--nx-read-4);
+.sidebar-item-inactive {
+  color: var(--text-muted);
 }
 
-.theme-noir .sidebar-item-inactive:hover {
+.sidebar-item-inactive:hover {
   border-radius: 999px;
-  background: color-mix(in srgb, var(--nx-accent) 6%, transparent);
-  color: var(--nx-read-3);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--text-secondary);
 }
 
-.theme-noir .integration-card {
-  border-color: var(--nx-hair);
+.integration-card {
+  border-color: var(--border-default-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
+  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
   transition: transform 220ms ease, border-color 220ms ease, background 220ms ease, box-shadow 220ms ease;
 }
 
-.theme-noir .integration-card:hover {
+.integration-card:hover {
   transform: translateY(-4px);
-  border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
   box-shadow: 0 18px 46px color-mix(in srgb, var(--shadow) 26.6667%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4%, transparent);
 }
 
-.theme-noir .integration-icon-bg {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 16%, transparent);
+.integration-icon-bg {
+  border: 1px solid color-mix(in srgb, var(--accent-hover) 16%, transparent);
   border-radius: 14px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 17%, transparent), color-mix(in srgb, var(--nx-accent) 3.5%, transparent));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 17%, transparent), color-mix(in srgb, var(--accent) 3.5%, transparent));
 }
 
-.theme-noir .integration-card h3:not(.uppercase) {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.integration-card h3:not(.uppercase) {
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 1.2rem;
   font-weight: 500;
 }
 
-.theme-noir .integration-card p {
-  color: var(--nx-read-3);
+.integration-card p {
+  color: var(--text-secondary);
 }
 
-.theme-noir .integration-status-connected {
-  background: var(--nx-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 9%, transparent), 0 0 10px color-mix(in srgb, var(--nx-success) 55%, transparent);
+.integration-status-connected {
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 9%, transparent), 0 0 10px color-mix(in srgb, var(--status-success) 55%, transparent);
 }
 
-.theme-noir .integration-status-offline {
-  background: var(--nx-read-5);
+.integration-status-offline {
+  background: var(--text-dim);
 }
 
-.theme-noir .integration-tag {
-  border: 1px solid var(--nx-hair);
+.integration-tag {
+  border: 1px solid var(--border-default-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
   color: var(--text-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -972,16 +972,16 @@ onMounted(async() => {
   text-transform: uppercase;
 }
 
-.theme-noir .integration-btn-primary {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+.integration-btn-primary {
+  border: 1px solid color-mix(in srgb, var(--accent-hover) 30%, transparent);
   border-radius: 9px;
-  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--nx-accent) 16%, transparent);
-  color: var(--nx-paper);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--bg-surface);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .integration-card {
+  .integration-card {
     transition: none;
   }
 }

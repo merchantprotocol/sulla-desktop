@@ -15,7 +15,7 @@
       class="relative overflow-visible rounded-lg bg-surface shadow-sm ring-1 ring-edge transition-shadow focus-within:ring-edge-strong"
       :class="panelClass"
     >
-      <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r from-sky-300/0 via-sky-300/70 to-sky-300/0" />
+      <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r [--tw-gradient-from:var(--accent-hover)]/0 [--tw-gradient-via:var(--accent-hover)]/70 [--tw-gradient-to:var(--accent-hover)]/0" />
       <div class="absolute right-20 -bottom-px left-11 h-[2px] bg-linear-to-r from-blue-400/0 via-blue-400 to-blue-400/0" />
       <!-- Attachment thumbnail preview strip -->
       <div
@@ -333,7 +333,7 @@
               </div>
               <button
                 type="button"
-                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white animate-pulse hover:cursor-pointer transition-colors"
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 [color:var(--bg-surface)] animate-pulse hover:cursor-pointer transition-colors"
                 aria-label="Stop recording (Ctrl+Shift+V)"
                 title="Stop recording (Ctrl+Shift+V)"
                 @click="toggleRecording()"
@@ -404,7 +404,7 @@
             <button
               v-if="hasMessages && graphRunning && !isRecording"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer dark:bg-red-500 dark:text-white"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 [color:var(--bg-surface)] disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer dark:bg-red-500 dark:[color:var(--bg-surface)]"
               aria-label="Stop"
               :disabled="showOverlay"
               @click="emit('stop')"
@@ -714,12 +714,12 @@ onUnmounted(() => {
 <style scoped>
 /* ── Sulla speaking button ── */
 .sulla-speaking-btn {
-  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
-  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 .sulla-speaking-btn:hover {
-  background: color-mix(in srgb, var(--accent-primary) 25%, transparent);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 /* Animated sound waves */
@@ -751,7 +751,7 @@ onUnmounted(() => {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   white-space: nowrap;
 }
 
@@ -759,7 +759,7 @@ onUnmounted(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-primary);
+  background: var(--accent);
   animation: stagePulse 1.2s ease-in-out infinite;
 }
 

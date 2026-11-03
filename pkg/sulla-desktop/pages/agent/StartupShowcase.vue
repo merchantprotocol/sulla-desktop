@@ -316,10 +316,10 @@ export default defineComponent({
 
 <style scoped>
 .sulla-showcase {
-  --sc-ink: var(--nx-read-1, var(--text-primary, #e6edf3));
-  --sc-read: var(--nx-read-2, var(--text-secondary, #c9d1d9));
-  --sc-accent: var(--nx-accent, #5096b3);
-  --sc-hair: var(--nx-hair-strong, rgba(168, 192, 220, 0.16));
+  --sc-ink: var(--text-primary, var(--text-primary));
+  --sc-read: var(--text-primary, var(--text-secondary));
+  --sc-accent: var(--accent);
+  --sc-hair: var(--border-default-strong);
 
   position: relative;
   box-sizing: border-box;
@@ -391,7 +391,7 @@ export default defineComponent({
 
 .sulla-showcase-eyebrow {
   margin: 0 0 10px;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -400,7 +400,7 @@ export default defineComponent({
 
 .sulla-showcase-title {
   margin: 0;
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(28px, 4vw, 44px);
   line-height: 1.12;

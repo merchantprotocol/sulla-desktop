@@ -253,14 +253,14 @@ export default defineComponent({
 
 <style scoped>
 .sulla-sp {
-  --sp-ink: var(--nx-read-1, var(--text-primary, #e6edf3));
-  --sp-read: var(--nx-read-2, var(--text-secondary, #c9d1d9));
-  --sp-accent: var(--nx-accent, #5096b3);
-  --sp-accent-2: var(--nx-accent-2, #6ab0cc);
-  --sp-hair: var(--nx-hair-strong, rgba(168, 192, 220, 0.16));
-  --sp-track: var(--bg-surface-alt, var(--bg-surface-hover, #21262d));
-  --sp-danger: var(--nx-danger, #f85149);
-  --sp-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sp-ink: var(--text-primary, var(--text-primary));
+  --sp-read: var(--text-primary, var(--text-secondary));
+  --sp-accent: var(--accent);
+  --sp-accent-2: var(--accent-hover);
+  --sp-hair: var(--border-default-strong);
+  --sp-track: var(--bg-surface-alt, var(--bg-surface-hover));
+  --sp-danger: var(--status-error);
+  --sp-mono: var(--font-mono);
 
   text-align: left;
   font-family: Inter, 'Open Sans', system-ui, -apple-system, sans-serif;
@@ -335,7 +335,7 @@ export default defineComponent({
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  background: linear-gradient(105deg, transparent 30%, color-mix(in srgb, var(--text-on-accent) 28%, transparent) 50%, transparent 70%);
   transform: translateX(-100%);
   animation: sulla-sp-shimmer 1.8s ease-in-out infinite;
 }
