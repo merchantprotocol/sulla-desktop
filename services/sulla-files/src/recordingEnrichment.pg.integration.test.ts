@@ -147,6 +147,7 @@ integration('recording persistence write failure rolls back plaintext and status
     const { fileId, versionId } = await recordingFixture(db, 'rollback');
     await db.query(`INSERT INTO recording_metadata(file_id,version_id,language,transcript,chapters,duration_seconds,generator)
       VALUES($1,$2,'en','[{"start":0,"end":1,"text":"prior synthetic transcript"}]','[]',1,'synthetic')`, [fileId, versionId]);
+    const statusBefore = (await db.query('SELECT extraction_status FROM files WHERE id=$1', [fileId])).rows;
     let released = 0;
     const failingDb = interceptedPool(db, async(sql, run) => {
       if (sql.startsWith("UPDATE files SET extraction_status='indexed'")) throw new Error('controlled synthetic status write failure');
@@ -161,8 +162,8 @@ integration('recording persistence write failure rolls back plaintext and status
       [{ transcript: [{ start: 0, end: 1, text: 'prior synthetic transcript' }], generator: 'synthetic' }]);
     assert.deepEqual((await db.query('SELECT search_text FROM file_search_text WHERE file_id=$1', [fileId])).rows,
       [{ search_text: 'prior synthetic transcript' }]);
-    assert.deepEqual((await db.query('SELECT extraction_status FROM files WHERE id=$1', [fileId])).rows,
-      [{ extraction_status: 'indexing' }]);
+    assert.deepEqual((await db.query('SELECT extraction_status FROM files WHERE id=$1', [fileId])).rows, statusBefore,
+      'the controlled failure preserves the trigger-owned pre-transaction extraction status');
     assert.deepEqual((await db.query('SELECT status,finished_at FROM recording_enrichment_jobs WHERE version_id=$1', [versionId])).rows,
       [{ status: 'processing', finished_at: null }]);
   } finally {

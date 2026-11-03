@@ -20,6 +20,9 @@ END $$;
 CREATE OR REPLACE FUNCTION purge_ineligible_file_recording_derivatives() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.deleted_at IS NOT NULL THEN
+    DELETE FROM file_search_text WHERE file_id=NEW.id;
+    DELETE FROM file_search_chunks WHERE file_id=NEW.id;
+    DELETE FROM file_index_jobs WHERE file_id=NEW.id;
     PERFORM purge_file_recording_derivatives(NEW.id);
   ELSIF NEW.current_version_id IS DISTINCT FROM OLD.current_version_id THEN
     DELETE FROM recording_metadata WHERE file_id=NEW.id AND version_id IS DISTINCT FROM NEW.current_version_id;
