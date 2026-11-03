@@ -74,7 +74,7 @@ const appBadge = computed(() => {
   grid-template-columns: 52px 1fr auto;
   gap: 16px;
   align-items: center;
-  background: var(--bg-surface, var(--bg-page);
+  background: var(--bg-surface, var(--bg-page));
   border: 1px solid var(--border-subtle);
   border-radius: 16px;
   padding: 18px 20px;
@@ -119,7 +119,7 @@ const appBadge = computed(() => {
 .pkg-name {
   font-size: 12px;
   font-weight: 700;
-  color: var(--text-secondary, var(--text-primary);
+  color: var(--text-secondary, var(--text-primary));
 }
 .pill {
   font-size: 12px;
