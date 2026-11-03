@@ -21,6 +21,12 @@ const console = Logging.background;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const POLL_MS = 3_000;
+// The device-tools DO auto-responds to "ping" with "pong" via
+// setWebSocketAutoResponse without waking from hibernation. Keeps the pipe
+// warm through NAT/proxy idle timeouts; a missed pong means the socket is
+// dead even if `close` never fires.
+const PING_INTERVAL_MS = 20_000;
+const PONG_TIMEOUT_MS = 10_000;
 const MAX_ACTIVITY = 500;
 const MAX_EXEC_OUTPUT_BYTES = 1024 * 1024;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -33,11 +39,14 @@ type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor' | 'start' | 'stop
 type JsonObject = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError: boolean };
 
+interface JsonRpcBody { method?: string; params?: { name?: string; arguments?: unknown } }
 interface SupportRpcFrame {
   type: 'rpc';
   id: string;
   support?: { eventId: string; sessionId: string; tool: string };
-  envelope?: { body?: { method?: string; params?: { name?: string; arguments?: unknown } } };
+  // Workers #205 sends the JSON-RPC under envelope.body; older Workers send
+  // the JSON-RPC as envelope itself.
+  envelope?: JsonRpcBody & { body?: JsonRpcBody };
 }
 
 const TOOLS = [
@@ -141,6 +150,9 @@ export class RemoteSupportService {
   private poll?: ReturnType<typeof setInterval>;
   private starting = false;
   private reconnectAttempt = 0;
+  private pingTimer?: ReturnType<typeof setInterval>;
+  private pongTimeout?: ReturnType<typeof setTimeout>;
+  private lastPongAt = 0;
 
   configureRuntime(runtime: Runtime) { this.runtime = runtime }
 
@@ -156,10 +168,15 @@ export class RemoteSupportService {
     if (this.reconnect) clearTimeout(this.reconnect);
     if (this.poll) clearInterval(this.poll);
     this.reconnect = undefined; this.poll = undefined; this.reconnectAttempt = 0;
+    this.teardownHeartbeat();
     this.socket?.close(); this.socket = undefined;
   }
 
   state(): SupportState { return stateStore().read() }
+
+  channelStatus(): { connected: boolean; lastPongAt: number; reconnectAttempt: number } {
+    return { connected: this.socket?.readyState === WebSocket.OPEN, lastPongAt: this.lastPongAt, reconnectAttempt: this.reconnectAttempt };
+  }
 
   async request(message: string): Promise<SupportState> {
     const clean = message.trim();
@@ -251,39 +268,88 @@ export class RemoteSupportService {
     try {
       const deviceId = getOrCreateSupportDeviceId();
       const grant = this.state().remote.grant!;
+      console.info('[RemoteSupport] requesting host ticket');
       const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId });
+      console.info('[RemoteSupport] host ticket received');
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(ticket.url);
         const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Support channel connection timed out.')) }, 15_000);
-        socket.once('open', () => { clearTimeout(timeout); this.reconnectAttempt = 0; this.socket = socket; this.attachSocket(socket); resolve() });
+        socket.once('open', () => {
+          clearTimeout(timeout); this.reconnectAttempt = 0; this.socket = socket; this.lastPongAt = Date.now();
+          console.info('[RemoteSupport] socket open');
+          this.attachSocket(socket); this.startHeartbeat(socket); resolve();
+        });
         socket.once('error', (error) => { clearTimeout(timeout); reject(error) });
       });
     } catch (error) { console.warn('[RemoteSupport] tool host connection failed:', error); this.scheduleReconnect() }
     finally { this.starting = false }
   }
 
+  /** Send a ping every PING_INTERVAL_MS; terminate the socket if no pong answers within PONG_TIMEOUT_MS. */
+  private startHeartbeat(socket: WebSocket) {
+    this.teardownHeartbeat();
+    this.pingTimer = setInterval(() => {
+      if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+      try { socket.send(JSON.stringify({ type: 'ping' })) } catch { /* send failure; pong timeout below will force a reconnect */ }
+      if (this.pongTimeout) clearTimeout(this.pongTimeout);
+      this.pongTimeout = setTimeout(() => {
+        if (this.socket !== socket) return;
+        console.warn('[RemoteSupport] ping timeout — terminating socket');
+        socket.terminate();
+      }, PONG_TIMEOUT_MS);
+      this.pongTimeout.unref?.();
+    }, PING_INTERVAL_MS);
+    this.pingTimer.unref?.();
+  }
 
+  private teardownHeartbeat() {
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    if (this.pongTimeout) clearTimeout(this.pongTimeout);
+    this.pingTimer = undefined; this.pongTimeout = undefined;
+  }
 
   private attachSocket(socket: WebSocket) {
     socket.on('message', data => void this.onSocketFrame(String(data)));
-    socket.on('close', () => { if (this.socket === socket) this.socket = undefined; this.scheduleReconnect() });
-    socket.on('error', error => console.warn('[RemoteSupport] support tool socket error:', error));
+    socket.on('close', (code, reason) => {
+      if (this.socket !== socket) return;
+      console.info(`[RemoteSupport] socket closed code=${ code } reason=${ reason?.toString().slice(0, 200) || '' }`);
+      this.socket = undefined; this.teardownHeartbeat(); this.scheduleReconnect();
+    });
+    socket.on('error', error => {
+      console.warn('[RemoteSupport] support tool socket error:', error);
+      if (this.socket !== socket) return;
+      this.socket = undefined; this.teardownHeartbeat(); this.scheduleReconnect();
+    });
   }
 
   private scheduleReconnect() {
     if (this.reconnect || !this.state().remote.grant) return;
     const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(this.reconnectAttempt++, 5));
+    console.info(`[RemoteSupport] reconnect scheduled in ${ delay }ms`);
     this.reconnect = setTimeout(() => { this.reconnect = undefined; void this.restore() }, delay);
     this.reconnect.unref?.();
+  }
+
+  /** powerMonitor 'resume' / network-online: reconnect immediately instead of waiting on the ping/pong watchdog. */
+  handleResume(): void {
+    if (!this.state().remote.grant || this.socket?.readyState === WebSocket.OPEN) return;
+    console.info('[RemoteSupport] system resumed — reconnecting support channel');
+    this.reconnectAttempt = 0;
+    if (this.reconnect) { clearTimeout(this.reconnect); this.reconnect = undefined }
+    void this.restore();
   }
 
   private async onSocketFrame(raw: string) {
     let frame: any;
     try { frame = JSON.parse(raw) } catch { return }
+    if (frame.type === 'pong') { this.lastPongAt = Date.now(); if (this.pongTimeout) { clearTimeout(this.pongTimeout); this.pongTimeout = undefined } return }
     if (frame.type === 'support/activity') return;
     if (frame.type !== 'rpc' || typeof frame.id !== 'string') return;
     const rpc = frame as SupportRpcFrame;
-    const body = rpc.envelope?.body;
+    // Workers #205 sends the JSON-RPC under envelope.body; tolerate envelope
+    // itself being the JSON-RPC for older Workers.
+    const body = rpc.envelope?.body ?? rpc.envelope;
+    console.info(`[RemoteSupport] frame received type=rpc id=${ frame.id } tool=${ body?.params?.name || 'n/a' }`);
     if (body?.method === 'initialize') { this.reply(frame.id, { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'sulla-desktop-support', version: app.getVersion() } }); return }
     if (body?.method === 'ping') { this.reply(frame.id, {}); return }
     if (body?.method === 'tools/list') { this.reply(frame.id, { tools: TOOLS.map(({ mutates: _mutates, ...tool }) => tool) }); return }
@@ -301,8 +367,15 @@ export class RemoteSupportService {
     }
   }
 
-  private reply(id: string, result: unknown) { this.socket?.send(JSON.stringify({ type: 'rpc_result', id, result })) }
-  private replyError(id: string, code: number, message: string) { this.socket?.send(JSON.stringify({ type: 'rpc_result', id, error: { code, message } })) }
+  private reply(id: string, result: unknown) {
+    const ok = !(result && typeof result === 'object' && (result as JsonObject).isError === true);
+    console.info(`[RemoteSupport] reply sent id=${ id } ok=${ ok }`);
+    this.socket?.send(JSON.stringify({ type: 'rpc_result', id, result }));
+  }
+  private replyError(id: string, code: number, message: string) {
+    console.info(`[RemoteSupport] reply sent id=${ id } ok=false`);
+    this.socket?.send(JSON.stringify({ type: 'rpc_result', id, error: { code, message } }));
+  }
 
   private runtimeRequired(): Runtime {
     if (!this.runtime || !['STARTED', 'DISABLED', 'started', 'disabled'].includes(String(this.runtime.state))) throw new Error('The Sulla runtime is offline.');
@@ -448,5 +521,6 @@ export function startRemoteSupport() {
     if (event.sender !== main?.webContents) throw new Error('Support access can only be ended from the main Sulla window.');
     return remoteSupportService.end();
   });
+  ipcMain.handle('support:remote-channel-status', () => remoteSupportService.channelStatus());
   remoteSupportService.start();
 }

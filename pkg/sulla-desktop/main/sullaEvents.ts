@@ -917,6 +917,15 @@ export function initSullaEvents(): void {
       console.warn('[Power] Failed to resume secure desktop channel:', err);
     }
 
+    // Reconnect the remote-support tool channel right away with fresh
+    // backoff — otherwise recovery waits on the ping/pong watchdog.
+    try {
+      const { remoteSupportService } = require('@pkg/main/supportRemote');
+      remoteSupportService.handleResume();
+    } catch (err) {
+      console.warn('[Power] Failed to resume support channel:', err);
+    }
+
     // Refresh device presence immediately so mobile's device list shows this
     // desktop online within seconds of wake instead of at the next 45s tick.
     try {
