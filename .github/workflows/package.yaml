@@ -275,6 +275,10 @@ jobs:
           # never see a feed whose immutable release files are incomplete.
           node scripts/release/publish-to-releases.mjs feed/latest.json channels/nightly/latest.json --cache-control no-cache
           node scripts/release/publish-to-releases.mjs feed/latest-mac.yml channels/nightly/latest-mac.yml --cache-control no-cache
+          # electron-updater on a -nightly build derives its channel from the version and
+          # requests nightly-mac.yml, so publish the same feed under that name too.
+          node scripts/release/publish-to-releases.mjs feed/latest-mac.yml "releases/v${version}/nightly-mac.yml" --cache-control 'public, max-age=300'
+          node scripts/release/publish-to-releases.mjs feed/latest-mac.yml channels/nightly/nightly-mac.yml --cache-control no-cache
           echo "Published nightly ${version}: ${RELEASES_BASE_URL%/}/channels/nightly/latest-mac.yml"
         fi
     - name: Write release notes header
