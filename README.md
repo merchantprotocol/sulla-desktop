@@ -169,3 +169,14 @@ Sulla Desktop is **free and open source** under the [GNU General Public License 
 **The name is not part of the license.** "Sulla" and the Sulla logo are trademarks. A fork must use its own name and logo. See the [Trademark Policy](TRADEMARK.md).
 
 Sulla Server is a separately distributed product. This repository contains the GPL-licensed Desktop application and shared service cores only.
+
+### Browser theme preview
+
+Render representative Desktop pages without launching Electron. Dependencies are installed only inside the Node 22 container:
+
+```sh
+docker build -f docker/theme-preview/Dockerfile -t sulla-theme-preview .
+docker run --rm -p 4174:4174 sulla-theme-preview
+```
+
+Open `http://localhost:4174/?theme=studio-light&page=chat`. The toolbar exposes every theme and fixture page; the query parameters are stable deep links. `just theme-preview` runs the same build and server.
