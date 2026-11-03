@@ -119,6 +119,17 @@
         --separator-bg: rgba(148, 163, 184, 0.3) !important;
       }
 
+      html.theme-studio-light {
+        --menu-bg: oklch(100% 0 0 / 0.98);
+        --menu-border: oklch(93.5% 0 0);
+        --menu-shadow: 0 20px 48px oklch(0% 0 0 / 0.105), 0 3px 10px oklch(0% 0 0 / 0.045);
+        --text-primary: oklch(15% 0 0);
+        --text-hover: oklch(33% 0 0);
+        --item-hover-bg: color-mix(in oklab, oklch(33% 0 0) 4%, white);
+        --icon-opacity: 0.7;
+        --separator-bg: oklch(96.5% 0 0);
+      }
+
       /* Dark mode explicit class (optional, for consistency) */
       html.dark-mode {
         --menu-bg: rgba(30, 41, 59, 0.98) !important;
@@ -266,6 +277,10 @@
 
       ipcRenderer.on("tab-context-menu:data", (_event, data) => {
         buildMenu(data.items || []);
+        [...document.documentElement.classList]
+          .filter((name) => name.startsWith("theme-"))
+          .forEach((name) => document.documentElement.classList.remove(name));
+        if (data.themeId) document.documentElement.classList.add(`theme-${data.themeId}`);
         if (data.theme === "light") {
           document.documentElement.classList.add("light-mode");
         } else {
