@@ -23,6 +23,7 @@ import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
@@ -749,8 +750,11 @@ export class BackendGraphWebSocketService {
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
-        const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', '')).trim();
+        const { modelRouter } = await import('../languagemodels/modelRouter');
+        const routedAgentId = resolveAgentIdentity(state.metadata);
+        const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
+        const routed = (await modelRouter.resolve('agents', definition?.model_choice || { mode: 'list' }))[0];
+        const provider = String(state.metadata.agent?.provider || routed?.provider || '').trim();
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(

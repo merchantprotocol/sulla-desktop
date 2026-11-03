@@ -86,25 +86,10 @@ class LLMRegistryImpl {
    * Resolve the active remote provider and create the appropriate service.
    */
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
-    const remoteProvider = await this.getActiveRemoteProviderId();
-    const key = `remote:${ remoteProvider }`;
-    let svc = this.services.get(key);
-
-    if (!svc) {
-      const factory = PROVIDER_FACTORIES[remoteProvider];
-      if (factory) {
-        svc = await factory();
-      } else {
-        console.warn(`[LLMRegistry] Unknown provider '${ remoteProvider }', falling back to custom`);
-        const { getCustomService } = await import('./CustomService');
-        svc = await getCustomService();
-      }
-
-      this.services.set(key, svc);
-      svc.initialize().catch(console.error);
-    }
-
-    return svc;
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', { mode: 'list' }))[0];
+    if (!routed) throw new Error('No connected AI provider is available in the Agents routing list.');
+    return this.getServiceByProvider(routed.provider, overrideModel || routed.model);
   }
 
   /**
@@ -162,27 +147,17 @@ class LLMRegistryImpl {
    * falls back to SullaSettingsModel.
    */
   async getPrimaryService(): Promise<BaseLanguageModel> {
-    const mps = tryGetModelProviderService();
-    const providerId = mps
-      ? mps.getPrimaryProvider()
-      : await SullaSettingsModel.get('primaryProvider', '');
-    const activeModelId = mps
-      ? mps.getActiveModelId()
-      : await SullaSettingsModel.get('activeModelId', '');
-    // CLI-agent providers use their own provider id as the "auto" sentinel
-    // model id (see ModelProviderService.getModelsForProvider) — omit the
-    // override so the CLI picks freely. Comparing against providerId instead
-    // of a literal list keeps a model genuinely named e.g. 'codex' on some
-    // other provider working.
-    const modelOverride = activeModelId && activeModelId !== providerId ? activeModelId : undefined;
-    firstRunTrace('models', 'primary service resolved', { providerId, modelOverride: modelOverride ?? '' });
-    return this.getServiceByProvider(providerId, modelOverride);
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', { mode: 'list' }))[0];
+    if (!routed) throw new Error('No connected AI provider is available in the Agents routing list.');
+    firstRunTrace('models', 'primary service resolved', { providerId: routed.provider, modelOverride: routed.model });
+    return this.getServiceByProvider(routed.provider, routed.model);
   }
 
   /** The backup provider the owner chose, or '' when none is set. */
   async getSecondaryProviderId(): Promise<string> {
-    const mps = tryGetModelProviderService();
-    return mps ? mps.getSecondaryProvider() : await SullaSettingsModel.get('secondaryProvider', '');
+    const { modelRouter } = await import('./modelRouter');
+    return (await modelRouter.resolve('agents', { mode: 'list' }))[1]?.provider || '';
   }
 
   /**
@@ -190,18 +165,10 @@ class LLMRegistryImpl {
    * Applies secondaryModelId override (supports tier names or explicit model IDs).
    */
   async getSecondaryService(): Promise<BaseLanguageModel> {
-    const mps = tryGetModelProviderService();
-    const providerId = mps
-      ? mps.getSecondaryProvider()
-      : await SullaSettingsModel.get('secondaryProvider', '');
-    const secondaryModelId = mps?.getSecondaryModelId?.() || await SullaSettingsModel.get('secondaryModelId', '');
-    const modelOverride = secondaryModelId
-      ? (isTierName(secondaryModelId)
-        ? await resolveTierToModelId(providerId, secondaryModelId)
-        : secondaryModelId)
-      : undefined;
-    firstRunTrace('models', 'secondary service resolved', { providerId, modelOverride: modelOverride ?? '' });
-    return this.getServiceByProvider(providerId, modelOverride);
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', { mode: 'list' }))[1];
+    if (!routed) throw new Error('No second connected AI provider is available in the Agents routing list.');
+    return this.getServiceByProvider(routed.provider, routed.model);
   }
 
   /**
@@ -210,21 +177,10 @@ class LLMRegistryImpl {
    * model ID. Tier names are resolved dynamically from the provider's live model list.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
-    const mps = tryGetModelProviderService();
-    const heartbeatProvider = mps
-      ? mps.getHeartbeatProvider()
-      : await SullaSettingsModel.get('heartbeatProvider', 'default');
-
-    const effectiveProvider = heartbeatProvider === 'default'
-      ? (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', ''))
-      : heartbeatProvider;
-
-    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'fast');
-    const modelOverride = isTierName(heartbeatModelId)
-      ? await resolveTierToModelId(effectiveProvider, heartbeatModelId)
-      : (heartbeatModelId || undefined);
-
-    return this.getServiceByProvider(effectiveProvider, modelOverride);
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('subconscious', { mode: 'list' }))[0];
+    if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
+    return this.getServiceByProvider(routed.provider, routed.model);
   }
 
   /**
@@ -242,54 +198,16 @@ class LLMRegistryImpl {
    *   2. Primary provider (default)
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
-    const mps = tryGetModelProviderService();
-    const subconsciousProvider = mps
-      ? mps.getSubconsciousProvider()
-      : await SullaSettingsModel.get('subconsciousProvider', 'default');
-    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'fast');
-
-    const primaryProvider = mps
-      ? mps.getPrimaryProvider()
-      : await SullaSettingsModel.get('primaryProvider', '');
-
-    // 'default' routes to primary; explicit value uses that provider
-    const effectiveProvider = (subconsciousProvider && subconsciousProvider !== 'default')
-      ? subconsciousProvider
-      : primaryProvider;
-
-    const modelOverride = isTierName(subconsciousModelId)
-      ? await resolveTierToModelId(effectiveProvider, subconsciousModelId)
-      : (subconsciousModelId || undefined);
-
-    const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
-      try { return !!(svc?.getModel?.() || '').trim() } catch { return false }
-    };
-
-    // One-line resolution trace (deduped). `modelOverride` is the tier already
-    // resolved to a concrete model id (when subconsciousModelId is a tier
-    // name); `resolved` is what the service will actually call. When the
-    // subconscious service has no usable model we fall back to PRIMARY — that
-    // is the silent-degradation case worth flagging loudly.
-    const logResolution = (resolved: string, fellBackToPrimary: boolean) => {
-      const sig = `${ effectiveProvider }|${ subconsciousModelId }|${ modelOverride ?? '' }|${ resolved }|${ fellBackToPrimary }`;
-      if (sig === lastSubconsciousResolutionSig) return;
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('subconscious', { mode: 'list' }))[0];
+    if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
+    const service = await this.getServiceByProvider(routed.provider, routed.model);
+    const sig = `${ routed.provider }|${ routed.model }`;
+    if (sig !== lastSubconsciousResolutionSig) {
       lastSubconsciousResolutionSig = sig;
-      console.log(
-        `[SubconsciousLLM] provider=${ effectiveProvider } tier/id=${ subconsciousModelId } ` +
-        `resolvedTierModel=${ modelOverride ?? '(none)' } effectiveModel=${ resolved || '(empty)' } ` +
-        `fellBackToPrimary=${ fellBackToPrimary }`,
-      );
-    };
-
-    const svc = await this.getServiceByProvider(effectiveProvider, modelOverride);
-    if (hasUsableModel(svc)) {
-      logResolution((() => { try { return svc?.getModel?.() || '' } catch { return '' } })(), false);
-      return svc;
+      console.log(`[SubconsciousLLM] provider=${ routed.provider } effectiveModel=${ routed.model }`);
     }
-
-    const primary = await this.getPrimaryService();
-    logResolution((() => { try { return primary?.getModel?.() || '' } catch { return '' } })(), true);
-    return primary;
+    return service;
   }
 
   /**
@@ -504,7 +422,15 @@ export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
 export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
 export const getSecondaryProviderId = async() => await LLMRegistry.getSecondaryProviderId();
-export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string }) => await LLMRegistry.getAgentOverrideService(agentCfg);
+export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string; modelChoice?: import('./modelRoutingTypes').AgentModelChoice }) => {
+  if (agentCfg?.modelChoice) {
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', agentCfg.modelChoice))[0];
+    return routed ? LLMRegistry.getServiceByProvider(routed.provider, routed.model) : null;
+  }
+  return LLMRegistry.getAgentOverrideService(agentCfg);
+};
+export const getServiceByProvider = async(provider: string, model?: string) => LLMRegistry.getServiceByProvider(provider, model);
 export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
 export const getSubconsciousService = async() => await LLMRegistry.getSubconsciousLLM();
 
