@@ -146,7 +146,7 @@ interface ShareRequest {
 
 function describeFailure(kind: RelayFailureKind): string {
   switch (kind) {
-  case 'vault_locked': return 'Vault is locked — relay waits for unlock';
+  case 'vault_locked': return 'Restoring the signed-in encrypted session — relay will retry';
   case 'signed_out': return 'Sulla Cloud sign-in required — relay cannot authenticate';
   case 'denied': return 'Vault policy denied the Sulla Cloud relay';
   default: return 'Sulla Cloud relay unavailable — retrying with backoff';

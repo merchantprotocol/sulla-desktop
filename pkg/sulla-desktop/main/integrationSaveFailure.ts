@@ -24,7 +24,7 @@ export function classifyIntegrationSaveFailure(error: unknown): IntegrationSaveF
 
 export function integrationSaveFailureMessage(name: string, failure: IntegrationSaveFailure): string {
   if (failure.code === 'vault_locked' || failure.status === 423) {
-    return 'The vault is locked. Unlock it, then try again.';
+    return 'Your signed-in session could not be restored. Sign in to Sulla Cloud again, then try again.';
   }
   if (failure.code === 'vault_unavailable' || failure.status === 503) {
     return `Could not save ${ name }. The vault service is unavailable. Try again.`;

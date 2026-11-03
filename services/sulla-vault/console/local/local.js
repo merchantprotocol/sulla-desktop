@@ -552,14 +552,14 @@
     if (session.phase === 'unlocked') {
       await load(); await openIntegrationHint();
     } else {
-      byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault';
+      byId('unlock-title').textContent = session.setupRequired ? 'Finish setting up your account' : 'Finish updating your account';
+      byId('unlock-help').textContent = session.setupRequired ? 'Return to Sulla Desktop and sign in to finish setup.' : 'Enter your old vault password once. Sulla will move your existing encrypted data to your account password.';
       byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password';
       byId('password-confirm-label').hidden = !setupCreatesVault;
       byId('password-confirm').required = setupCreatesVault;
     }
   };
 
-  byId('cloud-restore-form').onsubmit = async event => { event.preventDefault(); const password = byId('cloud-restore-password'); byId('cloud-restore-error').textContent = ''; byId('cloud-restore-status').textContent = 'Checking encrypted Cloud vault…'; try { await api('/v1/human/files/cloud-escrow/unlock', { method: 'POST', body: JSON.stringify({ password: password.value }) }); password.value = ''; byId('cloud-restore-status').textContent = 'Cloud vault unlocked. Return to Files and continue the restore.'; } catch (error) { password.value = ''; byId('cloud-restore-status').textContent = ''; byId('cloud-restore-error').textContent = error.message; } };
 
   const configureOnboardingRecovery = async() => {
     byId('onboarding-recovery').hidden = false;
@@ -641,7 +641,6 @@
   byId('bitwarden-import-form').onsubmit = async event => { event.preventDefault(); try { const file=byId('bitwarden-file').files[0]; if(!file||file.size>25*1024*1024) throw new Error('Choose a Bitwarden export up to 25 MB'); const zip=file.name.toLowerCase().endsWith('.zip'); const content=zip?await fileBase64(file):await file.text(); pendingBitwarden={content,format:zip?'zip':file.name.toLowerCase().endsWith('.csv')?'csv':'json',password:byId('bitwarden-password').value||undefined}; const preview=await api('/v1/human/import/bitwarden/preview',{method:'POST',body:JSON.stringify(pendingBitwarden)}); byId('bitwarden-counts').textContent=`Found ${preview.total}; ${preview.importable} ready to import, ${preview.duplicates} duplicates, ${preview.unmapped.length} unmapped. ${Object.entries(preview.counts).map(([type,count])=>`${type}: ${count}`).join(' · ')}`; byId('bitwarden-warnings').textContent=preview.warnings.join(' '); byId('bitwarden-preview').hidden=false; byId('bitwarden-confirm').disabled=!preview.importable; } catch(error){ pendingBitwarden=null; byId('bitwarden-preview').hidden=true; message(error.message,true); } };
   byId('bitwarden-confirm').onclick = async()=>{ if(!pendingBitwarden)return; try{ const result=await api('/v1/human/import/bitwarden',{method:'POST',body:JSON.stringify(pendingBitwarden)}); pendingBitwarden=null; byId('bitwarden-import-form').reset(); byId('bitwarden-preview').hidden=true; byId('utility-dialog').close(); await load(); message(`Imported ${result.imported} Bitwarden item${result.imported===1?'':'s'}; skipped ${result.duplicates} duplicate${result.duplicates===1?'':'s'}.`); }catch(error){message(error.message,true);} };
   byId('backup-import-form').onsubmit = async event => { event.preventDefault(); try { const file = byId('backup-file').files[0]; if (file.size > 25 * 1024 * 1024) throw new Error('Backup files are limited to 25 MB'); const backup = JSON.parse(await file.text()); await api('/v1/human/backup/import', { method: 'POST', body: JSON.stringify({ backupPassword: byId('backup-import-password').value, backup }) }); event.target.reset(); byId('unlock-error').textContent = 'Backup restored. Unlock it with the vault password from that backup.'; } catch (error) { byId('unlock-error').textContent = error.message; } };
-  byId('lock').onclick = async() => { try { invalidateDetail(); invalidateAudit(); const next = await api('/v1/human/lock', { method: 'POST', body: '{}' }); if (!next?.csrf || next.phase !== 'pre-unlock') throw new Error('Vault lock did not rotate the protected session'); csrf = next.csrf; items = []; renderItems(); showBrowser(); document.querySelectorAll('form').forEach(form => form.reset()); renderIntegrationProperties({}); renderCustomFields([]); byId('recovery-output').textContent = ''; byId('recovery-output').hidden = true; message(''); setPhase(next.phase); } catch (error) { message(error.message, true); } };
   addEventListener('pagehide', () => { invalidateDetail(); invalidateAudit(); csrf = ''; items = []; });
   start().catch(error => { byId('state').textContent = 'Unavailable'; byId('unlock').hidden = false; byId('unlock-error').textContent = error.message; });
 })();

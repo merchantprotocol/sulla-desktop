@@ -214,7 +214,7 @@ class VaultSyncV3Impl {
   private fail(err: unknown): VaultSyncStatus {
     if (err instanceof ContainerSyncError) {
       if (err.status === 423 || err.code === 'vault_locked') return this.set({ skipped: 'vault_locked' });
-      if (err.code === 'password_kdf_missing') return this.set({ lastError: 'Set a master password in the vault before turning on Cloud sync.' });
+      if (err.code === 'password_kdf_missing') return this.set({ lastError: 'Sign in to Sulla Cloud again to finish updating encrypted sync.' });
       if (err.code === 'device_revoked') return this.set({ lastError: 'This desktop was removed from your Sulla Cloud account.' });
       if (err.code === 'integrity_failed') return this.set({ lastError: 'The Cloud copy failed an integrity check. Sync stopped; nothing local changed.' });
     }
