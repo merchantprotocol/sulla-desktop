@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import assert from 'node:assert/strict';import crypto from 'node:crypto';import test from 'node:test';
+import{applyMemoryRecord,decryptMemoryRecord,encryptMemoryRecord,isAuthorityWidening,memoryHeadMac,memoryStateHash,verifyMemoryHead}from'../pkg/sulla-desktop/main/cloud/memorySyncV1/protocol.ts';
+const key=crypto.randomBytes(32);
+test('record round-trip binds AAD',()=>{const e=encryptMemoryRecord(key,'u','observations:a',1,{x:1});assert.deepEqual(decryptMemoryRecord(key,'u','observations:a',1,e),{x:1});assert.throws(()=>decryptMemoryRecord(key,'u','observations:b',1,e))});
+test('head MAC accepts current and rejects tamper and rollback',()=>{const h={seq:3,stateHash:'abc',deviceId:'d',mac:memoryHeadMac(key,3,'abc','d')};assert.doesNotThrow(()=>verifyMemoryHead(key,h,3));assert.throws(()=>verifyMemoryHead(key,{...h,stateHash:'bad'},3),/tamper/);assert.throws(()=>verifyMemoryHead(key,h,4),/rollback/)});
+test('state hash is deterministic',()=>{const a=[{id:'b',generation:2,deleted:false},{id:'a',generation:1,deleted:true}];assert.equal(memoryStateHash(a),memoryStateHash([...a].reverse()))});
+test('tombstone becomes active',()=>{assert.equal(applyMemoryRecord({id:'a',generation:1,deleted:false},{id:'a',generation:2,deleted:true}).active?.deleted,true)});
+test('conflict keeps both and supersedes older',()=>{const r=applyMemoryRecord({id:'a',generation:2,deleted:false,value:{x:1}},{id:'a',generation:2,deleted:false,value:{x:2}});assert.equal(r.active?.value?.x,2);assert.equal(r.conflictCopy?.value?.superseded_by,'a')});
+test('authority widening is pending until human confirmation',()=>{const value={table:'subject_memory.items',value:{kind:'policy',ptype:'dont',always_on:true}};assert.equal(isAuthorityWidening(value,true),true);const r=applyMemoryRecord(undefined,{id:'x',generation:1,deleted:false,value},true);assert.equal(r.active,undefined);assert.equal(r.pending?.pending,true);const confirmed=applyMemoryRecord(undefined,{id:'x',generation:1,deleted:false,value},false);assert.equal(confirmed.active?.id,'x')});
+test('consent off exports no writes',()=>{const exportWrites=(enabled,rows)=>enabled?rows:[];assert.deepEqual(exportWrites(false,[{id:'a'}]),[])});

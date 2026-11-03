@@ -26,3 +26,11 @@ export function verifyMemoryHead(memoryKey:Buffer,head:{seq:number;stateHash:str
  if(head.seq<lastVerifiedSeq)throw new Error('memory_head_rollback');const expected=memoryHeadMac(memoryKey,head.seq,head.stateHash,head.deviceId);if(!crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(head.mac)))throw new Error('memory_head_tamper');
 }
 export function isAuthorityWidening(record:{table:string;value:Record<string,unknown>},foreign:boolean):boolean{return foreign&&(record.value.always_on===true||(record.table==='subject_memory.items'&&record.value.kind==='policy'&&(record.value.ptype==='do'||record.value.ptype==='dont')))}
+export type ImportedMemory={id:string;generation:number;deleted:boolean;value?:Record<string,unknown>;pending?:boolean};
+export function applyMemoryRecord(current:ImportedMemory|undefined,incoming:ImportedMemory,foreign=false):{active?:ImportedMemory;pending?:ImportedMemory;conflictCopy?:ImportedMemory}{
+ if(incoming.deleted)return{active:incoming};
+ if(incoming.value&&isAuthorityWidening({table:String(incoming.value.table??''),value:(incoming.value.value??{}) as Record<string,unknown>},foreign))return{active:current,pending:{...incoming,pending:true}};
+ if(!current||incoming.generation>current.generation)return{active:incoming};
+ if(incoming.generation===current.generation&&JSON.stringify(incoming.value)!==JSON.stringify(current.value))return{active:incoming,conflictCopy:{...current,id:`${current.id}:conflict`,value:{...current.value,superseded_by:incoming.id}}};
+ return{active:current};
+}
