@@ -6,6 +6,8 @@
 /** Human-owned Cloud upload preferences. Signing in never implies consent. */
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
+import { planConsentInit } from './cloudConsentInit';
+
 export interface CloudPreferences {
   enabled: boolean;
   workflows: boolean; skills: boolean; customAgents: boolean; recipes: boolean;
@@ -19,6 +21,7 @@ export const CLOUD_SETTING_KEYS: Record<keyof CloudPreferences, string> = {
   memory:'cloudSyncMemory', conversations:'cloudSyncConversations', files:'cloudSyncFiles', vault:'cloudSyncVault', remoteAccess:'cloudRemoteAccess',
 };
 const INITIALIZED_KEY='cloudSyncPreferencesInitializedV3';
+const LEGACY_CURSOR_KEY='claudeSyncLastSeq';
 /** Explicit user action only: never includes passwords, API credentials, or remote execution. */
 export const RECOMMENDED_CLOUD_DATA_KINDS: readonly CloudDataKind[] = [
   'workflows','skills','customAgents','recipes','useCases','liveAgents','usage','memory','conversations','files',
@@ -32,10 +35,8 @@ async function ensureInitialized(){
   const current=Object.fromEntries(await Promise.all(keys.map(async key=>[key,await SullaSettingsModel.get(CLOUD_SETTING_KEYS[key],null)]))) as Partial<Record<keyof CloudPreferences,unknown>>;
   // New installs start with no uploads. Existing installations keep every explicit
   // value, including false and mixed settings; only missing keys get the safe off default.
-  for(const key of keys){
-    if(current[key]===null||current[key]===undefined)
-      await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key],false,'boolean');
-  }
+  const plan=planConsentInit(keys,current,await SullaSettingsModel.get(LEGACY_CURSOR_KEY,'0'));
+  for(const key of keys)if(key in plan)await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key],plan[key],'boolean');
   await SullaSettingsModel.set(INITIALIZED_KEY,true,'boolean');
 }
 
