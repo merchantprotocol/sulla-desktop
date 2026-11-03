@@ -11,15 +11,11 @@ import { app, ipcMain } from 'electron';
 import WebSocket from 'ws';
 
 import type { VMBackend } from '@pkg/backend/backend';
-import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
-import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
-import { signDeviceMessage } from '@pkg/main/cloud/deviceKey';
-import { getDesktopDeviceId, getDesktopDeviceMetadata } from '@pkg/main/deviceIdentity';
+import { supportCloudRequest } from '@pkg/main/support/supportCloud';
+import { getOrCreateSupportDeviceId } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore, type RemoteSupportActivity, type SupportState } from '@pkg/main/supportState';
-import { supportUpdateApi } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
-import * as window from '@pkg/window';
 
 const console = Logging.background;
 const RECONNECT_MIN_MS = 1_000;
@@ -30,8 +26,10 @@ const MAX_EXEC_OUTPUT_BYTES = 1024 * 1024;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const AI_PROVIDERS = new Set(['anthropic', 'claude', 'openai', 'codex', 'google', 'gemini', 'xai', 'grok', 'ollama', 'local']);
+const windowApi = (): any => require('@pkg/window');
+const updateApi = (): any => require('@pkg/main/update/UpdateManager').supportUpdateApi;
 
-type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor'>;
+type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor' | 'start' | 'stop'>;
 type JsonObject = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError: boolean };
 
@@ -44,6 +42,9 @@ interface SupportRpcFrame {
 
 const TOOLS = [
   { name: 'support.logs.tail', description: 'Read redacted Sulla app, runtime, container, or AI logs.', inputSchema: { type: 'object', properties: { source: { enum: ['app', 'runtime', 'containers', 'ai'] }, lines: { type: 'integer', minimum: 1, maximum: 2000 } }, required: ['source'], additionalProperties: false }, mutates: false },
+  { name: 'support.runtime.status', description: 'Show Electron-side Sulla runtime status even when the VM is down.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
+  { name: 'support.runtime.restart', description: 'Restart the Sulla runtime VM from Electron.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: true },
+  { name: 'support.container.restart', description: 'Restart one named Sulla runtime container.', inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['name'], additionalProperties: false }, mutates: true },
   { name: 'support.diagnostics.snapshot', description: 'Read a bounded Sulla runtime diagnostic snapshot.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.list', description: 'List Sulla runtime containers.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.restart', description: 'Restart one Sulla runtime container.', inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['name'], additionalProperties: false }, mutates: true },
@@ -70,6 +71,7 @@ function plainSummary(tool: string): string {
     'support.diagnostics.snapshot': 'Support checked Sulla diagnostics',
     'support.containers.list': 'Support checked Sulla containers',
     'support.containers.restart': 'Support restarted a Sulla container',
+    'support.container.restart': 'Support restarted a Sulla container',
     'support.containers.logs': 'Support read redacted container logs',
     'support.containers.set_memory_limit': 'Support changed a Sulla container memory limit',
     'support.ai.retry_connection': 'Support retried an AI connection',
@@ -77,6 +79,8 @@ function plainSummary(tool: string): string {
     'support.update.check_and_install': 'Support checked and installed a signed update',
     'support.update.status': 'Support checked update status',
     'support.runtime.exec': 'Support ran a command inside the Sulla runtime VM',
+    'support.runtime.status': 'Support checked the Sulla runtime status',
+    'support.runtime.restart': 'Support restarted the Sulla runtime VM',
   } as Record<string, string>)[tool] || 'Support ran a Sulla support action';
 }
 function safeInput(value: unknown): JsonObject {
@@ -105,11 +109,11 @@ function finishActivity(eventId: string, status: RemoteSupportActivity['status']
 }
 function broadcast() {
   const state = stateStore().read();
-  window.send('support:remote-state' as any, state.remote);
-  window.getWindow('support-center')?.webContents.send('support:remote-state', state.remote);
+  windowApi().send('support:remote-state' as any, state.remote);
+  windowApi().getWindow('support-center')?.webContents.send('support:remote-state', state.remote);
 }
 async function jsonCloud(method: string, pathname: string, body?: unknown, headers?: Record<string, string>): Promise<any> {
-  const response = await cloudRequest(method, pathname, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await supportCloudRequest(method, pathname, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(value?.message || value?.error || `Support request failed (${ response.status })`) as Error & { code?: string; status?: number };
@@ -160,10 +164,10 @@ export class RemoteSupportService {
   async request(message: string): Promise<SupportState> {
     const clean = message.trim();
     if (!clean || clean.length > 4000) throw new Error('Describe the problem in 1 to 4,000 characters.');
-    const [deviceId, metadata] = await Promise.all([getDesktopDeviceId(), getDesktopDeviceMetadata()]);
+    const deviceId = getOrCreateSupportDeviceId(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
-      deviceName: metadata.name, updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(),
+      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(),
     });
     stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), activity: [] } });
     broadcast();
@@ -174,9 +178,8 @@ export class RemoteSupportService {
     const current = this.state().remote;
     if (current.status !== 'approval' || !current.sessionId) throw new Error('This support request is not ready for approval.');
     const token = crypto.randomBytes(32).toString('base64url');
-    const deviceId = await getDesktopDeviceId();
-    const signed = signDeviceMessage('support-desktop-v1', [await this.currentUserId(), deviceId, current.sessionId, 'approve', crypto.createHash('sha256').update(token).digest('hex')]);
-    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId, ts: signed.ts, signature: signed.signature });
+    const deviceId = getOrCreateSupportDeviceId();
+    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId });
     const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
     if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
     stateStore().update((state) => {
@@ -215,7 +218,6 @@ export class RemoteSupportService {
   }
 
   private async refreshSession() {
-    if (!await isCloudSignedIn()) return;
     const remote = this.state().remote;
     if (remote.pendingCloudEnd) { await this.flushPendingEnd(); return }
     if (!remote.sessionId || !['waiting', 'approval', 'connected'].includes(remote.status)) return;
@@ -247,10 +249,9 @@ export class RemoteSupportService {
     if (this.starting || this.socket?.readyState === WebSocket.OPEN || !this.state().remote.grant) return;
     this.starting = true;
     try {
-      const deviceId = await getDesktopDeviceId();
+      const deviceId = getOrCreateSupportDeviceId();
       const grant = this.state().remote.grant!;
-      const signed = signDeviceMessage('device-tools-host-v1', [await this.currentUserId(), deviceId, grant.sessionId]);
-      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId, ts: signed.ts, signature: signed.signature });
+      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId });
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(ticket.url);
         const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Support channel connection timed out.')) }, 15_000);
@@ -261,12 +262,6 @@ export class RemoteSupportService {
     finally { this.starting = false }
   }
 
-  private async currentUserId(): Promise<string> {
-    const { getCurrentUserId } = await import('@pkg/main/sullaCloudAuth');
-    const id = await getCurrentUserId();
-    if (!id) throw new Error('Sign in to Sulla Cloud to connect support.');
-    return id;
-  }
 
 
   private attachSocket(socket: WebSocket) {
@@ -332,6 +327,12 @@ export class RemoteSupportService {
 
   private async callTool(name: string, raw: unknown): Promise<ToolResult> {
     if (!TOOLS.some(tool => tool.name === name)) throw new Error('Tool is not in the support allowlist.');
+    if (name === 'support.runtime.status') { exactKeys(raw, []); return textResult({status:this.runtimeHealth(),state:String(this.runtime?.state??'unavailable')}) }
+    if (name === 'support.runtime.restart') {
+      exactKeys(raw, []); if(!this.runtime) return textResult({restarted:false,status:'offline',error:'The runtime controller is unavailable.'},true);
+      const { getSettings } = require('@pkg/config/settingsImpl');
+      await this.runtime.stop(); await this.runtime.start(getSettings()); return textResult({restarted:true,status:this.runtimeHealth(),state:String(this.runtime.state)});
+    }
     if (name === 'support.runtime.exec') {
       const args = exactKeys(raw, ['command', 'cwd', 'timeoutSec']);
       if (typeof args.command !== 'string' || !args.command.length || Buffer.byteLength(args.command, 'utf8') > 8 * 1024) throw new Error('Command must contain 1 byte to 8 KiB.');
@@ -361,7 +362,7 @@ export class RemoteSupportService {
       exactKeys(raw, []); const containers = await this.sullaContainers();
       return textResult({ containers: [...containers].map(([containerName, item]) => ({ name: containerName, image: item.image, state: /up|running/.test(item.state) ? 'running' : /restart/.test(item.state) ? 'restarting' : /exit|stop/.test(item.state) ? 'stopped' : 'error', health: item.health, memoryLimitBytes: null })) });
     }
-    if (name === 'support.containers.restart') {
+    if (name === 'support.containers.restart' || name === 'support.container.restart') {
       const args = exactKeys(raw, ['name']); const { name: container } = await this.requireContainer(args.name); await this.vm('docker', 'restart', container); const current = await this.sullaContainers();
       return textResult({ name: container, restarted: true, state: current.get(container)?.state || 'unknown' });
     }
@@ -379,20 +380,21 @@ export class RemoteSupportService {
     }
     if (name === 'support.ai.retry_connection') {
       const args = exactKeys(raw, ['provider']); if (typeof args.provider !== 'string' || !PROVIDER.test(args.provider) || !AI_PROVIDERS.has(args.provider.toLowerCase())) throw new Error('Unknown AI provider.');
-      const retried = await getServiceLifecycleManager().retryService('model-provider');
+      const containers=await this.sullaContainers(), agent=[...containers.keys()].find(container=>/(^|[_-])agent($|[_-])/.test(container));
+      const retried=!!agent; if(agent)await this.vm('docker','restart',agent);
       return textResult({ provider: args.provider, status: retried ? 'connected' : 'error', error: retried ? null : 'No retryable Sulla service has that name.' });
     }
     if (name === 'support.update.set_channel') {
       const args = exactKeys(raw, ['channel', 'pinnedVersion']); if (!['lts', 'nightly'].includes(String(args.channel))) throw new Error('Invalid update channel.');
       if (args.pinnedVersion !== undefined && args.pinnedVersion !== null && (typeof args.pinnedVersion !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(args.pinnedVersion))) throw new Error('Invalid pinned semantic version.');
-      const previousChannel = supportUpdateApi.status().channel; const state = await supportUpdateApi.setChannel(args.channel as 'lts' | 'nightly', { pinnedVersion: args.pinnedVersion as string | undefined, setBy: 'support' });
+      const previousChannel = updateApi().status().channel; const state = await updateApi().setChannel(args.channel as 'lts' | 'nightly', { pinnedVersion: args.pinnedVersion as string | undefined, setBy: 'support' });
       return textResult({ channel: state.channel, pinnedVersion: state.pinnedVersion || null, previousChannel });
     }
     if (name === 'support.update.check_and_install') {
-      exactKeys(raw, []); try { const state = await supportUpdateApi.checkAndInstall(); return textResult({ status: state.phase === 'not-available' ? 'up_to_date' : state.phase === 'downloading' ? 'downloading' : state.phase === 'downloaded' ? 'restart_pending' : state.phase === 'error' ? 'error' : 'installing', version: state.availableVersion || null, error: state.error || null }) } catch (error) { return textResult({ status: 'error', version: null, error: redacted(error instanceof Error ? error.message : String(error)) }) }
+      exactKeys(raw, []); try { const state = await updateApi().checkAndInstall(); return textResult({ status: state.phase === 'not-available' ? 'up_to_date' : state.phase === 'downloading' ? 'downloading' : state.phase === 'downloaded' ? 'restart_pending' : state.phase === 'error' ? 'error' : 'installing', version: state.availableVersion || null, error: state.error || null }) } catch (error) { return textResult({ status: 'error', version: null, error: redacted(error instanceof Error ? error.message : String(error)) }) }
     }
     if (name === 'support.update.status') {
-      exactKeys(raw, []); const status = supportUpdateApi.status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
+      exactKeys(raw, []); const status = updateApi().status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
     }
     throw new Error('Tool is not in the support allowlist.');
   }
@@ -427,9 +429,8 @@ export class RemoteSupportService {
 
   private async reportDeviceStatus() {
     const remote = this.state().remote; if (!remote.sessionId || !remote.grant) return;
-    const [metadata, deviceId, userId] = await Promise.all([getDesktopDeviceMetadata(), getDesktopDeviceId(), this.currentUserId()]);
-    const signed = signDeviceMessage('support-desktop-v1', [userId, deviceId, remote.sessionId, 'device-status']);
-    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, ts: signed.ts, signature: signed.signature, appVersion: app.getVersion(), updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(), deviceName: metadata.name });
+    const deviceId=getOrCreateSupportDeviceId(); const deviceName=require('node:os').hostname() || 'Sulla Desktop';
+    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), deviceName });
   }
 }
 
@@ -438,12 +439,12 @@ export const remoteSupportService = new RemoteSupportService();
 export function configureRemoteSupportRuntime(runtime: Runtime) { remoteSupportService.configureRuntime(runtime) }
 export function startRemoteSupport() {
   ipcMain.handle('support:remote-banner-state', event => {
-    const main = window.getWindow('main-agent') ?? window.getWindow('main');
+    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
     if (event.sender !== main?.webContents) throw new Error('Support status is only available from the main Sulla window.');
     return remoteSupportService.state().remote;
   });
   ipcMain.handle('support:remote-banner-end', event => {
-    const main = window.getWindow('main-agent') ?? window.getWindow('main');
+    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
     if (event.sender !== main?.webContents) throw new Error('Support access can only be ended from the main Sulla window.');
     return remoteSupportService.end();
   });

@@ -95,6 +95,8 @@ const PURPOSE_TAGS = {
   'device-tools-rpc-v1': 'sulla-device-tools-rpc-v1',
   'device-tools-host-v1': 'sulla-device-tools-host-v1',
   'support-desktop-v1': 'sulla-support-desktop-v1',
+  'support-request-v1': 'sulla-support-request-v1',
+  'support-guest-v1': 'sulla-support-guest-v1',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;

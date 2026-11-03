@@ -368,17 +368,6 @@ const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
   [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}$/, ['GET']],
   [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['PUT']],
   // Support Center (user side): tickets, feedback, uploads, consent, timeline.
-  [/^\/support\/(?:tickets|unread)$/, ['GET']],
-  [/^\/support\/(?:tickets|feedback|timeline|attachments)$/, ['POST']],
-  [/^\/support\/metrics-consent$/, ['PUT']],
-  [/^\/support\/tickets\/[A-Za-z0-9_-]{1,200}$/, ['GET']],
-  [/^\/support\/tickets\/[A-Za-z0-9_-]{1,200}\/reply$/, ['POST']],
-  // Remote support (user side): request, approve, grant check, status, end, device-channel host ticket.
-  [/^\/support\/sessions$/, ['POST']],
-  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}$/, ['GET']],
-  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/grant$/, ['GET']],
-  [/^\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:approve|end|device-status)$/, ['POST']],
-  [/^\/device-tools\/tickets$/, ['POST']],
   // Remote support (supporter side): Workers enforces super-admin + accepted-by-caller on each route.
   [/^\/super-admin\/support\/sessions$/, ['GET']],
   [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/events$/, ['GET']],

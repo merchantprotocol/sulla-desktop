@@ -6,14 +6,13 @@
 import Electron from 'electron';
 
 import { SupportStateStore } from '@pkg/main/supportState';
-import { cloudRequest } from '@pkg/main/cloud/cloudFetch';
-import { isCloudSignedIn } from '@pkg/main/sullaCloudAuth';
+import { supportCloudRequest } from '@pkg/main/support/supportCloud';
 
 /** Best-effort support timeline delivery. It never waits for, or unlocks, the vault. */
 export async function recordSupportTimeline(eventType: 'downloaded' | 'installed' | 'first_run_step' | 'error', data?: Record<string, unknown>): Promise<void> {
   try {
-    if (!new SupportStateStore(Electron.app.getPath('userData')).read().privacy.metricsConsent || !await isCloudSignedIn()) return;
-    await cloudRequest('POST', '/support/timeline', {
+    if (!new SupportStateStore(Electron.app.getPath('userData')).read().privacy.metricsConsent) return;
+    await supportCloudRequest('POST', '/support/timeline', {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ eventType, appVersion: Electron.app.getVersion(), data }),
     });
