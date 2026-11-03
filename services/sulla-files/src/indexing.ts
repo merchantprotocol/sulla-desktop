@@ -10,6 +10,16 @@ import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 
 import type pg from 'pg';
 
+export async function lockIndexingEligibility(client:pg.PoolClient, fileId:string):Promise<any> {
+  // Acquire both scope locks first, then evaluate eligibility in a new statement.
+  // PostgreSQL keeps a locking statement's pre-wait snapshot for subqueries.
+  const locked = (await client.query('SELECT collection_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+  if (locked) await client.query('SELECT id FROM collections WHERE id=$1 FOR UPDATE', [locked.collection_id]);
+  return (await client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,
+    EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
+    FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1`, [fileId])).rows[0];
+}
+
 const CHUNK_CHARS = 3_500;
 const CHUNK_OVERLAP = 300;
 
@@ -105,7 +115,7 @@ export class IndexingQueue {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-      const file = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [fileId])).rows[0];
+      const file = await lockIndexingEligibility(client, fileId);
       if (UNINDEXED_SYSTEM_AREAS.has(file?.system_area) || file?.protected) throw new Error('This file is excluded from indexing.');
       if (!file || file.deleted_at || !file.current_version_id) throw new Error('Only a current, active file can be re-indexed.');
       await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [fileId, file.current_version_id]);
@@ -138,7 +148,7 @@ export class IndexingQueue {
       let file:any;
       try {
         await eligibilityClient.query('BEGIN');
-        file = (await eligibilityClient.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
+        file = await lockIndexingEligibility(eligibilityClient, job.file_id);
         if (!file || file.deleted_at || UNINDEXED_SYSTEM_AREAS.has(file.system_area) || file.protected) {
           await eligibilityClient.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
           await eligibilityClient.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
@@ -160,7 +170,7 @@ export class IndexingQueue {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
-        const current = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [file.id])).rows[0];
+        const current = await lockIndexingEligibility(client, file.id);
         if (!current || current.deleted_at || UNINDEXED_SYSTEM_AREAS.has(current.system_area) || current.protected) {
           await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
           await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
@@ -199,7 +209,7 @@ export class IndexingQueue {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
-        const current = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
+        const current = await lockIndexingEligibility(client, job.file_id);
         if (current && !current.deleted_at && current.current_version_id === job.version_id && !UNINDEXED_SYSTEM_AREAS.has(current.system_area) && !current.protected) {
           const updated = await client.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END
             WHERE version_id=$1 AND status='indexing' AND attempts=$6`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason, job.attempts]);
