@@ -1621,7 +1621,7 @@ export default {
         border-color: var(--border-success);
 
         .bg {
-          background-color: var(--success);
+          background-color: var(--status-success);
         }
       }
 
@@ -1629,7 +1629,7 @@ export default {
         border-color: var(--border-warning);
 
         .bg {
-          background-color: var(--warning);
+          background-color: var(--status-warning);
         }
       }
 
@@ -1645,7 +1645,7 @@ export default {
         border-color: var(--border-error);
 
         .bg {
-          background-color: var(--error);
+          background-color: var(--status-error);
         }
       }
 
@@ -1746,7 +1746,7 @@ export default {
     border-collapse: collapse;
     min-width: 400px;
     border-radius: 5px 5px 0 0;
-    outline: 1px solid var(--border);
+    outline: 1px solid var(--border-default);
     overflow: hidden;
     background: var(--sortable-table-bg);
     border-radius: 4px;

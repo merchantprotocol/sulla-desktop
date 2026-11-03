@@ -134,7 +134,7 @@ export default defineComponent({
 }
 
 .vue-slider :deep(.vue-slider-process) {
-  background-color: var(--error);
+  background-color: var(--status-error);
 }
 
 .slider-input, .slider-input:focus, .slider-input:hover {

@@ -2333,7 +2333,7 @@ onBeforeUnmount(() => {
     gap: 8px;
     font-size: 12.5px;
     font-weight: 600;
-    color: var(--text);
+    color: var(--text-primary);
     margin-bottom: 7px;
   }
   .engine .h .r {
@@ -2351,7 +2351,7 @@ onBeforeUnmount(() => {
   }
   .engine .h .r button:hover {
     background: var(--ink-05);
-    color: var(--text);
+    color: var(--text-primary);
   }
   .engine .h .r .pi {
     width: 14px;
@@ -2363,7 +2363,7 @@ onBeforeUnmount(() => {
     margin-top: 5px;
   }
   .engine .m b {
-    color: var(--text);
+    color: var(--text-primary);
     font-weight: 600;
   }
   .kline .sv {
@@ -2506,7 +2506,7 @@ onBeforeUnmount(() => {
   }
   .tb .acts button:hover {
     background: var(--ink-08);
-    color: var(--text);
+    color: var(--text-primary);
   }
   .tb .acts .pi {
     width: 14px;
@@ -2607,7 +2607,7 @@ onBeforeUnmount(() => {
     padding: 0;
     height: auto;
     background: transparent !important;
-    color: var(--text) !important;
+    color: var(--text-primary) !important;
     font-size: 12.5px;
   }
   .toolbar .search input::placeholder, .lsearch input::placeholder { color: var(--dim); }
@@ -2621,7 +2621,7 @@ onBeforeUnmount(() => {
     padding: 4px 0;
   }
   .ftabs a.on {
-    color: var(--text);
+    color: var(--text-primary);
     font-weight: 600;
     box-shadow: inset 0 -2px 0 var(--accent);
   }
@@ -2683,13 +2683,13 @@ onBeforeUnmount(() => {
     font-weight: 500;
   }
   .tabs a.on {
-    color: var(--text);
+    color: var(--text-primary);
     font-weight: 600;
     box-shadow: inset 0 -2px 0 var(--accent);
   }
   .term {
-    background: #0b111c;
-    color: #c9d4e3;
+    background: var(--bg-surface-alt);
+    color: var(--text-secondary);
     font: 12px/1.65 var(--mono);
     padding: 14px 16px;
     border-radius: 0 0 var(--r) var(--r);
@@ -2702,11 +2702,11 @@ onBeforeUnmount(() => {
     max-height: 360px;
     white-space: pre-wrap;
   }
-  .term .ts { color: #66788f; }
-  .term .lv-i { color: #6fb3d2; }
-  .term .lv-w { color: #e3b341; }
-  .term .lv-e { color: #f8716b; }
-  .term .pr { color: #6fd39a; }
+  .term .ts { color: var(--text-muted); }
+  .term .lv-i { color: var(--accent); }
+  .term .lv-w { color: var(--status-warning); }
+  .term .lv-e { color: var(--status-error); }
+  .term .pr { color: var(--status-success); }
   .logbar {
     display: flex;
     align-items: center;
@@ -2740,8 +2740,8 @@ onBeforeUnmount(() => {
     content: "";
     width: 7px;
     height: 4px;
-    border-left: 2px solid #fff;
-    border-bottom: 2px solid #fff;
+    border-left: 2px solid var(--bg-surface);
+    border-bottom: 2px solid var(--bg-surface);
     transform: rotate(-45deg) translate(1px, -1px);
   }
   .logbar .sel { min-width: 0; }

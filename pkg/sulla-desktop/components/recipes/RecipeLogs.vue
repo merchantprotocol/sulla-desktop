@@ -132,7 +132,7 @@ onBeforeUnmount(stopSession);
 
 .log-error {
   padding: 8px 12px;
-  color: var(--danger);
+  color: var(--status-error);
   font-size: 12px;
   font-family: var(--font-mono);
 }

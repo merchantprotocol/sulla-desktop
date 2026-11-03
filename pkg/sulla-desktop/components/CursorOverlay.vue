@@ -182,7 +182,7 @@ onBeforeUnmount(() => {
   top: 20px;
   left: 16px;
   background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  color: var(--bg-surface);
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
   top: 20px;
   left: 16px;
   background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  color: var(--bg-surface);
   font-size: 14px;
   padding: 2px 6px;
   border-radius: 4px;
