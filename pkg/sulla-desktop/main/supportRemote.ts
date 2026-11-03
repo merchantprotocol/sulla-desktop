@@ -11,6 +11,7 @@ import { app, ipcMain } from 'electron';
 import WebSocket from 'ws';
 
 import type { VMBackend } from '@pkg/backend/backend';
+import { getSettings } from '@pkg/config/settingsImpl';
 import { supportCloudRequest } from '@pkg/main/support/supportCloud';
 import { getOrCreateSupportDeviceId } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore, type RemoteSupportActivity, type SupportState } from '@pkg/main/supportState';
@@ -29,7 +30,7 @@ const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const AI_PROVIDERS = new Set(['anthropic', 'claude', 'openai', 'codex', 'google', 'gemini', 'xai', 'grok', 'ollama', 'local']);
 
-type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor'>;
+type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor' | 'start' | 'stop'>;
 type JsonObject = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError: boolean };
 
@@ -42,6 +43,8 @@ interface SupportRpcFrame {
 
 const TOOLS = [
   { name: 'support.logs.tail', description: 'Read redacted Sulla app, runtime, container, or AI logs.', inputSchema: { type: 'object', properties: { source: { enum: ['app', 'runtime', 'containers', 'ai'] }, lines: { type: 'integer', minimum: 1, maximum: 2000 } }, required: ['source'], additionalProperties: false }, mutates: false },
+  { name: 'support.runtime.status', description: 'Show Electron-side Sulla runtime status even when the VM is down.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
+  { name: 'support.runtime.restart', description: 'Restart the Sulla runtime VM from Electron.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: true },
   { name: 'support.diagnostics.snapshot', description: 'Read a bounded Sulla runtime diagnostic snapshot.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.list', description: 'List Sulla runtime containers.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.restart', description: 'Restart one Sulla runtime container.', inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['name'], additionalProperties: false }, mutates: true },
@@ -75,6 +78,8 @@ function plainSummary(tool: string): string {
     'support.update.check_and_install': 'Support checked and installed a signed update',
     'support.update.status': 'Support checked update status',
     'support.runtime.exec': 'Support ran a command inside the Sulla runtime VM',
+    'support.runtime.status': 'Support checked the Sulla runtime status',
+    'support.runtime.restart': 'Support restarted the Sulla runtime VM',
   } as Record<string, string>)[tool] || 'Support ran a Sulla support action';
 }
 function safeInput(value: unknown): JsonObject {
@@ -321,6 +326,11 @@ export class RemoteSupportService {
 
   private async callTool(name: string, raw: unknown): Promise<ToolResult> {
     if (!TOOLS.some(tool => tool.name === name)) throw new Error('Tool is not in the support allowlist.');
+    if (name === 'support.runtime.status') { exactKeys(raw, []); return textResult({status:this.runtimeHealth(),state:String(this.runtime?.state??'unavailable')}) }
+    if (name === 'support.runtime.restart') {
+      exactKeys(raw, []); if(!this.runtime) return textResult({restarted:false,status:'offline',error:'The runtime controller is unavailable.'},true);
+      await this.runtime.stop(); await this.runtime.start(getSettings()); return textResult({restarted:true,status:this.runtimeHealth(),state:String(this.runtime.state)});
+    }
     if (name === 'support.runtime.exec') {
       const args = exactKeys(raw, ['command', 'cwd', 'timeoutSec']);
       if (typeof args.command !== 'string' || !args.command.length || Buffer.byteLength(args.command, 'utf8') > 8 * 1024) throw new Error('Command must contain 1 byte to 8 KiB.');
