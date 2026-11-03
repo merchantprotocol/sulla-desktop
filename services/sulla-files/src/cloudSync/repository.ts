@@ -13,6 +13,7 @@ import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, 
 import type { Envelope } from '../crypto.js';
 import type { StateEntry, SyncHead } from './envelope.js';
 import type { ApplyRemoteInput, ForkLocalInput, LocalFileState, PullRepository } from './pull.js';
+import type { RecursiveDeleteProgress, RecursiveDeleteProgressStore } from './push.js';
 import { conflictPath, type RemoteVersion } from './validation.js';
 
 export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault';
@@ -116,7 +117,7 @@ async function transaction<T>(db:pg.Pool, work:(client:pg.PoolClient) => Promise
 }
 
 /** All cloud-sync SQL. Collections in system areas (Logs, Training Data) are never sync candidates. */
-export class PgCloudSyncRepository implements PullRepository {
+export class PgCloudSyncRepository implements PullRepository, RecursiveDeleteProgressStore {
   constructor(private readonly db:pg.Pool, private readonly actor:FilesIdentity) {}
 
   // ---- collections and sync state ----
@@ -167,6 +168,24 @@ export class PgCloudSyncRepository implements PullRepository {
 
   async clearSkip(versionId:string):Promise<void> {
     await this.db.query('DELETE FROM files_cloud_skips WHERE version_id=$1', [versionId]);
+  }
+
+  async load(rootItemId:string):Promise<RecursiveDeleteProgress|null> {
+    const row=(await this.db.query(`SELECT batch_id::text,root_item_id::text,device_id,next_index,sessions FROM files_cloud_namespace_batches
+      WHERE root_item_id=$1`,[rootItemId])).rows[0];
+    return row?{batchId:row.batch_id,rootItemId:row.root_item_id,deviceId:row.device_id,nextIndex:Number(row.next_index),sessions:row.sessions}:null;
+  }
+
+  async save(progress:RecursiveDeleteProgress):Promise<void> {
+    await this.db.query(`INSERT INTO files_cloud_namespace_batches(batch_id,collection_id,root_item_id,device_id,next_index,sessions)
+      SELECT $1,collection_id,$2,$3,$4,$5 FROM (SELECT collection_id FROM files WHERE id=$2 UNION ALL SELECT collection_id FROM file_folders WHERE id=$2 LIMIT 1) root
+      ON CONFLICT(collection_id,root_item_id) DO UPDATE SET next_index=GREATEST(files_cloud_namespace_batches.next_index,EXCLUDED.next_index),sessions=EXCLUDED.sessions,updated_at=NOW()
+      WHERE files_cloud_namespace_batches.batch_id=EXCLUDED.batch_id AND files_cloud_namespace_batches.device_id=EXCLUDED.device_id`,
+    [progress.batchId,progress.rootItemId,progress.deviceId,progress.nextIndex,progress.sessions]);
+  }
+
+  async clear(batchId:string):Promise<void> {
+    await this.db.query('DELETE FROM files_cloud_namespace_batches WHERE batch_id=$1',[batchId]);
   }
 
   async sync(collectionId:string):Promise<SyncRow | null> {
@@ -317,7 +336,7 @@ export class PgCloudSyncRepository implements PullRepository {
   async nextPushCandidate(collectionId:string, cursor:number):Promise<PushCandidate | null> {
     const row = (await this.db.query(`SELECT * FROM (
       SELECT j.op,j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
-        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,NULL::uuid AS restored_from_version_id,
+        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,v.restored_from_version_id,
         regexp_replace(f.path,'^.*/','') AS item_name,
         CASE WHEN strpos(f.path,'/')=0 THEN NULL ELSE COALESCE((SELECT ff.id::text FROM file_folders ff WHERE ff.collection_id=f.collection_id AND ff.path=regexp_replace(f.path,'/[^/]+$','') AND ff.deleted_at IS NULL LIMIT 1),
           (SELECT cf.file_id::text FROM files_cloud_folders cf WHERE cf.collection_id=f.collection_id AND cf.path=regexp_replace(f.path,'/[^/]+$','') AND cf.deleted=FALSE LIMIT 1)) END AS parent_folder_id,
