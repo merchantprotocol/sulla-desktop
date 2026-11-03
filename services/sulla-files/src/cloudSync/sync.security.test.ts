@@ -29,6 +29,7 @@ class MemoryRepository implements PullRepository {
   conflicts = 0;
   writes = 0;
   savedHead?:SyncHead;
+  folders = new Map<string, { path:string; versionId:string; deleted:boolean }>();
 
   async cloudHeads() { return [...this.heads.values()] }
   async hasLocalVersion(versionId:string) { return this.versions.has(versionId) }
@@ -57,6 +58,12 @@ class MemoryRepository implements PullRepository {
     this.cloudVersions.add(remote.versionId);
     this.heads.set(remote.fileId, { fileId: remote.fileId, versionId: remote.versionId, deleted: remote.deleted });
     this.journal.push({ fileId: remote.fileId, versionId: remote.versionId, op: remote.deleted ? 'delete' : 'put' });
+  }
+  async applyRemoteFolderVersion(input:ApplyRemoteInput) {
+    this.writes += 1;
+    this.folders.set(input.remote.fileId, { path: input.manifest.path, versionId: input.remote.versionId, deleted: input.manifest.deleted });
+    this.cloudVersions.add(input.remote.versionId);
+    this.heads.set(input.remote.fileId, { fileId: input.remote.fileId, versionId: input.remote.versionId, deleted: input.remote.deleted });
   }
   async recordCloudHead(_collectionId:string, remote:RemoteVersion) {
     this.writes += 1;
@@ -110,6 +117,29 @@ test('a new remote file is added locally, including its remote parent folder, an
   assert.equal(repository.files.get(fileId)?.path,'Phone folder/new file.txt');
   assert.equal(repository.files.get(fileId)?.current,versionId);
   assert.equal(await repository.isCloudVersion(versionId),true,'the pulled version cannot become an upload candidate');
+});
+
+test('encrypted folder create, rename, and delete apply without content download or upload candidates', async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const fileId=randomUUID();
+  let parent:string|null=null;
+  let priorMac='';
+  let state={ collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null as SyncHead|null };
+  let materializeCalls=0;
+  const content={ async materialize(){ materializeCalls++; throw new Error('folders have no payload'); } };
+  for (const [seq,path,deleted] of [[1,'Phone folder',false],[2,'Renamed folder',false],[3,'Renamed folder',true]] as const) {
+    const versionId=randomUUID();
+    const manifest:ManifestPlain={v:1,kind:'folder',path,mime:'application/x-directory',size:0,mtime:NOW.toISOString(),sha256:createHash('sha256').update(Buffer.alloc(0)).digest('hex'),chunks:[],deleted,parentVersionId:parent};
+    const remote={fileId,versionId,parentVersionId:parent,deleted,seq,deviceId:'mobile',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,fileId,versionId,manifest),chunkIds:[]};
+    const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq,stateHash:await stateHash([{fileId,versionId,deleted}]),prevMac:priorMac});
+    await new CloudPuller({changes:async()=>({versions:[remote],head})},repository,content,DEVICE,()=>NOW).pull(state,root);
+    state={collectionId:COLLECTION,keyVersion:1,lastSeq:seq,head}; parent=versionId; priorMac=head.mac;
+  }
+  assert.equal(materializeCalls,0);
+  assert.deepEqual(repository.folders.get(fileId),{path:'Renamed folder',versionId:parent,deleted:true});
+  assert.equal(repository.files.size,0,'folder metadata is not invented as a zero-byte file');
+  assert.equal(repository.journal.length,0,'a pulled folder cannot enter the file upload journal');
 });
 
 /** Collection where file F was pushed at seq 1 as V0, plus a valid seq-1 head. */

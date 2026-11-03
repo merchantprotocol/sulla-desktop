@@ -7,7 +7,8 @@ import { verifyHead, type ManifestEnvelope, type ManifestPlain, type SyncHead } 
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
-const MANIFEST_FIELDS = ['v', 'path', 'mime', 'size', 'mtime', 'sha256', 'chunks', 'deleted', 'parentVersionId'];
+const REQUIRED_MANIFEST_FIELDS = ['v', 'path', 'mime', 'size', 'mtime', 'sha256', 'chunks', 'deleted', 'parentVersionId'];
+const MANIFEST_FIELDS = [...REQUIRED_MANIFEST_FIELDS, 'kind'];
 const MAX_PLAIN_CHUNK_BYTES = 4 * 1024 * 1024;
 
 export class CloudSyncIntegrityError extends Error {
@@ -80,9 +81,10 @@ export function parseManifestPlain(value:unknown):ManifestPlain {
   if (typeof manifest.v === 'number' && manifest.v > 1) {
     throw Object.assign(new CloudSyncIntegrityError('This backup was written by a newer Sulla. Update Sulla to read it.'), { status: 409 });
   }
-  if (Object.keys(manifest).some(key => !MANIFEST_FIELDS.includes(key)) || MANIFEST_FIELDS.some(key => !(key in manifest))) integrity('manifest fields invalid');
+  if (Object.keys(manifest).some(key => !MANIFEST_FIELDS.includes(key)) || REQUIRED_MANIFEST_FIELDS.some(key => !(key in manifest))) integrity('manifest fields invalid');
   if (manifest.v !== 1) integrity('manifest version invalid');
   assertCollectionPath(manifest.path);
+  if (manifest.kind !== undefined && manifest.kind !== 'file' && manifest.kind !== 'folder') integrity('manifest kind invalid');
   if (typeof manifest.mime !== 'string' || manifest.mime.length > 255) integrity('manifest mime invalid');
   if (!Number.isSafeInteger(manifest.size) || manifest.size < 0) integrity('manifest size invalid');
   if (typeof manifest.mtime !== 'string' || !Number.isFinite(Date.parse(manifest.mtime))) integrity('manifest mtime invalid');
@@ -100,6 +102,7 @@ export function parseManifestPlain(value:unknown):ManifestPlain {
   }
   if (total !== manifest.size) integrity('manifest size does not match its chunks');
   if (manifest.deleted && manifest.chunks.length) integrity('deleted manifest has content');
+  if (manifest.kind === 'folder' && (manifest.size !== 0 || manifest.chunks.length !== 0)) integrity('folder manifest has content');
   return manifest as ManifestPlain;
 }
 

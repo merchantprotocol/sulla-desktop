@@ -456,6 +456,27 @@ export class PgCloudSyncRepository implements PullRepository {
     });
   }
 
+  async applyRemoteFolderVersion(input:ApplyRemoteInput):Promise<void> {
+    const { collectionId, remote, manifest } = input;
+    await transaction(this.db, async client => {
+      await lockStoredNamespace(client, collectionId);
+      const prior = (await client.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 FOR UPDATE', [collectionId, remote.fileId])).rows[0];
+      if (manifest.deleted) {
+        if (prior?.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, prior.path]);
+      } else {
+        await ensureStoredFileParents(client, collectionId, `${ manifest.path }/.folder`, this.actor);
+        if (prior?.path && prior.path !== manifest.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, prior.path]);
+        await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id)
+          VALUES($1,$2,$3,'user',$4) ON CONFLICT(collection_id,path) DO UPDATE SET updated_at=NOW()`,
+        [remote.fileId, collectionId, manifest.path, this.actor.userId]);
+      }
+      await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,
+      [collectionId, remote.fileId, remote.versionId, manifest.deleted ? null : manifest.path, manifest.deleted]);
+      await this.upsertCloudHead(client, collectionId, remote.fileId, remote.versionId, manifest.deleted, remote.seq);
+    });
+  }
+
   async applyRemoteVersion(input:ApplyRemoteInput):Promise<void> {
     try {
       await transaction(this.db, client => this.applyRemote(client, input, input.remote.fileId, input.remote.versionId));

@@ -26,6 +26,8 @@ export type SubkeyPurpose = 'chunk-id' | 'chunk' | 'manifest' | 'head' | 'info';
 export interface ManifestPlain {
   v:1;
   path:string;
+  /** Missing means file for v1 compatibility. */
+  kind?:'file' | 'folder';
   mime:string;
   size:number;
   mtime:string;

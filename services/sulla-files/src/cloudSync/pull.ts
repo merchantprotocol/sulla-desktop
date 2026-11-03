@@ -66,6 +66,8 @@ export interface PullRepository {
   forkLocalVersion(input:ForkLocalInput):Promise<void>;
   /** Apply a remote version onto its original fileId and record it as the file's cloud head. */
   applyRemoteVersion(input:ApplyRemoteInput):Promise<void>;
+  /** Apply an explicit empty-folder object (v1 manifests without kind remain files). */
+  applyRemoteFolderVersion?(input:ApplyRemoteInput):Promise<void>;
   /** Record a cloud head for a version that is already present locally. */
   recordCloudHead(collectionId:string, remote:RemoteVersion):Promise<void>;
   saveVerifiedHead(collectionId:string, head:SyncHead):Promise<void>;
@@ -225,6 +227,11 @@ export class CloudPuller {
     const materializedManifest = manifest.size === 0 && manifest.chunks.length === 1 && manifest.chunks[0][1] === 0
       ? { ...manifest, chunks: [] }
       : manifest;
+    if (manifest.kind === 'folder') {
+      if (!this.repository.applyRemoteFolderVersion) throw new CloudSyncIntegrityError('folder sync is unavailable');
+      await this.repository.applyRemoteFolderVersion({ collectionId: state.collectionId, remote, manifest, content: null, remoteDeviceLabel: (remote.deviceId ?? 'cloud').slice(0, 8) });
+      return forked ? 'forked' : 'applied';
+    }
     const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, materializedManifest);
     await this.repository.applyRemoteVersion({
       collectionId: state.collectionId,
