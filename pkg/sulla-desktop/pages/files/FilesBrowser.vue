@@ -1454,7 +1454,10 @@ function onDragLeave(_event:DragEvent) { if (!dragging.value && !externalNavigat
 async function onDrop(event:DragEvent) {
   if (readOnlyArea.value) { clearInternalDrag(); return }
   dragging.value = false; externalDragDepth = 0;
-  if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
+  // A selected file can keep the details pane open while the user drops a
+  // file into the browser. Selection is unrelated to drop ownership; aborting
+  // here made external uploads silently do nothing whenever details were open.
+  if (busy.value || loading.value || section.value !== 'files') { clearInternalDrag(); return }
   if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
   if (!props.dataSource.capabilities.upload) return;
