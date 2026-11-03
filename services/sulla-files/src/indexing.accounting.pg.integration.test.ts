@@ -59,12 +59,13 @@ integration('restart reconciliation accounts for every eligible current file and
       const chunkId = (await db.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
         VALUES($1,$2,0,'synthetic sensitive chunk') ON CONFLICT(version_id,ordinal) DO UPDATE SET content=EXCLUDED.content RETURNING id`, [fileId, versionId])).rows[0].id;
       await db.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2) ON CONFLICT(chunk_id) DO UPDATE SET embedding=EXCLUDED.embedding', [chunkId, vectorValue]);
+      return chunkId as string;
     };
-    const assertDerivedRemoved = async(fileIds:string[]) => {
+    const assertDerivedRemoved = async(fileIds:string[], chunkIds:string[]) => {
       const counts = (await db.query(`SELECT
         (SELECT count(*)::int FROM file_search_text WHERE file_id=ANY($1::uuid[])) search_text,
         (SELECT count(*)::int FROM file_search_chunks WHERE file_id=ANY($1::uuid[])) chunks,
-        (SELECT count(*)::int FROM file_search_vectors v JOIN file_search_chunks ch ON ch.id=v.chunk_id WHERE ch.file_id=ANY($1::uuid[])) vectors`, [fileIds])).rows[0];
+        (SELECT count(*)::int FROM file_search_vectors WHERE chunk_id=ANY($2::uuid[])) vectors`, [fileIds, chunkIds])).rows[0];
       assert.deepEqual(counts, { search_text: 0, chunks: 0, vectors: 0 });
     };
 
@@ -93,7 +94,8 @@ integration('restart reconciliation accounts for every eligible current file and
     await db.query('INSERT INTO files_protected_files(file_id) VALUES($1)', [protectedFile.fileId]);
     await db.query('UPDATE files SET current_version_id=$2,size=2 WHERE id=$1', [stale.fileId, staleVersionId]);
     await setJob(stale.fileId, stale.versionId, 'indexed');
-    for (const item of [deleted, protectedFile, excluded, stale]) await seedDerived(item.fileId, item.versionId);
+    const derivedChunkIds = [] as string[];
+    for (const item of [deleted, protectedFile, excluded, stale]) derivedChunkIds.push(await seedDerived(item.fileId, item.versionId));
 
     await reconcileIndexingAccounting(db);
 
@@ -121,7 +123,7 @@ integration('restart reconciliation accounts for every eligible current file and
     assert.equal(eligible.find(row => row.path === 'interrupted.txt')?.attempts, 0);
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=ANY($1::uuid[])', [[deleted.fileId, protectedFile.fileId, excluded.fileId]])).rows[0].count, 0);
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=$1 AND version_id=$2', [stale.fileId, stale.versionId])).rows[0].count, 0);
-    await assertDerivedRemoved([deleted.fileId, protectedFile.fileId, excluded.fileId, stale.fileId]);
+    await assertDerivedRemoved([deleted.fileId, protectedFile.fileId, excluded.fileId, stale.fileId], derivedChunkIds);
 
     const beforeSecondRestart = (await db.query(`SELECT f.path,f.extraction_status,f.extraction_reason_code,f.extraction_reason,j.status,j.reason_code,j.reason,j.attempts
       FROM files f JOIN file_index_jobs j ON j.version_id=f.current_version_id WHERE f.collection_id=$1 ORDER BY f.path`, [collectionId])).rows;
@@ -166,12 +168,13 @@ integration('protecting a file behind an in-flight index lock purges text, chunk
     const vectorValue = vectorType === 'text' ? 'synthetic-vector' : `[${ Array(512).fill('0').join(',') }]`;
 
     const indexer = await db.connect();
+    let chunkId:string | undefined;
     try {
       await indexer.query('BEGIN');
       await indexer.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [fileId]);
       await indexer.query(`INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,'race.fixture','synthetic race text')
         ON CONFLICT(file_id) DO UPDATE SET search_text=EXCLUDED.search_text`, [fileId]);
-      const chunkId = (await indexer.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
+      chunkId = (await indexer.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
         VALUES($1,$2,0,'synthetic race chunk') RETURNING id`, [fileId, versionId])).rows[0].id;
       await indexer.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2)', [chunkId, vectorValue]);
 
@@ -191,8 +194,8 @@ integration('protecting a file behind an in-flight index lock purges text, chunk
     const counts = (await db.query(`SELECT
       (SELECT count(*)::int FROM file_search_text WHERE file_id=$1) search_text,
       (SELECT count(*)::int FROM file_search_chunks WHERE file_id=$1) chunks,
-      (SELECT count(*)::int FROM file_search_vectors v JOIN file_search_chunks ch ON ch.id=v.chunk_id WHERE ch.file_id=$1) vectors,
-      (SELECT count(*)::int FROM file_index_jobs WHERE file_id=$1) jobs`, [fileId])).rows[0];
+      (SELECT count(*)::int FROM file_search_vectors WHERE chunk_id=$2) vectors,
+      (SELECT count(*)::int FROM file_index_jobs WHERE file_id=$1) jobs`, [fileId, chunkId])).rows[0];
     assert.deepEqual(counts, { search_text: 0, chunks: 0, vectors: 0, jobs: 0 });
   } finally {
     await db.end();
