@@ -136,6 +136,7 @@ export class ModelRouter {
   /** Optional provider-service source; tests inject one because ESM jest has no `require`. */
   constructor(private readonly providerService?: () => any) {}
   private health = new Map<string, Health>();
+  private epochs = new Map<string, number>();
   private loadedHealth = false;
   private listeners = new Set<() => void>();
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -207,9 +208,11 @@ export class ModelRouter {
     if (Number.isFinite(next)) { this.expiryTimer = setTimeout(() => { this.expiryTimer = null; this.emit(); this.expire() }, Math.max(0, next - now)); this.expiryTimer.unref?.() }
   }
   /** Record one failed turn for a provider (after its own retries). Repeated failures back it off longer. */
-  async markFailure(provider: string, error: unknown, headers?: Record<string, string>): Promise<void> {
+  attemptToken(provider: string): number { return this.epochs.get(canonicalProviderId(provider)) || 0 }
+  async markFailure(provider: string, error: unknown, headers?: Record<string, string>, attemptEpoch?: number): Promise<void> {
     await this.loadHealth(); provider = canonicalProviderId(provider); const failure = classifyLLMFailure(error); const text = redactLLMFailureMessage(error);
     if (failure.kind === 'interrupted' || failure.kind === 'infrastructure') return;
+    if (attemptEpoch !== undefined && attemptEpoch !== (this.epochs.get(provider) || 0)) return;
     const usage = failure.kind === 'quota' || failure.kind === 'rate_limit';
     const failures = (this.health.get(provider)?.failures || 0) + 1;
     const now = Date.now();
@@ -228,7 +231,11 @@ export class ModelRouter {
     this.expire(); this.emit();
   }
   /** A successful turn puts the provider straight back in its normal place. */
-  async markSuccess(provider: string): Promise<void> { await this.clear(provider) }
+  async markSuccess(provider: string): Promise<void> {
+    await this.loadHealth(); provider = canonicalProviderId(provider);
+    this.epochs.set(provider, (this.epochs.get(provider) || 0) + 1);
+    if (this.health.delete(provider)) { this.expire(); this.emit() }
+  }
   async clear(provider: string): Promise<void> { await this.loadHealth(); provider = canonicalProviderId(provider); if (this.health.delete(provider)) { this.expire(); this.emit() } }
   /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }

@@ -77,7 +77,10 @@ export class AnthropicService extends BaseLanguageModel {
 
     let lastError: unknown = null;
 
-    for (let attempt = 0; attempt <= this.retryCount; attempt++) {
+    // BaseNode owns the cross-provider retry budget. A routed call performs one
+    // upstream attempt here so service retries cannot multiply that budget.
+    const retryCount = options?.routingOwnedRetry ? 0 : this.retryCount;
+    for (let attempt = 0; attempt <= retryCount; attempt++) {
       try {
         if (options?.signal?.aborted) throw new DOMException('Operation aborted', 'AbortError');
 
@@ -363,7 +366,9 @@ export class AnthropicService extends BaseLanguageModel {
 
     let lastError: unknown = null;
 
-    for (let attempt = 0; attempt <= this.retryCount; attempt++) {
+    // See sendRawRequest: routed turns are retried by BaseNode, not twice here.
+    const retryCount = options?.routingOwnedRetry ? 0 : this.retryCount;
+    for (let attempt = 0; attempt <= retryCount; attempt++) {
       try {
         if (options?.signal?.aborted) {
           throw new DOMException('Operation aborted', 'AbortError');

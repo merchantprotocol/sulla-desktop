@@ -396,14 +396,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const startTime = performance.now();
 
     try {
+      let toolStarted = false;
       const guardedCallbacks: StreamCallbacks = {
         ...callbacks,
         onToken: (token: string) => {
           callbacks.onToken?.(token);
         },
         onToolEvent: (event) => {
+          toolStarted = true;
           callbacks.onToolEvent?.(event);
         },
+        onToolStarted: (event) => { toolStarted = true; callbacks.onToolStarted?.(event) },
       };
       let streamedText = '';
       guardedCallbacks.onToken = (token: string) => {
@@ -412,7 +415,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       };
       const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
         signal:   options.signal,
-        canRetry: () => true,
+        canRetry: () => !toolStarted,
         onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
       });
       if (streamedText) result.text = streamedText;
@@ -1058,6 +1061,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const noteToolStart = (id?: string, name?: string, input?: unknown) => {
           if (!id || toolStarts.has(id)) return;
           toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
+          callbacks.onToolStarted?.({ toolUseId: id, toolName: name ?? 'tool', input });
         };
         const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
           if (!id) return;

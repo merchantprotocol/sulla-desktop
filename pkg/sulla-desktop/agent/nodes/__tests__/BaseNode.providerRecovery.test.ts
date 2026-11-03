@@ -15,6 +15,7 @@ const routingResolveMock: any = jest.fn(async() => [
 ]);
 const routingMarkFailureMock: any = jest.fn(async() => undefined);
 const routingMarkSuccessMock: any = jest.fn(async() => undefined);
+const settingsGetMock: any = jest.fn(async(_key: string, fallback: any) => fallback);
 
 const primaryService = {
   getContextWindow: jest.fn(() => 100_000),
@@ -106,7 +107,7 @@ jest.unstable_mockModule('../../controllers/ToolExecutor', () => ({
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: {
-    get: jest.fn(async(_key: string, fallback: any) => fallback),
+    get: settingsGetMock,
     set: jest.fn(async() => undefined),
   },
 }));
@@ -147,6 +148,8 @@ describe('BaseNode provider recovery', () => {
     ]);
     routingMarkFailureMock.mockReset();
     routingMarkSuccessMock.mockReset();
+    settingsGetMock.mockReset();
+    settingsGetMock.mockImplementation(async(_key: string, fallback: any) => fallback);
 
     primaryChatStreamMock.mockRejectedValue(new Error('Codex app-server event stream lag dropped events'));
     primaryChatMock.mockRejectedValue(new Error('Non-streaming recovery must not be called'));
@@ -285,6 +288,45 @@ describe('BaseNode provider recovery', () => {
     expect(reply?.metadata).toMatchObject({ retry_used: true, streamingEmitted: true });
     expect(primaryChatMock).not.toHaveBeenCalled();
     expect(secondaryChatStreamMock).not.toHaveBeenCalled();
+  });
+
+  it('gives a fallback its own three-attempt budget after primary quota exhaustion', async() => {
+    primaryChatStreamMock.mockReset();
+    primaryChatStreamMock.mockRejectedValue(new Error('quota exceeded'));
+    secondaryChatStreamMock.mockReset();
+    secondaryChatStreamMock
+      .mockRejectedValueOnce(new Error('HTTP 503 unavailable'))
+      .mockRejectedValueOnce(new Error('HTTP 503 unavailable'))
+      .mockResolvedValueOnce({ content: 'third attempt', metadata: {} });
+    const { BaseNode } = await import('../BaseNode');
+    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'quota', wsChannel: 'quota', options: {} } };
+    await expect(new TestNode('quota', 'Quota').execute(state)).resolves.toMatchObject({ content: 'third attempt' });
+    expect(primaryChatStreamMock).toHaveBeenCalledTimes(1);
+    expect(secondaryChatStreamMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('never replays a failed call after a provider-owned tool started', async() => {
+    primaryChatStreamMock.mockReset();
+    primaryChatStreamMock.mockImplementationOnce(async(_messages: any, callbacks: any) => {
+      callbacks.onToolStarted({ toolUseId: 'tool-1', toolName: 'write_file' });
+      throw new Error('HTTP 503 unavailable');
+    });
+    const { BaseNode } = await import('../BaseNode');
+    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'tool', wsChannel: 'tool', options: {} } };
+    await expect(new TestNode('tool', 'Tool').execute(state)).rejects.toThrow('HTTP 503');
+    expect(primaryChatStreamMock).toHaveBeenCalledTimes(1);
+    expect(secondaryChatStreamMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back for a non-pinned turn even when the legacy setting is false', async() => {
+    settingsGetMock.mockImplementation(async(key: string, fallback: any) => key === 'fallbackEnabled' ? false : fallback);
+    const { BaseNode } = await import('../BaseNode');
+    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'legacy', wsChannel: 'legacy', options: {} } };
+    await expect(new TestNode('legacy', 'Legacy').execute(state)).resolves.toMatchObject({ content: 'fallback response ok' });
+    expect(secondaryChatStreamMock).toHaveBeenCalledTimes(1);
   });
 
   it('ends the graph cycle without re-dispatching an already persisted assistant response', async() => {
