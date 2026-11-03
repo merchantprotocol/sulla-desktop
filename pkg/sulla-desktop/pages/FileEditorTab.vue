@@ -261,7 +261,7 @@ export default defineComponent({
 .file-editor-error {
   padding: 12px 16px;
   font-size: 13px;
-  color: var(--danger);
+  color: var(--status-error);
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
 }
@@ -285,7 +285,7 @@ export default defineComponent({
   gap: 9px;
   background: color-mix(in srgb, var(--bg-surface-alt) 78%, transparent);
   border-color: var(--border-subtle);
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow) 17.7778%, transparent);
+  box-shadow: var(--elev-raised);
   backdrop-filter: blur(18px);
 }
 
@@ -308,8 +308,8 @@ export default defineComponent({
   height: 30px;
   padding: 0 14px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--border-subtle-strong) 31.25%, transparent);
-  border-color: color-mix(in srgb, var(--border-subtle-strong) 75%, transparent);
+  background: color-mix(in srgb, var(--border-strong) 31.25%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 75%, transparent);
   border-radius: 15px;
   transition: transform 0.45s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }

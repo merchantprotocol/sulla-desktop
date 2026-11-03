@@ -406,7 +406,7 @@ onUnmounted(() => {
 }
 
 .frw-btn-accent {
-  color: #fff;
+  color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--accent), var(--accent));
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 34%, transparent);
 }

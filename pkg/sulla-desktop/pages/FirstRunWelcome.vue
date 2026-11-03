@@ -435,7 +435,7 @@ async function finishSetup(allowMarketing: boolean) {
 /* Recovery key display */
 .recovery-key-box {
   padding: 1rem 1.5rem;
-  border: 2px dashed var(--border-default-strong);
+  border: 2px dashed var(--border-strong);
   border-radius: 0.5rem;
   background-color: var(--bg-surface-alt);
   text-align: center;
@@ -488,7 +488,7 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: var(--border-default-strong);
+  border-color: var(--border-strong);
   background-color: var(--bg-surface-alt);
 }
 
@@ -608,7 +608,7 @@ input:hover, select:hover {
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--text-primary);
+  background: var(--bg-elevated);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--fr-account-spring), background .2s ease;
 }
@@ -639,7 +639,7 @@ input:hover, select:hover {
   min-height: 40px;
   padding-inline: 20px;
   border-radius: 20px;
-  color: #fff;
+  color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--accent), var(--accent));
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: transform .58s var(--fr-account-spring), box-shadow .2s ease;

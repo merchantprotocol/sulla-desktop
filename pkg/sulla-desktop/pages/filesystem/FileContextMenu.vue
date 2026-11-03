@@ -506,9 +506,9 @@ export default defineComponent({
   padding: 6px;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
-  border-color: color-mix(in srgb, var(--border-subtle-strong) 93.75%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 93.75%, transparent);
   border-radius: 16px;
-  box-shadow: 0 20px 54px color-mix(in srgb, var(--shadow) 68.8889%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--border-subtle-strong) 15.625%, transparent);
+  box-shadow: var(--elev-float), inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 15.625%, transparent);
   backdrop-filter: blur(20px);
   font-family: var(--font-mono);
 }

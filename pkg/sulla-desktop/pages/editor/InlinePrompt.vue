@@ -183,9 +183,9 @@ defineExpose({ show });
   padding: 18px;
   gap: 14px;
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-subtle-strong) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 75%, transparent);
   border-radius: 18px;
-  box-shadow: 0 28px 80px color-mix(in srgb, var(--shadow) 71.1111%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--border-subtle-strong) 15.625%, transparent);
+  box-shadow: var(--elev-float), inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 15.625%, transparent);
   animation: noir-prompt-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
 
@@ -199,7 +199,7 @@ defineExpose({ show });
   height: 40px;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
-  border-color: color-mix(in srgb, var(--border-subtle-strong) 75%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 75%, transparent);
   border-radius: 12px;
   font-family: var(--font-mono);
 }
@@ -219,8 +219,8 @@ defineExpose({ show });
 
 .inline-prompt-btn.cancel {
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--border-subtle-strong) 37.5%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-subtle-strong) 62.5%, transparent);
+  background: color-mix(in srgb, var(--border-strong) 37.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 62.5%, transparent);
 }
 
 .inline-prompt-btn.confirm {

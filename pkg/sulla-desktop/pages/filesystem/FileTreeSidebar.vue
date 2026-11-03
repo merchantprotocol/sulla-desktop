@@ -768,7 +768,7 @@ export default defineComponent({
 
 .file-tree-scroll { padding: 7px 6px; }
 .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--border-subtle-strong) 87.5%, transparent);
+  background: color-mix(in srgb, var(--border-strong) 87.5%, transparent);
 }
 
 .file-tree-loading {

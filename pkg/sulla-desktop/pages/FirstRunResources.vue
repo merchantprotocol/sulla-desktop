@@ -450,7 +450,7 @@ button:hover {
 }
 
 input:hover, select:hover {
-  border-color: var(--border-default-strong);
+  border-color: var(--border-strong);
   background-color: var(--bg-surface-alt);
 }
 
@@ -635,7 +635,7 @@ input:hover, select:hover {
   border-radius: 11px;
   font-weight: 700;
   font-size: 15px;
-  color: #fff;
+  color: var(--text-on-accent);
   background: var(--accent);
   border: none;
   cursor: pointer;
@@ -788,7 +788,7 @@ input:hover, select:hover {
 }
 
 .frw :deep(.vue-slider-dot-handle) {
-  background: var(--text-primary);
+  background: var(--bg-elevated);
   box-shadow: inset 0 0 0 2px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
@@ -816,7 +816,7 @@ input:hover, select:hover {
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--text-primary);
+  background: var(--bg-elevated);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--frw-spring), background .2s ease;
 }
@@ -841,7 +841,7 @@ input:hover, select:hover {
   border-radius: 21px;
   font-size: 14px;
   font-weight: 600;
-  color: #fff;
+  color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--accent), var(--accent));
   box-shadow: inset 0 0 0 .5px rgb(from var(--text-primary) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;

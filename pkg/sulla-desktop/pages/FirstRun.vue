@@ -415,7 +415,7 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 .fr-step.is-active .fr-step-n,
 .fr-step.is-done .fr-step-n {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .fr-step.is-done { color: var(--text-secondary); }
