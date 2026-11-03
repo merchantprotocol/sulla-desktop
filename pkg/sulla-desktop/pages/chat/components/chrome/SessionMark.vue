@@ -42,30 +42,30 @@ function commit(): void {
   position: absolute; top: 32px; left: 50%;
   transform: translateX(-50%);
   z-index: 12;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.4em;
   text-transform: uppercase;
-  color: var(--steel-400);
+  color: var(--accent-hover);
   display: inline-flex; align-items: center; gap: 14px;
 }
 .session-mark::before,
 .session-mark::after {
   content: ""; width: 28px; height: 1px;
-  background: var(--steel-500); opacity: 0.55;
+  background: var(--accent); opacity: 0.55;
 }
 .session-mark .dot {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--steel-400);
-  box-shadow: 0 0 8px var(--steel-400);
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent-hover);
+  box-shadow: 0 0 8px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
 .session-mark .title {
-  color: white; font-family: var(--serif); font-style: italic;
+  color: var(--text-on-accent); font-family: var(--font-display); font-style: italic;
   letter-spacing: 0.01em; text-transform: none; font-size: 15px;
   outline: none;
 }
 .session-mark .title[contenteditable="true"]:focus {
-  background: rgba(80, 150, 179, 0.1);
+  background: var(--accent-dim);
   padding: 2px 8px; border-radius: 4px;
 }
 </style>

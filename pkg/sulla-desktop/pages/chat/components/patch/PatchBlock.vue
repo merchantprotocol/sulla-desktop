@@ -158,48 +158,48 @@ function copyPatch(): void {
 <style scoped>
 .patch {
   margin: 8px 0 0;
-  border-left: 1px solid rgba(80, 150, 179, 0.28);
+  border-left: 1px solid var(--accent-dim);
   padding-left: 22px; position: relative;
 }
 .patch::before {
   content: ""; position: absolute; left: -4px; top: 20px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: rgba(80, 150, 179, 0.55);
+  background: var(--accent-glow);
 }
 .patch-head {
-  font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--accent-primary, var(--accent));
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--accent, var(--accent));
   display: flex; align-items: baseline; gap: 14px; margin: 8px 0 10px;
 }
 .patch-head .path {
-  font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px;
+  font-family: var(--font-mono); font-size: 11px;
   color: var(--text-primary); letter-spacing: 0.02em; text-transform: none;
 }
 .patch-head .stat { margin-left: auto; font-size: 10px; color: var(--text-secondary); }
-.patch-head .stat .plus  { color: var(--text-success); }
-.patch-head .stat .minus { color: var(--text-error); margin-left: 6px; }
+.patch-head .stat .plus  { color: var(--status-success); }
+.patch-head .stat .minus { color: var(--status-error); margin-left: 6px; }
 .patch-copy { display: none; }
 .patch-body {
-  font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.7;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
   color: var(--text-primary);
   padding: 14px 0 16px;
-  border-top: 1px solid rgba(80, 150, 179, 0.18);
-  border-bottom: 1px solid rgba(80, 150, 179, 0.18);
+  border-top: 1px solid var(--accent-dim);
+  border-bottom: 1px solid var(--accent-dim);
 }
 .patch-body .l { display: flex; gap: 12px; padding: 0 2px; }
 .patch-body .l .n { color: var(--text-muted); min-width: 22px; text-align: right; user-select: none; font-size: 11.5px; }
-.patch-body .l.add { background: var(--diff-ins-bg, rgba(34, 197, 94, 0.15)); border-radius: 2px; }
-.patch-body .l.add .n { color: var(--text-success); }
-.patch-body .l.add::before { content: "+ "; color: var(--text-success); margin-left: 2px; }
+.patch-body .l.add { background: var(--status-success-soft); border-radius: 2px; }
+.patch-body .l.add .n { color: var(--status-success); }
+.patch-body .l.add::before { content: "+ "; color: var(--status-success); margin-left: 2px; }
 .patch-body .l.context::before { content: "  "; white-space: pre; }
 .patch-body .l.context { color: var(--text-secondary); }
-.patch-body .l.remove { background: var(--diff-del-bg, rgba(239, 68, 68, 0.15)); }
-.patch-body .l.remove .n { color: var(--text-error); }
-.patch-body .l.remove::before { content: "- "; color: var(--text-error); margin-left: 2px; }
+.patch-body .l.remove { background: var(--status-error-soft); }
+.patch-body .l.remove .n { color: var(--status-error); }
+.patch-body .l.remove::before { content: "- "; color: var(--status-error); margin-left: 2px; }
 
 .patch-actions {
   display: flex; gap: 14px; margin-top: 14px; align-items: center;
-  font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; letter-spacing: 0.2em;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em;
   text-transform: uppercase;
 }
 .patch-actions button {
@@ -208,17 +208,17 @@ function copyPatch(): void {
   transition: color 0.15s ease;
 }
 .patch-actions .apply  { color: var(--text-primary); font-weight: 700; }
-.patch-actions .apply:hover { color: var(--accent-primary, var(--accent)); }
-.patch-actions .open   { color: var(--accent-primary, var(--accent)); }
+.patch-actions .apply:hover { color: var(--accent, var(--accent)); }
+.patch-actions .open   { color: var(--accent, var(--accent)); }
 .patch-actions .open:hover { color: var(--text-primary); }
 .patch-actions .reject { color: var(--text-secondary); }
-.patch-actions .reject:hover { color: var(--text-error); }
+.patch-actions .reject:hover { color: var(--status-error); }
 .patch-actions .revert { color: var(--text-secondary); }
-.patch-actions .revert:hover { color: var(--text-error); }
+.patch-actions .revert:hover { color: var(--status-error); }
 .patch-actions .revert:disabled { color: var(--text-muted); cursor: wait; }
 .patch-actions .sep    { color: var(--text-muted); }
 .patch.applied .patch-body { opacity: 0.55; }
-.patch.applied .patch-head::before { content: "◆ APPLIED · "; color: var(--text-success); letter-spacing: 0.18em; }
+.patch.applied .patch-head::before { content: "◆ APPLIED · "; color: var(--status-success); letter-spacing: 0.18em; }
 .patch.rejected .patch-body { opacity: 0.4; filter: saturate(0.3); }
-.patch.rejected .patch-head::before { content: "◇ REJECTED · "; color: var(--text-error); letter-spacing: 0.18em; }
+.patch.rejected .patch-head::before { content: "◇ REJECTED · "; color: var(--status-error); letter-spacing: 0.18em; }
 </style>

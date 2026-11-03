@@ -59,7 +59,7 @@ function openConversation(): void {
   border-radius: 8px;
   background: var(--bg-surface-alt);
   color: var(--text-primary);
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 summary {
@@ -72,10 +72,10 @@ summary {
   list-style: none;
 }
 summary::-webkit-details-marker { display: none; }
-.direction { color: var(--accent-primary); font-size: 16px; }
+.direction { color: var(--accent); font-size: 16px; }
 .agent {
   padding: 0;
-  color: var(--accent-primary);
+  color: var(--accent);
   font: inherit;
   font-weight: 700;
 }
@@ -91,7 +91,7 @@ pre {
   white-space: pre-wrap;
   border-top: 1px solid var(--border-default);
   color: var(--text-secondary);
-  font: 11px/1.5 var(--mono);
+  font: 11px/1.5 var(--font-mono);
 }
 .is-done, .is-failed, .is-stopped { opacity: 0.78; }
 </style>

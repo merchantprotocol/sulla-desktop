@@ -6,7 +6,7 @@
 -->
 <template>
   <!-- VARIANT B: Editorial Landing
-       Magazine/editorial aesthetic. Big Playfair Display serif headline,
+       Magazine/editorial aesthetic. Large display-token headline,
        monospace section label above, green left-border pull quote vibe,
        editorial card grid for actions. -->
   <div class="vb-root">
@@ -166,7 +166,7 @@ const localQuery = computed({
 
 /* ── Editorial headline ── */
 .vb-headline {
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: var(--font-display);
   font-weight: 900;
   font-size: clamp(2.2rem, 5vw, 3.5rem);
   line-height: 1.1;
@@ -178,7 +178,7 @@ const localQuery = computed({
 .vb-headline em {
   font-style: italic;
   color: var(--text-link);
-  text-shadow: 0 0 40px rgba(80, 150, 179, 0.4);
+  text-shadow: 0 0 40px var(--accent-glow);
 }
 
 /* ── Tagline ── */
@@ -226,12 +226,12 @@ const localQuery = computed({
   text-align: left;
   padding: 0;
   transition: border-color 0.3s, box-shadow 0.3s;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px var(--bg-overlay);
 }
 
 .vb-onboarding-btn:hover {
   border-color: var(--text-link);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(80, 150, 179, 0.2);
+  box-shadow: 0 6px 24px var(--bg-overlay), 0 0 0 1px var(--accent-dim);
 }
 
 .vb-onboarding-accent {
@@ -264,12 +264,12 @@ const localQuery = computed({
 }
 
 .vb-onboarding-accent--business {
-  background: var(--text-success, #4ade80);
+  background: var(--status-success);
 }
 
 .vb-onboarding-btn--business:hover {
-  border-color: var(--text-success, #4ade80);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(74, 222, 128, 0.2);
+  border-color: var(--status-success);
+  box-shadow: 0 6px 24px var(--bg-overlay), 0 0 0 1px var(--status-success-soft);
 }
 
 /* ── Card grid ── */
@@ -292,12 +292,12 @@ const localQuery = computed({
   text-align: left;
   padding: 0;
   transition: border-color 0.3s, box-shadow 0.3s;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 8px var(--bg-overlay);
 }
 
 .vb-card:hover {
   border-color: var(--text-link);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(80, 150, 179, 0.15);
+  box-shadow: 0 6px 24px var(--bg-overlay), 0 0 0 1px var(--accent-dim);
 }
 
 .vb-card-accent {

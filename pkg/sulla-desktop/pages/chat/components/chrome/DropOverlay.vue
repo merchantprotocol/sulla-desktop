@@ -27,27 +27,27 @@ defineProps<{ active: boolean }>();
 .drop-overlay {
   position: absolute; inset: 0; z-index: 100;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(7, 13, 26, 0.78);
+  background: var(--bg-elevated);
   backdrop-filter: blur(10px);
   pointer-events: none;
 }
 .drop-card {
   text-align: center; padding: 48px 72px;
-  border: 2px dashed var(--steel-400); border-radius: 16px;
-  background: rgba(20, 30, 42, 0.55);
-  box-shadow: 0 0 60px rgba(106, 176, 204, 0.3);
+  border: 2px dashed var(--accent-hover); border-radius: 16px;
+  background: var(--accent-glow);
+  box-shadow: 0 0 60px var(--accent-glow);
 }
 .drop-icon {
-  font-size: 44px; color: var(--steel-400); margin-bottom: 14px;
-  filter: drop-shadow(0 0 14px rgba(106, 176, 204, 0.45));
+  font-size: 44px; color: var(--accent-hover); margin-bottom: 14px;
+  filter: drop-shadow(0 0 14px var(--accent-glow));
 }
 .drop-title {
-  font-family: var(--serif); font-style: italic; font-size: 22px;
-  color: white; margin-bottom: 8px;
+  font-family: var(--font-display); font-style: italic; font-size: 22px;
+  color: var(--text-on-accent); margin-bottom: 8px;
 }
 .drop-sub {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-300);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
 }
 .drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s ease; }
 .drop-fade-enter-from,  .drop-fade-leave-to    { opacity: 0; }

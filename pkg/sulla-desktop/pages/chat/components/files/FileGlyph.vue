@@ -134,12 +134,12 @@ const kind = computed(() => {
 </script>
 
 <style scoped>
-.file-glyph { width:30px;height:30px;border-radius:7px;display:grid;place-items:center;flex:none;color:var(--nx-accent-2);background:color-mix(in srgb,var(--nx-accent) 13%,transparent) }
+.file-glyph { width:30px;height:30px;border-radius:7px;display:grid;place-items:center;flex:none;color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 13%,transparent) }
 .file-glyph svg { width:17px;height:17px }
-.file-glyph.image { color:#b9a4ff;background:rgba(107,79,191,.16) }
-.file-glyph.video,.file-glyph.pdf { color:#f0a45d;background:rgba(217,92,58,.13) }
-.file-glyph.audio { color:#7ed7a8;background:rgba(31,157,85,.14) }
-.file-glyph.code { color:var(--nx-read-2);background:color-mix(in srgb,var(--nx-read-3) 12%,transparent) }
-.file-glyph.archive { color:var(--nx-read-3);background:color-mix(in srgb,var(--nx-read-3) 11%,transparent) }
-.file-glyph.folder { color:var(--nx-accent-2);background:color-mix(in srgb,var(--nx-accent) 15%,transparent) }
+.file-glyph.image { color:var(--accent);background:var(--accent-dim) }
+.file-glyph.video,.file-glyph.pdf { color:var(--status-warning);background:var(--status-error-soft) }
+.file-glyph.audio { color:var(--status-success);background:var(--status-success-soft) }
+.file-glyph.code { color:var(--text-secondary);background:var(--bg-surface-alt) }
+.file-glyph.archive { color:var(--text-muted);background:var(--bg-surface-alt) }
+.file-glyph.folder { color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 15%,transparent) }
 </style>

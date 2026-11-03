@@ -41,33 +41,33 @@ const visible      = computed(() => showStop.value || showContinue.value);
 }
 .run-controls button {
   padding: 8px 14px; border-radius: 100px;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
   text-transform: uppercase; cursor: pointer;
-  background: rgba(20, 30, 42, 0.7);
-  border: 1px solid rgba(168, 192, 220, 0.25);
-  color: var(--read-2);
+  background: var(--accent);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-primary);
   backdrop-filter: blur(8px);
   transition: all 0.15s ease;
   display: inline-flex; align-items: center; gap: 8px;
 }
 .run-controls button:hover {
-  border-color: var(--steel-400); color: white;
-  background: rgba(80, 150, 179, 0.2);
+  border-color: var(--accent-hover); color: var(--text-on-accent);
+  background: var(--accent-dim);
 }
 .run-controls .stop::before {
   content: ""; width: 10px; height: 10px; border-radius: 2px;
-  background: var(--err); box-shadow: 0 0 8px var(--err);
+  background: var(--status-error); box-shadow: 0 0 8px var(--status-error);
 }
 .run-controls .continue::before {
-  content: "▸"; color: var(--steel-400); font-size: 13px;
+  content: "▸"; color: var(--accent-hover); font-size: 13px;
 }
-.theme-noir .run-controls .stop { display: none; }
-.theme-noir .run-controls {
+.run-controls .stop { display: none; }
+.run-controls {
   top: auto; right: 56px; bottom: 28px; z-index: 5;
 }
-.theme-noir .run-controls .continue {
-  padding: 6px 10px; border-color: var(--nx-hair-strong);
-  color: var(--nx-read-3); background: rgba(12, 18, 28, 0.9);
+.run-controls .continue {
+  padding: 6px 10px; border-color: var(--border-default);
+  color: var(--text-muted); background: var(--accent);
 }
-.theme-noir-light .run-controls .continue { background: color-mix(in srgb, var(--nx-surface) 90%, transparent); }
+.run-controls .continue { background: color-mix(in srgb, var(--bg-surface) 90%, transparent); }
 </style>

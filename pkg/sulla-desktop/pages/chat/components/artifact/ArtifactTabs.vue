@@ -53,42 +53,42 @@ function iconFor(kind: ArtifactKind): string {
 .artifact-tabs {
   display: flex; align-items: center; gap: 4px;
   padding: 14px 14px 0;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  border-bottom: 1px solid var(--accent-dim);
 }
 .atab {
   padding: 9px 14px; border-radius: 8px 8px 0 0;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
-  text-transform: uppercase; color: var(--read-3);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-secondary);
   cursor: pointer;
   border: 1px solid transparent; border-bottom: none;
   display: inline-flex; align-items: center; gap: 8px;
   transition: all 0.15s ease;
 }
-.atab:hover { color: var(--steel-100); background: rgba(80, 150, 179, 0.06); }
+.atab:hover { color: var(--text-secondary); background: var(--accent-dim); }
 .atab.active {
-  color: white;
-  background: rgba(80, 150, 179, 0.12);
-  border-color: rgba(80, 150, 179, 0.25);
+  color: var(--text-on-accent);
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
 }
-.atab .ic { color: var(--steel-400); font-size: 11px; }
+.atab .ic { color: var(--accent-hover); font-size: 11px; }
 .atab .x {
   width: 14px; height: 14px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 10px; color: var(--read-4); background: transparent;
+  font-size: 10px; color: var(--text-muted); background: transparent;
   border: none; cursor: pointer; margin-left: 4px;
 }
-.atab .x:hover { color: var(--err); background: rgba(252, 165, 165, 0.12); }
+.atab .x:hover { color: var(--status-error); background: var(--status-warning-soft); }
 .atab .running-dot {
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--steel-400); box-shadow: 0 0 8px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 8px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
-.atab .done-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.atab .done-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-success); }
 .collapse {
   margin-left: auto; align-self: center; flex: 0 0 auto;
   padding: 0 7px; border: none; border-radius: 6px;
-  background: transparent; color: var(--read-3);
+  background: transparent; color: var(--text-secondary);
   font-size: 16px; line-height: 22px; cursor: pointer;
 }
-.collapse:hover { color: var(--steel-100); background: rgba(80, 150, 179, 0.08); }
+.collapse:hover { color: var(--text-secondary); background: var(--accent-dim); }
 </style>

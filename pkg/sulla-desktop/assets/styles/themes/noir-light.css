@@ -453,29 +453,6 @@
   --dur-move: 480ms;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Component Overrides for Light Theme — FORCE LIGHT MODE
-   These override any dark theme remnants with !important
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Chat Canvas — force light background, hide dark elements */
-.theme-noir-light .chat-canvas {
-  background: var(--nx-surface, #ffffff) !important;
-}
-
-.theme-noir-light .chat-stars,
-.theme-noir-light .stars {
-  display: none !important;
-}
-
-/* Page root backgrounds */
-.theme-noir-light .chat-root,
-.theme-noir-light .page-root,
-.theme-noir-light [class*="page-root"] {
-  background: var(--bg-page, #f4f7fb) !important;
-  color: var(--text-primary, #1a2332) !important;
-}
-
 /* Empty State — High Contrast */
 .theme-noir-light .empty h1,
 .theme-noir-light h1:has(+ .lede) {
@@ -799,15 +776,6 @@
   color: #3d4f63 !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   ModeRail Sidebar — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-noir-light .mode-rail {
-  background: rgba(238, 242, 248, 0.85) !important;
-  border-right-color: rgba(168, 188, 207, 0.2) !important;
-}
-
 .theme-noir-light .mode-btn {
   color: #6a7d94 !important;
 }
@@ -988,30 +956,6 @@
   background: var(--bg-page, #f4f7fb) !important;
 }
 
-.theme-noir-light .welcome-title {
-  color: #1a2332 !important;
-}
-
-.theme-noir-light .welcome-subtitle {
-  color: #6a7d94 !important;
-}
-
-.theme-noir-light .welcome-card {
-  background: var(--bg-surface, #ffffff) !important;
-  border-color: rgba(168, 188, 207, 0.3) !important;
-}
-
-.theme-noir-light .welcome-card:hover {
-  border-color: rgba(80, 150, 179, 0.5) !important;
-  box-shadow: 0 0 15px rgba(80, 150, 179, 0.15), 0 0 30px rgba(80, 150, 179, 0.1) !important;
-}
-
-.theme-noir-light .welcome-card-cta {
-  color: #5096b3 !important;
-  background: rgba(80, 150, 179, 0.1) !important;
-  border-top-color: rgba(168, 188, 207, 0.2) !important;
-}
-
 .theme-noir-light .dt-header {
   background: rgba(238, 242, 248, 0.9) !important;
   border-bottom-color: rgba(168, 188, 207, 0.2) !important;
@@ -1068,21 +1012,6 @@
   color: #6a7d94 !important;
 }
 
-.theme-noir-light .dt-chat-input {
-  background: rgba(238, 242, 248, 0.9) !important;
-  border-top-color: rgba(168, 188, 207, 0.2) !important;
-}
-
-.theme-noir-light .dt-chat-field {
-  color: #1a2332 !important;
-  background: #ffffff !important;
-  border-color: rgba(168, 188, 207, 0.3) !important;
-}
-
-.theme-noir-light .dt-chat-field::placeholder {
-  color: #a8bccf !important;
-}
-
 .theme-noir-light .dt-kbd {
   background: rgba(168, 188, 207, 0.2) !important;
   border-color: rgba(168, 188, 207, 0.3) !important;
@@ -1101,14 +1030,6 @@
   color: #a8bccf !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Chat Page Gradients — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-noir-light .chat-root {
-  background: var(--nx-surface, #ffffff) !important;
-}
-
 .theme-noir-light .header-backdrop {
   background: linear-gradient(
     to bottom,
@@ -1116,29 +1037,6 @@
     rgba(255, 255, 255, 0.85) 55%,
     rgba(255, 255, 255, 0) 100%
   ) !important;
-}
-
-.theme-noir-light .composer-backdrop {
-  background: linear-gradient(
-    to top,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(255, 255, 255, 0.85) 45%,
-    rgba(255, 255, 255, 0) 100%
-  ) !important;
-}
-
-/* The conversation is the white reading canvas. Navigation chrome and
-   contextual drawers sit one level back on the approved off-white paper. */
-.theme-noir-light .app-titlebar,
-.theme-noir-light .app-titlebar .tab-scroll-wrapper,
-.theme-noir-light .mode-rail,
-.theme-noir-light .chat-root .history,
-.theme-noir-light .chat-root .subagent-rail,
-.theme-noir-light .chat-root .subagent-rail-tab,
-.theme-noir-light .chat-root .artifact,
-.theme-noir-light .chat-root .artifact-tab,
-.theme-noir-light .chat-root .chat-files-drawer {
-  background: var(--nx-paper, #f4f7fb) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1284,19 +1182,6 @@
   color: #1a2332 !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Composer — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-noir-light .composer {
-  border-bottom-color: rgba(80, 150, 179, 0.4) !important;
-}
-
-.theme-noir-light .composer:focus-within {
-  border-bottom-color: #5096b3 !important;
-  box-shadow: 0 14px 20px -14px rgba(80, 150, 179, 0.25) !important;
-}
-
 .theme-noir-light .input,
 .theme-noir-light textarea.input {
   color: #1a2332 !important;
@@ -1321,14 +1206,6 @@
   background: rgba(168, 188, 207, 0.15) !important;
   border-color: rgba(168, 188, 207, 0.25) !important;
   color: #6a7d94 !important;
-}
-
-.theme-noir-light .composer-inner {
-  background: transparent !important;
-}
-
-.theme-noir-light .composer-wrap {
-  background: transparent !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1375,59 +1252,6 @@
 .theme-noir-light .time-marker::before,
 .theme-noir-light .time-marker::after {
   background: linear-gradient(90deg, transparent, rgba(168, 188, 207, 0.4), transparent) !important;
-}
-
-.theme-noir-light .chat-role {
-  color: #6a7d94 !important;
-}
-
-.theme-noir-light .chat-turn.you .chat-role {
-  color: #6a7d94 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-role {
-  color: #5096b3 !important;
-}
-
-.theme-noir-light .chat-turn.you .chat-body {
-  color: #1a2332 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body {
-  color: #1a2332 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body em {
-  color: #3d4f63 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body strong {
-  color: #1a2332 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body code,
-.theme-noir-light .chat-turn.sulla .chat-body .term {
-  color: #3d4f63 !important;
-  background: rgba(168, 188, 207, 0.15) !important;
-  border-color: rgba(168, 188, 207, 0.25) !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body h3 {
-  color: #1a2332 !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body h3::before {
-  color: #a8bccf !important;
-}
-
-.theme-noir-light .chat-turn.sulla .chat-body blockquote {
-  color: #6a7d94 !important;
-  border-left-color: rgba(80, 150, 179, 0.4) !important;
-}
-
-.theme-noir-light .chat-cursor {
-  background: #a8bccf !important;
-  box-shadow: 0 0 14px #a8bccf !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1489,28 +1313,6 @@
 
 .theme-noir-light .expanded li::before {
   color: #a8bccf !important;
-}
-
-/* ═════════════════════════════════════════════════════════════════
-   Interim (Listening) — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-noir-light .chat-turn.interim .chat-role {
-  color: #6a7d94 !important;
-}
-
-.theme-noir-light .chat-turn.interim .chat-role::before {
-  background: #5096b3 !important;
-  box-shadow: 0 0 10px #5096b3 !important;
-}
-
-.theme-noir-light .chat-turn.interim .chat-body {
-  color: #6a7d94 !important;
-}
-
-.theme-noir-light .chat-turn.interim .chat-body::after {
-  background: #5096b3 !important;
-  box-shadow: 0 0 12px #5096b3 !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1763,15 +1565,6 @@
 
 .theme-noir-light .search-box .count {
   color: #6a7d94 !important;
-}
-
-/* ═════════════════════════════════════════════════════════════════
-   ModeRail — Light Mode Fixes
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-noir-light .mode-rail {
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
 }
 
 .theme-noir-light header,

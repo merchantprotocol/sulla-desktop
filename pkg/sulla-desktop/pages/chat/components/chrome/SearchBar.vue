@@ -49,25 +49,25 @@ const resultsCount = computed(() => {
   transform: translateX(-50%);
   z-index: 25; width: 480px; max-width: calc(100vw - 48px);
   padding: 10px 16px;
-  background: rgba(20, 30, 42, 0.92);
-  border: 1px solid var(--steel-400);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-hover);
   border-radius: 100px;
   backdrop-filter: blur(14px);
-  box-shadow: 0 14px 30px rgba(0,0,0,0.4), 0 0 24px rgba(106, 176, 204, 0.2);
+  box-shadow: 0 14px 30px var(--bg-overlay), 0 0 24px var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
-.ic { color: var(--steel-400); font-size: 14px; }
+.ic { color: var(--accent-hover); font-size: 14px; }
 input {
   flex: 1; background: transparent; border: none; outline: none;
-  font-family: var(--serif); font-style: italic; font-size: 16px;
-  color: var(--read-1); caret-color: var(--steel-400);
+  font-family: var(--font-display); font-style: italic; font-size: 16px;
+  color: var(--text-primary); caret-color: var(--accent-hover);
 }
-input::placeholder { color: var(--read-4); }
+input::placeholder { color: var(--text-muted); }
 .count {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em;
-  color: var(--read-4);
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em;
+  color: var(--text-muted);
 }
-.x { background: transparent; border: none; color: var(--read-4); cursor: pointer; }
+.x { background: transparent; border: none; color: var(--text-muted); cursor: pointer; }
 
 .veil-enter-active, .veil-leave-active { transition: opacity 0.18s ease; }
 .veil-enter-from,   .veil-leave-to    { opacity: 0; }
