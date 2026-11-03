@@ -30,7 +30,7 @@ function store() { return new SupportStateStore(app.getPath('userData')) }
 function authorize(event: IpcMainInvokeEvent) {
   const { getWindow, webRoot }=windowApi(); const window = getWindow('support-center');
   if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame ||
-      event.senderFrame.url.split(/[?#]/)[0] !== `${ webRoot }/support.html`) {
+      event.senderFrame?.url.split(/[?#]/)[0] !== `${ webRoot }/support.html`) {
     throw new Error('Support requests must come from the Support window.');
   }
   return window;
