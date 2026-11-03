@@ -60,6 +60,11 @@ jobs:
               echo "::error title=Focused vault session tests failed::${detail}"
               exit 1
             }
+      - name: Prepare focused vault service dependencies
+        run: |
+          yarn --cwd packages/vault-crypto install --no-lockfile --ignore-scripts
+          yarn --cwd packages/vault-crypto build
+          yarn --cwd services/sulla-vault install --no-lockfile --ignore-scripts
       - name: Run focused Files Cloud escrow restore tests
         run: |
           yarn esbuild services/sulla-vault/src/filesCloudEscrow.security.test.ts \
@@ -67,8 +72,4 @@ jobs:
             --outfile=services/sulla-vault/dist-test/filesCloudEscrow.security.test.js
           node --test services/sulla-vault/dist-test/filesCloudEscrow.security.test.js
       - name: Run existing vault envelope tests
-        run: |
-          yarn esbuild services/sulla-vault/src/browserEnvelope/envelope.security.test.ts \
-            --bundle --external:libsodium-wrappers-sumo --platform=node --format=esm \
-            --outfile=services/sulla-vault/dist-test/browserEnvelope/envelope.security.test.js
-          node --test services/sulla-vault/dist-test/browserEnvelope/envelope.security.test.js
+        run: yarn --cwd services/sulla-vault test:envelope
