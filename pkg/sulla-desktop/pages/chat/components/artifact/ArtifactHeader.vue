@@ -7,14 +7,83 @@
 <!-- Artifact header — name + status + actions (Expand / Close). -->
 <template>
   <div class="artifact-head">
-    <div class="title-block"><small><span :class="['status-dot', artifact.status === 'done' ? 'done' : '']" />{{ artifact.status }} · {{ typeLabel }}</small><h2>{{ artifact.name }}</h2></div>
-    <div class="spacer" />
-    <span v-if="actionError || artifact.filesRegistrationStatus === 'error'" class="files-error" :title="actionError || artifact.filesRegistrationError || 'Files registration failed'">{{ actionError ? 'Files action failed' : 'Files failed' }}</span>
-    <button v-if="artifact.filesRegistrationStatus === 'error'" class="act" type="button" :disabled="retrying" @click="retryFiles">{{ retrying ? 'Retrying' : 'Retry Files' }}</button>
-    <button v-if="artifact.filesFileId" class="act" type="button" title="Open in editor" aria-label="Open in editor" @click="openFile">↗</button>
-    <button v-if="artifact.filesFileId" class="act" type="button" title="Share" aria-label="Share" @click="shareFile">⇧</button>
-    <button class="act" type="button" title="Expand" aria-label="Expand" @click="$emit('expand')">⛶</button>
-    <button class="act" type="button" title="Close artifact" aria-label="Close artifact" @click="controller.closeArtifact(artifact.id)">×</button>
+  <div class="title-block">
+  <small>
+  <span :class="['status-dot', artifact.status === 'done' ? 'done' : '']" />{{ artifact.status }} · {{ typeLabel }}</small>
+  <h2>{{ artifact.name }}</h2>
+  </div>
+  <div class="spacer" />
+  <span
+    v-if="actionError || artifact.filesRegistrationStatus === 'error'"
+    class="files-error"
+    :title="actionError || artifact.filesRegistrationError || 'Files registration failed'"
+  >{{ actionError ? 'Files action failed' : 'Files failed' }}</span>
+  <button
+    v-if="artifact.filesRegistrationStatus === 'error'"
+    class="act"
+    type="button"
+    :disabled="retrying"
+    @click="retryFiles"
+  >{{ retrying ? 'Retrying' : 'Retry Files' }}</button>
+  <button
+    v-if="artifact.filesFileId"
+    class="act"
+    type="button"
+    title="Open in editor"
+    aria-label="Open in editor"
+    @click="openFile"
+  >
+  <svg
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+  <path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8Z"/>
+  <path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/>
+  </svg>
+  </button>
+  <button
+    v-if="artifact.filesFileId"
+    class="act"
+    type="button"
+    title="Share"
+    aria-label="Share"
+    @click="shareFile"
+  >
+  <svg
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+  <path d="M12 15V4M8 8l4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>
+  </svg>
+  </button>
+  <button
+    class="act"
+    type="button"
+    title="Expand"
+    aria-label="Expand"
+    @click="$emit('expand')"
+  >
+  <svg
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+  <path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/>
+  </svg>
+  </button>
+  <button
+    class="act"
+    type="button"
+    title="Close artifact"
+    aria-label="Close artifact"
+    @click="controller.closeArtifact(artifact.id)"
+  >
+  <svg
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+  <path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/>
+  </svg>
+  </button>
   </div>
 </template>
 
@@ -76,22 +145,81 @@ async function retryFiles(): Promise<void> {
 <style scoped>
 .artifact-head {
   padding: 16px 20px 14px;
-  display: flex; align-items: center; gap: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
   border-bottom: 1px solid rgba(168, 192, 220, 0.1);
   background: transparent;
 }
-.title-block{min-width:0}.title-block small{display:flex;align-items:center;gap:6px;color:var(--text-muted);font:11px var(--mono);letter-spacing:.06em;text-transform:uppercase}.title-block h2{margin:6px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);font:italic 500 22px/1.15 var(--serif);letter-spacing:-.01em}.status-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-primary);animation:chat-pulse 1.5s infinite}.status-dot.done{background:var(--text-success);animation:none}
-.spacer { flex: 1; }
+.title-block {
+  min-width: 0;
+}
+.title-block small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font: 11px var(--mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.title-block h2 {
+  margin: 6px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font: italic 500 22px/1.15 var(--serif);
+  letter-spacing: -.01em;
+}
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: chat-pulse 1.5s infinite;
+}
+.status-dot.done {
+  background: var(--text-success);
+  animation: none;
+}
+.spacer {
+  flex: 1;
+}
 .act {
-  width:32px;height:32px;background:transparent;border:0;color:var(--text-secondary);padding:0;border-radius:8px;font-size:16px;cursor:pointer;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  padding: 0;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
   transition: all 0.15s ease;
 }
-.act:hover {
-  color:var(--text-primary);background:var(--bg-surface-alt);
+.act svg {
+  width: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
 }
-.act:disabled { cursor: wait; opacity: 0.55; }
+.act:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-alt);
+}
+.act:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
 .files-error {
-  max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--danger, #e36b65); font: 600 9.5px var(--mono); letter-spacing: 0.12em; text-transform: uppercase;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger, #e36b65);
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 </style>
