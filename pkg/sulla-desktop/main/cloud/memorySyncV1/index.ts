@@ -36,7 +36,7 @@ class MemorySyncV1Impl{
   throw new Error(`memory key slot create failed (${created.status})`)
  }
  private async rows(){const out:Array<{id:string;table:string;value:Record<string,unknown>;deleted:boolean}>=[];for(const table of TABLES){const rows=await postgresClient.query<MemoryTableRow>(`SELECT row_to_json(t) value FROM ${table} t`);for(const row of rows){const v=row.value as Record<string,unknown>;const pk=table==='subject_memory.overviews'?`${v.subject}:${v.ts}`:String(v.id??v.slug);out.push({id:`${table}:${pk}`,table,value:v,deleted:v.archived===true||v.status==='archived'||Boolean(v.superseded_by)})}}return out}
- private async run(retryConflicts=true){try{const prefs=await getCloudPreferences();if(!isCloudKindEnabled(prefs,'memory')){this.status={...this.status,skipped:'disabled'};return}if(!await isCloudSignedIn())return;const userId=await getCurrentUserId(),deviceId=await getDesktopDeviceId();if(!userId)return;const key=await this.key(deviceId);
+ private async run(retryConflicts=true):Promise<void>{try{const prefs=await getCloudPreferences();if(!isCloudKindEnabled(prefs,'memory')){this.status={...this.status,skipped:'disabled'};return}if(!await isCloudSignedIn())return;const userId=await getCurrentUserId(),deviceId=await getDesktopDeviceId();if(!userId)return;const key=await this.key(deviceId);
   let cursor=Number(await SullaSettingsModel.get('memorySyncV1Cursor','0')),verified=Number(await SullaSettingsModel.get('memorySyncV1VerifiedSeq','0'));
   if(!Number.isSafeInteger(cursor)||cursor<0)cursor=0;if(!Number.isSafeInteger(verified)||verified<0)verified=0;
   let pulledHead:{seq:number;stateHash:string;mac:string;deviceId:string}|null=null;
