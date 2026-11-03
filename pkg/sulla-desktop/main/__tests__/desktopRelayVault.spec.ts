@@ -69,6 +69,7 @@ const mockAuth = { getCurrentAccessToken: jest.fn(async() => { throw new Error('
 const restoreSession = jest.fn(async() => { broker.unlocked = true; return true });
 
 mockModules({
+  electron: undefined,
   '@pkg/agent/database/models/SullaSettingsModel': {
     SullaSettingsModel: {
       get:                jest.fn(async() => ''),
