@@ -22,6 +22,7 @@ import { BrowserWindow, ipcMain, app, screen } from 'electron';
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
+import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
 const console = Logging.background;
 
@@ -57,7 +58,7 @@ function onShow(
   _event: Electron.IpcMainEvent,
   payload: { screenX: number; screenY: number; buttonWidth?: number; buttonHeight?: number; theme?: string },
 ): void {
-  const { screenX, screenY, theme = 'noir-dark' } = payload;
+  const { screenX, screenY, theme = DEFAULT_THEME_ID } = payload;
   const isDark = !theme.includes('light');
 
   console.log('[MoreMenu] onShow', { screenX, screenY, existingWindow: !!win, theme });

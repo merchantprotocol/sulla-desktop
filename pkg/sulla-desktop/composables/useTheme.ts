@@ -6,10 +6,11 @@
 import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light' | 'studio-light';
 
-export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol' | 'noir';
+export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol' | 'noir' | 'studio';
 
 export interface ThemeOption {
   id:     ThemeName;
@@ -36,6 +37,7 @@ export const availableThemes: ThemeOption[] = [
   { id: 'protocol-light', scheme: 'protocol', mode: 'light', label: 'Protocol Light', isDark: false },
   { id: 'noir-dark', scheme: 'noir', mode: 'dark', label: 'Noir Dark', isDark: true },
   { id: 'noir-light', scheme: 'noir', mode: 'light', label: 'Noir Light', isDark: false },
+  { id: 'studio-light', scheme: 'studio', mode: 'light', label: 'Studio', isDark: false },
 ];
 
 export const themeGroups: ThemeGroup[] = [
@@ -44,6 +46,7 @@ export const themeGroups: ThemeGroup[] = [
   { scheme: 'nord', label: 'Nord', themes: availableThemes.filter(t => t.scheme === 'nord') },
   { scheme: 'protocol', label: 'Protocol', themes: availableThemes.filter(t => t.scheme === 'protocol') },
   { scheme: 'noir', label: 'Noir', themes: availableThemes.filter(t => t.scheme === 'noir') },
+  { scheme: 'studio', label: 'Studio', themes: availableThemes.filter(t => t.scheme === 'studio') },
 ];
 
 const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
@@ -73,7 +76,7 @@ const THEME_SETTING_KEY = 'theme';
 const THEME_STORAGE_KEY = 'agentTheme';
 
 /** Theme used when nothing has been saved yet (fresh installs). */
-export const DEFAULT_THEME: ThemeName = 'noir-dark';
+export const DEFAULT_THEME: ThemeName = DEFAULT_THEME_ID;
 
 // Shared reactive state across all composable instances in the same window
 const currentTheme = ref<ThemeName>(DEFAULT_THEME);

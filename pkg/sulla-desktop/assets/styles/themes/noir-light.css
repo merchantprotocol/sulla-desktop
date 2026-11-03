@@ -426,6 +426,31 @@
 
   /* Box */
   --box-bg: #f4f7fb;
+
+  /* Shared theme contract */
+  --bg-selected: var(--nav-active, var(--bg-active));
+  --bg-glass: var(--nx-glass);
+  --accent-glow: var(--nx-glow);
+  --status-success-soft: var(--bg-success);
+  --status-warning-soft: var(--bg-warning);
+  --status-error-soft: var(--bg-error);
+  --status-info-soft: var(--bg-info);
+  --focus-ring: 0 0 0 3px var(--ring-color);
+  --radius-sm: var(--border-radius);
+  --radius-ctl: var(--border-radius-md);
+  --radius-panel: var(--border-radius-lg);
+  --radius-sheet: var(--border-radius-lg);
+  --elev-rest: var(--shadow-sm);
+  --elev-raised: var(--shadow-md);
+  --elev-float: var(--shadow-lg, var(--shadow-md));
+  --font-body: var(--font-sans);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-instant: 120ms;
+  --dur-fast: 160ms;
+  --dur-std: 240ms;
+  --dur-move: 480ms;
 }
 
 /* ═════════════════════════════════════════════════════════════════
