@@ -18,7 +18,14 @@ export interface UpdateChannelState {
   setBy: UpdateChannelSetter;
   setAt: string;
   pendingInstall?: { previousVersion: string; targetVersion: string; channel: UpdateChannel; verifiedAt: string };
-  lastUpdateResult?: { previousVersion: string; newVersion: string; channel: UpdateChannel; completedAt: string };
+  lastUpdateResult?: {
+    previousVersion: string;
+    newVersion: string;
+    channel: UpdateChannel;
+    completedAt: string;
+    status?: 'completed' | 'failed';
+    error?: string;
+  };
 }
 
 export const UPDATE_CHANNEL_STATE_FILE = 'update-channel.json';
@@ -73,10 +80,27 @@ export function reconcileCompletedUpdate(): UpdateChannelState {
       previousVersion: state.pendingInstall.previousVersion,
       newVersion: app.getVersion(),
       channel: state.pendingInstall.channel,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(), status: 'completed',
     };
     delete state.pendingInstall;
     writeUpdateChannelState(state);
   }
+  return state;
+}
+
+
+/** Persist an installer failure so local and remote Support can explain why no restart occurred. */
+export function recordUpdateFailure(targetVersion: string, error: string): UpdateChannelState {
+  const state = readUpdateChannelState();
+  state.lastUpdateResult = {
+    previousVersion: app.getVersion(),
+    newVersion: targetVersion,
+    channel: state.channel,
+    completedAt: new Date().toISOString(),
+    status: 'failed',
+    error: error.slice(0, 240),
+  };
+  delete state.pendingInstall;
+  writeUpdateChannelState(state);
   return state;
 }

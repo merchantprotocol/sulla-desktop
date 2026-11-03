@@ -15,6 +15,8 @@ const console = Logging.background;
 
 type UpdateInstaller = () => void;
 
+const UPDATE_HANDOFF_SAFETY_TIMEOUT_MS = 15_000;
+
 const state = new RestartState();
 let updateInstaller: UpdateInstaller | undefined;
 
@@ -71,6 +73,14 @@ export function completeRestart(): void {
       console.log('[Restart] Shutdown complete; handing off to updater with force-run-after enabled');
       try {
         updateInstaller();
+        // Squirrel owns the normal quit/relaunch from here. If it fails to quit
+        // this process, recover with a plain Electron relaunch instead of
+        // stranding the user with a shut-down runtime and no replacement app.
+        setTimeout(() => {
+          console.error('[Restart] Updater did not quit the app after handoff; falling back to an application relaunch');
+          Electron.app.relaunch();
+          Electron.app.exit(0);
+        }, UPDATE_HANDOFF_SAFETY_TIMEOUT_MS);
 
         return;
       } catch (error) {

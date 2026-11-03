@@ -168,6 +168,14 @@ class UpdateManager extends EventEmitter {
       this.translateRawState(raw);
     });
 
+    updateEvents.on('install-failed', (result: UpdateChannelState['lastUpdateResult']) => {
+      this.setState({
+        phase: 'error',
+        error: result?.error || 'Squirrel could not stage the update.',
+        lastUpdateResult: result,
+      });
+    });
+
     // Register IPC handlers eagerly so any early window open can query state
     // without racing against initialize(). Safe to register here since the
     // renderer-facing surface is self-contained.
@@ -354,7 +362,7 @@ class UpdateManager extends EventEmitter {
     }
     const { installQueuedUpdate } = await import('./index');
 
-    installQueuedUpdate();
+    await installQueuedUpdate();
   }
 
   /**
@@ -486,13 +494,15 @@ class UpdateManager extends EventEmitter {
     return this.getState();
   }
 
-  status(): { currentVersion: string; channel: UpdateChannel; pinnedVersion?: string; available?: string; downloading?: number; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
+  status(): { currentVersion: string; channel: UpdateChannel; pinnedVersion?: string; available?: string; downloading?: number; status: UpdatePhase; error?: string; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
     return {
       currentVersion: this.state.currentVersion,
       channel: this.state.channel,
       pinnedVersion: this.state.pinnedVersion,
       available: this.state.updateAvailable ? this.state.availableVersion : undefined,
       downloading: this.state.phase === 'downloading' ? this.state.progress?.percent ?? 0 : undefined,
+      status: this.state.phase,
+      error: this.state.error,
       lastUpdateResult: this.state.lastUpdateResult,
     };
   }
