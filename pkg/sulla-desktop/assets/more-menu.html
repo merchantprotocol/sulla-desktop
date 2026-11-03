@@ -97,6 +97,18 @@
         --shadow-color: rgba(0, 0, 0, 0.5);
       }
 
+      /* Studio */
+      [data-theme="studio-light"] {
+        --bg-color: oklch(100% 0 0 / 0.98);
+        --text-color: oklch(15% 0 0);
+        --text-muted: oklch(59% 0 0);
+        --hover-bg: color-mix(in oklab, oklch(33% 0 0) 4%, white);
+        --hover-color: oklch(33% 0 0);
+        --separator-color: oklch(96.5% 0 0);
+        --border-color: oklch(93.5% 0 0);
+        --shadow-color: oklch(0% 0 0 / 0.105);
+      }
+
       html, body {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 13px;
