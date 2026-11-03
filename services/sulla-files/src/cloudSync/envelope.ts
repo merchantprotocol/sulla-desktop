@@ -37,6 +37,24 @@ export interface ManifestPlain {
   parentVersionId:string | null;
 }
 
+/** Goal N's additive plaintext namespace. The surrounding crypto envelope stays v1. */
+export interface NamespaceManifestPlain {
+  v:2;
+  itemId:string;
+  kind:'file' | 'folder';
+  name:string;
+  parentFolderId:string | null;
+  mime:string | null;
+  size:number;
+  mtime:number;
+  sha256:string | null;
+  chunks:Array<[string, number]>;
+  deleted:boolean;
+  parentVersionId:string | null;
+  operation:'create' | 'content' | 'metadata' | 'delete' | 'restore';
+  restoredFromVersionId?:string;
+}
+
 export interface ManifestEnvelope {
   format:'sulla-files-sync-manifest';
   v:1;
@@ -222,7 +240,7 @@ export async function sealManifest(
   keyVersion:number,
   fileId:string,
   versionId:string,
-  manifest:ManifestPlain,
+  manifest:ManifestPlain | NamespaceManifestPlain,
   fixedNonce?:Uint8Array,
 ):Promise<ManifestEnvelope> {
   assertUuid(fileId, 'fileId');

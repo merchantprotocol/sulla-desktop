@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { sealManifest, signHead, stateHash, type ManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
+import { sealManifest, signHead, stateHash, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import { CloudPuller, type ApplyRemoteInput, type ForkLocalInput, type LocalFileState, type PullRepository } from './pull.js';
 import { commitStateHash } from './push.js';
 import { parseManifestPlain, type RemoteVersion } from './validation.js';
@@ -73,6 +73,10 @@ class MemoryRepository implements PullRepository {
   async saveVerifiedHead(_collectionId:string, head:SyncHead) {
     this.writes += 1;
     this.savedHead = head;
+  }
+  async cloudFolderPath(_collectionId:string, fileId:string) {
+    const folder = this.folders.get(fileId);
+    return folder && !folder.deleted ? folder.path : null;
   }
 }
 
@@ -140,6 +144,33 @@ test('encrypted folder create, rename, and delete apply without content download
   assert.deepEqual(repository.folders.get(fileId),{path:'Renamed folder',versionId:parent,deleted:true});
   assert.equal(repository.files.size,0,'folder metadata is not invented as a zero-byte file');
   assert.equal(repository.journal.length,0,'a pulled folder cannot enter the file upload journal');
+});
+
+test('Goal N namespace KAT pulls a nested encrypted file once without changing the v1 envelope', async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const folderId='00000000-0000-4000-8000-000000000002';
+  const fileId='00000000-0000-4000-8000-000000000001';
+  const folderVersion=randomUUID(), fileVersion=randomUUID();
+  const folder:NamespaceManifestPlain={v:2,itemId:folderId,kind:'folder',name:'Folder',parentFolderId:null,mime:null,size:0,mtime:1,sha256:null,chunks:[],deleted:false,parentVersionId:null,operation:'create'};
+  const file:NamespaceManifestPlain={v:2,itemId:fileId,kind:'file',name:'Renamed.txt',parentFolderId:folderId,mime:'text/plain',size:5,mtime:2,sha256:'b'.repeat(64),chunks:[['a'.repeat(64),5]],deleted:false,parentVersionId:null,operation:'create'};
+  const versions=[
+    {fileId:folderId,versionId:folderVersion,parentVersionId:null,deleted:false,seq:1,deviceId:'phone',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,folderId,folderVersion,folder),chunkIds:[]},
+    {fileId,versionId:fileVersion,parentVersionId:null,deleted:false,seq:2,deviceId:'phone',createdAt:NOW.toISOString(),manifest:await sealManifest(root,COLLECTION,1,fileId,fileVersion,file),chunkIds:['a'.repeat(64)]},
+  ];
+  const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq:2,stateHash:await stateHash([{fileId:folderId,versionId:folderVersion,deleted:false},{fileId,versionId:fileVersion,deleted:false}]),prevMac:''});
+  const content={async materialize(_collectionId:string,_keyVersion:number,_root:Uint8Array,manifest:ManifestPlain){return {chunkIds:manifest.chunks.map(([id])=>id),chunks:manifest.chunks.map(([id,size])=>({id,size,storedSize:size}))}}};
+  const puller=new CloudPuller({changes:async()=>({versions,head})},repository,content,DEVICE,()=>NOW);
+
+  const first=await puller.pull({collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null},root);
+  assert.equal(first.applied,2);
+  assert.equal(repository.folders.get(folderId)?.path,'Folder');
+  assert.equal(repository.files.get(fileId)?.path,'Folder/Renamed.txt');
+  const writes=repository.writes;
+  const second=await new CloudPuller({changes:async()=>({versions:[],head})},repository,content,DEVICE,()=>NOW)
+    .pull({collectionId:COLLECTION,keyVersion:1,lastSeq:2,head},root);
+  assert.equal(second.applied,0);
+  assert.equal(repository.writes,writes+1,'repeat pull only saves the already-verified head');
 });
 
 /** Collection where file F was pushed at seq 1 as V0, plus a valid seq-1 head. */
