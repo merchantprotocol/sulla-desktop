@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, powerSaveBlocker } from 'electron';
 import WebSocket from 'ws';
 
 import type { VMBackend } from '@pkg/backend/backend';
@@ -153,12 +153,13 @@ export class RemoteSupportService {
   private pingTimer?: ReturnType<typeof setInterval>;
   private pongTimeout?: ReturnType<typeof setTimeout>;
   private lastPongAt = 0;
+  private keepAwakeId?: number;
 
   configureRuntime(runtime: Runtime) { this.runtime = runtime }
 
   start() {
     if (!this.poll) {
-      this.poll = setInterval(() => void this.refreshSession(), POLL_MS);
+      this.poll = setInterval(() => { this.syncKeepAwake(); void this.refreshSession() }, POLL_MS);
       this.poll.unref?.();
     }
     void this.restore();
@@ -170,6 +171,31 @@ export class RemoteSupportService {
     this.reconnect = undefined; this.poll = undefined; this.reconnectAttempt = 0;
     this.teardownHeartbeat();
     this.socket?.close(); this.socket = undefined;
+    this.setKeepAwake(false);
+  }
+
+  /**
+   * Hold off idle system sleep while a support grant is live. A sleeping Mac
+   * keeps its support socket open at the TCP level (TCPKeepAlive offload), so
+   * Cloud still sees the host as online, but every RPC frame waits undelivered
+   * until the next DarkWake and the supporter's call times out. Called on every
+   * session poll, so any path that clears the grant releases the hold.
+   */
+  private syncKeepAwake() {
+    const grant = this.state().remote.grant;
+    this.setKeepAwake(!!grant && Date.parse(grant.expiresAt) > Date.now());
+  }
+
+  private setKeepAwake(on: boolean) {
+    if (on === (this.keepAwakeId !== undefined)) return;
+    try {
+      if (on) this.keepAwakeId = powerSaveBlocker.start('prevent-app-suspension');
+      else {
+        if (powerSaveBlocker.isStarted(this.keepAwakeId!)) powerSaveBlocker.stop(this.keepAwakeId!);
+        this.keepAwakeId = undefined;
+      }
+      console.info(`[RemoteSupport] keep-awake ${ on ? 'on' : 'off' }`);
+    } catch (error) { console.warn('[RemoteSupport] keep-awake toggle failed:', error) }
   }
 
   state(): SupportState { return stateStore().read() }
@@ -203,7 +229,7 @@ export class RemoteSupportService {
       state.remote.status = 'connected'; state.remote.approvedAt = result.session?.approvedAt || now(); state.remote.expiresAt = expiresAt;
       state.remote.grant = { sessionId: current.sessionId!, token, deviceId, expiresAt };
     });
-    broadcast();
+    broadcast(); this.syncKeepAwake();
     await this.ensureHost();
     await this.reportDeviceStatus();
     return this.state();
@@ -213,7 +239,7 @@ export class RemoteSupportService {
     const current = this.state().remote;
     stateStore().clearGrant(reason);
     if (current.sessionId) stateStore().update(state => { state.remote.pendingCloudEnd = { sessionId: current.sessionId!, reason } });
-    broadcast();
+    broadcast(); this.syncKeepAwake();
     this.socket?.close(); this.socket = undefined;
     if (current.sessionId) void this.flushPendingEnd();
     return this.state();
@@ -227,7 +253,7 @@ export class RemoteSupportService {
       const result = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(grant.sessionId) }/grant`, undefined, { 'X-Sulla-Support-Token': grant.token });
       if (!result.active) throw new Error('The support grant is no longer active.');
       stateStore().update((state) => { state.remote.status = 'connected'; state.remote.expiresAt = result.expiresAt; state.remote.offeredBy = result.acceptedByName || state.remote.offeredBy; if (state.remote.grant) state.remote.grant.expiresAt = result.expiresAt });
-      broadcast(); await this.ensureHost(); await this.reportDeviceStatus();
+      broadcast(); this.syncKeepAwake(); await this.ensureHost(); await this.reportDeviceStatus();
     } catch (error: any) {
       if (error?.status === 403) { stateStore().clearGrant(error.code === 'support_grant_invalid' ? 'revoked_or_expired' : 'grant_invalid'); broadcast() }
       else this.scheduleReconnect();
