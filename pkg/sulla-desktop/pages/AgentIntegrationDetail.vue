@@ -1841,7 +1841,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
   outline: none;
 }
 
-.integration-detail-main button.bg-[var(--accent)] {
+.integration-detail-main button.bg-\[var\(--accent\)\] {
   border: 1px solid color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 16%, transparent);
