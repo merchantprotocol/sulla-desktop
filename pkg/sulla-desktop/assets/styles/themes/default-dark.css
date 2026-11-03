@@ -308,6 +308,68 @@
   --border-radius-lg: 8px;
   --outline: var(--accent-primary);
   --outline-width: 1px;
+
+  /* Shared theme contract */
+  --bg-elevated: var(--modal-bg, var(--bg-surface));
+  --bg-selected: var(--nav-active, var(--bg-active));
+  --bg-glass: var(--bg-header, var(--bg-surface));
+  --text-dim: var(--disabled-text, var(--text-muted));
+  --accent-hover: var(--accent-primary-hover, var(--accent));
+  --accent-dim: var(--bg-accent);
+  --accent-border: var(--border-accent);
+  --accent-glow: var(--brand-glow, color-mix(in srgb, var(--accent) 40%, transparent));
+  --status-info: var(--text-info);
+  --status-success-soft: var(--bg-success);
+  --status-warning-soft: var(--bg-warning);
+  --status-error-soft: var(--bg-error);
+  --status-info-soft: var(--bg-info);
+  --focus-ring: 0 0 0 3px var(--ring-color);
+  --radius-sm: var(--border-radius);
+  --radius-ctl: var(--border-radius-md);
+  --radius-panel: var(--border-radius-lg);
+  --radius-sheet: var(--border-radius-lg);
+  --elev-rest: var(--shadow-sm);
+  --elev-raised: var(--shadow-md);
+  --elev-float: var(--shadow-lg, var(--shadow-md));
+  --font-body: var(--font-sans);
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+  --fs-display: 30px;
+  --fs-heading: 18px;
+  --fs-body: 14px;
+  --fs-body-sm: 12px;
+  --fs-caption: 10px;
+  --fs-code: 13px;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-instant: 120ms;
+  --dur-fast: 160ms;
+  --dur-std: 240ms;
+  --dur-move: 480ms;
+  --spring: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Legacy Noir aliases — keep shared components theme-neutral */
+  --nx-paper: var(--bg-page);
+  --nx-surface: var(--bg-surface);
+  --nx-glass: var(--bg-glass);
+  --nx-ink: var(--text-primary);
+  --nx-read-1: var(--text-primary);
+  --nx-read-2: var(--text-secondary);
+  --nx-read-3: var(--text-muted);
+  --nx-read-4: var(--text-dim);
+  --nx-read-5: var(--border-strong);
+  --nx-hair: var(--border-subtle);
+  --nx-hair-strong: var(--border-default);
+  --nx-accent: var(--accent);
+  --nx-accent-2: var(--accent-hover);
+  --nx-glow: var(--accent-glow);
+  --nx-indicator-bg: var(--bg-elevated);
+  --nx-indicator-edge: var(--accent-border);
+  --nx-shadow-lg: var(--elev-float);
+  --nx-success: var(--status-success);
+  --nx-warning: var(--status-warning);
+  --nx-danger: var(--status-error);
 }
 
 /* Scrollbar styling for dark mode */
