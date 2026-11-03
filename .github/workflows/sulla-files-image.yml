@@ -40,6 +40,11 @@ jobs:
         env:
           SULLA_FILES_FRESH_DATABASE_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
           SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
+      - name: Prove deterministic per-file indexing accounting
+        run: node --test services/sulla-files/dist/indexing.accounting.pg.integration.test.js
+        env:
+          SULLA_FILES_INDEX_ACCOUNTING_TEST_URL: postgresql://sulla:sulla@127.0.0.1:5432/test_sulla_files
+          SULLA_FILES_ALLOW_DESTRUCTIVE_TESTS: '1'
   image:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
