@@ -346,6 +346,11 @@ export class WorkflowSchedulerService {
       async() => {
         console.log(`[WorkflowSchedulerService] Cron fired for workflow "${ workflowName }" (node ${ node.id })`);
         try {
+          const { getModelProviderService } = await import('./ModelProviderService');
+          if (!getModelProviderService().getPrimaryProvider().trim()) {
+            console.log(`[WorkflowSchedulerService] Skipped scheduled run of "${ workflowName }": no AI provider is connected`);
+            return;
+          }
           if (await this.takeContainerOwnershipIfHealthy()) {
             console.log(`[WorkflowSchedulerService] Skipped local fire for "${ workflowName }" because the manager owns schedules`);
             return;

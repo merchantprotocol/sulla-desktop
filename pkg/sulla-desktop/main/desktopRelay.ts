@@ -68,6 +68,8 @@ const RECONNECT_MAX_MS = 5 * 60_000;
 // While the vault is locked, re-check this often (a cheap local status call)
 // so the relay reconnects promptly after unlock without exponential delay.
 const VAULT_LOCKED_RETRY_MS = 5_000;
+const OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY = (deviceName: string) =>
+  `Someone is signing in on ${ deviceName }. Open Sulla to see the code.`;
 // Heartbeat + watchdog tuned for Cloudflare Workers: the DO auto-responds to
 // "ping" with "pong" via setWebSocketAutoResponse without waking from
 // hibernation. A 20s ping interval + 45s silence watchdog keeps the pipe
@@ -120,8 +122,13 @@ interface IncomingMessage {
    * the mobile's copy the same row after sync, instead of a duplicate pair.
    */
   userMessageId?:  string;
+  clientRunId?:    string;
   role?:           Role;
   reason?:         string;
+  code?:           string;
+  expiresAt?:      string;
+  requestingDeviceId?: string;
+  requestingDeviceName?: string;
 }
 
 interface Status {
@@ -205,6 +212,11 @@ export class DesktopRelayClient {
   // mobile peer is online; peer_offline pauses it so we don't spam the DO
   // with undeliverable frames during a mobile reconnect.
   private activeConversations = new Set<string>();
+  // Runs are ordered per thread because an aborted graph can emit its final
+  // completion after mobile has already submitted the replacement turn.
+  // Keeping the ids in graph-event order prevents that stale completion from
+  // being stamped as (and therefore ending) the replacement run.
+  private relayRuns = new Map<string, string[]>();
   private mobilePeerOnline = true;
   // System-sleep gate. While the machine is suspended we close the socket on
   // purpose and must not schedule reconnects that can't succeed. Set on
@@ -316,6 +328,7 @@ export class DesktopRelayClient {
     this.keepaliveTimers.clear();
     this.pendingFrames = [];
     this.activeConversations.clear();
+    this.relayRuns.clear();
     this.mobilePeerOnline = true;
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
@@ -531,6 +544,21 @@ export class DesktopRelayClient {
       msg = JSON.parse(raw);
     } catch {
       console.warn('[DesktopRelay] Non-JSON message received');
+      return;
+    }
+
+    if (msg.type === 'other_device_signin_code') {
+      if (!msg.requestId || !/^\d{6}$/.test(msg.code ?? '') || !msg.expiresAt || !msg.requestingDeviceId) return;
+      if (msg.requestingDeviceId === await getDesktopDeviceId()) return;
+      const payload = { requestId: msg.requestId, code: msg.code!, expiresAt: msg.expiresAt, requestingDeviceId: msg.requestingDeviceId, requestingDeviceName: msg.requestingDeviceName ?? 'another device' };
+      try {
+        const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
+        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
+        }
+      } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
+      console.info(`[DesktopRelay] Received other-device sign-in approval ${msg.requestId}`);
       return;
     }
 
@@ -809,7 +837,8 @@ export class DesktopRelayClient {
     // Ack back to mobile so it knows the run ended without waiting for
     // `done` (which may never arrive after an abort). The mobile session
     // socket stays open — this is not a close signal.
-    this.sendChatFrame(conversationId, { type: 'stopped' });
+    const runId = msg.clientRunId || msg.userMessageId || this.relayRuns.get(conversationId)?.[0];
+    this.sendChatFrame(conversationId, { type: 'stopped', ...(runId ? { clientRunId: runId, userMessageId: runId } : {}) });
   }
 
   private async handleInject(msg: IncomingMessage) {
@@ -882,6 +911,11 @@ export class DesktopRelayClient {
       this.sendChatFrame(conversationId, { type: 'error', reason: 'missing_user_message_id' });
       return;
     }
+
+    const runId = msg.clientRunId || msg.userMessageId;
+    const runs = this.relayRuns.get(conversationId) ?? [];
+    if (!runs.includes(runId)) runs.push(runId);
+    this.relayRuns.set(conversationId, runs);
 
     // Extract the user prompt from the incoming frame. The agent maintains
     // its own conversation state keyed by threadId; we only need the fresh
@@ -1167,11 +1201,17 @@ export class DesktopRelayClient {
         finalTextByThread.delete(threadId);
         lastActivityByThread.delete(threadId);
         lastCommittedIdByThread.delete(threadId);
-        // Stop the keepalive — run is complete.
-        const t = this.keepaliveTimers.get(threadId);
-        if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
-        this.activeConversations.delete(threadId);
+        // Stop liveness only when this is still the newest run. A cancelled
+        // graph may complete after its replacement was submitted.
+        const runs = this.relayRuns.get(threadId);
+        if (!runs || runs.length <= 1) {
+          const t = this.keepaliveTimers.get(threadId);
+          if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
+          this.activeConversations.delete(threadId);
+        }
         this.sendChatFrame(threadId, { type: 'done', content: finalText, id: doneId });
+        if (runs?.length) runs.shift();
+        if (!runs?.length) this.relayRuns.delete(threadId);
         return;
       }
 
@@ -1208,16 +1248,20 @@ export class DesktopRelayClient {
       console.error(`[DesktopRelay] BUG: refusing to send ${ type } frame without conversationId`);
       return;
     }
+    const runId = typeof payload.clientRunId === 'string'
+      ? payload.clientRunId
+      : this.relayRuns.get(conversationId)?.[0];
+    const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: runId } : payload;
     const secure = this.secureRoutes.get(conversationId);
     if (secure) {
       try {
-        secure({ ...payload, conversationId, deviceId: this.deviceId });
+        secure({ ...stamped, conversationId, deviceId: this.deviceId });
       } catch (err) {
         console.warn('[DesktopRelay] Secure route send failed:', err);
       }
       return;
     }
-    this.send({ ...payload, conversationId, deviceId: this.deviceId });
+    this.send({ ...stamped, conversationId, deviceId: this.deviceId });
   }
 
   private sendUnchecked(payload: Record<string, unknown>) {

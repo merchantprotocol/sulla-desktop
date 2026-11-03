@@ -61,45 +61,45 @@ const connectionTitle = computed(() => {
 .top-right {
   position: absolute; top: 18px; right: 22px; z-index: 21;
   display: flex; align-items: center; gap: 12px;
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: 10px;
   letter-spacing: 0.2em; text-transform: uppercase;
 }
 .badge {
   padding: 6px 12px; border-radius: 100px;
-  background: rgba(20, 30, 42, 0.5);
-  border: 1px solid rgba(168, 192, 220, 0.14);
-  color: var(--read-3);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-secondary);
   display: inline-flex; align-items: center; gap: 8px;
   backdrop-filter: blur(8px);
   font: inherit; cursor: default;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 .badge.model {
-  color: var(--steel-300); cursor: pointer;
+  color: var(--accent-hover); cursor: pointer;
 }
-.badge.model:hover { color: var(--steel-100); border-color: var(--steel-400); }
+.badge.model:hover { color: var(--text-secondary); border-color: var(--accent-hover); }
 .badge .dot {
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--ok); box-shadow: 0 0 8px var(--ok);
+  background: var(--status-success); box-shadow: 0 0 8px var(--status-success);
 }
 .badge.degraded {
-  border-color: rgba(224, 182, 95, 0.35);
+  border-color: var(--status-warning);
   animation: badge-glow 2.2s ease-in-out infinite;
 }
-.badge.degraded .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: chat-pulse 1.5s infinite; }
+.badge.degraded .dot { background: var(--status-warning); box-shadow: 0 0 8px var(--status-warning); animation: chat-pulse 1.5s infinite; }
 .badge.offline {
-  border-color: rgba(220, 95, 95, 0.35);
+  border-color: var(--status-error);
   animation: badge-glow-offline 1.8s ease-in-out infinite;
 }
-.badge.offline  .dot { background: var(--err);  box-shadow: 0 0 8px var(--err);  animation: chat-pulse 1.5s infinite; }
-.badge.model    .dot { background: var(--steel-400); box-shadow: 0 0 10px var(--steel-400); }
+.badge.offline  .dot { background: var(--status-error);  box-shadow: 0 0 8px var(--status-error);  animation: chat-pulse 1.5s infinite; }
+.badge.model    .dot { background: var(--accent-hover); box-shadow: 0 0 10px var(--accent-hover); }
 
 @keyframes badge-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 182, 95, 0.0); }
-  50%      { box-shadow: 0 0 14px 0 rgba(224, 182, 95, 0.28); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--status-warning-soft); }
+  50%      { box-shadow: 0 0 14px 0 var(--status-warning-soft); }
 }
 @keyframes badge-glow-offline {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 95, 95, 0.0); }
-  50%      { box-shadow: 0 0 14px 0 rgba(220, 95, 95, 0.30); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--status-error-soft); }
+  50%      { box-shadow: 0 0 14px 0 var(--status-error); }
 }
 </style>

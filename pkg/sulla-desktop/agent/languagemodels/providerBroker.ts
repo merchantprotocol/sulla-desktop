@@ -5,6 +5,7 @@
 
 import { issueLocalBrokerContext, requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
+import { providerFailureFromHttp } from './failures';
 
 import type { BrokerInjection } from '../../vault-broker';
 import type { BaseThreadState } from '../nodes/Graph';
@@ -84,7 +85,29 @@ export async function providerFetch(
   ctx: ToolExecutionContext | undefined,
   options: ProviderFetchOptions,
 ): Promise<Response> {
-  if (!usesContainerVaultAuthority() || providerId === 'ollama') return fetch(url, init);
+  const checked = (response: Response): Response => {
+    if (!response.ok) throw providerFailureFromHttp(providerId, response.status);
+    return response;
+  };
+  if (['lm-studio', 'local-server'].includes(providerId)) {
+    const target = new URL(url);
+    const host = target.hostname.toLowerCase();
+    const privateLan = /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(host);
+    if (target.protocol !== 'http:' || !(['localhost', '127.0.0.1', '::1', 'host.sulla.internal'].includes(host) || privateLan)) {
+      throw new Error(`${ providerId } only allows HTTP connections to localhost, host.sulla.internal, or a private LAN address`);
+    }
+    return checked(await fetch(url, init));
+  }
+  if (!usesContainerVaultAuthority() || providerId === 'ollama') return checked(await fetch(url, init));
+  // During first run the verified key can briefly live only in main-process
+  // memory while the encrypted container vault starts. Use it for the first
+  // chat rather than showing a false disconnected state; the pending entry is
+  // zeroed as soon as the vault accepts it.
+  try {
+    const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+    const queued = getPendingCredential(providerId);
+    if (queued?.values.api_key && (!queued.accountId || queued.accountId === ctx?.credential_scope?.account_id)) return checked(await fetch(url, init));
+  } catch { /* pending credentials exist only in the main process */ }
   if (!ctx) throw new Error('provider.inference requires a verified execution context');
 
   const scope = ctx.credential_scope;
@@ -113,14 +136,14 @@ export async function providerFetch(
     injections:   options.injections ?? [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
     responseType: options.responseType ?? (options.streaming ? 'stream' : 'json'),
   });
-  if (options.streaming) return broker.executeStream(request, init.signal ?? undefined);
+  if (options.streaming) return checked(await broker.executeStream(request, init.signal ?? undefined));
 
   const result = await broker.execute(request, init.signal ?? undefined);
   const responseBody = options.responseType === 'base64' && typeof result.body === 'string'
     ? Buffer.from(result.body, 'base64')
     : result.body == null ? null : JSON.stringify(result.body);
-  return new Response(responseBody, {
+  return checked(new Response(responseBody, {
     status:  result.status,
     headers: result.headers,
-  });
+  }));
 }

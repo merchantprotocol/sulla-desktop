@@ -5,6 +5,11 @@
 
 import { app } from 'electron';
 
+import { e2eTrace, installE2eCrashTrace } from '@pkg/main/e2eTrace';
+
+installE2eCrashTrace();
+e2eTrace(`bootstrap start platform=${ process.platform } argv=${ JSON.stringify(process.argv.slice(1)) }`);
+
 // The bootstrap helper branch executes before importing any normal Desktop
 // modules, IPC handlers, browser registries, agent services, or logging.
 const filesBootstrapHelper = process.argv.includes('--sulla-files-bootstrap-helper');
@@ -23,5 +28,11 @@ if (filesBootstrapHelper) {
 } else if (vaultBootstrapHelper) {
   void import('@pkg/main/vaultBootstrapProcess').then(module => module.runVaultBootstrapProcess());
 } else {
-  void import('./background');
+  void import('./background').then(
+    () => e2eTrace('background module loaded'),
+    (error) => {
+      e2eTrace(`background module failed to load: ${ error instanceof Error ? error.stack : error }`);
+      throw error;
+    },
+  );
 }

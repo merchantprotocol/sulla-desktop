@@ -134,7 +134,7 @@ defineExpose({ show });
 }
 
 .inline-prompt-input:focus {
-  border-color: var(--accent-primary);
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
 }
 
@@ -163,53 +163,53 @@ defineExpose({ show });
 }
 
 .inline-prompt-btn.confirm {
-  background: var(--accent-primary);
+  background: var(--accent);
   color: var(--text-on-accent);
 }
 
 .inline-prompt-btn.confirm:hover {
-  background: var(--accent-primary-hover);
+  background: var(--accent-hover);
 }
 </style>
 
 <style scoped>
-.theme-noir .inline-prompt-overlay {
-  background: color-mix(in srgb, var(--nx-paper) 70%, transparent);
+.inline-prompt-overlay {
+  background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
   backdrop-filter: blur(8px);
 }
 
-.theme-noir .inline-prompt-dialog {
+.inline-prompt-dialog {
   width: 360px;
   padding: 18px;
   gap: 14px;
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
-  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 75%, transparent);
   border-radius: 18px;
-  box-shadow: 0 28px 80px color-mix(in srgb, var(--shadow) 71.1111%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
+  box-shadow: var(--elev-float), inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 15.625%, transparent);
   animation: noir-prompt-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-.theme-noir .inline-prompt-title {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.inline-prompt-title {
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 18px;
 }
 
-.theme-noir .inline-prompt-input {
+.inline-prompt-input {
   height: 40px;
-  color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 75%, transparent);
   border-radius: 12px;
-  font-family: ui-monospace, 'SF Mono', monospace;
+  font-family: var(--font-mono);
 }
 
-.theme-noir .inline-prompt-input:focus {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 55%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 12%, transparent);
+.inline-prompt-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.theme-noir .inline-prompt-btn {
+.inline-prompt-btn {
   min-width: 74px;
   height: 32px;
   padding: 0 14px;
@@ -217,19 +217,19 @@ defineExpose({ show });
   transition: transform 0.42s cubic-bezier(.22, 1, .36, 1);
 }
 
-.theme-noir .inline-prompt-btn.cancel {
-  color: var(--nx-read-3);
-  background: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
-  border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
+.inline-prompt-btn.cancel {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--border-strong) 37.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 62.5%, transparent);
 }
 
-.theme-noir .inline-prompt-btn.confirm {
+.inline-prompt-btn.confirm {
   color: var(--text-on-accent);
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 35%, transparent);
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-.theme-noir .inline-prompt-btn:active { transform: scale(0.94); }
+.inline-prompt-btn:active { transform: scale(0.94); }
 
 @keyframes noir-prompt-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -237,7 +237,7 @@ defineExpose({ show });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .inline-prompt-dialog { animation: none; }
-  .theme-noir .inline-prompt-btn { transition-duration: 0.01ms; }
+  .inline-prompt-dialog { animation: none; }
+  .inline-prompt-btn { transition-duration: 0.01ms; }
 }
 </style>

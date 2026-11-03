@@ -30,6 +30,7 @@ import {
 } from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
+import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
 import {
   createProviderCliBridge,
@@ -46,6 +47,8 @@ import {
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
+import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
+import { VaultLocked } from '../languagemodels/failures';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -58,6 +61,7 @@ import {
   AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, egressPolicyCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
 } from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
@@ -68,6 +72,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 const log = Logging.background;
 const perf = Logging.perf;
@@ -83,19 +88,103 @@ const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
 const AGENT_OOM_SCORE_ADJ = 500;
 const LEASE_MS = 15 * 60_000;
 
-/** Boot brings sulla-tools up after Desktop is usable, so agents wait for it instead of failing. */
-const TOOLS_READY_TIMEOUT_MS = 180_000;
+/**
+ * Boot brings sulla-tools up after Desktop is usable, so agents wait for it
+ * instead of failing. Each launch waits this long; the chat retries the launch
+ * (AgentLaunchError) and tells the user it is still waiting.
+ */
+const TOOLS_READY_TIMEOUT_MS = 60_000;
+/** How long a launch waits for a vault that is about to unlock (first run saves the sign-in into it). */
+const VAULT_UNLOCK_TIMEOUT_MS = 60_000;
+
+/**
+ * A launch failed with a reason the user can read. `retryable` means part of
+ * Sulla is still starting and the same launch should work shortly.
+ */
+export class AgentLaunchError extends Error {
+  constructor(message: string, readonly retryable: boolean, readonly detail = '') {
+    super(message);
+    this.name = 'AgentLaunchError';
+  }
+}
+
+export async function toolsServiceHealthy(): Promise<boolean> {
+  return await fetch(`${ loopbackOrigin('http', 30123) }/healthz`, { signal: AbortSignal.timeout(1_000) })
+    .then(response => response.ok).catch(() => false);
+}
 
 async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
-      .then(response => response.ok).catch(() => false);
-
-    if (healthy) return true;
+    if (await toolsServiceHealthy()) return true;
     if (Date.now() >= deadline) return false;
     await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
+/** Resolves true once the vault is unlocked, false after the timeout or an abort. */
+async function waitForVaultUnlock(timeoutMs = VAULT_UNLOCK_TIMEOUT_MS, signal?: AbortSignal): Promise<boolean> {
+  const lifecycle = getServiceLifecycleManager();
+
+  if (lifecycle.isVaultUnlocked()) return true;
+
+  return await new Promise<boolean>((resolve) => {
+    const finish = (unlocked: boolean) => {
+      clearTimeout(timer);
+      lifecycle.off('vault:state', onState);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(unlocked);
+    };
+    const onState = (unlocked: boolean) => { if (unlocked) finish(true) };
+    const onAbort = () => finish(false);
+    const timer = setTimeout(() => finish(lifecycle.isVaultUnlocked()), timeoutMs);
+
+    lifecycle.on('vault:state', onState);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Why the vault is still locked. A vault that is not created yet (first run
+ * is still saving the sign-in) or not answering is worth waiting for; one
+ * that is set up and locked needs the user.
+ */
+async function lockedVaultError(): Promise<AgentLaunchError> {
+  try {
+    const { getDesktopVaultClient } = await import('./DesktopVaultClient');
+    const status = await getDesktopVaultClient().status();
+
+    if (status.setup?.required === false) {
+      return new AgentLaunchError('Your vault is locked. Unlock it, then send your message again.', false);
+    }
+
+    return new AgentLaunchError('Sulla is still setting up your vault', true, 'vault not created yet');
+  } catch (error) {
+    return new AgentLaunchError('Sulla is still starting its vault', true, (error as Error)?.message ?? String(error));
+  }
+}
+
+/**
+ * Join the service network. A replayed connect is rejected by Docker, and a
+ * lost response can hide a connect that worked, so a failure is checked
+ * against the container's networks before it counts.
+ */
+async function connectServiceNetwork(containerName: string): Promise<void> {
+  const connected = async() => (await guestExec([
+    'docker', 'inspect', '--format', '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}', containerName,
+  ])).stdout.split(/\s+/).includes('sulla_default');
+
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
+
+      return;
+    } catch (error) {
+      if (await connected().catch(() => false)) return;
+      if (attempt >= 3) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1_000 * attempt));
+    }
   }
 }
 const RENEW_MS = 5 * 60_000;
@@ -103,7 +192,7 @@ const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
 const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
 const HOST_RELAY_NAME = 'sulla-host-relay';
-const HOST_RELAY_PORT = 30124;
+const HOST_RELAY_PORT = hostPort(30124);
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
 const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
 // The Mac's loopback as seen from containers on the Sulla runtime.
@@ -466,15 +555,60 @@ async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<stri
   await ensureOnDemandService('threat_proxy');
   const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
 
-  while (!await guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false)) {
+  while (!await threatProxyCaPresent()) {
     if (Date.now() >= deadline) {
-      throw new Error('The threat proxy has not started (no CA in its state directory); agent web traffic cannot be scanned');
+      throw new AgentLaunchError('Sulla is still starting its web safety check', true,
+        'The threat proxy has not started (no CA in its state directory); agent web traffic cannot be scanned');
     }
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
   const trust = agentCaTrust();
 
   return { binds: [trust.bind], env: trust.env };
+}
+
+function threatProxyCaPresent(): Promise<boolean> {
+  return guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false);
+}
+
+/** The threat proxy has published its CA, or scanning is off. */
+export async function threatProxyWarm(): Promise<boolean> {
+  return !await egressEnforced() || await threatProxyCaPresent();
+}
+
+/** The agent image is in the guest and speaks this transport version. */
+export async function agentImagePresent(): Promise<boolean> {
+  const resolved = resolveSullaServiceImage('sulla-agent', process.cwd(), Electron.app.getVersion(), process.env.SULLA_AGENT_IMAGE);
+
+  return await requireTransportImage(resolved.image).then(() => true, () => false);
+}
+
+let warmUp: Promise<void> | undefined;
+
+/**
+ * Get the first chat's slow parts done before it is sent: load the agent
+ * image and start the threat proxy (which writes its CA). Called once the
+ * vault unlocks; runs one step at a time and never throws.
+ */
+export function warmAgentLaunch(): Promise<void> {
+  warmUp ??= (async() => {
+    try {
+      await ensureAgentImage();
+      log.info('[AgentContainer] Warm-up: agent image ready');
+      firstRunTrace('chat', 'warm-up: agent image ready');
+      await guestExec(ensureAgentNetworkCommand());
+      if (await egressEnforced()) {
+        await ensureOnDemandService('threat_proxy');
+        log.info('[AgentContainer] Warm-up: threat proxy started');
+        firstRunTrace('chat', 'warm-up: threat proxy started');
+      }
+    } catch (error) {
+      log.warn('[AgentContainer] Warm-up did not finish; the first chat will do it:', (error as Error)?.message ?? error);
+      firstRunTrace('chat', 'warm-up did not finish', { error });
+    }
+  })().finally(() => { warmUp = undefined });
+
+  return warmUp;
 }
 
 /**
@@ -916,9 +1050,13 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
-  const image = await ensureAgentImage();
+  const image = await ensureAgentImage().catch((error) => {
+    throw new AgentLaunchError('Sulla is still loading its assistant', true, (error as Error)?.message ?? String(error));
+  });
   log.info('[AgentContainer] Image ready');
-  await ensureHostRelay(image);
+  await ensureHostRelay(image).catch((error) => {
+    throw new AgentLaunchError('Sulla is still starting its tools', true, (error as Error)?.message ?? String(error));
+  });
   log.info('[AgentContainer] Host relay ready');
   const runtime = new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
@@ -962,15 +1100,37 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ]);
       return { identity, deviceId };
     });
-    const subjectTask = phase('vaultPrincipal', async() => usesContainerVaultAuthority()
-      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
-      : metadata.userId);
+    const subjectTask = phase('vaultPrincipal', async() => {
+      if (!usesContainerVaultAuthority()) return metadata.userId;
+      const signal = run.state.metadata.options?.abort?.signal;
+
+      if (run.provider === 'claude-code') {
+        // Right after setup the vault unlocks a moment after the window
+        // closes; keep that grace period, but never turn a still-locked vault
+        // into a feature-level unlock prompt (one-password rule).
+        if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
+          throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
+        }
+        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+      }
+
+      // Other providers retain the startup grace period until their resolvers
+      // move to the same typed, no-prompt execution-auth path.
+      if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
+        throw await lockedVaultError();
+      }
+
+      return await getLocalVaultPrincipalId(signal);
+    });
     const toolsServiceTask = phase('toolsService', () => waitForToolsService());
-    const [{ identity, deviceId }, subject, toolsServiceHealthy] = await Promise.all([
+    const [{ identity, deviceId }, subject, toolsReady] = await Promise.all([
       identityTask, subjectTask, toolsServiceTask,
     ]);
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
-    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
+    if (!toolsReady) {
+      throw new AgentLaunchError('Sulla is still starting its tools', true,
+        'sulla-tools is unavailable; container agents require hostname-based tool routing');
+    }
     const agentId = metadata.agentId ?? run.state.metadata.wsChannel;
     if (!agentId) throw new Error('Agent container requires an agent identity');
     const allowed = metadata.allowedToolNames;
@@ -1089,9 +1249,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     }));
     await Promise.all([
       phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
-      // `docker network connect` is not safe to replay after a lost response:
-      // Docker rejects a second connect, so leave this one-shot and visible.
-      phase('network', () => guestExec(connectServiceNetworkCommand('sulla_default', containerName))),
+      phase('network', () => connectServiceNetwork(containerName)),
     ]);
     await phase('start', () => retryIdempotent(
       () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
@@ -1112,6 +1270,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       'identity', 'vaultPrincipal', 'toolsService', 'dirs', 'memorySeed', 'chown', 'providerFiles', 'secrets',
       'egress', 'create', 'filesActor', 'network', 'start', 'mcpProbe',
     ].map(name => `${ name }Ms=${ phaseMs[name] ?? 0 }`).join(' ') } totalMs=${ Date.now() - launchStartedAt }`);
+    firstRunTrace('chat', 'agent container started', { provider: run.provider, ...phaseMs, totalMs: Date.now() - launchStartedAt });
     const binding = {
       podId:         containerName,
       subject,
@@ -1145,31 +1304,32 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             accountId = await getIntegrationService().getActiveAccountId('openai');
             integrationId = 'openai';
           }
+          // The vault derives the chatgpt_account_id routing header from the
+          // stored token per request; it is not exposed as metadata, so no
+          // Desktop-side metadata pre-check here (regression from #1843).
         } else {
-          try {
-            accountId = await getIntegrationService().getActiveAccountId('claude-code');
-            try {
-              const accounts = await getIntegrationService().getAccounts('claude-code');
-              if (!accounts.find(a => a.account_id === accountId)?.connected) {
-                const alt = accounts.find(a => a.connected);
-                if (alt) {
-                  log.info(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected; falling back to "${ alt.account_id }"`);
-                  accountId = alt.account_id;
-                } else {
-                  log.warn(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected with no connected alternative`);
-                }
-              }
-            } catch (err) {
-              log.warn(`[AgentContainer] Could not verify claude-code account connectivity for ${ containerName }: ${ (err as Error).message }`);
-            }
+          const credential = await claudeCredentialResolver.resolve();
+          if (credential.kind !== 'none' && credential.accountId) {
             integrationId = 'claude-code';
-            authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
-          } catch (error) {
-            if ((error as Error).message !== 'No local vault account is configured for claude-code') throw error;
+            accountId = credential.accountId;
+            authMode = credential.kind === 'api-key' ? 'api-key' : 'oauth';
+          } else {
+            // No Claude account: keep the existing Anthropic API-key fallback.
+            const anthropicAccount = await getIntegrationService().getActiveAccountId('anthropic').catch(() => '');
+            if (!anthropicAccount) {
+              throw new VaultLocked('claude-code', { cause: credential.kind === 'none' && credential.unavailable ? 'Claude credential authority unavailable' : 'No connected Claude or Anthropic account' });
+            }
             integrationId = 'anthropic';
-            accountId = await getIntegrationService().getActiveAccountId(integrationId);
+            accountId = anthropicAccount;
             authMode = 'api-key';
           }
+        }
+        let workspaceId = '';
+        if (provider === 'claude-code' && authMode === 'api-key') {
+          try {
+            const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
+            workspaceId = metadata.find(value => value.property === 'workspace_id')?.value.trim() || '';
+          } catch { /* optional non-secret Anthropic workspace metadata */ }
         }
         const bridgeContext = () => {
           const now = Math.floor(Date.now() / 1000);
@@ -1201,6 +1361,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           provider,
           accountId,
           authMode,
+          workspaceId,
           models:         pinnedModel ? [pinnedModel] : undefined,
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
@@ -1427,8 +1588,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
-    // Not retried: unlike `docker start`, network connect rejects a replay.
-    await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
+    await connectServiceNetwork(containerName);
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
       subject,

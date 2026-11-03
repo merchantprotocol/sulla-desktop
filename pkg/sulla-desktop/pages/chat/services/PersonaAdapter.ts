@@ -36,7 +36,7 @@ import type {
 import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, NoticeMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
 import type { ChatArtifactChangedEvent, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
@@ -46,6 +46,8 @@ export interface PersonaAdapterOptions {
   tabId?:              string;
   agentTabContractId?: string;
   agentTabThreadId?:   string;
+  supportSessionId?:    string;
+  supportToolNames?:    string[];
 }
 
 export class PersonaAdapter {
@@ -103,6 +105,7 @@ export class PersonaAdapter {
     opts: PersonaAdapterOptions = {},
   ) {
     this.tabId = opts.tabId;
+    (this as any)._supportOptions = opts;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
       this.controller.artifacts.value.list.filter(artifact => artifact.persistent).map(artifact => artifact.id),
@@ -221,6 +224,21 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('decisions:changed', applyDecision);
     this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+
+    const reconnectClaude = (_event: unknown, payload: { type?: string; providerId?: string; message?: string }) => {
+      if (payload?.type !== 'provider-auth-reconnect-required' || payload.providerId !== 'claude-code') return;
+      const createdAt = Date.now();
+      this.controller.appendMessage({
+        id:        asMessageId(`claude-reconnect-${ createdAt }`),
+        kind:      'notice',
+        text:      payload.message || 'Claude sign-in expired. Reconnect',
+        action:    { label: 'Reconnect', kind: 'connect' },
+        createdAt,
+      });
+      this.controller.persistThread();
+    };
+    ipcRenderer.on('provider-auth:reconnect-required' as any, reconnectClaude);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, reconnectClaude));
     ipcRenderer.invoke('decisions:list').then(records => records.forEach(r => applyDecision(undefined, r))).catch(() => undefined);
 
     // Approval bridge — when the user clicks approve/deny on a
@@ -304,7 +322,37 @@ export class PersonaAdapter {
   }
 
   // ─── Intents dispatched by the controller ──────────────────────────
+  private supportSessionMetadata():Record<string, unknown> {
+    const options = (this as any)._supportOptions as PersonaAdapterOptions | undefined;
+    return options?.supportSessionId ? {
+      supportSessionId: options.supportSessionId,
+      allowedToolNames: options.supportToolNames || [],
+      conversationContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
+    } : {};
+  }
+
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
+    const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
+      .catch(() => ({ connected: false, loading: true }));
+    if (!aiStatus.loading && !aiStatus.connected) {
+      const createdAt = Date.now();
+      this.controller.appendMessage({
+        id:        asMessageId(`no-ai-user-${ createdAt }`),
+        kind:      'user',
+        text:      text.trim() || '(attached)',
+        attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
+        createdAt,
+      });
+      this.controller.appendMessage({
+        id:        asMessageId(`no-ai-notice-${ createdAt }`),
+        kind:      'notice',
+        text:      'Connect an AI model to start chatting',
+        action:    { label: 'Connect', kind: 'connect' },
+        createdAt: createdAt + 1,
+      });
+      this.controller.persistThread();
+      return;
+    }
     this.ci.query.value = text;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
@@ -319,6 +367,7 @@ export class PersonaAdapter {
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);
@@ -871,6 +920,11 @@ export class PersonaAdapter {
 
     // Speak messages are audio-only — skip in transcript.
     if (b.kind === 'speak') return null;
+
+    // Neutral informational notice (for example, no AI connected).
+    if (b.kind === 'notice') {
+      return { id, kind: 'notice', createdAt, text: b.content ?? '', action: { label: 'Connect', kind: 'connect' } } satisfies NoticeMessage;
+    }
 
     // Error
     if (b.role === 'error' || b.kind === 'error') {

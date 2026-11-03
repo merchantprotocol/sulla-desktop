@@ -5,7 +5,7 @@
 
 import { getModelProviderService } from '../../services/ModelProviderService';
 import { BaseTool, ToolResponse } from '../base';
-import { getProviderRuntimeStatus, getStaticModels } from './shared';
+import { getProviderRuntimeStatus } from './shared';
 
 export class ModelsListWorker extends BaseTool {
   name = '';
@@ -23,10 +23,7 @@ export class ModelsListWorker extends BaseTool {
     }
 
     const liveModels = await getModelProviderService().getModelsForProvider(providerId);
-    const staticModels = getStaticModels(providerId);
-    const models = liveModels.length > 0
-      ? liveModels.map(model => ({ ...model, source: 'provider-or-cli' }))
-      : staticModels.map(model => ({ ...model, source: 'static-catalog' }));
+    const models = liveModels.map(model => ({ ...model, source: 'provider-or-cli' }));
 
     return {
       successBoolean: true,

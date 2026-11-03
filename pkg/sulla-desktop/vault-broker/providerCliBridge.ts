@@ -126,6 +126,8 @@ export interface ProviderCliBridgeIdentity {
 }
 
 export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
+  /** Non-secret Anthropic account metadata, used only for API-key requests. */
+  workspaceId?: string;
   /**
    * Called before binding and before every request. It must consult live
    * lifecycle state. Returning a context renews short-lived caller claims.
@@ -407,6 +409,10 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         return;
       }
       const headers = requestHeaders(request.headers);
+      const workspaceId = options.workspaceId?.trim();
+      if (definition.cli === 'claude-code' && definition.authMode === 'api-key' && workspaceId) {
+        headers['anthropic-workspace-id'] = workspaceId;
+      }
       if (definition.integration === 'codex') {
         headers.originator = 'codex_cli_rs';
         headers['session-id'] = context.thread_id!;

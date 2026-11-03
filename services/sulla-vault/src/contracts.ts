@@ -330,6 +330,15 @@ export interface BrokerSetActiveAccountRequest { accountId: string }
 /** Trusted Desktop-only request to create the empty account a first OAuth sign-in fills in. */
 export interface BrokerOAuthAccountRequest { accountId: string; label?: string }
 
+/** Trusted Desktop-only atomic handoff of credentials collected by Desktop UI. */
+export interface BrokerIntegrationAccountImportRequest {
+  accountId: string;
+  label?: string;
+  values: Record<string, string>;
+  active?: boolean;
+  connected?: boolean;
+}
+
 /** Trusted Desktop-only handoff after a fixed-host Sulla Cloud auth flow. */
 export interface SullaCloudSessionAdoptRequest {
   userId:             string;
@@ -388,6 +397,42 @@ export interface RotateMasterKeyRequest {
 
 export interface ConfigureRecoveryRequest {
   recoveryCode: string;
+}
+
+export interface AccountPasswordRewrapRequest {
+  /** base64url account master key, exactly 32 bytes; accepted only from Desktop approval identity over pinned TLS. */
+  masterKey: string;
+  /** Stable Sulla Cloud user id. Binds this local vault to one Cloud account. */
+  cloudUserId: string;
+  kdf: { alg: 'argon2id13'; salt: string; memoryBytes: number; ops: number };
+}
+
+export interface AccountPasswordRewrapResponse {
+  migrated: boolean;
+  recoveryKey?: string;
+  recoveryCreated: boolean;
+  cacheMode: 'helper-update-required';
+}
+
+export interface RecoveryKeyRotateResponse {
+  recoveryKey: string;
+  replacedExisting: boolean;
+}
+
+
+export interface VaultEnrollmentWrapRequest {
+  requestId:string; vaultId:string; vaultEpoch:number; publicKey:string; bundle:unknown; head:unknown; records?:unknown; approved:boolean;
+}
+export interface VaultEnrollmentAdoptRequest {
+  requestId:string; vaultId:string; vaultEpoch:number; privateKeyJwk:JsonWebKey; wrappedUserKey:unknown; masterKey:string; cloudUserId:string;
+}
+
+export interface VaultDeviceApprovalWrapRequest {
+  requestId: string;
+  vaultId: string;
+  vaultEpoch: number;
+  publicKey: string;
+  approved: boolean;
 }
 
 export interface RecoverVaultRequest {

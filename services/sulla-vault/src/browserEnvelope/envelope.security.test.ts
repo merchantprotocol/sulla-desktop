@@ -15,7 +15,10 @@ import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type Sy
 import { bundleFields, itemRecordFields, NEVER_UPLOADED } from './exportBuilder.js';
 
 interface Half { bundle: SyncBundle; records: SyncRecord[]; head: SyncHead; plaintexts: Record<string, string> }
-const kat = JSON.parse(readFileSync(new URL('./vault-sync-v3-kat.json', import.meta.url), 'utf8')) as { password: string; desktop: Half; browser: Half };
+const kat = JSON.parse(readFileSync(new URL('../../src/browserEnvelope/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as { password: string; desktop: Half; browser: Half };
+const accountKat = JSON.parse(readFileSync(new URL('../../../../tests/fixtures/account-auth-v1.json', import.meta.url), 'utf8')) as {
+  recoveryCode: string; userKeyFingerprint: string; bundleV2: SyncBundle;
+};
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const flip = (b64: string) => (b64[5] === 'A' ? `${ b64.slice(0, 5) }B${ b64.slice(6) }` : `${ b64.slice(0, 5) }A${ b64.slice(6) }`);
@@ -47,6 +50,26 @@ test('interop: records the browser wrote verify and decrypt with the Desktop sta
 test('wrong master password fails locally as wrong_password', async() => {
   const env = createSyncEnvelope(await loadSodium());
   rejects(() => env.unlockBundle(kat.browser.bundle, `${ kat.password }!`), 'wrong_password');
+});
+
+test('shared account-auth-v1 KAT recovery wrap unwraps bundle v2 byte-for-byte', async() => {
+  const sodium = await loadSodium();
+  const env = createSyncEnvelope(sodium);
+  const userKey = env.unlockRecovery(accountKat.bundleV2, accountKat.recoveryCode);
+  try {
+    assert.equal(
+      sodium.to_base64(
+        sodium.crypto_generichash(32, new TextEncoder().encode('sulla-vault-user-key-kat-fingerprint-v1'), userKey),
+        sodium.base64_variants.URLSAFE_NO_PADDING,
+      ),
+      accountKat.userKeyFingerprint,
+    );
+    const badMac = { ...clone(accountKat.bundleV2), mac: flip(accountKat.bundleV2.mac) };
+    rejects(() => env.unlockRecovery(badMac, accountKat.recoveryCode), 'bundle_mac');
+    rejects(() => env.unlockRecovery(accountKat.bundleV2, `${ accountKat.recoveryCode }!`), 'wrong_recovery_key');
+  } finally {
+    userKey.fill(0);
+  }
 });
 
 test('AAD and MAC bind a record to its vault, scope, id, generation and tombstone flag', async() => {

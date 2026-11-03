@@ -11,12 +11,15 @@ import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, ip
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { requestApplicationRestart } from '@pkg/main/restartCoordinator';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import {
   openDocker, openMain, openPreferences, getWindow, openUrlInApp,
 } from '@pkg/window';
 import { openProcessManager } from '@pkg/window/processManager';
+import { initSupportCenterIpc, openSupportCenter } from '@pkg/window/supportCenter';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.mainmenu;
 
@@ -59,6 +62,7 @@ export function setUserLoggedIn(unlocked: boolean): void {
 }
 
 export default function buildApplicationMenu(): void {
+  initSupportCenterIpc();
   const menuItems: MenuItem[] = getApplicationMenu();
   const menu = Menu.buildFromTemplate(menuItems);
 
@@ -108,11 +112,7 @@ function getApplicationMenu(): MenuItem[] {
 }
 
 function restartApplication(): void {
-  console.log('[Shutdown] restartApplication() called — emitting "restarting" event');
-  mainEvents.emit('restarting');
-  console.log('[Shutdown] "restarting" event emitted, calling app.relaunch() + app.quit()');
-  Electron.app.relaunch();
-  Electron.app.quit();
+  requestApplicationRestart();
 }
 
 /**
@@ -198,7 +198,7 @@ async function refreshExtensions(): Promise<void> {
     }
 
     const authHeader = `Basic ${ Buffer.from(`${ credentials.user }:${ credentials.password }`).toString('base64') }`;
-    const response = await fetch('http://127.0.0.1:6107/v1/extensions', {
+    const response = await fetch(`${ loopbackOrigin('http', 6107) }/v1/extensions`, {
       headers: { Authorization: authHeader },
     });
 
@@ -385,6 +385,25 @@ function getInspectMenu(): MenuItem {
           { role: 'toggleDevTools', label: 'Toggle &Developer Tools' } as MenuItemConstructorOptions,
         ]
         : []),
+    ],
+  });
+}
+
+function getSupportMenu(): MenuItem {
+  return new MenuItem({
+    label: '&Support',
+    submenu: [
+      { label: 'Support Center…', accelerator: 'Alt+CmdOrCtrl+H', click: () => openSupportCenter('home') },
+      { type: 'separator' },
+      { label: 'Logs', accelerator: 'Alt+CmdOrCtrl+L', click: () => openSupportCenter('logs') },
+      { label: 'Send Feedback…', click: () => openSupportCenter('feedback') },
+      { label: 'Open a Ticket…', click: () => openSupportCenter('tickets') },
+      { label: 'My Tickets', click: () => openSupportCenter('tickets') },
+      { type: 'separator' },
+      { label: 'Request Remote Support…', click: () => openSupportCenter('remote') },
+      { type: 'separator' },
+      { label: 'Privacy and Metrics…', click: () => openSupportCenter('privacy') },
+      { label: 'Update channel: LTS · v1.7.5', enabled: false },
     ],
   });
 }
@@ -682,6 +701,7 @@ function getMacApplicationMenu(): MenuItem[] {
     getEditMenu(true),
     getHistoryMenu(),
     getInspectMenu(),
+    getSupportMenu(),
     new MenuItem({
       label:   '&Window',
       submenu: [
@@ -801,6 +821,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
     getEditMenu(false),
     getHistoryMenu(),
     getInspectMenu(),
+    getSupportMenu(),
     getHelpMenu(false),
   ];
 }

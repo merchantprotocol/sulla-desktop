@@ -5,7 +5,7 @@
 
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
 
-const DEFAULT_BASE_URL = 'https://coding-intl.dashscope.aliyuncs.com/v1';
+const DEFAULT_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
 // Friendly labels/descriptions for known model ids. Unknown ids (e.g. models
 // Alibaba adds later) still surface — they just show their raw id as the label.
@@ -27,7 +27,11 @@ export class AlibabaModels extends SelectBoxProvider {
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
     const apiKey  = context.formValues.api_key;
-    const baseUrl = (context.formValues.base_url || DEFAULT_BASE_URL).replace(/\/$/, '');
+    const plan = context.formValues.plan || 'payg';
+    const region = context.formValues.region || 'intl';
+    const baseUrl = (context.formValues.base_url || (plan === 'coding'
+      ? (region === 'cn' ? 'https://coding.dashscope.aliyuncs.com/v1' : 'https://coding-intl.dashscope.aliyuncs.com/v1')
+      : (({ intl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', us: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1', cn: 'https://dashscope.aliyuncs.com/compatible-mode/v1' } as Record<string, string>)[region] || DEFAULT_BASE_URL))).replace(/\/$/, '');
 
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };

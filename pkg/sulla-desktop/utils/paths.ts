@@ -18,8 +18,27 @@
  * Paths are derived in-process so every Electron process uses the same
  * platform conventions without an external management binary.
  */
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+import { requestedInstance } from '@pkg/utils/instance';
+
+/**
+ * Directory holding the app's extraResources. Packaged apps keep them one
+ * level down (macOS: Contents/Resources/resources). An unpackaged run's
+ * resourcesPath already is the repo's resources folder. Decide by what exists,
+ * not by the folder name: macOS's packaged folder is "Resources", which a
+ * case-insensitive name check mistook for the unpackaged layout, so every
+ * packaged Mac build looked for its icons one level too high and quit at
+ * startup.
+ */
+function resolveResourcesDir(): string {
+  if (!process.resourcesPath) return path.join(process.cwd(), 'resources');
+  const nested = path.join(process.resourcesPath, 'resources');
+
+  return fs.existsSync(nested) ? nested : process.resourcesPath;
+}
 
 
 export interface Paths {
@@ -90,29 +109,25 @@ export class UnixPaths implements Paths {
 /** Build paths using the application's established platform data locations. */
 function getDefaultPaths(): Partial<Paths> {
   const home = os.homedir();
+  const instanceSuffix = requestedInstance() ? `-${ requestedInstance() }` : '';
 
   switch (process.platform) {
   case 'darwin': {
-    const appHome = path.join(home, 'Library', 'Application Support', 'sulla-desktop');
-    // In a packaged app, process.resourcesPath points to Contents/Resources;
-    // extraResources are nested under a 'resources' subdirectory there.
-    // In dev, fall back to the project's resources directory.
-    const resources = process.resourcesPath
-      ? path.join(process.resourcesPath, 'resources')
-      : path.join(process.cwd(), 'resources');
+    const appHome = path.join(home, 'Library', 'Application Support', `sulla-desktop${ instanceSuffix }`);
+    const resources = resolveResourcesDir();
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.sulla-desktop-data'),
-      config:                     path.join(home, 'Library', 'Preferences', 'sulla-desktop'),
-      logs:                       path.join(home, 'Library', 'Logs', 'sulla-desktop'),
-      cache:                      path.join(home, 'Library', 'Caches', 'sulla-desktop'),
+      altAppHome:                 path.join(home, `.sulla-desktop-data${ instanceSuffix }`),
+      config:                     path.join(home, 'Library', 'Preferences', `sulla-desktop${ instanceSuffix }`),
+      logs:                       path.join(home, 'Library', 'Logs', `sulla-desktop${ instanceSuffix }`),
+      cache:                      path.join(home, 'Library', 'Caches', `sulla-desktop${ instanceSuffix }`),
       resources,
-      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
+      integration:                path.join(home, `.sulla-desktop-data${ instanceSuffix }`, 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
       deploymentProfileUser:      path.join(home, 'Library', 'Preferences'),
-      extensionRoot:              path.join(home, 'Library', 'Application Support', 'sulla-desktop', 'extensions'),
+      extensionRoot:              path.join(home, 'Library', 'Application Support', `sulla-desktop${ instanceSuffix }`, 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
@@ -121,23 +136,21 @@ function getDefaultPaths(): Partial<Paths> {
     const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
     const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
     const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
-    const appHome = path.join(dataHome, 'sulla-desktop');
-    const resources = process.resourcesPath
-      ? path.join(process.resourcesPath, 'resources')
-      : path.join(process.cwd(), 'resources');
+    const appHome = path.join(dataHome, `sulla-desktop${ instanceSuffix }`);
+    const resources = resolveResourcesDir();
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.sulla-desktop-data'),
-      config:                     path.join(configHome, 'sulla-desktop'),
-      logs:                       path.join(dataHome, 'sulla-desktop', 'logs'),
-      cache:                      path.join(cacheHome, 'sulla-desktop'),
+      altAppHome:                 path.join(home, `.sulla-desktop-data${ instanceSuffix }`),
+      config:                     path.join(configHome, `sulla-desktop${ instanceSuffix }`),
+      logs:                       path.join(dataHome, `sulla-desktop${ instanceSuffix }`, 'logs'),
+      cache:                      path.join(cacheHome, `sulla-desktop${ instanceSuffix }`),
       resources,
-      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
+      integration:                path.join(home, `.sulla-desktop-data${ instanceSuffix }`, 'bin'),
       deploymentProfileSystem:    '/etc/sulla-desktop',
       altDeploymentProfileSystem: '/usr/etc/sulla-desktop',
       deploymentProfileUser:      configHome,
-      extensionRoot:              path.join(dataHome, 'sulla-desktop', 'extensions'),
+      extensionRoot:              path.join(dataHome, `sulla-desktop${ instanceSuffix }`, 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
@@ -152,15 +165,16 @@ function getDefaultPaths(): Partial<Paths> {
  */
 function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
   const home = os.homedir();
+  const instanceSuffix = requestedInstance() ? `-${ requestedInstance() }` : '';
 
   if (!pathsData.sullaHome) {
-    pathsData.sullaHome = path.join(home, 'sulla');
+    pathsData.sullaHome = path.join(home, `sulla${ instanceSuffix }`);
   }
   if (!pathsData.sullaConfig) {
-    pathsData.sullaConfig = path.join(home, '.sulla');
+    pathsData.sullaConfig = path.join(home, `.sulla${ instanceSuffix }`);
   }
   if (!pathsData.sullaDesktopCodebase) {
-    pathsData.sullaDesktopCodebase = path.join(home, '.sulla-desktop');
+    pathsData.sullaDesktopCodebase = path.join(home, `.sulla-desktop${ instanceSuffix }`);
   }
   if (!pathsData.sullaRuntime && pathsData.resources) {
     pathsData.sullaRuntime = process.env.SULLA_RUNTIME_BIN ||

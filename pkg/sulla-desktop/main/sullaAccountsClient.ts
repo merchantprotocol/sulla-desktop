@@ -8,8 +8,9 @@ import { isIP } from 'node:net';
 import { session } from 'electron';
 
 import { SullaAccountsBootstrap, type AccountsOwnerSession } from './sullaAccountsBootstrap';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
-const API = 'http://127.0.0.1:3020';
+const API = loopbackOrigin('http', 3020);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -260,8 +261,9 @@ function normalizeConnectionInput(value:AccountsConnectionInput):AccountsConnect
 }
 
 /**
- * Resolves once the accounts container answers HTTP (any status), or after the
- * timeout so a container that never starts still reaches the normal retry path.
+ * Resolves once the accounts container answers HTTP (any status). Throws after
+ * the timeout, so a container that never starts shows as failed and reaches
+ * the normal retry path.
  */
 export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -272,6 +274,7 @@ export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<v
     if (reachable) return;
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
+  throw new Error(`The accounts service did not answer within ${ Math.round(timeoutMs / 1000) }s`);
 }
 
 export class SullaAccountsClient {

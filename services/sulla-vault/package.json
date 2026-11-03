@@ -4,20 +4,24 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "sulla-vault-bootstrap": "dist/serverBootstrapCli.js" },
+  "bin": {
+    "sulla-vault-bootstrap": "dist/serverBootstrapCli.js"
+  },
   "scripts": {
     "build": "npm run build:console && tsc -p tsconfig.json",
     "build:console": "node console/build.mjs",
     "start": "node dist/index.js",
     "test:security": "npm run build && node --test dist/rbac.test.js",
     "test:sync": "npm run build && node --test dist/sync.test.js",
-    "test:local-authority": "npm run build && node --test dist/localAuthority.test.js"
+    "test:local-authority": "npm run build && node --test dist/localAuthority.test.js",
+    "test:envelope": "esbuild src/browserEnvelope/envelope.security.test.ts --bundle --external:libsodium-wrappers-sumo --platform=node --format=esm --outfile=dist-test/browserEnvelope/envelope.security.test.js && node --test dist-test/browserEnvelope/envelope.security.test.js"
   },
   "dependencies": {
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
     "express": "5.2.1",
     "hash-wasm": "4.12.0",
     "jsonwebtoken": "9.0.3",
+    "libsodium-wrappers-sumo": "0.8.4",
     "pg": "8.18.0",
     "ws": "8.21.0",
     "yaml": "2.8.3"

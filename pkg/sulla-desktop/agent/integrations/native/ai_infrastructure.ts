@@ -4,6 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Integration } from '../types';
+import { OPENAI_COMPATIBLE_PROVIDERS, type OpenAICompatibleProviderDefinition } from '../../languagemodels/openAICompatibleProviders';
+
+const AI_ML_OWNED_PROVIDER_IDS = new Set(['huggingface', 'perplexity']);
 
 export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
   mcp: {
@@ -76,6 +79,14 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         placeholder: 'sk-ant-...',
       },
       {
+        key:         'workspace_id',
+        title:       'Workspace ID',
+        hint:        'Needed with an Anthropic user-level key (sk-ant-usr-…). Find it in the Anthropic console under Settings, Workspaces. Leave empty when you sign in with Claude.',
+        type:        'text',
+        required:    false,
+        placeholder: 'wrkspc_…',
+      },
+      {
         key:         'model',
         title:       'Model',
         hint:        'Claude Code chooses its own model; this field is informational.',
@@ -124,13 +135,13 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     version:     '1.0.0',
     lastUpdated: '2026-10-14',
     developer:   'OpenCode',
-    formGuide:   'Install with npm install -g opencode-ai, then run opencode auth login in the VM. OpenCode also offers free models without a provider login.',
+    formGuide:   'Use your GitHub Copilot plan: install OpenCode, run `opencode`, then `/connect` → GitHub Copilot. OpenCode also offers free models without a provider login.',
     installationGuide: {
       title:       'Connect OpenCode',
       description: 'OpenCode stores provider credentials in its own CLI profile.',
       steps:       [
         { title: 'Install the CLI', content: 'Run: npm install -g opencode-ai' },
-        { title: 'Sign in', content: 'Run: opencode auth login and choose the model provider you use.' },
+        { title: 'Connect a provider', content: 'Run opencode, then /connect. Choose GitHub Copilot to use your Copilot plan.' },
         { title: 'Verify models', content: 'Run: opencode models' },
       ],
     },
@@ -187,7 +198,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         title:       'xAI API Key',
         hint:        'Only needed if you are not signing in with Grok. Generate this in your xAI developer console.',
         type:        'password',
-        required:    true,
+        required:    false,
         placeholder: 'xai-...',
       },
       {
@@ -228,6 +239,14 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         placeholder: 'sk-ant-...',
       },
       {
+        key:         'workspace_id',
+        title:       'Workspace ID',
+        hint:        'Required for Anthropic user-level keys (sk-ant-usr-…). Find it in the Anthropic console under Settings, Workspaces.',
+        type:        'text',
+        required:    false,
+        placeholder: 'wrkspc_…',
+      },
+      {
         key:             'model',
         title:           'Model',
         hint:            'Select a Claude model to use for completions.',
@@ -235,7 +254,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         required:        true,
         placeholder:     'Select a model...',
         selectBoxId:     'anthropic_models',
-        selectDependsOn: ['api_key'],
+        selectDependsOn: ['api_key', 'workspace_id'],
       },
     ],
   },
@@ -304,7 +323,16 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         hint:        'Generate this in your Moonshot/Kimi developer console.',
         type:        'password',
         required:    true,
-        placeholder: 'kimi-...',
+        placeholder: 'sk-...',
+      },
+      {
+        key:        'region',
+        title:      'Region',
+        hint:       'Choose International for keys from platform.kimi.ai, or China for keys from platform.moonshot.cn.',
+        type:       'select',
+        required:   false,
+        placeholder: 'Select a region...',
+        selectBoxId: 'kimi_regions',
       },
       {
         key:             'model',
@@ -314,7 +342,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         required:        true,
         placeholder:     'Select a model...',
         selectBoxId:     'kimi_models',
-        selectDependsOn: ['api_key'],
+        selectDependsOn: ['api_key', 'region'],
       },
     ],
   },
@@ -338,10 +366,28 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
       {
         key:         'api_key',
         title:       'DashScope API Key',
-        hint:        'Generate this in your Alibaba Cloud Model Studio console (bailian.console.alibabacloud.com).',
+        hint:        'Generate this in the Alibaba Cloud Model Studio console. Coding Plan keys start with sk-sp-.',
         type:        'password',
         required:    true,
-        placeholder: 'sk-...',
+        placeholder: 'sk-... or sk-sp-...',
+      },
+      {
+        key:        'plan',
+        title:      'Plan',
+        hint:       'Choose Pay-as-you-go for Model Studio API keys, or Coding Plan for keys from the Coding Plan page.',
+        type:       'select',
+        required:   false,
+        placeholder: 'Select a plan...',
+        selectBoxId: 'alibaba_plans',
+      },
+      {
+        key:        'region',
+        title:      'Region',
+        hint:       'Choose the same region where you created the DashScope key: International, US, or China.',
+        type:       'select',
+        required:   false,
+        placeholder: 'Select a region...',
+        selectBoxId: 'alibaba_regions',
       },
       {
         key:             'model',
@@ -351,7 +397,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         required:        true,
         placeholder:     'Select a model...',
         selectBoxId:     'alibaba_models',
-        selectDependsOn: ['api_key'],
+        selectDependsOn: ['api_key', 'plan', 'region'],
       },
     ],
   },
@@ -388,43 +434,6 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         required:        true,
         placeholder:     'Select a model...',
         selectBoxId:     'nvidia_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
-  cohere: {
-    id:          'cohere',
-    sort:        8,
-    paid:        false,
-    beta:        true,
-    comingSoon:  false,
-    name:        'Cohere',
-    description: 'Connect to Cohere\'s free tier for Command A, Command A Reasoning, Command A Translate, Command A Vision, Command R, Command R+, Command R7B, and Command R7B Arabic. All models support tool use. 1,000 API calls/month (non-commercial use).',
-    category:    'AI Infrastructure',
-    icon:        'cohere.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-22 00:00:00',
-    developer:   'Cohere',
-    formGuide:   'Get your free trial API key from dashboard.cohere.com/api-keys. Free tier is limited to non-commercial use with 1,000 API calls per month. Only Command family models support tool use (Aya models do not).',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Cohere API Key',
-        hint:        'Free trial key from dashboard.cohere.com/api-keys',
-        type:        'password',
-        required:    true,
-        placeholder: '...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a Cohere model to use.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'cohere_models',
         selectDependsOn: ['api_key'],
       },
     ],
@@ -576,80 +585,6 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
-  groq: {
-    id:          'groq',
-    sort:        12,
-    paid:        false,
-    beta:        false,
-    comingSoon:  false,
-    name:        'Groq',
-    description: 'Ultra-fast free-tier inference for Llama 4, DeepSeek R1, Qwen 2.5 Coder, and more — powered by Groq LPU hardware.',
-    category:    'AI Infrastructure',
-    icon:        'groq.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-25',
-    developer:   'Groq',
-    formGuide:   'Get your free API key at console.groq.com/keys. Free tier has generous daily limits with extremely fast inference.',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Groq API Key',
-        hint:        'Generate this for free at console.groq.com/keys.',
-        type:        'password',
-        required:    true,
-        placeholder: 'gsk_...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a model. Llama 4 Scout and DeepSeek R1 are great for coding.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'groq_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
-  mistral: {
-    id:          'mistral',
-    sort:        13,
-    paid:        false,
-    beta:        false,
-    comingSoon:  false,
-    name:        'Mistral AI',
-    description: 'Access Mistral models including the free-tier Codestral — purpose-built for code generation, completion, and explanation.',
-    category:    'AI Infrastructure',
-    icon:        'mistral.svg',
-    connected:   false,
-    version:     '1.0.0',
-    lastUpdated: '2026-04-25',
-    developer:   'Mistral AI',
-    formGuide:   'Get your API key at console.mistral.ai/api-keys. Codestral is available free for non-commercial use.',
-    properties:  [
-      {
-        key:         'api_key',
-        title:       'Mistral API Key',
-        hint:        'Generate this at console.mistral.ai/api-keys.',
-        type:        'password',
-        required:    true,
-        placeholder: '...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select a model. Codestral is optimized for coding tasks.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'mistral_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
-
   cerebras: {
     id:          'cerebras',
     sort:        14,
@@ -769,13 +704,64 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+
+  // huggingface and perplexity keep their richer cards in ./ai_ml.ts (they won by
+  // spread order before duplicate ids became a startup error), so skip them here.
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.filter((provider) => !AI_ML_OWNED_PROVIDER_IDS.has(provider.id)).map((provider: OpenAICompatibleProviderDefinition) => [provider.id, {
+    id:          provider.id,
+    sort:        20 + (OPENAI_COMPATIBLE_PROVIDERS as readonly OpenAICompatibleProviderDefinition[]).indexOf(provider),
+    paid:        true,
+    beta:        false,
+    comingSoon:  false,
+    name:        provider.name,
+    description: `Connect ${ provider.name } for OpenAI-compatible chat and live model discovery.`,
+    category:    'AI Infrastructure',
+    icon:        'custom.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-10-31',
+    developer:   provider.developer,
+    formGuide:   provider.keyHelp,
+    properties:  [
+      ...(provider.id === 'azure-openai' ? [{ key: 'resource_url', title: 'Resource endpoint URL', hint: 'Azure portal or Foundry → your resource → Keys and Endpoint. Use the HTTPS endpoint ending in openai.azure.com or services.ai.azure.com.', type: 'url' as const, required: true, placeholder: 'https://your-resource.openai.azure.com' }] : []),
+      ...(provider.id === 'lm-studio' || provider.id === 'local-server' ? [{ key: 'base_url', title: 'Base URL', hint: provider.id === 'lm-studio' ? 'LM Studio → Developer → Local Server. Use this computer’s VM gateway URL unless you changed the port.' : 'Use the /v1 URL shown by your local server (llama.cpp, vLLM, LocalAI, or another OpenAI-compatible server).', type: 'url' as const, required: true, placeholder: provider.id === 'lm-studio' ? 'http://host.sulla.internal:1234/v1' : 'http://host.sulla.internal:8000/v1' }] : []),
+      ...(provider.regionSelect ? [{
+        key: 'region', title: provider.regionSelect.label,
+        hint: 'Choose the region where you created this API key.', type: 'select' as const,
+        required: true, placeholder: 'Select a region...', selectBoxId: provider.regionSelect.id,
+      }] : []),
+      ...(!('local' in provider && provider.local) ? [{
+        key: 'api_key', title: 'API Key', hint: provider.keyHelp, type: 'password' as const,
+        required: !('keyRequired' in provider) || provider.keyRequired !== false, placeholder: 'Paste your API key',
+      }] : []),
+      {
+        key: 'model', title: provider.id === 'azure-openai' ? 'Deployment / model' : 'Model', hint: provider.id === 'azure-openai' ? 'Use the deployment name you created in Azure AI Foundry.' : `Models available to your ${ provider.name } account.`, type: 'select' as const,
+        required: true, placeholder: 'Select a model...', selectBoxId: `${ provider.id }_models`,
+        selectDependsOn: 'local' in provider && provider.local ? ['base_url'] : provider.id === 'azure-openai' ? ['resource_url', 'api_key'] : provider.regionSelect ? ['api_key', 'region'] : ['api_key'],
+      },
+    ],
+  } satisfies Integration])),
+
+  'vertex-ai': {
+    id: 'vertex-ai', sort: 19, paid: true, beta: true, comingSoon: false, connected: false,
+    name: 'Google Vertex AI Express', description: 'Use a Vertex AI Express API key with Gemini models.', category: 'AI Infrastructure', icon: 'google.svg',
+    version: '1.0.0', lastUpdated: '2026-10-31', developer: 'Google',
+    formGuide: 'Google Cloud console → Vertex AI Studio: choose your project, create an Express mode API key, and use the project ID and region shown there.',
+    properties: [
+      { key: 'project_id', title: 'Project ID', hint: 'Google Cloud console → project selector → copy the Project ID.', type: 'text', required: true, placeholder: 'my-project' },
+      { key: 'region', title: 'Region', hint: 'Vertex AI Studio shows the region for your project, such as us-central1.', type: 'text', required: true, placeholder: 'us-central1' },
+      { key: 'api_key', title: 'API Key', hint: 'Vertex AI Studio → Express mode → API key.', type: 'password', required: true, placeholder: 'AIza...' },
+      { key: 'model', title: 'Model', hint: 'Enter the Gemini publisher model available to your Vertex project.', type: 'text', required: true, placeholder: 'gemini-2.5-flash' },
+    ],
+  },
+
   custom: {
     id:          'custom',
     sort:        10,
     paid:        false,
     beta:        false,
     comingSoon:  false,
-    name:        'Custom',
+    name:        'OpenAI-compatible endpoint',
     description: 'Connect a custom AI provider endpoint using your own base URL.',
     category:    'AI Infrastructure',
     icon:        'custom.svg',
@@ -792,6 +778,14 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
         type:        'url',
         required:    true,
         placeholder: 'https://api.example.com/v1',
+      },
+      {
+        key:         'api_key',
+        title:       'API Key (optional)',
+        hint:        'Optional. Find this in your endpoint provider’s API keys or credentials settings.',
+        type:        'password',
+        required:    false,
+        placeholder: 'sk-...',
       },
       {
         key:             'model',

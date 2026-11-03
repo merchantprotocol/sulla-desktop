@@ -17,6 +17,8 @@ export interface SullaRuntimeGuestUser {
 let active = false;
 let guestUser: SullaRuntimeGuestUser | undefined;
 let suspendOnNextStop = false;
+let plannedOptionalServices: Set<string> | undefined;
+let startFailure: { reason: string; message: string } | undefined;
 
 export function setSullaRuntimeActive(value: boolean, user?: SullaRuntimeGuestUser): void {
   active = value;
@@ -47,6 +49,28 @@ export function takeSullaRuntimeSuspendRequest(): boolean {
   suspendOnNextStop = false;
 
   return requested;
+}
+
+/** The optional compose services this boot is bringing up (set once compose is prepared). */
+export function setSullaOptionalServicesPlanned(services: string[] | undefined): void {
+  plannedOptionalServices = services ? new Set(services) : undefined;
+}
+
+/** Whether boot is bringing this optional service up; undefined until it knows. */
+export function isSullaOptionalServicePlanned(service: string): boolean | undefined {
+  return plannedOptionalServices?.has(service);
+}
+
+/**
+ * Why the last backend start failed, in plain words, until the next start.
+ * Lets a window that opens after the 'sulla-backend-start-failed' event still show it.
+ */
+export function setSullaRuntimeStartFailure(failure: { reason: string; message: string } | undefined): void {
+  startFailure = failure;
+}
+
+export function sullaRuntimeStartFailure(): { reason: string; message: string } | undefined {
+  return startFailure;
 }
 
 export class SullaRuntimeUnsupportedError extends Error {

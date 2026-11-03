@@ -166,34 +166,34 @@ function pickAgent(agent: AgentOption): void {
   position: absolute; inset: 0; z-index: 80;
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 15vh;
-  background: rgba(7, 13, 26, 0.7); backdrop-filter: blur(8px);
+  background: var(--bg-overlay); backdrop-filter: blur(8px);
 }
 .modal {
   width: 480px; max-width: calc(100vw - 48px);
-  background: rgba(20, 30, 42, 0.95);
-  border: 1px solid rgba(80, 150, 179, 0.3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-glow);
   border-radius: 12px; overflow: hidden;
-  box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+  box-shadow: 0 30px 60px var(--bg-page);
 }
 .mhead {
   padding: 12px 18px;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400);
-  border-bottom: 1px solid rgba(80, 150, 179, 0.15);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
+  border-bottom: 1px solid var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
 .mhead .x {
   margin-left: auto; background: transparent; border: none;
-  color: var(--read-4); cursor: pointer; font-size: 14px;
+  color: var(--text-muted); cursor: pointer; font-size: 14px;
 }
-.msearch { padding: 12px 18px; border-bottom: 1px solid rgba(80, 150, 179, 0.1); }
+.msearch { padding: 12px 18px; border-bottom: 1px solid var(--accent-dim); }
 .msearch input {
   width: 100%; background: transparent; border: none; outline: none;
-  color: var(--read-1);
-  font-family: var(--serif); font-style: italic; font-size: 16px;
-  caret-color: var(--steel-400);
+  color: var(--text-primary);
+  font-family: var(--font-display); font-style: italic; font-size: 16px;
+  caret-color: var(--accent-hover);
 }
-.msearch input::placeholder { color: var(--read-4); }
+.msearch input::placeholder { color: var(--text-muted); }
 .mlist { padding: 6px 0; max-height: 360px; overflow-y: auto; }
 
 /* Themed scrollbar for the model list */
@@ -204,36 +204,36 @@ function pickAgent(agent: AgentOption): void {
   background: transparent;
 }
 .mlist::-webkit-scrollbar-thumb {
-  background: rgba(80, 150, 179, 0.3);
+  background: var(--accent-glow);
   border-radius: 4px;
 }
 .mlist::-webkit-scrollbar-thumb:hover {
-  background: rgba(80, 150, 179, 0.5);
+  background: var(--accent-glow);
 }
 
 .mgroup-head {
   padding: 10px 18px 4px;
   display: flex; align-items: center; gap: 8px;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.2em;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.2em;
   text-transform: uppercase;
 }
-.mgroup-head .provider { color: var(--steel-400); font-weight: 600; }
+.mgroup-head .provider { color: var(--accent-hover); font-weight: 600; }
 .mgroup-head .primary-pill {
-  color: var(--steel-300);
-  background: rgba(80, 150, 179, 0.14);
-  border: 1px solid rgba(80, 150, 179, 0.28);
+  color: var(--accent-hover);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
   padding: 1px 7px; border-radius: 3px;
   font-size: 8.5px;
 }
 
 .mdivider {
   height: 1px; margin: 6px 18px;
-  background: rgba(80, 150, 179, 0.1);
+  background: var(--accent-dim);
 }
 
 .mempty {
   padding: 14px 18px;
-  font-family: var(--mono); font-size: 11px; color: var(--read-4);
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
 }
 .mempty-sub { padding-top: 4px; padding-bottom: 10px; }
 
@@ -242,27 +242,27 @@ function pickAgent(agent: AgentOption): void {
   display: flex; align-items: center; gap: 12px;
   cursor: pointer; transition: background 0.1s ease;
 }
-.mitem:hover { background: rgba(80, 150, 179, 0.1); }
+.mitem:hover { background: var(--accent-dim); }
 .mitem .name {
-  font-family: var(--mono); font-size: 12.5px; color: var(--read-1); font-weight: 600;
+  font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); font-weight: 600;
   flex: 1; min-width: 0;
   white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
 }
 .mitem .tier {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--accent-hover);
   padding: 1px 7px; border-radius: 3px;
-  background: rgba(80, 150, 179, 0.12);
-  border: 1px solid rgba(80, 150, 179, 0.22);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
   flex-shrink: 0;
 }
 .mitem .tier.active {
-  color: var(--ok);
-  background: rgba(134, 239, 172, 0.08);
-  border-color: rgba(134, 239, 172, 0.22);
+  color: var(--status-success);
+  background: var(--status-success-soft);
+  border-color: var(--status-success-soft);
 }
-.mitem.active { background: rgba(80, 150, 179, 0.14); }
-.mitem.active::before { content: "◆"; color: var(--steel-400); margin-right: -4px; }
+.mitem.active { background: var(--accent-dim); }
+.mitem.active::before { content: "◆"; color: var(--accent-hover); margin-right: -4px; }
 
 .veil-enter-active, .veil-leave-active { transition: opacity 0.18s ease; }
 .veil-enter-from,   .veil-leave-to    { opacity: 0; }

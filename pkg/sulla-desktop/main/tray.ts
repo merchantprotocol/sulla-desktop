@@ -20,9 +20,11 @@ import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
 import { createTrayPanel, toggleTrayPanel, sendPanelState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
 import { updateManager } from '@pkg/main/update/UpdateManager';
+import { openSupportCenter } from '@pkg/window/supportCenter';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
+import { isFirstRunTestInstance } from '@pkg/utils/instance';
 import {
   openMain, send, openDocker, openPreferences, getWindow, openUrlInApp,
 } from '@pkg/window';
@@ -108,7 +110,7 @@ export class Tray {
           label: 'Get Support',
           icon:  path.join(paths.resources, 'icons', 'help-circle-16.png'),
           click() {
-            openUrlInApp('https://sulladesktop.com/support');
+            openSupportCenter('home');
           },
         },
         {
@@ -180,8 +182,11 @@ export class Tray {
 
   private constructor(settings: Settings) {
     this.settings = settings;
-    this.trayMenu = new Electron.Tray(this.trayIconSet.starting);
-    this.trayMenu.setToolTip('Sulla Desktop');
+    const trayIcon = isFirstRunTestInstance()
+      ? Electron.nativeImage.createFromPath(path.join(paths.resources, 'icons', 'sulla-app-icon.png')).resize({ width: 18, height: 18 })
+      : this.trayIconSet.starting;
+    this.trayMenu = new Electron.Tray(trayIcon);
+    this.trayMenu.setToolTip(isFirstRunTestInstance() ? 'Sulla (first-run test)' : 'Sulla Desktop');
     const menuItem = this.contextMenuItems.find(item => item.id === 'container-engine');
 
     if (menuItem) {

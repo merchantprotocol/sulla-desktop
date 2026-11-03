@@ -11,8 +11,9 @@ import Electron from 'electron';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 
 import paths from '@pkg/utils/paths';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
-export const FILES_HTTPS_ORIGIN = 'https://127.0.0.1:30124';
+export const FILES_HTTPS_ORIGIN = loopbackOrigin('https', 30124);
 const SESSION_PARTITION = 'sulla-files-service';
 
 let pinnedFingerprint:Promise<string> | undefined;

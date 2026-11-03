@@ -116,15 +116,15 @@ export default {
     }
 
     &.error {
-        @include tooltipColors(var(--error), var(--border-error));
+        @include tooltipColors(var(--status-error), var(--border-error));
     }
 
     &.warning {
-        @include tooltipColors(var(--warning), var(--border-warning));
+        @include tooltipColors(var(--status-warning), var(--border-warning));
     }
 
     &.success {
-        @include tooltipColors(var(--success), var(--border-success));
+        @include tooltipColors(var(--status-success), var(--border-success));
     }
 }
 </style>

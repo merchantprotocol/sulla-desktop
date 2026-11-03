@@ -3,454 +3,119 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * Claude Code OAuth handler.
- *
- * Runs `claude setup-token` inside the Sulla VM via PTY, opens the OAuth
- * URL in an embedded BrowserWindow, intercepts the callback to extract
- * the authorization code, feeds it back to the CLI, and captures the
- * long-lived OAuth token when Claude CLI prints it.
- *
- * After a token is captured, writes it to /etc/claude-env in the VM
- * so Claude Code can pick it up immediately without a VM restart.
- */
-
-import * as childProcess from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
-import { BrowserWindow } from 'electron';
-import * as pty from 'node-pty';
+import { app, BrowserWindow } from 'electron';
 
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import { queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { ClaudeOAuthCoordinator } from '@pkg/main/oauth/claude/ClaudeOAuthCoordinator';
+import { claudeOAuthFailure, type ClaudeOAuthResult } from '@pkg/utils/claudeOAuthContract';
 import Logging from '@pkg/utils/logging';
-import paths from '@pkg/utils/paths';
 import * as window from '@pkg/window';
+import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
 const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
-
 const console = Logging.background;
-
-// Claude CLI emits the token on its own line after completion.
-const TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]{40,})/;
-
-// Match the OAuth URL even when the terminal wraps it across lines.
-const URL_PATTERN = /(https?:\/\/(?:claude\.com|claude\.ai)\/[\s\S]+?state=[A-Za-z0-9_-]+)/;
-
-// Claude CLI prints this after a bad code; we could retry but for now we bail.
-const INVALID_CODE_PATTERN = /OAuth error: Invalid code/i;
-
-interface OAuthSession {
-  ptyProcess:   pty.IPty;
-  stdoutBuffer: string;
-  authWindow:   BrowserWindow | null;
-}
-
-let activeSession: OAuthSession | null = null;
-
-function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
-}
-
-/** Redact sensitive OAuth params so they never hit disk. */
-function redactUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    for (const key of ['code', 'state', 'code_challenge', 'access_token']) {
-      if (parsed.searchParams.has(key)) {
-        parsed.searchParams.set(key, '(redacted)');
-      }
-    }
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
-function killActiveSession() {
-  if (activeSession) {
-    try { activeSession.ptyProcess.kill() } catch { /* already dead */ }
-    try { activeSession.authWindow?.close() } catch { /* already closed */ }
-    activeSession = null;
-  }
-}
-
-/** Whether the Sulla runtime VM is up; Desktop owns it, so this needs no process spawn. */
-async function isVMRunning(): Promise<boolean> {
-  return isSullaRuntimeActive();
-}
-
-/**
- * Write the OAuth token into the running VM's /etc/claude-env so that
- * Claude Code can pick it up without a VM restart.
- */
-async function injectTokenIntoVM(token: string): Promise<void> {
-  const runtimePath = paths.sullaRuntime;
-  const env = { ...process.env, };
-
-  // Write the token to a temp file on the host, copy into VM, then move to /etc.
-  const tmpPath = path.join(os.tmpdir(), `sulla-claude-env-${ Date.now() }`);
-  await fs.promises.writeFile(tmpPath, `CLAUDE_CODE_OAUTH_TOKEN=${ token }\n`, { mode: 0o600 });
-
-  const run = (args: string[]) => new Promise<void>((resolve, reject) => {
-    const proc = childProcess.spawn(runtimePath, args, { env });
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString() });
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`sulla-runtime ${ args.join(' ') } exited ${ code }: ${ stderr }`));
-    });
-    proc.on('error', reject);
-  });
-
-  try {
-    await run(['copy', tmpPath, 'guest:/tmp/claude-env']);
-    await run(['exec', '--', 'sudo', 'mv', '/tmp/claude-env', '/etc/claude-env']);
-    await run(['exec', '--', 'sudo', 'chmod', '600', '/etc/claude-env']);
-    console.log('[ClaudeOAuth] Token injected into VM at /etc/claude-env');
-  } finally {
-    fs.promises.unlink(tmpPath).catch(() => { /* ignore */ });
-  }
-}
-
-async function injectTokenIntoVMWhenReady(token: string): Promise<void> {
-  for (;;) {
-    if (await isVMRunning()) {
-      try {
-        await injectTokenIntoVM(token);
-        return;
-      } catch (error) {
-        console.warn('[ClaudeOAuth] VM token injection is not ready yet:', (error as Error).message);
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 2_000));
-  }
-}
 
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = BrowserWindow.fromWebContents(event.sender);
-  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
-    throw new Error('Claude OAuth is only available from a trusted Sulla window');
-  }
+
+  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) throw new Error('Claude OAuth is only available from a trusted Sulla window');
 }
 
-/**
- * Persist the captured OAuth token into the integration vault so the
- * Integrations page reflects the connection and ClaudeCodeService can
- * pick it up on its next request.
- *
- * Clears any api_key stored under the same account (the two are mutually
- * exclusive — OAuth supersedes a manually-pasted key).
- */
 async function persistTokenToVault(token: string): Promise<void> {
-  try {
-    const svc = getIntegrationService();
-    // Wrap connection-status write in the suppression flag so the Integrations
-    // listener in agent/integrations/index.ts doesn't try to spin up a runtime
-    // client for claude-code (there is no IntegrationRegistry factory for it —
-    // credentials are consumed directly by ClaudeCodeService).
-    await withSuppressedConnectionStatus(async() => {
-      await svc.setMultipleValues([
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'oauth_token',
-          value:          token,
-        },
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'api_key',
-          value:          '',
-        },
-        {
-          integration_id: CLAUDE_INTEGRATION_ID,
-          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
-          property:       'account_label',
-          value:          'Claude Code OAuth',
-        },
-      ]);
-      await svc.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
-      await svc.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
+  if (usesContainerVaultAuthority()) {
+    const client = getConfiguredApprovalClient();
+
+    if (!client) throw new Error('Desktop vault session service is unavailable');
+    await client.importIntegrationAccount(CLAUDE_INTEGRATION_ID, {
+      accountId: CLAUDE_OAUTH_ACCOUNT_ID,
+      label: 'Claude Code OAuth',
+      values: { oauth_token: token, api_key: '', account_label: 'Claude Code OAuth' },
+      active: true,
+      connected: true,
     });
-    console.log('[ClaudeOAuth] Token persisted to integration vault');
-  } catch (err) {
-    console.warn('[ClaudeOAuth] Failed to persist token to integration vault:', err);
+    return;
   }
+  const service = getIntegrationService();
+
+  await withSuppressedConnectionStatus(async() => {
+    await service.setMultipleValues([
+      { integration_id: CLAUDE_INTEGRATION_ID, account_id: CLAUDE_OAUTH_ACCOUNT_ID, property: 'oauth_token', value: token },
+      { integration_id: CLAUDE_INTEGRATION_ID, account_id: CLAUDE_OAUTH_ACCOUNT_ID, property: 'api_key', value: '' },
+      { integration_id: CLAUDE_INTEGRATION_ID, account_id: CLAUDE_OAUTH_ACCOUNT_ID, property: 'account_label', value: 'Claude Code OAuth' },
+    ]);
+    await service.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
+    await service.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
+  });
 }
 
-// claude.ai's login session cookie.
-const CLAUDE_SESSION_COOKIE = 'sessionKey';
-// Pages only a logged-in user lands on.
-const LOGGED_IN_PATH = /^\/(new|chats?|recents|projects?)(\/|$)/;
-// Enough to recover from a dropped authorize step, never a reload loop.
-const MAX_AUTHORIZE_RETURNS = 3;
+async function saveToken(token: string, firstRun: boolean): Promise<void> {
+  if (!firstRun) {
+    await persistTokenToVault(token);
+    return;
+  }
+  await queuePendingCredential({
+    integrationId: CLAUDE_INTEGRATION_ID,
+    accountId: CLAUDE_OAUTH_ACCOUNT_ID,
+    values: { oauth_token: token, api_key: '', account_label: 'Claude Code OAuth' },
+    activate: true,
+  });
+  const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
 
-function isClaudeHost(hostname: string): boolean {
-  return hostname === 'claude.ai' || hostname.endsWith('.claude.ai') || hostname === 'claude.com' || hostname.endsWith('.claude.com');
+  await getModelProviderService().reconcilePrimaryProvider(false, CLAUDE_INTEGRATION_ID);
 }
 
-/**
- * Open the OAuth URL in an Electron BrowserWindow and intercept the
- * callback to extract the authorization code and state.
- */
-function openAuthWindow(url: string): { window: BrowserWindow; codePromise: Promise<string | null> } {
-  let resolveCode!: (code: string | null) => void;
-  let resolved = false;
-  const codePromise = new Promise<string | null>((resolve) => {
-    resolveCode = resolve;
-  });
-  const doResolve = (code: string | null) => {
-    if (resolved) return;
-    resolved = true;
-    resolveCode(code);
-  };
+const coordinator = new ClaudeOAuthCoordinator(saveToken);
 
-  // Returns true for the OAuth callback. Checked in the window and in every
-  // popup, since claude.com can finish sign-in in a popup (e.g. Google SSO).
-  const handleUrl = (targetUrl: string): boolean => {
-    try {
-      const parsed = new URL(targetUrl);
-      if (parsed.hostname.endsWith('claude.com') && parsed.pathname.includes('/oauth/code/callback')) {
-        const code = parsed.searchParams.get('code');
-        const state = parsed.searchParams.get('state');
-        // Claude CLI expects "code#state" format.
-        const combined = code && state ? `${ code }#${ state }` : code;
-        console.log(`[ClaudeOAuth] Intercepted callback, combined=${ combined ? `${ combined.length } chars` : '(missing)' }`);
-        if (combined) {
-          doResolve(combined);
-          return true;
-        }
-      }
-      // claude.ai drops the authorize step when it sends a logged-out user to
-      // log in, and leaves them on the Claude app after login. Once a
-      // logged-in page shows up, go back to the authorize URL.
-      if (isClaudeHost(parsed.hostname) && LOGGED_IN_PATH.test(parsed.pathname)) {
-        returnToAuthorize(`landed on ${ parsed.pathname }`);
-      } else if (isClaudeHost(parsed.hostname) && parsed.pathname === '/') {
-        // '/' is both the login page and the app home, so ask the cookie jar.
-        window.webContents.session.cookies.get({ name: CLAUDE_SESSION_COOKIE }).then((found) => {
-          const signedIn = found.some(c => isClaudeHost((c.domain ?? '').replace(/^\./, '')));
-          console.log(`[ClaudeOAuth] At claude.ai home — signed in: ${ signedIn ? 'yes' : 'no' }`);
-          if (signedIn) returnToAuthorize('already signed in at home page');
-        }).catch(() => { /* cookie jar unavailable */ });
-      }
-    } catch { /* not a URL */ }
-    return false;
-  };
+async function runE2EFlow(options?: { firstRun?: boolean }): Promise<ClaudeOAuthResult> {
+  if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return claudeOAuthFailure('cancelled', 'Sign-in was closed.');
+  const endpoint = process.env.SULLA_E2E_OAUTH_URL;
 
-  // Contained so claude.com can't hand sign-in to the host's Claude app.
-  const window = createContainedAuthWindow({
-    width:     720,
-    height:    800,
-    title:     'Sign in with Claude',
-    partition: 'persist:claude-oauth',
-    logPrefix: '[ClaudeOAuth]',
-    onUrl:     handleUrl,
-  });
+  if (!endpoint) return claudeOAuthFailure('provider_error', 'Sign-in is unavailable.');
+  try {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: CLAUDE_INTEGRATION_ID }) });
 
-  let returns = 0;
-  function returnToAuthorize(reason: string) {
-    if (resolved || window.isDestroyed() || returns >= MAX_AUTHORIZE_RETURNS) return;
-    returns++;
-    console.log(`[ClaudeOAuth] Signed in (${ reason }) — returning to the authorize page (${ returns }/${ MAX_AUTHORIZE_RETURNS })`);
-    window.loadURL(url).catch((err) => console.warn('[ClaudeOAuth] Could not reload the authorize page:', err));
+    if (!response.ok) return claudeOAuthFailure('provider_error', 'Sign-in failed.');
+    const tokens = await response.json() as Record<string, string>;
+    const token = tokens.oauth_token;
+
+    if (!token) return claudeOAuthFailure('provider_error', 'Sign-in returned no token.');
+    await saveToken(token, !!options?.firstRun);
+    return { status: 'success', success: true };
+  } catch {
+    return claudeOAuthFailure('provider_error', 'Sign-in failed.');
   }
-
-  // Login sets claude.ai's session cookie, whichever page or popup it
-  // happened in. That's the reliable signal to resume the authorize step.
-  const cookies = window.webContents.session.cookies;
-  const onCookie = (_e: Electron.Event, cookie: Electron.Cookie, _cause: string, removed: boolean) => {
-    if (!removed && cookie.name === CLAUDE_SESSION_COOKIE && isClaudeHost((cookie.domain ?? '').replace(/^\./, ''))) {
-      returnToAuthorize('session cookie set');
-    }
-  };
-  cookies.on('changed', onCookie);
-
-  window.on('closed', () => {
-    cookies.removeListener('changed', onCookie);
-    doResolve(null);
-  });
-
-  console.log(`[ClaudeOAuth] Opening auth window: ${ redactUrl(url) }`);
-  window.loadURL(url);
-  return { window, codePromise };
 }
 
 export function initClaudeOAuthEvents(): void {
   const ipcMainProxy = getIpcMainProxy(console);
 
-  /**
-   * Start the OAuth flow. Returns the captured token, or an error message.
-   */
-  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<{ success?: boolean; token?: string; error?: string }> => {
-    assertFirstRunOrMainSender(event);
-    if (activeSession) killActiveSession();
+  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<ClaudeOAuthResult> => {
+    try {
+      assertFirstRunOrMainSender(event);
+      const vmRunning = isSullaRuntimeActive();
 
-    // Bail out early with a clear message if the VM isn't ready.
-    if (!await isVMRunning()) {
-      return { error: 'The Sulla VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
+      firstRunTrace('claude', 'flow started', { firstRun: !!options?.firstRun, vmRunning });
+      if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') return await runE2EFlow(options);
+      if (!vmRunning) return claudeOAuthFailure('vm_not_ready', 'Your private workspace is still starting. Try again in a moment.');
+      return await coordinator.start(event, options);
+    } catch (error) {
+      console.warn('[ClaudeOAuth] Start failed:', error);
+      return claudeOAuthFailure('provider_error', 'Claude sign-in could not start. Try again.');
     }
-
-    return await new Promise((resolve) => {
-      const runtimePath = paths.sullaRuntime;
-
-      const ptyProcess = pty.spawn(runtimePath, ['exec', '--', 'claude', 'setup-token'], {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 30,
-        env:  {
-          ...process.env,
-          
-          TERM:      'xterm-256color',
-        } as Record<string, string>,
-      });
-
-      const session: OAuthSession = { ptyProcess, stdoutBuffer: '', authWindow: null };
-      activeSession = session;
-
-      let urlOpened = false;
-      let codeSent = false;
-      let enterSent = false;
-      let resolved = false;
-
-      const doResolve = (result: { token?: string; error?: string }) => {
-        if (resolved) return;
-        resolved = true;
-        try { ptyProcess.kill() } catch { /* dead */ }
-        try { session.authWindow?.close() } catch { /* closed */ }
-        if (activeSession === session) activeSession = null;
-
-        if (result.token) {
-          void injectTokenIntoVMWhenReady(result.token);
-          if (options?.firstRun) {
-            // First run has no durable secret store. Keep the token in main
-            // memory until lane 1b's vault-ready hook flushes it.
-            queuePendingCredential({
-              integrationId: CLAUDE_INTEGRATION_ID,
-              accountId: CLAUDE_OAUTH_ACCOUNT_ID,
-              values: { oauth_token: result.token, api_key: '', account_label: 'Claude Code OAuth' },
-              activate: true,
-            });
-          } else {
-            persistTokenToVault(result.token).catch((err) => {
-              console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
-            });
-          }
-        }
-        resolve(options?.firstRun && result.token ? { success: true } : result);
-      };
-
-      const timeout = setTimeout(() => {
-        doResolve({ error: 'OAuth flow timed out after 5 minutes' });
-      }, 5 * 60 * 1000);
-
-      console.log('[ClaudeOAuth] Starting OAuth flow');
-
-      ptyProcess.onData((data: string) => {
-        const clean = stripAnsi(data);
-        session.stdoutBuffer += clean;
-
-        // Stream progress to the renderer (UI status line)
-        if (!options?.firstRun) {
-          try {
-            event.sender.send('claude-oauth:progress', clean);
-          } catch { /* window closed */ }
-        }
-
-        // Early exit on explicit OAuth error
-        if (INVALID_CODE_PATTERN.test(session.stdoutBuffer)) {
-          clearTimeout(timeout);
-          doResolve({ error: 'OAuth error: Invalid code. Try again.' });
-          return;
-        }
-
-        // 1) Detect the auth URL and open our embedded window
-        if (!urlOpened) {
-          const urlMatch = URL_PATTERN.exec(session.stdoutBuffer);
-          if (urlMatch) {
-            urlOpened = true;
-            const url = urlMatch[1].replace(/\s+/g, '');
-
-            try {
-              event.sender.send('claude-oauth:url', url);
-            } catch { /* window closed */ }
-
-            const { window, codePromise } = openAuthWindow(url);
-            session.authWindow = window;
-
-            codePromise.then((code) => {
-              if (!code) {
-                // Don't leave `claude setup-token` waiting in the VM forever.
-                console.log('[ClaudeOAuth] Auth window closed without a code');
-                clearTimeout(timeout);
-                doResolve({ error: 'The sign-in window closed before Claude sent back a code. Try again.' });
-                return;
-              }
-              console.log(`[ClaudeOAuth] Writing ${ code.length } chars to PTY`);
-              try { session.authWindow?.close() } catch { /* closed */ }
-              session.authWindow = null;
-              try {
-                ptyProcess.write(code);
-                codeSent = true;
-              } catch (err) {
-                console.warn('[ClaudeOAuth] Failed to write code to PTY:', err);
-              }
-            });
-          }
-          return;
-        }
-
-        // 2) Wait until the PTY echoes back asterisks confirming the code was
-        // buffered, then send Enter to submit it. This is more reliable than
-        // a fixed timeout.
-        if (codeSent && !enterSent && /\*{20,}/.test(session.stdoutBuffer)) {
-          enterSent = true;
-          console.log('[ClaudeOAuth] Code echoed — sending Enter');
-          try {
-            ptyProcess.write('\r');
-          } catch (err) {
-            console.warn('[ClaudeOAuth] Failed to send Enter:', err);
-          }
-        }
-
-        // 3) Look for the final token
-        const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
-        if (tokenMatch) {
-          clearTimeout(timeout);
-          console.log('[ClaudeOAuth] Token captured');
-          doResolve({ token: tokenMatch[1] });
-        }
-      });
-
-      ptyProcess.onExit(({ exitCode, signal }) => {
-        clearTimeout(timeout);
-        console.log(`[ClaudeOAuth] PTY exited code=${ exitCode } signal=${ signal }`);
-        if (!resolved) {
-          const tokenMatch = TOKEN_PATTERN.exec(session.stdoutBuffer);
-          if (tokenMatch) {
-            doResolve({ token: tokenMatch[1] });
-          } else {
-            doResolve({
-              error: `Claude setup-token exited without producing a token (code=${ exitCode })`,
-            });
-          }
-        }
-      });
-    });
   });
 
-  /** Cancel an in-progress OAuth flow. */
-  ipcMainProxy.handle('claude-oauth:cancel', async() => {
-    console.log('[ClaudeOAuth] Flow cancelled by user');
-    killActiveSession();
+  ipcMainProxy.handle('claude-oauth:cancel', async(event: Electron.IpcMainInvokeEvent): Promise<ClaudeOAuthResult> => {
+    try {
+      assertFirstRunOrMainSender(event);
+      return coordinator.cancel(event);
+    } catch {
+      return claudeOAuthFailure('provider_error', 'Claude sign-in could not be cancelled.');
+    }
   });
 }

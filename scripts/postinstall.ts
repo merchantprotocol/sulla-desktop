@@ -186,7 +186,9 @@ async function buildDownloadContextFor(rawPlatform: DependencyPlatform, depVersi
     dependencyPlatform: rawPlatform,
     platform,
     goPlatform:         platform,
-    isM1:               !!process.env.M1 || process.arch === 'arm64',
+    // SULLA_TARGET_ARCH=x64|arm64 builds for another Mac (an Intel build made
+    // on Apple Silicon); otherwise the tools match the machine running this.
+    isM1:               process.env.SULLA_TARGET_ARCH ? process.env.SULLA_TARGET_ARCH === 'arm64' : (!!process.env.M1 || process.arch === 'arm64'),
     resourcesDir,
     binDir:             path.join(resourcesDir, platform, 'bin'),
     internalDir:        path.join(resourcesDir, platform, 'internal'),

@@ -13,10 +13,11 @@ import * as path from 'path';
 
 import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initAgentsIpc } from './agentsIpc';
+import { initModelRoutingIpc } from './modelRoutingIpc';
+import { initModelDefaultsIpc } from './modelDefaultsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initCloudConnectionEvents } from './cloud/cloudLifecycle';
-import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
@@ -46,6 +47,7 @@ import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 import { initRecipeRailApps } from './marketplace/recipeRailApps';
 import { initExtensionUiIpc } from './extensionUiIpc';
 import { initIntegrationGrantIpc } from './integrationGrantIpc';
+import { initSupportSessionIpc } from './supportSessionIpc';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -86,9 +88,12 @@ export function initSullaEvents(): void {
   initMessageBusIpc();
   initExtensionUiIpc();
   initIntegrationGrantIpc();
+  initSupportSessionIpc();
   initAgentTabContractIpc();
   initTabsIpc();
   initAgentsIpc();
+  initModelRoutingIpc();
+  initModelDefaultsIpc();
   initConversationHistoryIpc();
   initBookmarksIpc();
   initChatMessagesIpc();
@@ -96,7 +101,6 @@ export function initSullaEvents(): void {
   initChatArtifactsIpc();
   initChatHeartbeatIpc();
   initClaudeOAuthEvents();
-  initOpenAIOAuthEvents();
   initIntegrationOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
@@ -111,7 +115,7 @@ export function initSullaEvents(): void {
   // Postgres runs inside the Sulla VM and can take a minute+ to come up on a
   // cold boot. These tasks used to fire on a blind 5s timer (workflow
   // recovery) or one unretried initialize() (gateway lobby), die with
-  // ECONNREFUSED 127.0.0.1:30116, and stay dead until the next app restart.
+  // ECONNREFUSED the host database port, and stay dead until the next app restart.
   // Wait behind the shared unbounded DB boot gate, then run both once: a
   // finite deadline here turned a slow cold start into a session-long
   // recovery outage (2026-08-31 boot).
@@ -864,7 +868,11 @@ export function initSullaEvents(): void {
   // System sleep / wake
   // ─────────────────────────────────────────────────────────────
 
-  const { powerMonitor, BrowserWindow } = require('electron') as typeof import('electron');
+  const { powerMonitor, BrowserWindow, app } = require('electron') as typeof import('electron');
+  app.once('will-quit', () => {
+    const { releaseAllChatActivity } = require('@pkg/main/SleepPreventionService');
+    releaseAllChatActivity();
+  });
 
   powerMonitor.on('suspend', () => {
     console.log('[Power] System suspending');
@@ -876,6 +884,12 @@ export function initSullaEvents(): void {
       getHeartbeatService().handleSuspend();
     } catch (err) {
       console.warn('[Power] Failed to suspend heartbeat scheduler:', err);
+    }
+    try {
+      const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
+      getBackendGraphWebSocketService().handleSuspend();
+    } catch (err) {
+      console.warn('[Power] Failed to suspend chat runs:', err);
     }
 
     // Close the mobile-relay socket cleanly so the relay DO drops this peer
@@ -907,6 +921,15 @@ export function initSullaEvents(): void {
       console.warn('[Power] Failed to resume secure desktop channel:', err);
     }
 
+    // Reconnect the remote-support tool channel right away with fresh
+    // backoff — otherwise recovery waits on the ping/pong watchdog.
+    try {
+      const { remoteSupportService } = require('@pkg/main/supportRemote');
+      remoteSupportService.handleResume();
+    } catch (err) {
+      console.warn('[Power] Failed to resume support channel:', err);
+    }
+
     // Refresh device presence immediately so mobile's device list shows this
     // desktop online within seconds of wake instead of at the next 45s tick.
     try {
@@ -920,7 +943,9 @@ export function initSullaEvents(): void {
     // message handlers after wake.
     try {
       const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
-      getBackendGraphWebSocketService().reinitialize();
+      // handleResume() snapshots interrupted chat runs, reinitializes
+      // (re-subscribe), then continues those threads.
+      getBackendGraphWebSocketService().handleResume();
     } catch (err) {
       console.warn('[Power] Failed to reinitialize backend graph service:', err);
     }

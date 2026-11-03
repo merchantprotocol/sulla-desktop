@@ -59,6 +59,8 @@ export interface PullRepository {
   hasLocalVersion(versionId:string):Promise<boolean>;
   /** The version is known to Cloud: pushed from here or applied from a pull. */
   isCloudVersion(versionId:string):Promise<boolean>;
+  /** The local parent of a version: null for a first version, undefined when the version is unknown here. */
+  versionParent?(versionId:string):Promise<string | null | undefined>;
   localFile(collectionId:string, fileId:string):Promise<LocalFileState | null>;
   /** Preserve a local version as a new file with the same content and a 'conflict' journal op. */
   forkLocalVersion(input:ForkLocalInput):Promise<void>;
@@ -147,6 +149,7 @@ export class CloudPuller {
 
   private async openAll(state:PullState, root:Uint8Array, versions:RemoteVersion[]):Promise<OpenedVersion[]> {
     const opened:OpenedVersion[] = [];
+    const batchParents = new Map<string, string | null>();
     for (const remote of versions) {
       let plain:unknown;
       try {
@@ -154,11 +157,35 @@ export class CloudPuller {
       } catch {
         throw new CloudSyncIntegrityError('cloud manifest failed authentication');
       }
-      const manifest = parseManifestPlain(plain);
+      let manifest = parseManifestPlain(plain);
+      if (manifest.parentVersionId !== remote.parentVersionId && remote.parentVersionId &&
+          await this.isLegacyCloudAncestor(remote.parentVersionId, manifest.parentVersionId, batchParents)) {
+        manifest = { ...manifest, parentVersionId: remote.parentVersionId };
+      }
       assertRemoteMatchesManifest(remote, manifest);
+      batchParents.set(remote.versionId, manifest.parentVersionId);
       opened.push({ remote, manifest });
     }
     return opened;
+  }
+
+  /**
+   * Cloud saves before 2026-10-31 copied the replaced manifest's own parent, so the authenticated
+   * parent is an earlier ancestor (the grandparent, or older after repeated Cloud saves). Accept
+   * only a manifest parent that really is an ancestor of the version the commit builds on.
+   * Any other mismatch still fails closed.
+   */
+  private async isLegacyCloudAncestor(parentVersionId:string, manifestParent:string | null, batchParents:Map<string, string | null>):Promise<boolean> {
+    let cursor:string | null = parentVersionId;
+    for (let depth = 0; depth < 64 && cursor; depth++) {
+      const next:string | null | undefined = batchParents.has(cursor)
+        ? batchParents.get(cursor)
+        : await this.repository.versionParent?.(cursor);
+      if (next === undefined) return false;
+      if (next === manifestParent) return true;
+      cursor = next;
+    }
+    return false;
   }
 
   /** stateHash is over every file's cloud head after this page, never over local files (which may hold unpushed edits). */
@@ -193,7 +220,12 @@ export class CloudPuller {
       });
       forked = true;
     }
-    const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, manifest);
+    // Cloud briefly emitted one authenticated zero-byte chunk for empty files. It carries no
+    // content, so canonicalize that legacy shape before materialization rather than downloading it.
+    const materializedManifest = manifest.size === 0 && manifest.chunks.length === 1 && manifest.chunks[0][1] === 0
+      ? { ...manifest, chunks: [] }
+      : manifest;
+    const content = manifest.deleted ? null : await this.content.materialize(state.collectionId, state.keyVersion, root, materializedManifest);
     await this.repository.applyRemoteVersion({
       collectionId: state.collectionId,
       remote,

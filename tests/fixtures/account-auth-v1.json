@@ -1,0 +1,56 @@
+{
+  "note": "Synthetic account-auth v1 and bundle v2 known-answer fixture. Binary values are base64url without padding.",
+  "password": "Sulla KAT password · account auth v1",
+  "kdf": {
+    "alg": "argon2id13",
+    "salt": "AAECAwQFBgcICQoLDA0ODw",
+    "memoryBytes": 67108864,
+    "ops": 3
+  },
+  "masterKeyFingerprint": "OXIRUUvyWzZ4_U7PKf9Vt3x17RHT6iItB744RnT1nMU",
+  "authHash": "ib7ZZX_sM-TmLPJgvs2rUYxS6GG_gCvmF_9Gm_6W108",
+  "recoveryCode": "SULLA-RECOVERY-KAT-2026-X0",
+  "userKeyFingerprint": "IZOUQj8sswrecrtWRLjqlqTf_7_hs-Q_J1_jXrzHFhM",
+  "bundleV2": {
+    "format": "sulla-vault-sync-bundle",
+    "v": 2,
+    "vaultId": "00000000-0000-4000-8000-0000000000a1",
+    "vaultUserId": "00000000-0000-4000-8000-0000000000b2",
+    "epoch": 1,
+    "bundleGeneration": 2,
+    "kdf": {
+      "alg": "argon2id13",
+      "salt": "AAECAwQFBgcICQoLDA0ODw",
+      "memoryBytes": 67108864,
+      "ops": 3
+    },
+    "encryptedUserKey": {
+      "version": 1,
+      "algorithm": "xchacha20-poly1305",
+      "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
+      "ciphertext": "_J1c39dofnYyZK6tVmdO9gGXd-NdxPaJTq4oWUW_Dht6N21k1iX4cwFRp2qbKyUU"
+    },
+    "publicKey": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8",
+    "encryptedPrivateKey": {
+      "version": 1,
+      "algorithm": "xchacha20-poly1305",
+      "nonce": "MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZH",
+      "ciphertext": "xB1ZNorBea_AG0kUi6tuota60lONl6qt90Ct6Jq4WgJZmLZYFOE2XUQlhS-_ahTK"
+    },
+    "recovery": {
+      "kdf": {
+        "alg": "argon2id13",
+        "salt": "8ODQwLCgkIBwYFBAMCAQAA",
+        "memoryBytes": 67108864,
+        "ops": 3
+      },
+      "encryptedUserKey": {
+        "version": 1,
+        "algorithm": "xchacha20-poly1305",
+        "nonce": "GBkaGxwdHh8gISIjJCUmJygpKissLS4v",
+        "ciphertext": "lXe30JwFlABeIkltO1PiG02I0wR0fpg2cnYXmf_ShJWJr0XYC9puMKolyd9nIWO2"
+      }
+    },
+    "mac": "XOnqX8nF2QFMmKWtZW2kivly4qqRh6colIAg1rZqxu0"
+  }
+}

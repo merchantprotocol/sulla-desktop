@@ -231,7 +231,7 @@
 
     <!-- Document mode: raw HTML rendered in Shadow DOM -->
     <template v-else-if="tabMode === 'document'">
-      <div class="flex-1 min-h-0 overflow-auto bg-[#0d1117]">
+      <div class="flex-1 min-h-0 overflow-auto bg-surface-token">
         <HtmlMessageRenderer
           v-if="tabContent"
           :content="tabContent"
@@ -241,7 +241,7 @@
         />
         <div
           v-else
-          class="flex h-full items-center justify-center text-sm text-slate-500"
+          class="flex h-full items-center justify-center text-sm text-muted-token"
         >
           Document content unavailable
         </div>
@@ -328,7 +328,7 @@
           :tab-id="props.tabId"
           :document-file="getTab(props.tabId)!.documentFile!"
         />
-        <div v-else class="flex h-full items-center justify-center text-sm text-slate-500">This file is no longer available</div>
+        <div v-else class="flex h-full items-center justify-center text-sm text-muted-token">This file is no longer available</div>
       </div>
     </template>
 
@@ -378,6 +378,16 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'support-session'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <SupportSessionTab
+          :tab-id="props.tabId"
+          :session-id="getTab(props.tabId)?.supportSession?.sessionId || ''"
+          :is-visible="props.isVisible"
+        />
+      </div>
+    </template>
+
     <!-- Terminal: xterm.js PTY into the Sulla VM (sulla-runtime exec 0) -->
     <template v-else-if="tabMode === 'terminal'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -423,6 +433,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 // canvas). Each is only rendered inside its own v-if branch below.
 const AgentRoutines = defineAsyncComponent(() => import('./AgentRoutines.vue'));
 const FileEditorTab = defineAsyncComponent(() => import('./FileEditorTab.vue'));
+const SupportSessionTab = defineAsyncComponent(() => import('./SupportSessionTab.vue'));
 const TerminalTab = defineAsyncComponent(() => import('./TerminalTab.vue'));
 const PreferencesPage = defineAsyncComponent(() => import('./Preferences.vue'));
 const DockerPage = defineAsyncComponent(() => import('./Docker.vue'));
@@ -447,6 +458,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   decide:        'Decide',
   preferences:   'Preferences',
   docker:        'Docker',
+  'support-session': 'Support session',
 };
 
 const props = defineProps<{
@@ -1202,8 +1214,8 @@ onUnmounted(() => {
 }
 
 .address-bar:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .address-bar::placeholder {
@@ -1231,7 +1243,7 @@ onUnmounted(() => {
   background-color: var(--bg-surface-hover);
 }
 .address-bar-star.starred {
-  color: var(--accent-primary);
+  color: var(--accent);
 }
 
 /* Loading progress bar — Chrome-style sliding bar under the address bar */
@@ -1241,7 +1253,7 @@ onUnmounted(() => {
   left: 0;
   height: 2px;
   width: 30%;
-  background: var(--accent-primary);
+  background: var(--accent);
   border-radius: 0 1px 1px 0;
   animation: address-bar-slide 1.2s ease-in-out infinite;
 }
@@ -1291,8 +1303,8 @@ onUnmounted(() => {
 }
 
 .browser-vault-btn.active {
-  color: var(--accent-primary);
-  background-color: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .browser-vault-popup {
@@ -1303,9 +1315,9 @@ onUnmounted(() => {
   height: min(770px, calc(100vh - 7rem));
   z-index: 30;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border-default));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-default));
   border-radius: 1rem;
-  background: #f4f7fb;
+  background: var(--bg-page);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
@@ -1351,8 +1363,8 @@ onUnmounted(() => {
 }
 
 .agent-chat-origin:hover {
-  color: var(--nx-accent, var(--accent-primary));
-  border-color: var(--nx-accent, var(--accent-primary));
+  color: var(--nx-accent, var(--accent));
+  border-color: var(--nx-accent, var(--accent));
 }
 
 /* Theme-aware scrollbar styling for overflow-auto containers */
@@ -1373,7 +1385,7 @@ onUnmounted(() => {
 }
 
 .overflow-auto::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--border-strong);
 }
 
 .overflow-auto::-webkit-scrollbar-corner {
@@ -1389,11 +1401,11 @@ onUnmounted(() => {
      z-index 4) so it remains visible the rest of the time. */
   z-index: 5;
   padding: 6px 12px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: ui-monospace, SFMono-Regular, var(--font-mono), Menlo, monospace;
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #c4d4e6;
+  color: var(--text-secondary);
   background: rgba(20, 30, 54, 0.82);
   border: 1px solid rgba(140, 172, 201, 0.4);
   border-radius: 4px;
@@ -1406,4 +1418,6 @@ onUnmounted(() => {
   background: rgba(74, 111, 165, 0.35);
   border-color: rgba(196, 212, 230, 0.65);
 }
+ .bg-surface-token { background-color: var(--bg-surface); }
+.text-muted-token { color: var(--text-muted); }
 </style>

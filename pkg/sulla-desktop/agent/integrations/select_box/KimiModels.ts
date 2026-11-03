@@ -18,13 +18,16 @@ export class KimiModels extends SelectBoxProvider {
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
     const apiKey = context.formValues.api_key;
+    const baseUrl = context.formValues.region === 'international'
+      ? 'https://api.moonshot.ai/v1'
+      : 'https://api.moonshot.cn/v1';
 
     if (!apiKey) {
       return KIMI_FALLBACK;
     }
 
     try {
-      const response = await fetch('https://api.moonshot.cn/v1/models', {
+      const response = await fetch(`${ baseUrl }/models`, {
         headers: { Authorization: `Bearer ${ apiKey }` },
       });
 

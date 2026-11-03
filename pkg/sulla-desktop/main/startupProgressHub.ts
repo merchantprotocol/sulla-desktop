@@ -34,7 +34,7 @@ export class StartupProgressHub {
     this.attached = true;
     lifecycle.on('startup:begin', (e: LifecycleBeginEvent) => this.apply(() => this.model.onLifecycleBegin(e.order, e.alreadyStarted)));
     lifecycle.on('startup:step', (e: LifecycleStepEvent) => this.apply(() => this.model.onLifecycleStep(e)));
-    lifecycle.on('all:ready', () => this.apply(() => this.model.onLifecycleAllReady()));
+    lifecycle.on('startup:complete', () => this.apply(() => this.model.onLifecycleAllReady()));
     lifecycle.on('service:status', (status) => this.apply(() => this.model.onServiceStatus(status)));
     for (const status of lifecycle.serviceStatuses()) this.model.onServiceStatus(status);
   }

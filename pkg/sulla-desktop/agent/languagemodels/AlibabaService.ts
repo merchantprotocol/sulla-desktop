@@ -6,10 +6,11 @@
 import { type LLMServiceConfig, type ChatMessage } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { alibabaBaseUrl } from './providerEndpoints';
 
 /**
  * Alibaba Cloud (DashScope / Model Studio) LLM provider.
- * OpenAI-compatible API at https://coding-intl.dashscope.aliyuncs.com/v1 (Coding Plan)
+ * OpenAI-compatible API at a DashScope regional endpoint.
  * Provides access to MiniMax, Kimi K2.5, Qwen, and other models.
  */
 export class AlibabaService extends OpenAICompatibleService {
@@ -24,7 +25,7 @@ export class AlibabaService extends OpenAICompatibleService {
     return new AlibabaService({
       id:      'alibaba',
       model:   valMap.model || 'qwen3.5-plus',
-      baseUrl: valMap.base_url || 'https://coding-intl.dashscope.aliyuncs.com/v1',
+      baseUrl: alibabaBaseUrl(valMap),
       apiKey:  valMap.api_key || '',
     });
   }

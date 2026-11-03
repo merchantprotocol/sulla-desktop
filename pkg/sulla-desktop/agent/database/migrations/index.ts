@@ -132,6 +132,9 @@ import { up as up_0136, down as down_0136 } from './0136_create_memory_packs';
 import { up as up_0138, down as down_0138 } from './0138_trim_builtin_agent_environment_boilerplate';
 import { up as up_0139, down as down_0139 } from './0139_conversation_history_actions';
 import { up as up_0140, down as down_0140 } from './0140_conversation_history_sync_fields';
+import { up as up_0141, down as down_0141 } from './0141_first_run_credentials';
+import { up as up_0142, down as down_0142 } from './0142_create_desktop_audit';
+import { up as up_0143, down as down_0143 } from './0143_agent_model_choice';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -260,4 +263,7 @@ export const migrationsRegistry = [
   { name: '0138_trim_builtin_agent_environment_boilerplate', up: up_0138, down: down_0138 },
   { name: '0139_conversation_history_actions', up: up_0139, down: down_0139 },
   { name: '0140_conversation_history_sync_fields', up: up_0140, down: down_0140 },
+  { name: '0141_first_run_credentials', up: up_0141, down: down_0141 },
+  { name: '0142_create_desktop_audit', up: up_0142, down: down_0142 },
+  { name: '0143_agent_model_choice', up: up_0143, down: down_0143 },
 ] as const;

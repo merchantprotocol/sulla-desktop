@@ -32,6 +32,7 @@ export type MessageKind =
   | 'tts'           // Sulla is currently speaking (transient)
   | 'interim'       // user voice transcript being drafted (transient)
   | 'error'         // error/recovery
+  | 'notice'        // neutral informational notice
   | 'html';         // rich HTML reply
 
 export interface MessageBase {
@@ -252,7 +253,14 @@ export interface ErrorMessage extends MessageBase {
   kind:    'error';
   text:    string;
   detail?: string;
-  action?: { label: string; kind: 'retry' | 'continue' | 'dismiss' };
+  action?: { label: string; kind: 'retry' | 'continue' | 'dismiss' | 'connect' };
+}
+
+export interface NoticeMessage extends MessageBase {
+  kind:    'notice';
+  text:    string;
+  detail?: string;
+  action?: { label: string; kind: 'retry' | 'continue' | 'dismiss' | 'connect' };
 }
 
 // ─── HTML reply ───────────────────────────────────────────────────
@@ -282,6 +290,7 @@ export type Message =
   | TtsMessage
   | InterimMessage
   | ErrorMessage
+  | NoticeMessage
   | HtmlMessage;
 
 export const isTransient = (m: Message): boolean =>

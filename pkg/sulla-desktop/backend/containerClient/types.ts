@@ -82,9 +82,9 @@ export type ContainerRunClientOptions = SpawnOptions & { namespace?: string };
  */
 export interface ContainerEngineClient {
   /**
-   * Block until the container engine is ready.
+   * Block until the container engine is ready, or reject after timeoutMs when given.
    */
-  waitForReady(): Promise<void>;
+  waitForReady(timeoutMs?: number): Promise<void>;
 
   /**
    * Read the file from the given container image.

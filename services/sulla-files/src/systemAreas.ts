@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { Config } from './config.js';
 import type pg from 'pg';
@@ -22,6 +22,12 @@ const AREAS = [
   ] },
 ] as const;
 
+export function collectionIdFor(userId:string, rootId = 'default'):string {
+  const identity = rootId === 'default' ? `sulla-files:v1:${ userId }` : `sulla-files:root:v1:${ userId }:${ rootId }`;
+  const value = createHash('sha256').update(identity).digest('hex').slice(0, 32).split(''); value[12] = '4'; value[16] = '8';
+  return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
+}
+
 export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void> {
   if (!config.keyring?.unlocked) throw new Error('Files keyring must be unlocked before system areas are initialized');
   const client = await db.connect();
@@ -33,7 +39,7 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
         ? (await client.query("SELECT * FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [config.userId])).rows[0]
         : (await client.query('SELECT * FROM collections WHERE system_area=$1', [area.key])).rows[0];
       if (!collection) {
-        const id = randomUUID();
+        const id = area.key === 'home' ? collectionIdFor(config.userId) : randomUUID();
         collection = (await client.query(`INSERT INTO collections
           (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,explorer_path,system_area)
           VALUES($1,$2,$3,$4,'knowledge','desktop-only',$5,$6,'{}',$8,$7) RETURNING *`,

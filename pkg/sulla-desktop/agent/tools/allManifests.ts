@@ -14,6 +14,7 @@ import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
 import { chatToolManifests } from './chat/manifests';
+import { desktopToolManifests } from './desktop/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
@@ -38,6 +39,7 @@ import { settingsToolManifests } from './settings/manifests';
 import { skillsToolManifests } from './skills/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
+import { supportToolManifests } from './support/manifests';
 import { workflowToolManifests } from './workflow/manifests';
 
 import type { ToolManifest } from './registry';
@@ -51,6 +53,7 @@ export const allToolManifests: ToolManifest[] = [
   ...calendarToolManifests,
   ...chatToolManifests,
   ...captureToolManifests,
+  ...desktopToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
   ...episodicToolManifests,
@@ -75,5 +78,6 @@ export const allToolManifests: ToolManifest[] = [
   ...skillsToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,
+  ...supportToolManifests,
   ...workflowToolManifests,
 ];

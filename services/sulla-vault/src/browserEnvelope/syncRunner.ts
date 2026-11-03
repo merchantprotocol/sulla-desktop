@@ -20,8 +20,8 @@ import {
   type AgentPolicy, type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncEnvelope, type SyncHead, type SyncRecord } from './envelope.js';
-import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow } from './exportBuilder.js';
+import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type SyncEnvelope, type SyncHead, type SyncRecord } from './envelope.js';
+import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
 
 import type { Database } from '../db.js';
@@ -76,12 +76,16 @@ const HANDLE_TTL_MS = 60_000;
 const PULL_PAGE = 100;
 const MAX_WRITES = 256;
 const MAX_COMMIT_BYTES = 1_900_000;
+// Rollout gate: enable only after Cloud, Web and Mobile all advertise bundle-v2 support.
+const BUNDLE_V2_UPLOAD_ENABLED = process.env.SULLA_CLOUD_BUNDLE_VERSION === '2';
 const POLICY_RANK = { metadata: 0, autofill: 1, full: 2 } as const;
 const ITEM_TYPES = new Set(['login', 'note', 'card', 'identity', 'apiKey']);
 
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 /** Fingerprint of what the bundle wraps; changes on a password change, KDF change or key rotation. */
-const wrapFingerprint = (account: LocalAccountRow) => sha256Hex(Buffer.from(JSON.stringify([account.kdf, account.encrypted_user_key, account.public_key, account.encrypted_private_key])));
+const wrapFingerprint = (account: LocalAccountRow, recovery?: unknown) => sha256Hex(Buffer.from(JSON.stringify([
+  account.kdf, account.encrypted_user_key, account.public_key, account.encrypted_private_key, recovery ?? null,
+])));
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
 /** True when `next` grants agents anything `current` doesn't (§4: remote widening waits for the owner). */
@@ -148,6 +152,13 @@ export class CloudVaultSyncRunner {
     return result.rows[0] ?? null;
   }
 
+  private async recovery(userId: string): Promise<LocalRecoveryRow | null> {
+    const result = await this.db.query<LocalRecoveryRow>(
+      'SELECT recovery_salt,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   private async state(userId: string): Promise<StateRow | null> {
     const result = await this.db.query<StateRow>('SELECT * FROM cloud_vault_sync_state WHERE owner_user_id=$1', [userId]);
     return result.rows[0] ?? null;
@@ -194,12 +205,13 @@ export class CloudVaultSyncRunner {
               OR (i.deleted_at IS NOT NULL AND r.record_id IS NOT NULL AND NOT r.deleted))`, [userId],
       );
       const account = await this.account(userId);
+      const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
       return {
         configured: true, vaultId: state.vault_id, headSeq: num(state.head_seq), lastPushAt: state.last_push_at,
         lastPullAt: state.last_pull_at, lastError: state.last_error, policyReviewPending: num(review.rows[0]?.n),
         pendingChanges: num(pending.rows[0]?.n),
         // The master password (or KDF) changed since the last upload: the Cloud bundle needs a rewrap.
-        bundleStale: Boolean(account && state.bundle_sha && wrapFingerprint(account) !== state.bundle_sha),
+        bundleStale: Boolean(account && state.bundle_sha && wrapFingerprint(account, recovery) !== state.bundle_sha),
       };
     });
   }
@@ -220,6 +232,10 @@ export class CloudVaultSyncRunner {
         const deltas: SyncRecord[] = [];
         let head: SyncHead | null = null;
         let syncPaused = false;
+        let remoteBundle: SyncBundle | null = null;
+        const bundleResponse = await this.cloud('GET', `/cloud-vault-sync/vaults/${ state.vault_id }/bundle?deviceId=${ encodeURIComponent(deviceId) }`);
+        if (bundleResponse.status === 200) remoteBundle = (bundleResponse.body.bundle ?? bundleResponse.body) as SyncBundle;
+        else if (bundleResponse.status !== 404) throw new CloudSyncError('cloud_error', 502, `Sulla Cloud returned ${ bundleResponse.status } for the vault wrap`);
         let cursor = '';
         for (let page = 0; page < 1000; page++) {
           const query = new URLSearchParams({ scope: 'personal', since: String(since), limit: String(PULL_PAGE), deviceId });
@@ -235,6 +251,13 @@ export class CloudVaultSyncRunner {
           if (!cursor) break;
         }
         if (!head) throw new CloudSyncError('cloud_error', 502, 'Sulla Cloud returned no head');
+        if (remoteBundle) {
+          envelope.verifyBundle(remoteBundle, userKey);
+          if (remoteBundle.vaultId !== state.vault_id || remoteBundle.vaultUserId !== userId || remoteBundle.epoch !== num(state.epoch)) {
+            throw new CloudSyncError('bundle_moved', 409, 'Cloud wrap belongs to another vault');
+          }
+          if (remoteBundle.bundleGeneration < num(state.bundle_generation)) throw new CloudSyncError('integrity_failed', 409, 'Cloud served an older wrap');
+        }
         const known = await this.known(userId);
         const merged = new Map<string, Pick<SyncRecord, 'id' | 'generation' | 'deleted' | 'mac'>>();
         for (const row of known.values()) merged.set(row.record_id, { id: row.record_id, generation: num(row.generation), deleted: row.deleted, mac: row.record_mac });
@@ -249,6 +272,27 @@ export class CloudVaultSyncRunner {
         let applied = 0;
         let conflictCopies = 0;
         await this.transaction(async client => {
+          if (remoteBundle && remoteBundle.bundleGeneration > num(state.bundle_generation)) {
+            const current = await client.query<LocalAccountRow & { login_hash_salt: Buffer; login_hash_verifier: Buffer }>(
+              'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf,login_hash_salt,login_hash_verifier FROM users WHERE id=$1 FOR UPDATE', [userId],
+            );
+            const row = current.rows[0];
+            if (!row) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
+            await client.query(
+              `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
+               VALUES ($1,$2,$3,$4,$5,'cloud_rewrap')`,
+              [userId, row.login_hash_salt, row.login_hash_verifier, row.encrypted_user_key, row.kdf],
+            );
+            const nextKdf = { authority: 'container', version: 1, password: { salt: remoteBundle.kdf.salt, parameters: { memoryBytes: remoteBundle.kdf.memoryBytes, operations: remoteBundle.kdf.ops } } };
+            await client.query(
+              'UPDATE users SET encrypted_user_key=$2,public_key=$3,encrypted_private_key=$4,kdf=$5,updated_at=now() WHERE id=$1',
+              [userId, remoteBundle.encryptedUserKey, remoteBundle.publicKey, remoteBundle.encryptedPrivateKey, nextKdf],
+            );
+            await client.query(
+              'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,updated_at=now() WHERE owner_user_id=$1',
+              [userId, remoteBundle.bundleGeneration, wrapFingerprint({ id: userId, encrypted_user_key: remoteBundle.encryptedUserKey, public_key: remoteBundle.publicKey, encrypted_private_key: remoteBundle.encryptedPrivateKey, kdf: nextKdf }, remoteBundle.recovery)],
+            );
+          }
           for (const record of deltas) {
             const prior = known.get(record.id);
             if (prior && num(prior.generation) === record.generation) continue;
@@ -383,8 +427,9 @@ export class CloudVaultSyncRunner {
     if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
     const vaultId = replace || !state ? randomUUID() : state.vault_id;
     let fields;
+    const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
     try {
-      fields = bundleFields(account, { vaultId, epoch: 1, bundleGeneration: 1 });
+      fields = bundleFields(account, { vaultId, epoch: 1, bundleGeneration: 1 }, recovery);
     } catch (error) {
       throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
     }
@@ -403,7 +448,7 @@ export class CloudVaultSyncRunner {
         `INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_push_at)
          VALUES ($1,$2,1,1,1,$3,$4,now())
          ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,bundle_sha=$4,last_push_at=now(),last_error=NULL,updated_at=now()`,
-        [userId, vaultId, head.mac, wrapFingerprint(account)],
+        [userId, vaultId, head.mac, wrapFingerprint(account, recovery)],
       );
       for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null, false);
     });
@@ -414,14 +459,15 @@ export class CloudVaultSyncRunner {
     const account = await this.account(userId);
     if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
     let fields;
+    const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
     try {
-      fields = bundleFields(account, { vaultId: state.vault_id, epoch: num(state.epoch), bundleGeneration: num(state.bundle_generation) + 1 });
+      fields = bundleFields(account, { vaultId: state.vault_id, epoch: num(state.epoch), bundleGeneration: num(state.bundle_generation) + 1 }, recovery);
     } catch (error) {
       throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
     }
     const bundle = envelope.buildBundle(fields, userKey);
     const body = Buffer.from(JSON.stringify({ bundle, expectedBundleGeneration: num(state.bundle_generation) }));
-    const fingerprint = wrapFingerprint(account);
+    const fingerprint = wrapFingerprint(account, recovery);
     return this.stash(userId, 'rewrap', 'PUT', `/cloud-vault-sync/vaults/${ state.vault_id }?op=rewrap&deviceId=${ encodeURIComponent(deviceId) }`, body, state.vault_id, async(_res, client) => {
       await client.query(
         'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,last_error=NULL,updated_at=now() WHERE owner_user_id=$1',

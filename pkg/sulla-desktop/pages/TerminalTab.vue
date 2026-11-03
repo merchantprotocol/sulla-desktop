@@ -54,7 +54,7 @@ export default defineComponent({
   width:            100%;
   height:           100%;
   overflow:         hidden;
-  background-color: var(--bg-surface, #1e293b);
+  background-color: var(--bg-surface);
   padding:          6px 8px;
 }
 
@@ -64,14 +64,14 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.theme-noir .terminal-tab {
+.terminal-tab {
   display: flex;
   flex-direction: column;
   padding: 0;
   background: var(--nx-paper);
 }
 
-.theme-noir .terminal-chrome {
+.terminal-chrome {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -81,12 +81,12 @@ export default defineComponent({
   color: var(--nx-read-3);
   background: color-mix(in srgb, var(--bg-surface-alt) 76%, transparent);
   border-bottom: 1px solid var(--nx-hair);
-  font-family: ui-monospace, 'SF Mono', monospace;
+  font-family: ui-monospace, var(--font-mono), monospace;
   font-size: 11px;
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .terminal-status-dot {
+.terminal-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -94,9 +94,9 @@ export default defineComponent({
   box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
-.theme-noir .terminal-title { color: var(--nx-read-1); font-weight: 600; }
-.theme-noir .terminal-session { margin-left: auto; color: var(--nx-read-4); }
-.theme-noir .terminal-tab > :deep(.terminal-wrapper) {
+.terminal-title { color: var(--nx-read-1); font-weight: 600; }
+.terminal-session { margin-left: auto; color: var(--nx-read-4); }
+.terminal-tab > :deep(.terminal-wrapper) {
   min-height: 0;
   padding: 9px 10px 7px;
   background: var(--bg-surface-alt);

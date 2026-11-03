@@ -52,6 +52,29 @@ export function brokerTransferLimits(operation: string): { request: number; resp
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
   names.flatMap(name => ['Bearer', 'raw'].map(scheme => ({ field, target: 'header' as const, name, scheme: scheme as 'Bearer' | 'raw' }))));
 
+
+const OPENAI_COMPATIBLE_PROVIDER_BINDINGS = [
+  { integration: 'openrouter', hosts: ['openrouter.ai'], inference: /^\/api\/v1\/chat\/completions$/, discovery: /^\/api\/v1\/models$/ },
+  { integration: 'fireworks', hosts: ['api.fireworks.ai'], inference: /^\/inference\/v1\/chat\/completions$/, discovery: /^\/inference\/v1\/models$/ },
+  { integration: 'perplexity', hosts: ['api.perplexity.ai'], inference: /^\/chat\/completions$/, discovery: /^\/models$/ },
+  { integration: 'zai', hosts: ['api.z.ai', 'open.bigmodel.cn'], inference: /^\/api\/(?:coding\/)?paas\/v4\/chat\/completions$/, discovery: /^\/api\/(?:coding\/)?paas\/v4\/models$/ },
+  { integration: 'minimax', hosts: ['api.minimax.io', 'api.minimaxi.com'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'huggingface', hosts: ['router.huggingface.co'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'github-models', hosts: ['models.github.ai'], inference: /^\/inference\/chat\/completions$/, discovery: /^\/catalog\/models$/ },
+  { integration: 'deepinfra', hosts: ['api.deepinfra.com'], inference: /^\/v1\/openai\/chat\/completions$/, discovery: /^\/v1\/openai\/models$/ },
+  { integration: 'sambanova', hosts: ['api.sambanova.ai'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/v1\/models$/ },
+  { integration: 'ollama-cloud', hosts: ['ollama.com'], inference: /^\/v1\/chat\/completions$/, discovery: /^\/api\/tags$/ },
+  { integration: 'azure-openai', inference: /^\/openai\/v1\/chat\/completions$/, discovery: /^\/openai\/v1\/models$/ },
+  { integration: 'aws-bedrock', hosts: ['bedrock-runtime.us-east-1.amazonaws.com', 'bedrock-runtime.us-west-2.amazonaws.com', 'bedrock-runtime.eu-central-1.amazonaws.com', 'bedrock-runtime.eu-west-1.amazonaws.com', 'bedrock-runtime.ap-northeast-1.amazonaws.com', 'bedrock-runtime.ap-southeast-2.amazonaws.com'], inference: /^\/openai\/v1\/chat\/completions$/, discovery: /^\/openai\/v1\/models$/ },
+] as const;
+
+const openAICompatibleInferenceBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
+  integration: provider.integration, ...('hosts' in provider ? { hosts: [...provider.hosts] } : {}), injections: provider.integration === 'azure-openai' ? [{ field: 'api_key', target: 'header' as const, name: 'api-key', scheme: 'raw' as const }] : authHeaders(['api_key']), pathPattern: provider.inference,
+}));
+const openAICompatibleDiscoveryBindings = OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => ({
+  integration: provider.integration, ...('hosts' in provider ? { hosts: [...provider.hosts] } : {}), injections: provider.integration === 'azure-openai' ? [{ field: 'api_key', target: 'header' as const, name: 'api-key', scheme: 'raw' as const }] : authHeaders(['api_key']), pathPattern: provider.discovery,
+}));
+
 export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationPolicy>> = {
   ...CALLER_OPERATION_POLICIES,
   'github.api': {
@@ -122,7 +145,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     injections: [],
   },
   'provider.inference': {
-    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', 'vertex-ai', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
     requireItemSites: true,
     methods: ['POST'],
     allowStreaming: true,
@@ -131,6 +154,49 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
       { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
       { field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' },
+    ],
+    bindings: [
+      { integration: 'openai', hosts: ['api.openai.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/(?:chat\/completions|responses)$/ },
+      {
+        integration: 'anthropic', hosts: ['api.anthropic.com'],
+        injections: [
+          { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+          { field: 'workspace_id', target: 'header', name: 'anthropic-workspace-id', scheme: 'raw' },
+        ],
+        pathPattern: /^\/v1\/messages$/,
+      },
+      {
+        integration: 'google', hosts: ['generativelanguage.googleapis.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }],
+        pathPattern: /^\/v1beta\/models\/[^/]+:generateContent$/,
+      },
+      { integration: 'grok', hosts: ['api.x.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/(?:chat\/completions|responses)$/ },
+      {
+        integration: 'grok', hosts: ['cli-chat-proxy.grok.com'],
+        injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        injectionSets: [[{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
+        pathPattern: /^\/v1\/responses$/,
+      },
+      { integration: 'kimi', hosts: ['api.moonshot.ai', 'api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'nvidia', hosts: ['integrate.api.nvidia.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      {
+        integration: 'alibaba',
+        hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/(?:compatible-mode\/)?v1\/chat\/completions$/,
+      },
+      { integration: 'groq', hosts: ['api.groq.com'], injections: authHeaders(['api_key']), pathPattern: /^\/openai\/v1\/chat\/completions$/ },
+      { integration: 'mistral', hosts: ['api.mistral.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'cerebras', hosts: ['api.cerebras.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'together', hosts: ['api.together.xyz'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/chat\/completions$/ },
+      { integration: 'cohere', hosts: ['api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/compatibility\/v1\/chat\/completions$/ },
+      { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
+      { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/chat\/completions$/ },
+      { integration: 'vertex-ai', injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }], pathPattern: /^\/v1\/projects\/[^/]+\/locations\/[^/]+\/publishers\/google\/models\/[^/]+:generateContent$/ },
+      ...openAICompatibleInferenceBindings,
+      // A custom endpoint has no globally trusted host. Its item policy is the
+      // authority and is populated from the user-entered HTTPS base URL.
+      { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1\/)?chat\/completions$/ },
     ],
   },
   'provider.cli': {
@@ -180,7 +246,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     ],
   },
   'provider.discovery': {
-    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
+    integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom', ...OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => provider.integration)],
     requireItemSites: true,
     methods: ['GET'],
     injections: [],
@@ -189,9 +255,9 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'anthropic', hosts: ['api.anthropic.com'], injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }], pathPattern: /^\/v1\/models$/ },
       { integration: 'google', hosts: ['generativelanguage.googleapis.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1beta\/models$/ },
       { integration: 'grok', hosts: ['api.x.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
-      { integration: 'kimi', hosts: ['api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'kimi', hosts: ['api.moonshot.ai', 'api.moonshot.cn'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
       { integration: 'nvidia', hosts: ['integrate.api.nvidia.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
-      { integration: 'alibaba', hosts: ['coding-intl.dashscope.aliyuncs.com'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
+      { integration: 'alibaba', hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'], injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|compatible-mode\/v1)\/models$/ },
       { integration: 'groq', hosts: ['api.groq.com'], injections: authHeaders(['api_key']), pathPattern: /^\/openai\/v1\/models$/ },
       { integration: 'mistral', hosts: ['api.mistral.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
       { integration: 'cerebras', hosts: ['api.cerebras.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v1\/models$/ },
@@ -199,6 +265,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'cohere', hosts: ['api.cohere.com', 'api.cohere.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/v2\/models$/ },
       { integration: 'deepseek', hosts: ['api.deepseek.com'], injections: authHeaders(['api_key']), pathPattern: /^\/models$/ },
       { integration: 'arcee', hosts: ['api.arcee.ai'], injections: authHeaders(['api_key']), pathPattern: /^\/api\/v1\/models$/ },
+      ...openAICompatibleDiscoveryBindings,
       { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|v1beta)\/models$/ },
     ],
   },
@@ -206,7 +273,7 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
   // GET-only, exact host + path per credential lane; the response is the
   // provider's model list, never the credential.
   'provider.models': {
-    integrations: ['claude-code', 'anthropic', 'openai', 'grok'],
+    integrations: ['claude-code', 'anthropic', 'openai', 'grok', 'kimi', 'alibaba'],
     methods: ['GET'],
     injections: [],
     bindings: [
@@ -246,6 +313,18 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
         injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
         injectionSets: [[{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
         pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'kimi',
+        hosts: ['api.moonshot.ai', 'api.moonshot.cn'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'alibaba',
+        hosts: ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
+        injections: authHeaders(['api_key']),
+        pathPattern: /^\/(?:v1|compatible-mode\/v1)\/models$/,
       },
       {
         integration: 'grok',
@@ -379,6 +458,12 @@ export function validateOperation(
   if (!allowedHosts?.length || !allowedHosts.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
     throw new Error('destination_denied');
   }
+  // A binding is the product allowlist. Item sites are optional for bound
+  // providers; when present they can only narrow that allowlist, never widen it.
+  if (binding?.hosts && itemPolicy.sites?.length &&
+      !itemPolicy.sites.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
+    throw new Error('destination_denied');
+  }
   const streaming = input.responseType === 'stream' || input.responseType === 'binary-stream';
   if (streaming && !policy.allowStreaming) throw new Error('streaming_denied');
   if (input.responseType === 'binary-stream' && !policy.binaryResponse) throw new Error('binary_denied');
@@ -422,11 +507,11 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   anthropic: ['api.anthropic.com'],
   'claude-code': ['api.anthropic.com'],
   google:    ['generativelanguage.googleapis.com'],
-  grok:      ['api.x.ai'],
+  grok:      ['api.x.ai', 'cli-chat-proxy.grok.com'],
   elevenlabs: ['api.elevenlabs.io'],
-  kimi:      ['api.moonshot.cn'],
+  kimi:      ['api.moonshot.ai', 'api.moonshot.cn'],
   nvidia:    ['integrate.api.nvidia.com'],
-  alibaba:   ['coding-intl.dashscope.aliyuncs.com'],
+  alibaba:   ['dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com', 'coding-intl.dashscope.aliyuncs.com', 'coding.dashscope.aliyuncs.com'],
   groq:      ['api.groq.com'],
   mistral:   ['api.mistral.ai'],
   cerebras:  ['api.cerebras.ai'],
@@ -434,6 +519,7 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   cohere:    ['api.cohere.ai', 'api.cohere.com'],
   deepseek:  ['api.deepseek.com'],
   arcee:     ['api.arcee.ai'],
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => [provider.integration, [...provider.hosts]])),
   enterprise_gateway: [],
 };
 

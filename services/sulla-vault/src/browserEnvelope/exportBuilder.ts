@@ -12,7 +12,7 @@
 // agent_policy, integration_ref, agent_wrapped_item_key, audit rows or the
 // Cloud session. Pure functions, so the allowlist is testable without a DB.
 
-import type { AeadEnvelope, BundleFields, RecordFields, SyncKdf } from './envelope.js';
+import type { AeadEnvelope, BundleFields, RecordFields, RecoveryWrap, SyncKdf } from './envelope.js';
 
 /** Local columns that must never appear in an upload. Used by the allowlist test. */
 export const NEVER_UPLOADED = [
@@ -33,6 +33,8 @@ export interface LocalItemRow {
   ciphertext:         unknown;
   encrypted_item_key: unknown;
 }
+
+export interface LocalRecoveryRow { recovery_salt: string; encrypted_user_key: unknown }
 
 export class ExportError extends Error {
   constructor(public readonly code: 'password_kdf_missing' | 'envelope_invalid', message: string) {
@@ -66,6 +68,7 @@ export function passwordKdf(kdf: unknown): SyncKdf {
 export function bundleFields(
   account: LocalAccountRow,
   ids: { vaultId: string; epoch: number; bundleGeneration: number },
+  recovery?: LocalRecoveryRow | null,
 ): BundleFields {
   return {
     vaultId:             ids.vaultId,
@@ -76,6 +79,19 @@ export function bundleFields(
     encryptedUserKey:    pickEnvelope(account.encrypted_user_key),
     publicKey:           account.public_key,
     encryptedPrivateKey: pickEnvelope(account.encrypted_private_key),
+    ...(recovery ? { recovery: recoveryWrap(recovery) } : {}),
+  };
+}
+
+export function recoveryWrap(row: LocalRecoveryRow): RecoveryWrap {
+  let metadata: { kdf?: string; parameters?: { memoryBytes?: number; operations?: number } };
+  try { metadata = JSON.parse(row.recovery_salt) } catch { throw new ExportError('password_kdf_missing', 'Recovery KDF metadata is malformed') }
+  if (!metadata.kdf || !metadata.parameters?.memoryBytes || !metadata.parameters.operations) {
+    throw new ExportError('password_kdf_missing', 'Recovery KDF metadata is missing');
+  }
+  return {
+    kdf: { alg: 'argon2id13', salt: metadata.kdf, memoryBytes: metadata.parameters.memoryBytes, ops: metadata.parameters.operations },
+    encryptedUserKey: pickEnvelope(row.encrypted_user_key),
   };
 }
 

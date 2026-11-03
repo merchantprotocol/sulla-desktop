@@ -5,11 +5,11 @@
 
 import { jest } from '@jest/globals';
 
-import { nativeIntegrations } from '../native';
+import { buildNativeIntegrationCatalog, nativeIntegrations } from '../native';
 
 const PROVIDERS = ['claude-code', 'codex', 'grok', 'openai', 'anthropic', 'opencode', 'cursor'];
 const ADDED = ['azure_devops', 'forgejo', 'gitea', 'meta-ads', 'n8n'];
-const UPDATED = ['bitbucket', 'cloudflare', 'cohere', 'gitlab', 'google_drive', 'openai', 'r2'];
+const UPDATED = ['bitbucket', 'cloudflare', 'cohere', 'gitlab', 'google_drive', 'r2'];
 
 describe('built-in integration catalog (hard-coded, no folders, no DB)', () => {
   it('contains every model provider the app needs', async() => {
@@ -36,9 +36,12 @@ describe('built-in integration catalog (hard-coded, no folders, no DB)', () => {
     }
   });
 
-  it('prefers the newer definitions over the per-category ones', () => {
-    // openai gained OAuth sign-in in the newer definition.
-    expect((nativeIntegrations.openai as { oauth?: boolean }).oauth).toBe(true);
+  it('keeps OpenAI API-key-only and rejects duplicate ids', () => {
+    expect((nativeIntegrations.openai as { oauth?: boolean }).oauth).not.toBe(true);
+    expect(() => buildNativeIntegrationCatalog([
+      ['first', { duplicate: { ...nativeIntegrations.openai, id: 'duplicate' } }],
+      ['second', { duplicate: { ...nativeIntegrations.openai, id: 'duplicate' } }],
+    ])).toThrow('Duplicate native integration id "duplicate" in first and second');
   });
 
   it('keeps the baseline when the database catalog is empty, and lets the database override by slug', async() => {

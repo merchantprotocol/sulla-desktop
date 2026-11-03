@@ -210,8 +210,8 @@ onBeforeUnmount(closeShell);
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border-muted);
+  background: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -229,7 +229,7 @@ onBeforeUnmount(closeShell);
   font-size: 11px;
   padding: 2px 8px;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
@@ -237,8 +237,8 @@ onBeforeUnmount(closeShell);
 }
 
 .btn-reconnect:hover {
-  background: var(--surface-3);
-  color: var(--text);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }
 
 .term-wrap {
@@ -250,7 +250,7 @@ onBeforeUnmount(closeShell);
 
 .shell-error {
   padding: 8px 12px;
-  color: var(--danger);
+  color: var(--status-error);
   font-size: 12px;
   font-family: var(--font-mono);
 }

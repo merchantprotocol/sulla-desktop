@@ -16,6 +16,7 @@ import {
 } from './ProviderExecutionTransport';
 import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
@@ -25,7 +26,7 @@ import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandbo
 import { emitCodexToolEvent } from './codexToolEvents';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
-import { ensureCodexAuthFile } from '../util/codexAuthFile';
+import { resolveCodexExecutionAuth, type CodexExecutionAuth } from './codexExecutionAuth';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { RecallDedupe } from '../utils/recallDedupe';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
@@ -34,6 +35,7 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 const log = Logging.background;
 const perf = Logging.perf;
@@ -148,6 +150,9 @@ export class CodexService extends BaseLanguageModel {
     instructionsPath?: string | null;
     /** VM-side pidfile the launched codex records its PID in. */
     pidFile:           string;
+    /** ContainerBrokerLease / PendingMemoryBridge capability, exported before `exec codex …`. Omitted for guest-auth-file. */
+    environment?:          Readonly<Record<string, string>>;
+    codexConfigOverrides?: readonly string[];
   }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
@@ -169,6 +174,11 @@ export class CodexService extends BaseLanguageModel {
     for (const pin of CODEX_NATIVE_SPAWN_FEATURE_PINS) {
       codexArgs.push('-c', shq(pin));
     }
+    // ContainerBrokerLease / PendingMemoryBridge route this spawn through an
+    // opaque bridge instead of a raw auth.json — see codexExecutionAuth.ts.
+    for (const override of p.codexConfigOverrides ?? []) {
+      codexArgs.push('-c', shq(override));
+    }
     if (p.mcpSession) {
       for (const override of buildCodexMcpOverrides(p.mcpSession)) {
         codexArgs.push('-c', shq(override));
@@ -188,6 +198,9 @@ export class CodexService extends BaseLanguageModel {
     const mcpTokenExport = p.mcpSession
       ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) } SULLA_TOOL_SESSION=${ shq(p.mcpSession.id) }`
       : '';
+    const bridgeEnvExport = p.environment
+      ? Object.entries(p.environment).map(([key, value]) => ` ${ key }=${ shq(value) }`).join('')
+      : '';
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
@@ -198,7 +211,7 @@ export class CodexService extends BaseLanguageModel {
       `mkdir -p "$M" "$HOME/.codex"; ` +
       `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
       `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ bridgeEnvExport }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
@@ -588,9 +601,21 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     });
     requireBrokeredContainerAuth(initialTransportContext);
     mark('initialContext');
-    if (initialTransportContext.runtime === 'guest' && !await ensureCodexAuthFile()) {
-      throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
+    // Pick and validate exactly one execution auth before anything else is
+    // set up for this spawn — nothing allocated yet needs disposal if this
+    // throws, and a missing/invalid credential never surfaces as a late,
+    // opaque CLI crash deep inside the run.
+    let executionAuth: CodexExecutionAuth | undefined;
+    if (initialTransportContext.runtime === 'guest') {
+      // A fresh VM has no codex CLI; install the pinned version before the first turn.
+      const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+      await ensureGuestCli('codex');
+      executionAuth = await resolveCodexExecutionAuth({ conversationId: convId, state: options.state });
+      firstRunTrace('codex', 'credentials resolved', { source: executionAuth.kind, runtime: initialTransportContext.runtime });
+    } else {
+      firstRunTrace('codex', 'credentials resolved', { source: 'vault-bridge', runtime: initialTransportContext.runtime });
     }
+    mark('executionAuth');
     const attachmentRefs: ProviderFileRef[] = [];
 
     // Prompt strategy:
@@ -607,6 +632,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     if (existingSession) perf.log(`[RecallDedupe] convId=${ convId } beforeChars=${ this.extractLatestUserMessage(messages).length } afterChars=${ extractedPrompt.length }`);
 
     if (!extractedPrompt.trim()) {
+      executionAuth?.dispose();
       const roles = messages.map(m => m.role).join(',');
       throw new Error(`Codex got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
@@ -624,6 +650,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // The Sulla runtime only exists on macOS; paths.sullaRuntime is a throwing getter on
     // Windows. Surface a clear, user-readable error instead of an opaque crash.
     if (transport.runtime === 'guest' && process.platform === 'win32') {
+      executionAuth?.dispose();
       throw new Error('Codex execution requires the Sulla VM, which is not available on Windows yet. This feature currently supports macOS only.');
     }
 
@@ -667,13 +694,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // caller-built system prompt is staged inside the guest for every spawn.
     // Nothing depends on a host ~/.codex/AGENTS.md or broad home mount.
     const systemInstructions = systemPromptFromMessages(messages);
-    if (!systemInstructions.trim()) throw new Error('Codex system instructions are unavailable for this run');
+    if (!systemInstructions.trim()) {
+      executionAuth?.dispose();
+      throw new Error('Codex system instructions are unavailable for this run');
+    }
     const instructionsFile = await transport.files.write({
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,
       data:          systemInstructions,
-    });
+    }).catch(err => { executionAuth?.dispose(); throw err });
     const instructionsPath = instructionsFile.path;
     mark('instructionsFile');
     const setupDoneAt = Date.now();
@@ -684,6 +714,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       readOnly,
       instructionsPath,
       pidFile,
+      environment:          executionAuth?.environment,
+      codexConfigOverrides: executionAuth?.codexConfigOverrides,
     });
     const providerCommand = this.buildProviderCommand({
       existingSession,
@@ -700,6 +732,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         mcpCleaned = true;
         for (const ref of attachmentRefs.splice(0)) ref.dispose();
         try { mcpSession?.revoke() } catch { /* already revoked */ }
+        executionAuth?.dispose();
       };
       if (options.signal?.aborted) {
         cleanupMcp();
@@ -1257,15 +1290,21 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (errored) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
-          reject(new Error(`Codex: ${ msg }`));
+          const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          reject(isPermanentCliFailure(typedFailure) && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('process_exit', `Codex: ${ msg }`, typedFailure, !(activeToolItems.size > 0 || unresolvedTool), Boolean(activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 
         if (code !== 0) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
+          const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 
@@ -1278,9 +1317,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (!textCollected.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           log.warn(`[CodexService] runCodex exited with no text (code=${ code }) stderr=${ stderrTail }`);
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrTail);
+          const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
+          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+            ? typedFailure
+            : new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
           return;
         }
 

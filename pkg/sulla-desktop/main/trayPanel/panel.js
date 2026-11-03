@@ -111,7 +111,7 @@ refreshFilesStatus(); setInterval(() => { if (panelShown) refreshFilesStatus().c
 
 // Settings panel buttons
 document.getElementById('btn-support').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-url', 'https://sulladesktop.com/support');
+  ipcRenderer.send('tray-panel:open-support');
 });
 
 document.getElementById('btn-documentation').addEventListener('click', () => {

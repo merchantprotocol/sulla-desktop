@@ -578,12 +578,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue';
 
 import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import type { ClaudeReconnectRequiredEvent } from '@pkg/agent/languagemodels/credentials/ClaudeAuthFailureCoordinator';
+import { useOAuthConnection } from '@pkg/composables/useOAuthConnection';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
@@ -602,6 +604,10 @@ const emit = defineEmits<{
 
 const integrationService = getIntegrationService();
 const integration = ref<Integration | null>(null);
+const oauthConnection = useOAuthConnection(
+  () => integration.value?.id || props.integrationId,
+  () => integration.value?.name || 'The provider',
+);
 const loading = ref(true);
 const saving = ref(false);
 
@@ -841,22 +847,15 @@ async function handleOAuthConnect() {
   oauthError.value = '';
   saving.value = true;
 
-  // Claude Code uses a PTY-driven CLI flow, not HTTP OAuth. Route to its
-  // dedicated IPC handler; claudeOAuth.ts persists the token to the vault.
+  // Claude uses the dedicated setup-token IPC behind the shared presenter.
   if (integration.value.id === 'claude-code') {
     try {
-      const result = await ipcRenderer.invoke('claude-oauth:start');
-      if (result?.error) {
-        oauthError.value = result.error;
-        return;
-      }
-      if (!result?.token) {
-        oauthError.value = 'OAuth flow completed without a token.';
+      const connected = await oauthConnection.start();
+      if (!connected) {
+        oauthError.value = oauthConnection.state.errorMessage;
         return;
       }
       emit('saved', 'oauth');
-    } catch (err: any) {
-      oauthError.value = err?.message || 'OAuth failed. Please try again.';
     } finally {
       saving.value = false;
     }
@@ -882,16 +881,17 @@ async function handleOAuthConnect() {
     }
     // Run the OAuth flow in the MAIN process so embedded-window providers
     // (Codex, Grok) can construct a BrowserWindow — undefined in the renderer.
-    const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {
+    const connected = await oauthConnection.start({
       integrationId: props.integrationId,
-      providerId:    integration.value.oauthProviderId!,
+      oauthProviderId: integration.value.oauthProviderId!,
       clientId,
       clientSecret,
-      accountId:     targetAccountId,
-      extraScopes:   integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
+      accountId: targetAccountId,
+      extraScopes: integration.value.oauthScopes ? [...integration.value.oauthScopes] : undefined,
     });
-    if (!oauthResult?.success) {
-      throw new Error(oauthResult?.error || 'OAuth failed. Please try again.');
+    if (!connected) {
+      oauthError.value = oauthConnection.state.errorMessage;
+      return;
     }
     await integrationService.setActiveAccount(props.integrationId, targetAccountId);
     emit('saved', targetAccountId);
@@ -918,7 +918,16 @@ async function handleDelete() {
   }
 }
 
-onMounted(() => loadIntegration());
+function onReconnectRequired(_event: unknown, payload: ClaudeReconnectRequiredEvent) {
+  if (payload?.providerId !== 'claude-code' || props.integrationId !== 'claude-code') return;
+  oauthError.value = payload.message;
+}
+
+onMounted(() => {
+  ipcRenderer.on('provider-auth:reconnect-required' as any, onReconnectRequired);
+  void loadIntegration();
+});
+onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, onReconnectRequired));
 
 // Prefill password when returning from the generator
 watch(() => props.prefillPassword, (pw) => {
@@ -944,8 +953,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-primary, #e6edf3);
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -954,8 +963,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: flex;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: 1px solid var(--border-default, #21262d);
-  background: var(--bg-surface-alt, #161b22);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface-alt);
 }
 
 .editor-back-btn {
@@ -964,7 +973,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   gap: 6px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   background: none;
   border: none;
   cursor: pointer;
@@ -974,8 +983,8 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-back-btn:hover {
-  color: var(--text-primary, #e6edf3);
-  background: var(--bg-surface-hover, #1c2128);
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
 }
 
 /* ── Scroll area ── */
@@ -996,15 +1005,15 @@ watch(() => [props.integrationId, props.accountId], () => {
   align-items: center;
   gap: 12px;
   padding: 60px 0;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .editor-loading-spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid var(--border-default, #21262d);
-  border-top-color: var(--accent-primary, #38bdf8);
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -1019,8 +1028,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   align-items: flex-start;
   gap: 16px;
   padding: 20px;
-  background: var(--bg-surface-alt, #161b22);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
 }
 
@@ -1030,8 +1039,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   height: 48px;
   border-radius: 12px;
   overflow: hidden;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1040,7 +1049,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-hero-icon-fallback {
   font-size: 16px;
   font-weight: 700;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
   letter-spacing: 0.05em;
 }
 
@@ -1052,14 +1061,14 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-hero-title {
   font-size: 18px;
   font-weight: 700;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   margin: 0 0 4px;
   line-height: 1.3;
 }
 
 .editor-hero-subtitle {
   font-size: 13px;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.5;
 }
@@ -1081,21 +1090,21 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-badge-connected {
-  background: rgba(56, 189, 248, 0.12);
-  color: var(--accent-primary, #38bdf8);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .editor-badge-type {
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-secondary, #8b949e);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
 }
 
 /* ── Cards ── */
 .editor-card {
   padding: 20px;
-  background: var(--bg-surface-alt, #161b22);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
 }
 
@@ -1105,19 +1114,19 @@ watch(() => [props.integrationId, props.accountId], () => {
   gap: 10px;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-default, #21262d);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .editor-card-header-icon {
   width: 20px;
   height: 20px;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
 }
 
 .editor-card-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -1134,51 +1143,51 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   margin-bottom: 6px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .editor-required {
-  color: #f85149;
+  color: var(--status-error);
 }
 
 .editor-input {
   width: 100%;
   padding: 10px 14px;
   font-size: 14px;
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-primary, #e6edf3);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .editor-input:focus {
-  border-color: var(--accent-primary, #38bdf8);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .editor-input-error {
-  border-color: #f85149 !important;
+  border-color: var(--status-error) !important;
 }
 
 .editor-input::placeholder {
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
 }
 
 .editor-hint {
   font-size: 11px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   margin-top: 4px;
   line-height: 1.4;
 }
 
 .editor-error-text {
   font-size: 12px;
-  color: #f85149;
+  color: var(--status-error);
   margin-top: 4px;
 }
 
@@ -1207,14 +1216,14 @@ watch(() => [props.integrationId, props.accountId], () => {
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
 
 .editor-inline-remove:hover {
-  color: #f85149;
-  background: rgba(248, 81, 73, 0.1);
+  color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 10%, transparent);
 }
 
 .editor-custom-row {
@@ -1236,9 +1245,9 @@ watch(() => [props.integrationId, props.accountId], () => {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
   background: none;
-  border: 1px dashed var(--border-default, #21262d);
+  border: 1px dashed var(--border-default);
   border-radius: 6px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
@@ -1246,8 +1255,8 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-add-btn:hover {
-  border-color: var(--accent-primary, #38bdf8);
-  background: rgba(56, 189, 248, 0.06);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .mb-3 {
@@ -1273,7 +1282,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: flex;
   align-items: center;
   padding: 0 6px;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
   background: none;
   border: none;
   cursor: pointer;
@@ -1293,7 +1302,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: flex;
   align-items: center;
   padding: 0 12px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   background: none;
   border: none;
   cursor: pointer;
@@ -1301,7 +1310,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-eye-btn:hover {
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 
 /* ── Select field ── */
@@ -1314,16 +1323,16 @@ watch(() => [props.integrationId, props.accountId], () => {
   flex: 1;
   padding: 10px 14px;
   font-size: 14px;
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-primary, #e6edf3);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .editor-select:focus {
-  border-color: var(--accent-primary, #38bdf8);
+  border-color: var(--accent);
 }
 
 .editor-select-refresh {
@@ -1331,17 +1340,17 @@ watch(() => [props.integrationId, props.accountId], () => {
   align-items: center;
   justify-content: center;
   width: 40px;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
 
 .editor-select-refresh:hover {
-  color: var(--text-primary, #e6edf3);
-  border-color: var(--text-secondary, #8b949e);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 /* ── OAuth ── */
@@ -1354,8 +1363,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   padding: 12px;
   font-size: 14px;
   font-weight: 600;
-  background: var(--accent-primary, #38bdf8);
-  color: var(--bg-surface, #0d1117);
+  background: var(--accent);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -1363,7 +1372,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-oauth-btn:hover:not(:disabled) {
-  background: #7dd3fc;
+  background: var(--accent-hover);
 }
 
 .editor-oauth-btn:disabled {
@@ -1377,7 +1386,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   gap: 12px;
   margin-top: 16px;
   font-size: 12px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
 }
 
 .editor-divider::before,
@@ -1385,7 +1394,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--border-default, #21262d);
+  background: var(--bg-surface-hover);
 }
 
 /* ── Action buttons ── */
@@ -1403,8 +1412,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   padding: 12px 20px;
   font-size: 14px;
   font-weight: 600;
-  background: var(--accent-primary, #38bdf8);
-  color: var(--bg-surface, #0d1117);
+  background: var(--accent);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -1412,7 +1421,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-btn-primary:hover:not(:disabled) {
-  background: #7dd3fc;
+  background: var(--accent-hover);
 }
 
 .editor-btn-primary:disabled {
@@ -1425,23 +1434,23 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 14px;
   font-weight: 500;
   background: transparent;
-  color: var(--text-secondary, #8b949e);
-  border: 1px solid var(--border-default, #21262d);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
 
 .editor-btn-secondary:hover {
-  color: var(--text-primary, #e6edf3);
-  border-color: var(--text-secondary, #8b949e);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 /* ── Danger zone ── */
 .editor-danger {
   padding: 16px 20px;
-  background: rgba(248, 81, 73, 0.06);
-  border: 1px solid rgba(248, 81, 73, 0.2);
+  background: color-mix(in srgb, var(--status-error) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error) 20%, transparent);
   border-radius: 12px;
 }
 
@@ -1455,13 +1464,13 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-danger-title {
   font-size: 13px;
   font-weight: 600;
-  color: #f85149;
+  color: var(--status-error);
   margin: 0 0 2px;
 }
 
 .editor-danger-desc {
   font-size: 12px;
-  color: var(--text-muted, #484f58);
+  color: var(--text-muted);
   margin: 0;
 }
 
@@ -1471,16 +1480,16 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 12px;
   font-weight: 600;
   background: transparent;
-  color: #f85149;
-  border: 1px solid rgba(248, 81, 73, 0.3);
+  color: var(--status-error);
+  border: 1px solid color-mix(in srgb, var(--status-error) 30%, transparent);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 
 .editor-btn-danger:hover:not(:disabled) {
-  background: rgba(248, 81, 73, 0.12);
-  border-color: #f85149;
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+  border-color: var(--status-error);
 }
 
 .editor-btn-danger:disabled {
@@ -1492,177 +1501,177 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: none;
 }
 
-.theme-noir .account-editor {
-  background: var(--nx-paper);
-  color: var(--nx-read-1);
+.account-editor {
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 
-.theme-noir .editor-header {
+.editor-header {
   min-height: 56px;
   padding: 0 30px;
-  border-bottom-color: var(--nx-hair);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
+  border-bottom-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
   backdrop-filter: blur(14px);
 }
 
-.theme-noir .editor-back-btn {
+.editor-back-btn {
   height: 34px;
   padding: 0 14px;
   border-radius: 17px;
-  color: var(--nx-read-3);
+  color: var(--text-secondary);
 }
 
-.theme-noir .editor-back-btn:hover {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.editor-back-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .editor-scroll {
+.editor-scroll {
   max-width: 920px;
   width: 100%;
   margin: 0 auto;
   padding: 30px 34px 48px;
 }
 
-.theme-noir .editor-noir-copy {
+.editor-noir-copy {
   display: block;
   margin-bottom: 22px;
   animation: vault-editor-in 0.35s ease both;
 }
 
-.theme-noir .editor-noir-copy p {
+.editor-noir-copy p {
   margin: 0 0 7px;
-  color: var(--nx-accent-2);
+  color: var(--accent-hover);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.theme-noir .editor-noir-copy h1 {
+.editor-noir-copy h1 {
   margin: 0;
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.18;
 }
 
-.theme-noir .editor-noir-copy span {
+.editor-noir-copy span {
   display: block;
   margin-top: 7px;
-  color: var(--nx-read-3);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
-.theme-noir .editor-hero {
+.editor-hero {
   padding: 20px;
-  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 25%, transparent);
   border-radius: 20px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 3%, transparent));
 }
 
-.theme-noir .editor-hero-icon {
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+.editor-hero-icon {
+  border-color: color-mix(in srgb, var(--accent-hover) 10%, transparent);
   border-radius: 14px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
-.theme-noir .editor-hero-title {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.editor-hero-title {
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 23px;
   font-weight: 600;
 }
 
-.theme-noir .editor-hero-subtitle {
-  color: var(--nx-read-3);
+.editor-hero-subtitle {
+  color: var(--text-secondary);
 }
 
-.theme-noir .editor-badge-connected::before {
+.editor-badge-connected::before {
   width: 6px;
   height: 6px;
   margin-right: 6px;
   border-radius: 50%;
-  background: var(--nx-success);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
+  background: var(--status-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--status-success) 70%, transparent);
   content: '';
 }
 
-.theme-noir .editor-card,
-.theme-noir .editor-guide {
-  border-color: var(--nx-hair);
+.editor-card,
+.editor-guide {
+  border-color: var(--border-default);
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.015);
+  background: color-mix(in srgb, var(--accent-hover) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.015);
 }
 
-.theme-noir .editor-card-header {
-  border-bottom-color: var(--nx-hair);
+.editor-card-header {
+  border-bottom-color: var(--border-default);
 }
 
-.theme-noir .editor-card-title {
-  color: var(--nx-read-2);
+.editor-card-title {
+  color: var(--text-primary);
 }
 
-.theme-noir .editor-label {
-  color: var(--nx-read-4);
+.editor-label {
+  color: var(--text-muted);
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.12em;
 }
 
-.theme-noir .editor-input,
-.theme-noir .editor-select,
-.theme-noir .editor-select-refresh {
+.editor-input,
+.editor-select,
+.editor-select-refresh {
   min-height: 40px;
   border: 0;
   border-radius: 12px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.66);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
-  color: var(--nx-read-1);
+  background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 12%, transparent);
+  color: var(--text-primary);
 }
 
-.theme-noir .editor-input:focus,
-.theme-noir .editor-select:focus {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 62%, transparent), 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.editor-input:focus,
+.editor-select:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 62%, transparent), 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .editor-input-password {
+.editor-input-password {
   letter-spacing: 0.14em;
 }
 
-.theme-noir .editor-gen-btn,
-.theme-noir .editor-eye-btn,
-.theme-noir .editor-select-refresh {
+.editor-gen-btn,
+.editor-eye-btn,
+.editor-select-refresh {
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), color 0.18s;
 }
 
-.theme-noir .editor-gen-btn:active,
-.theme-noir .editor-eye-btn:active,
-.theme-noir .editor-select-refresh:active {
+.editor-gen-btn:active,
+.editor-eye-btn:active,
+.editor-select-refresh:active {
   transform: scale(0.86);
 }
 
-.theme-noir .editor-btn-primary,
-.theme-noir .editor-oauth-btn {
+.editor-btn-primary,
+.editor-oauth-btn {
   border-radius: 20px;
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  color: #fff;
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 28%, transparent);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  color: var(--text-on-accent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.theme-noir .editor-btn-secondary,
-.theme-noir .editor-add-btn {
-  border-color: var(--nx-hair-strong);
+.editor-btn-secondary,
+.editor-add-btn {
+  border-color: var(--border-strong);
   border-radius: 20px;
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .editor-guide-summary,
-.theme-noir .editor-guide-content {
-  border-color: var(--nx-hair);
+.editor-guide-summary,
+.editor-guide-content {
+  border-color: var(--border-default);
   background: transparent;
 }
 
@@ -1672,20 +1681,20 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .editor-noir-copy {
+  .editor-noir-copy {
     animation: none;
   }
 
-  .theme-noir .editor-gen-btn,
-  .theme-noir .editor-eye-btn,
-  .theme-noir .editor-select-refresh {
+  .editor-gen-btn,
+  .editor-eye-btn,
+  .editor-select-refresh {
     transition-duration: 0.01ms;
   }
 }
 
 /* ── Installation guide ── */
 .editor-guide {
-  border: 1px solid var(--border-default, #21262d);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -1697,8 +1706,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   padding: 14px 20px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary, #8b949e);
-  background: var(--bg-surface-alt, #161b22);
+  color: var(--text-secondary);
+  background: var(--bg-surface-alt);
   cursor: pointer;
   list-style: none;
   transition: color 0.15s;
@@ -1709,18 +1718,18 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-guide-summary:hover {
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 
 .editor-guide-content {
   padding: 16px 20px 20px;
-  background: var(--bg-surface-alt, #161b22);
-  border-top: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface-alt);
+  border-top: 1px solid var(--border-default);
 }
 
 .editor-guide-desc {
   font-size: 13px;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   margin: 0 0 16px;
   line-height: 1.5;
 }
@@ -1739,23 +1748,23 @@ watch(() => [props.integrationId, props.accountId], () => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent-primary, #38bdf8);
+  color: var(--accent);
 }
 
 .editor-guide-step-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   margin: 0 0 4px;
 }
 
 .editor-guide-step-content {
   font-size: 12px;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   margin: 0;
   font-family: inherit;

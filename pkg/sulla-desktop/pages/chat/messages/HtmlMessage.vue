@@ -14,7 +14,7 @@
         aria-hidden="true"
       >
       <div class="flex-1 min-w-0">
-        <div class="sulla-name dark:text-slate-400">
+        <div class="sulla-name">
           {{ botName }}
         </div>
         <HtmlMessageRenderer

@@ -42,6 +42,10 @@ const AUTO_SENTINEL: CodexCatalogModel = {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: { at: number; models: CodexCatalogModel[] } | null = null;
 
+export function clearCodexModelCatalogCache(): void {
+  cache = null;
+}
+
 interface RawCodexModel {
   slug?:         string;
   display_name?: string;
@@ -70,6 +74,14 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
     await ensureCodexAuthFile();
   } catch (err) {
     log.warn(`[codexModelCatalog] ensureCodexAuthFile failed (continuing — a live auth file may still exist): ${ err }`);
+  }
+
+  // A fresh VM has no codex CLI; install the pinned version first.
+  try {
+    const { ensureGuestCli } = await import('@pkg/backend/guestClis');
+    await ensureGuestCli('codex');
+  } catch (err) {
+    log.warn(`[codexModelCatalog] codex CLI is not installed in the VM: ${ err }`);
   }
 
   const command = 'export CODEX_HOME="$HOME/.codex"; codex debug models';

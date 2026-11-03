@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * NVIDIA NIM LLM provider.
@@ -20,9 +21,12 @@ export class NvidiaService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('nvidia', valMap.api_key);
+    if (!model) throw new Error('NVIDIA returned no chat models; reconnect the account and choose a model');
+
     return new NvidiaService({
       id:      'nvidia',
-      model:   valMap.model || 'meta/llama-3.1-405b-instruct',
+      model,
       baseUrl: 'https://integrate.api.nvidia.com/v1',
       apiKey:  valMap.api_key || '',
     });

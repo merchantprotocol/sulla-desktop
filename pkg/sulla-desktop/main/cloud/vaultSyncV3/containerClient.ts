@@ -13,9 +13,10 @@
  */
 
 import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broker/desktopTransport';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 // Same endpoint as @pkg/vault-broker's DESKTOP_VAULT_ENDPOINT.
-const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
+const DESKTOP_VAULT_ENDPOINT = loopbackOrigin('https', 30135);
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
 

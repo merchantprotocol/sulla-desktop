@@ -426,7 +426,7 @@ onMounted(async() => {
         off
       >
         <template #subtitle>
-          Open sulla-vault.sulla.local instead of localhost:30135. <span class="soon">Coming soon</span>
+          Open sulla-vault.sulla.local instead of the local vault address. <span class="soon">Coming soon</span>
         </template>
         <PrefToggle
           :model-value="false"

@@ -6,11 +6,6 @@
 -->
 <template>
   <div class="agent-router-root">
-    <!-- Master password unlock — renders ABOVE everything including startup overlay and native views -->
-    <VaultUnlockScreen
-      v-if="vaultUnlockVisible"
-    />
-
     <div class="agent-router-body">
       <!--
         Global ModeRail — lives at the window level so it stays visible
@@ -40,13 +35,14 @@
         the bookmarks it opens swap through the preview tab beside it.
       -->
       <BookmarksPane
-        v-if="bookmarksOpen && loggedIn"
+        v-if="bookmarksOpen"
         :active-tab="activeTabInfo"
         :reveal-id="bookmarkRevealId"
         @close="toggleBookmarks(false)"
       />
 
       <div class="agent-router-content flex flex-col">
+        <NoAiConnectedBanner />
         <!--
           Non-browser routes use keep-alive normally.
           Hidden when a browser tab is the active route.
@@ -91,7 +87,7 @@
     </aside>
 
     <!-- Startup progress overlay -->
-    <StartupOverlay :force-visible="!vaultStatusResolved" />
+    <StartupOverlay />
 
     <!-- Status Bar Footer -->
     <footer class="agent-footer">
@@ -159,9 +155,9 @@ import { useRoute, useRouter } from 'vue-router';
 import BrowserTab from './BrowserTab.vue';
 import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
-import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
+import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
@@ -170,7 +166,6 @@ import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
@@ -181,16 +176,8 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
-const { loggedIn, vaultSetUp, statusResolved: vaultStatusResolved, tryAutoLogin, invalidateStatus } = useVaultUnlock();
+const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
-// While booting, vault-gated services report 'waiting-on-unlock' as soon as the vault is known locked.
-const bootVaultLocked = ref(false);
-function onBootSnapshot(_event: unknown, snapshot?: StartupProgressSnapshot | null) {
-  bootVaultLocked.value = !!snapshot?.services?.some(s => s.status === 'waiting-on-unlock');
-}
-const vaultUnlockVisible = computed(() => vaultSetUp.value && (systemReady.value
-  ? vaultStatusResolved.value && !loggedIn.value
-  : bootVaultLocked.value));
 
 watch(systemReady, (ready) => {
   if (!ready) {
@@ -201,8 +188,8 @@ watch(systemReady, (ready) => {
   void tryAutoLogin();
 }, { immediate: true });
 
-// Close the side panel when a full-screen overlay is active (vault lock or startup)
-const sidePanelBlocked = computed(() => !vaultStatusResolved.value || vaultUnlockVisible.value || startupOverlayVisible.value);
+// Close the side panel while the startup overlay is active.
+const sidePanelBlocked = computed(() => startupOverlayVisible.value);
 watch(sidePanelBlocked, (blocked) => {
   if (blocked) {
     ipcRenderer.invoke('chrome-api:sidePanel:close' as any, { all: true });
@@ -573,6 +560,14 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'support:open-session': {
+    const sessionId = args.sessionId;
+    if (!sessionId) break;
+    const existing = browserTabs.find(t => t.mode === 'support-session' && t.supportSession?.sessionId === sessionId);
+    const targetTab = existing ?? createTab('about:blank', { mode: 'support-session', title: 'Support session', supportSession: { sessionId } });
+    router.push(`/Browser/${ targetTab.id }`);
+    break;
+  }
   case 'marketplace:open-detail': {
     // Fired by the main-process deep-link handler when the user clicks
     // "Open in Sulla Desktop" on sulladesktop.com (sulla://marketplace/
@@ -692,8 +687,6 @@ onMounted(async() => {
   void refreshRailExtensions();
   ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
-  ipcRenderer.on('startup-progress' as any, onBootSnapshot);
-  ipcRenderer.invoke('startup-progress' as any).then(snapshot => onBootSnapshot(undefined, snapshot)).catch(() => undefined);
 
   // Register sub-tab change listener
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
@@ -747,7 +740,6 @@ onMounted(async() => {
 onUnmounted(() => {
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
-  ipcRenderer.removeListener('startup-progress' as any, onBootSnapshot);
   presenceTracker.stop();
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
@@ -892,13 +884,13 @@ onUnmounted(() => {
   font-size: var(--fs-caption);
 }
 .footer-state.state-ok {
-  color: var(--text-success);
+  color: var(--status-success);
 }
 .footer-state.state-error {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 .footer-state.state-busy {
-  color: var(--text-warning);
+  color: var(--status-warning);
 }
 .footer-state.state-stopped {
   color: var(--text-muted);
@@ -916,7 +908,7 @@ onUnmounted(() => {
 }
 .footer-progress-bar-fill {
   height: 100%;
-  background: var(--accent-primary);
+  background: var(--accent);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -932,5 +924,5 @@ onUnmounted(() => {
 </style>
 
 <style scoped>
-.extension-permission-prompt{position:fixed;z-index:9500;right:24px;bottom:44px;width:390px;padding:17px 19px;background:var(--surface-1);border:1px solid var(--accent-border);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.45)}.extension-permission-prompt .prompt-kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--accent);margin-bottom:8px}.extension-permission-prompt p{color:var(--text-muted);font-size:13px;line-height:1.45}.extension-permission-prompt code{display:block;color:var(--text-dim);margin:8px 0 14px}.extension-permission-prompt>div:last-child{display:flex;justify-content:flex-end;gap:8px}.extension-permission-prompt button{border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--text);padding:7px 12px}.extension-permission-prompt button.allow{background:var(--accent);color:white;border-color:var(--accent)}
+.extension-permission-prompt{position:fixed;z-index:9500;right:24px;bottom:44px;width:390px;padding:17px 19px;background:var(--bg-surface);border:1px solid var(--accent-border);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.45)}.extension-permission-prompt .prompt-kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--accent);margin-bottom:8px}.extension-permission-prompt p{color:var(--text-muted);font-size:13px;line-height:1.45}.extension-permission-prompt code{display:block;color:var(--text-dim);margin:8px 0 14px}.extension-permission-prompt>div:last-child{display:flex;justify-content:flex-end;gap:8px}.extension-permission-prompt button{border:1px solid var(--border-default);border-radius:7px;background:transparent;color:var(--text-primary);padding:7px 12px}.extension-permission-prompt button.allow{background:var(--accent);color:white;border-color:var(--accent)}
 </style>

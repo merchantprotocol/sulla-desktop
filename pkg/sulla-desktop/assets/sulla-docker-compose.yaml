@@ -8,7 +8,7 @@ services:
     image: ghcr.io/merchantprotocol/sulla-postgres:latest
     container_name: sulla_postgres
     ports:
-      - "127.0.0.1:30116:5432"
+      - "127.0.0.1:${SULLA_PORT_30116:-30116}:5432"
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_USER=sulla
@@ -64,7 +64,7 @@ services:
     image: redis:7-alpine
     container_name: sulla_redis
     ports:
-      - "127.0.0.1:30117:6379"
+      - "127.0.0.1:${SULLA_PORT_30117:-30117}:6379"
     # Cache and coordination only: no persistence. maxmemory bounds growth;
     # noeviction because some keys (workflow stop/pause flags, settings cache,
     # agent registry) carry no TTL and must not silently disappear: past the
@@ -84,7 +84,7 @@ services:
     image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
     container_name: sulla_python_runtime
     ports:
-      - "127.0.0.1:30118:8080"
+      - "127.0.0.1:${SULLA_PORT_30118:-30118}:8080"
     volumes:
       - "/mnt/data/sulla/runtime/functions/catalog:/var/functions:ro"
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"
@@ -104,7 +104,7 @@ services:
     image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
     container_name: sulla_shell_runtime
     ports:
-      - "127.0.0.1:30119:8080"
+      - "127.0.0.1:${SULLA_PORT_30119:-30119}:8080"
     volumes:
       - "/mnt/data/sulla/runtime/functions/catalog:/var/functions:ro"
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"
@@ -123,7 +123,7 @@ services:
     image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
     container_name: sulla_node_runtime
     ports:
-      - "127.0.0.1:30120:8080"
+      - "127.0.0.1:${SULLA_PORT_30120:-30120}:8080"
     volumes:
       - "/mnt/data/sulla/runtime/functions/catalog:/var/functions:ro"
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"

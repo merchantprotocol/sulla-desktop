@@ -156,13 +156,17 @@ export function readBundledImageLock(imagesDir: string): BundledImageLock | null
 
 let configuredDir: string | undefined;
 let configuredLock: BundledImageLock | null | undefined;
+let configuredLockError: Error | undefined;
 
 /**
  * Point the app at its bundled images (resources/darwin/images). Until this is
  * called nothing is bundled, which keeps the image resolver pure in tests.
  */
 export function useBundledImages(imagesDir: string | undefined): void {
-  if (imagesDir !== configuredDir) configuredLock = undefined;
+  if (imagesDir !== configuredDir) {
+    configuredLock = undefined;
+    configuredLockError = undefined;
+  }
   configuredDir = imagesDir;
 }
 
@@ -177,12 +181,22 @@ export function currentBundledImageLock(): BundledImageLock | null {
     try {
       configuredLock = readBundledImageLock(configuredDir);
     } catch (error) {
-      console.error(`[bundled-images] ignoring the unreadable lock in ${ configuredDir }:`, error);
+      // A damaged app: every service would quietly fall back to the registry,
+      // which fails offline. Keep going, but say so (bundledImageLockError).
+      console.error(`[bundled-images] THE BUNDLED IMAGE LOCK IN ${ configuredDir } IS UNREADABLE; images will be pulled instead:`, error);
+      configuredLockError = error instanceof Error ? error : new Error(String(error));
       configuredLock = null;
     }
   }
 
   return configuredLock;
+}
+
+/** Why the bundled image lock could not be read, when it exists but is damaged. */
+export function bundledImageLockError(): Error | undefined {
+  currentBundledImageLock();
+
+  return configuredLockError;
 }
 
 export function findBundledImage(lock: BundledImageLock | null | undefined, reference: string): BundledImage | undefined {
@@ -355,7 +369,8 @@ const inFlight = new Map<string, Promise<void>>();
 /**
  * Make each selected bundled image present in the guest, loading only the
  * missing ones. Idempotent and safe to call concurrently (one load per image).
- * A failed image is reported, not thrown: compose then tries its normal path.
+ * A failed load is tried once more; a second failure is reported, not thrown,
+ * and the caller decides whether that stops the boot.
  */
 export async function ensureBundledImages(options: EnsureBundledImagesOptions): Promise<EnsureBundledImagesResult> {
   const {
@@ -376,27 +391,38 @@ export async function ensureBundledImages(options: EnsureBundledImagesOptions): 
 
   for (const image of missing) {
     const started = Date.now();
-    let loading = inFlight.get(image.manifestDigest);
 
-    if (!loading) {
-      loading = docker.load(imageArchiveStream(imagesDir, image, (bytes) => {
-        done += bytes;
-        onProgress?.(done, total, image);
-      })).finally(() => inFlight.delete(image.manifestDigest));
-      inFlight.set(image.manifestDigest, loading);
-    }
-    try {
-      await loading;
-      const id = await docker.imageId(image.ref).catch(() => undefined);
+    for (let attempt = 1; ; attempt++) {
+      const doneBefore = done;
+      let loading = inFlight.get(image.manifestDigest);
 
-      if (!isBundledImagePresent(image, id)) {
-        throw new Error(`after loading, ${ image.ref } is ${ id ?? 'missing' } instead of ${ image.manifestDigest }`);
+      if (!loading) {
+        loading = docker.load(imageArchiveStream(imagesDir, image, (bytes) => {
+          done += bytes;
+          onProgress?.(done, total, image);
+        })).finally(() => inFlight.delete(image.manifestDigest));
+        inFlight.set(image.manifestDigest, loading);
       }
-      result.loaded.push(image.name);
-      log.log(`[bundled-images] loaded ${ image.ref } in ${ Date.now() - started }ms`);
-    } catch (error) {
-      result.failed.push({ name: image.name, error: error instanceof Error ? error : new Error(String(error)) });
-      log.warn(`[bundled-images] could not load ${ image.ref }:`, error);
+      try {
+        await loading;
+        const id = await docker.imageId(image.ref).catch(() => undefined);
+
+        if (!isBundledImagePresent(image, id)) {
+          throw new Error(`after loading, ${ image.ref } is ${ id ?? 'missing' } instead of ${ image.manifestDigest }`);
+        }
+        result.loaded.push(image.name);
+        log.log(`[bundled-images] loaded ${ image.ref } in ${ Date.now() - started }ms${ attempt > 1 ? ' (second try)' : '' }`);
+        break;
+      } catch (error) {
+        if (attempt < 2) {
+          log.warn(`[bundled-images] could not load ${ image.ref }; trying once more:`, error);
+          done = doneBefore;
+          continue;
+        }
+        result.failed.push({ name: image.name, error: error instanceof Error ? error : new Error(String(error)) });
+        log.warn(`[bundled-images] could not load ${ image.ref }:`, error);
+        break;
+      }
     }
   }
 

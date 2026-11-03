@@ -11,6 +11,7 @@
  */
 
 import { MCPClient } from './MCPClient';
+import { CloudDeviceTransport, defaultCloudDeviceChannel, type CloudDeviceChannel } from './CloudDeviceTransport';
 import {
   generateConfigs,
   removeConfigs,
@@ -43,7 +44,9 @@ export interface MCPEndpoint {
 let instance: MCPBridge | null = null;
 
 export class MCPBridge {
-  private clients = new Map<string, MCPClient>();
+  private clients = new Map<string, MCPClient | CloudDeviceTransport>();
+
+  constructor(private readonly cloudDeviceChannel: CloudDeviceChannel = defaultCloudDeviceChannel) {}
 
   static getInstance(): MCPBridge {
     if (!instance) {
@@ -74,7 +77,42 @@ export class MCPBridge {
       }
     }
 
+    try {
+      await this.refreshCloudDevices();
+    } catch (error) {
+      // MCP accounts still initialize when Cloud is signed out or temporarily unavailable.
+      console.warn(`${ LOG } Cloud app discovery unavailable: ${ (error as Error).message }`);
+    }
+
     console.log(`${ LOG } Initialized ${ this.clients.size } MCP server(s)`);
+  }
+
+  /** Reconcile paired Cloud app devices into the same account namespace as MCP servers. */
+  async refreshCloudDevices(): Promise<void> {
+    const devices = await this.cloudDeviceChannel.listDevices();
+    const present = new Set(devices.map(device => device.appSlug!));
+
+    for (const [accountId, client] of this.clients) {
+      if (client instanceof CloudDeviceTransport && !present.has(accountId)) {
+        await this.removeAccount(accountId);
+      }
+    }
+
+    for (const device of devices) {
+      const accountId = device.appSlug!;
+      const existing = this.clients.get(accountId);
+      if (existing instanceof CloudDeviceTransport && existing.targetDeviceId === device.id) continue;
+      if (existing) await this.removeAccount(accountId);
+      const manifest = await this.cloudDeviceChannel.getManifest(device.id);
+      const client = new CloudDeviceTransport(accountId, device.id, manifest, this.cloudDeviceChannel);
+      try {
+        await client.initialize();
+      } catch (error) {
+        // The published manifest remains useful while the app is offline.
+        console.warn(`${ LOG } Cloud app ${ accountId } is unavailable; using its published manifest: ${ (error as Error).message }`);
+      }
+      this.clients.set(accountId, client);
+    }
   }
 
   /**

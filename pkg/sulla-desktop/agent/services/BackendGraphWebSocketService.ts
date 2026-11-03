@@ -6,31 +6,37 @@
 // BackendGraphWebSocketService.ts
 // Main-process agent dispatcher: routes messages on the sulla-desktop and
 // heartbeat channels to the default agent via GraphRegistry.
+import { toolRegistry } from '@pkg/agent/tools/registry';
+import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
-import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
+import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { RunActivity } from './RunActivity';
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
 
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
+const RESUME_CONTINUE_DELAY_MS = 1_000;
 const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Dedicated channel for chats routed from a paired mobile device via the
 // Cloudflare relay. Mobile messages arrive through `DesktopRelayClient`,
@@ -61,6 +67,11 @@ export class BackendGraphWebSocketService {
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
+  private suspendedRuns = new Set<string>();
+  private resumeContexts = new Map<string, {
+    channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
+    overrideAgentId?: string; inputSource?: string;
+  }>();
   private subscribedChannels = new Set<string>();
   private conversationContainers = new Map<string, {
     provider: string;
@@ -139,7 +150,10 @@ export class BackendGraphWebSocketService {
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
+    for (const key of this.activeAborts.keys()) releaseChatActivity(`graph:${ key }`);
     this.activeAborts.clear();
+    this.suspendedRuns.clear();
+    this.resumeContexts.clear();
     for (const [, record] of this.conversationContainers) {
       clearTimeout(record.idleTimer);
       record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
@@ -147,6 +161,39 @@ export class BackendGraphWebSocketService {
     }
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
+  }
+
+  /** Stamp only runs actually in flight when macOS suspends. */
+  handleSuspend(): void {
+    this.suspendedRuns = new Set(this.activeAborts.keys());
+    console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
+  }
+
+  /**
+   * Wake recovery. Snapshot the threads whose runs crossed sleep BEFORE
+   * reinitialize(): dispose() aborts every in-flight run (their LLM sockets
+   * died while the Mac slept) and clears the resume bookkeeping, so reading
+   * it afterwards would find nothing and the tabs would stay stopped.
+   * Then re-subscribe and send each interrupted thread a continue.
+   */
+  handleResume(): void {
+    const interrupted = [...this.suspendedRuns]
+      .map(key => this.resumeContexts.get(key))
+      .filter((context): context is NonNullable<typeof context> => !!context);
+    this.suspendedRuns.clear();
+    this.reinitialize();
+    if (interrupted.length) console.log(`[BackendGraphWS] Continuing ${ interrupted.length } chat thread(s) interrupted by system sleep`);
+    for (const context of interrupted) {
+      // Give the aborted runs a moment to unwind their finally blocks first.
+      setTimeout(() => {
+        void this.dispatchToAgent(
+          context.channelId, context.triggerType,
+          'Continue from where you stopped after the computer resumed. Preserve and process any queued messages.',
+          context.threadId, context.scopedWorkflowId, context.overrideAgentId, context.inputSource,
+          { source: 'system_resume', inputSource: 'system' },
+        ).catch(err => console.error('[BackendGraphWS] Failed to continue chat after resume:', err));
+      }, RESUME_CONTINUE_DELAY_MS);
+    }
   }
 
   private async conversationContainer(
@@ -436,6 +483,34 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
+    const { getModelProviderService } = await import('./ModelProviderService');
+    const modelProvider = getModelProviderService();
+    // Before the saved model choice loads (it waits for the vault on a
+    // relaunch), an empty provider is not evidence that no AI is connected.
+    // Give it a minute rather than bouncing the user's first message.
+    for (let waited = 0; !modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID && waited < 60; waited++) {
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+    }
+    if (!modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID) {
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'Sulla is still starting up. Send your message again in a moment.',
+        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat held: model choice not loaded yet', { channelId });
+      return;
+    }
+    if (!modelProvider.isInitialized() || !modelProvider.getPrimaryProvider().trim()) {
+      if (channelId === HEARTBEAT_CHANNEL_ID) {
+        console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
+        return;
+      }
+      this.emitMessage(channelId, 'assistant_message', {
+        content: 'No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.',
+        role: 'assistant', kind: 'notice', thread_id: threadIdFromMsg,
+      });
+      firstRunTrace('chat', 'chat blocked before launch', { reason: 'no-ai-provider', channelId });
+      return;
+    }
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
@@ -472,7 +547,8 @@ export class BackendGraphWebSocketService {
         const prediction = await routeChatAgent(message, threadId);
         const predictedAgent = prediction ? await resolveFrontDoorAgent(prediction.agentId) : null;
         const routedAgent = predictedAgent ?? await resolveDefaultRouteAgent();
-        if (routedAgent.graphAgentId !== defaultAgentId) {
+        // A model default keeps Sulla but still has to be stored on the thread.
+        if (routedAgent.graphAgentId !== defaultAgentId || routedAgent.modelChoice) {
           agentId = routedAgent.graphAgentId;
           newRoute = { prediction: predictedAgent ? prediction : null, agent: routedAgent };
         }
@@ -495,18 +571,39 @@ export class BackendGraphWebSocketService {
         // Persist before execution so a renderer refresh or process interruption
         // cannot lose the sticky route chosen for this thread.
         await saveThreadState(state);
-        this.wsService.send(channelId, {
-          type: 'agent_routed',
-          data: {
-            threadId,
-            agentId:    newRoute.agent.agentId,
-            name:       newRoute.agent.name,
-            confidence: newRoute.prediction?.confidence ?? null,
-            decisionId: newRoute.prediction?.decisionId ?? null,
-            reason:     newRoute.prediction ? 'reflex' : 'default',
-          },
-          timestamp: Date.now(),
-        });
+        if (newRoute.agent.graphAgentId !== defaultAgentId) {
+          this.wsService.send(channelId, {
+            type: 'agent_routed',
+            data: {
+              threadId,
+              agentId:    newRoute.agent.agentId,
+              name:       newRoute.agent.name,
+              confidence: newRoute.prediction?.confidence ?? null,
+              decisionId: newRoute.prediction?.decisionId ?? null,
+              reason:     newRoute.prediction ? 'reflex' : 'default',
+            },
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      // A support tab supplies an opaque session id every turn. Resolve the
+      // fixed tool set here rather than trusting renderer-provided names. If an
+      // active session ends, the tab omits the id and the old capability is
+      // synchronously removed before this turn can execute.
+      const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
+        ? metadata.supportSessionId : '';
+      if (supportSessionId) {
+        (state.metadata as any).supportSessionId = supportSessionId;
+        const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+        (state.metadata as any).allowedToolNames = supportTabTools;
+        (state.metadata as any).conversationContext = typeof metadata?.conversationContext === 'string' ? metadata.conversationContext : '';
+        (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
+      } else if ((state.metadata as any).supportSessionId) {
+        delete (state.metadata as any).supportSessionId;
+        delete (state.metadata as any).allowedToolNames;
+        delete (state.metadata as any).conversationContext;
+        delete (state as any).llmTools;
       }
 
       // A saved/cached thread carries a historical copy of its agent config.
@@ -574,6 +671,10 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      this.resumeContexts.set(abortKey, {
+        channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
+      });
+      acquireChatActivity(`graph:${ abortKey }`);
       for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
         await markCompletionDelivered(String(jobId));
       }
@@ -649,13 +750,24 @@ export class BackendGraphWebSocketService {
       const runLocation = effectiveAgentRunLocation(VM_OPERATOR_CHANNELS.has(channelId)
         ? 'vm'
         : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
+      const tracedProvider = String(state.metadata.agent?.provider || '').trim();
+      firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
-        const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+        const { modelRouter } = await import('../languagemodels/modelRouter');
+        const routedAgentId = resolveAgentIdentity(state.metadata);
+        const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
+        const routed = (await modelRouter.resolve('agents', definition?.model_choice || { mode: 'list' }))[0];
+        const provider = String(state.metadata.agent?.provider || routed?.provider || '').trim();
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(
-          () => this.conversationContainer(channelId, threadId, provider, runState),
+          () => acquireWhenReady(
+            () => this.conversationContainer(channelId, threadId, provider, runState),
+            message => this.emitMessage(channelId, 'assistant_message', {
+              content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
+            }),
+            runAbort?.signal,
+          ),
           lost => this.recoverConversationContainer(channelId, threadId, provider, runState, lost),
           () => graph.execute(runState, startNode),
         );
@@ -672,8 +784,13 @@ export class BackendGraphWebSocketService {
         }
       } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
+        // Launch errors are already written for the user; the detail is in the log.
+        const content = err?.name === 'AgentLaunchError'
+          ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
+          : `Agent error: ${ err.message || String(err) }`;
+        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
         this.emitMessage(channelId, 'assistant_message', {
-          content:   `Agent error: ${ err.message || String(err) }`,
+          content,
           role:      'assistant',
           thread_id: threadId,
         });
@@ -681,6 +798,8 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         this.activeAborts.delete(abortKey);
+        this.resumeContexts.delete(abortKey);
+        releaseChatActivity(`graph:${ abortKey }`);
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this

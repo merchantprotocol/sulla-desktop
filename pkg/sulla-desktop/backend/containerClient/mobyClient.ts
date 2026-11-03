@@ -70,7 +70,8 @@ export class MobyClient implements ContainerEngineClient {
     return container;
   }
 
-  async waitForReady(): Promise<void> {
+  /** Resolves once Docker answers twice in a row; with a timeout, rejects after it instead of polling forever. */
+  async waitForReady(timeoutMs?: number): Promise<void> {
     let successCount = 0;
     let failureCount = 0;
     let lastOutput = { stdout: '', stderr: '' };
@@ -101,6 +102,9 @@ export class MobyClient implements ContainerEngineClient {
             console.error(`Failed to run docker system info after ${ failureCount } failures (will retry):`, output);
             lastOutput = output;
           }
+        }
+        if (timeoutMs !== undefined && Date.now() - startTime >= timeoutMs) {
+          throw new Error(`Docker did not answer within ${ Math.round(timeoutMs / 1000) }s: ${ lastOutput.stderr.trim().split('\n')[0] || (ex as Error)?.message || 'no output' }`);
         }
         await util.promisify(setTimeout)(250);
       }

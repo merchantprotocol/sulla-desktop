@@ -7,23 +7,20 @@
 // Handles: authorize URL generation, code exchange, token storage (DB-backed),
 // automatic refresh, and revocation.
 
-import crypto from 'crypto';
-
-import { BrowserWindow, shell } from 'electron';
-
 import { getIntegrationService } from './IntegrationService';
-import { startOAuthCallbackServer } from './OAuthCallbackServer';
+import { OAuthFlowSession } from './oauth/flow/OAuthFlowSession';
+import { TokenExchanger } from './oauth/flow/TokenExchanger';
 import { REFRESH_RETRY_DELAY_MS, refreshRetryDelayMs } from './oauthRefreshRetry';
+import { CustodyResolver } from './oauth/custody/CustodyResolver';
+import { isRawTokenCustody, type RawTokenCustody, type ResolvedTokenCustody, type TokenCustody } from './oauth/custody/TokenCustody';
+import { RefreshScheduler } from './oauth/RefreshScheduler';
 import {
   issueLocalBrokerContext,
   requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-  type BrokerIntegrationMetadataResponse,
 } from '../../vault-broker';
-import { postgresClient } from '../database/PostgresClient';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
-import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 
@@ -35,7 +32,7 @@ const MIN_REFRESH_DELAY_MS = 5000;
 // ─── DB row shape ─────────────────────────────────────────────────
 
 interface OAuthTokenRow {
-  token_id:       number;
+  token_id?:      number;
   integration_id: string;
   account_id:     string;
   provider_id:    string;
@@ -45,7 +42,7 @@ interface OAuthTokenRow {
   scope:          string | null;
   expires_at:     number | null;
   raw_response:   Record<string, unknown> | null;
-  created_at:     Date;
+  created_at?:    Date;
   updated_at:     Date;
 }
 
@@ -59,24 +56,8 @@ interface VaultRefreshTarget {
 
 // ─── Active refresh timers ────────────────────────────────────────
 
-const refreshTimers = new Map<string, NodeJS.Timeout>();
-
-// Vault mode keeps token material inside the authority. Desktop only tracks
-// when each account is next due for refresh (from metadata expiry) and
-// coalesces refreshes so a timer and a request-time check never race.
-const vaultRefreshAt = new Map<string, number>();
-// Consecutive failed refresh retries per account, for exponential backoff.
-const refreshRetryCounts = new Map<string, number>();
-const vaultRefreshes = new Map<string, Promise<OAuthTokenSet>>();
-
 function timerKey(integrationId: string, accountId: string): string {
   return `${ integrationId }::${ accountId }`;
-}
-
-function updatedAtMs(row: OAuthTokenRow): number {
-  const value = row.updated_at instanceof Date ? row.updated_at.getTime() : new Date(row.updated_at).getTime();
-
-  return Number.isFinite(value) ? value : 0;
 }
 
 function decodeAccessTokenExpiry(accessToken: unknown): number | null {
@@ -118,6 +99,16 @@ function normalizeTokenExpiry<T extends OAuthTokenSet>(tokens: T): T {
   return tokens;
 }
 
+function refreshFailureReason(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const failure = body as Record<string, unknown>;
+  for (const field of ['error_description', 'reason', 'error', 'message']) {
+    const value = failure[field];
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 300);
+  }
+  return undefined;
+}
+
 // ─── Singleton ────────────────────────────────────────────────────
 
 let instance: OAuthService | null = null;
@@ -132,6 +123,17 @@ export function getOAuthService(): OAuthService {
 // ─── Service ──────────────────────────────────────────────────────
 
 export class OAuthService {
+  private readonly activeFlows = new Map<string, OAuthFlowSession>();
+  private readonly custodyResolver = new CustodyResolver();
+  private readonly scheduler = new RefreshScheduler();
+  private readonly tokenExchanger = new TokenExchanger();
+
+  cancelFlow(integrationId: string): boolean {
+    const entries = [...this.activeFlows].filter(([key]) => key.startsWith(`${ integrationId }::`));
+    for (const [, session] of entries) session.cancel();
+    return entries.length > 0;
+  }
+
   // ── Initiate OAuth flow ───────────────────────────────────────
 
   /**
@@ -159,225 +161,90 @@ export class OAuthService {
     extraScopes: string[] = [],
     persist = true,
   ): Promise<OAuthTokenSet> {
+    firstRunTrace('oauth', 'provider flow started', { integrationId, providerId, accountId, persist });
+    const custody = this.custodyResolver.resolve({ firstRun: !persist });
     const provider = getOAuthProvider(providerId);
-    if (!provider) {
-      throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
-    }
+    if (!provider) throw new Error(`${ LOG_PREFIX } Unknown OAuth provider: ${ providerId }`);
     const cfg = provider.config;
-    // Resolve effective client_id (built-in takes precedence for public clients).
-    // Providers with registrationEndpoint can fill this after the callback
-    // server starts, because DCR needs the actual redirect_uri for this flow.
     let effectiveClientId = cfg.builtInClientId || clientId;
-    if (usesContainerVaultAuthority() && !effectiveClientId) {
+    if (custody.kind === 'vault' && !effectiveClientId) {
       const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
       const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
       effectiveClientId = values.oauth_client_id || values.client_id || '';
     }
-    const effectiveClientSecret = usesContainerVaultAuthority() || cfg.clientAuthMethod === 'none' ? '' : clientSecret;
+    const effectiveClientSecret = custody.kind === 'vault' || cfg.clientAuthMethod === 'none' ? '' : clientSecret;
+    const flowKey = `${ integrationId }::${ accountId }`;
+    this.activeFlows.get(flowKey)?.cancel();
 
-    // Generate CSRF state
-    const state = crypto.randomBytes(24).toString('hex');
-
-    // Generate PKCE verifier/challenge if required
-    let codeVerifier: string | undefined;
-    let codeChallenge: string | undefined;
-    if (cfg.usePKCE) {
-      codeVerifier = crypto.randomBytes(64).toString('base64url');
-      codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    }
-
-    // Start callback server (with optional fixed port/path)
-    const { redirectUri, codePromise, shutdown } = await startOAuthCallbackServer({
-      expectedState:        state,
-      fixedPort:            cfg.fixedCallbackPort,
-      callbackPath:         cfg.fixedCallbackPath,
-      useLocalhostHostname: cfg.useLocalhostHostname ?? !!cfg.fixedCallbackPort,
+    const session = new OAuthFlowSession({
+      requesterId: accountId,
+      integrationId,
+      providerId,
+      config: cfg,
+      buildAuthorizeUrl: async({ redirectUri, state, codeChallenge }) => {
+        if (!effectiveClientId && cfg.registrationEndpoint) {
+          const registration = await this.registerDynamicClient(custody, cfg, redirectUri, integrationId, accountId);
+          effectiveClientId = registration.clientId;
+          if (custody.kind !== 'vault') {
+            await getIntegrationService().setIntegrationValue({
+              integration_id: integrationId,
+              account_id: accountId,
+              property: 'oauth_client_id',
+              value: effectiveClientId,
+            });
+          }
+        }
+        if (!effectiveClientId) throw new Error(`${ LOG_PREFIX } Missing client_id for OAuth provider ${ providerId }`);
+        return provider.buildAuthorizeUrl(effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
+      },
     });
-    console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
-
-    let authWindow: BrowserWindow | null = null;
+    this.activeFlows.set(flowKey, session);
 
     try {
-      if (!effectiveClientId && cfg.registrationEndpoint) {
-        const registration = await this.registerDynamicClient(cfg, redirectUri, integrationId, accountId);
-        effectiveClientId = registration.clientId;
-        if (!usesContainerVaultAuthority()) {
-          const integrationService = getIntegrationService();
-          await integrationService.setIntegrationValue({
-            integration_id: integrationId,
-            account_id:     accountId,
-            property:       'oauth_client_id',
-            value:          effectiveClientId,
-          });
-        }
-        console.log(`${ LOG_PREFIX } Registered OAuth client for ${ integrationId }/${ accountId }`);
+      const authorization = await session.authorize();
+      if (!authorization.ok) {
+        const error = new Error(authorization.message) as Error & { code?: string; owner?: string; port?: number };
+        error.code = authorization.code;
+        error.owner = authorization.owner;
+        error.port = authorization.port;
+        throw error;
       }
+      firstRunTrace('oauth', 'callback received', { integrationId, providerId });
+      const tokens = normalizeTokenExpiry(await this.tokenExchanger.exchange({
+        custody, config: cfg, clientId: effectiveClientId, clientSecret: effectiveClientSecret,
+        code: authorization.code, redirectUri: authorization.redirectUri,
+        codeVerifier: authorization.codeVerifier, integrationId, accountId, useVault: persist,
+      }));
+      if (cfg.registrationEndpoint) tokens.oauth_client_id = effectiveClientId;
+      firstRunTrace('oauth', 'token exchange completed', { integrationId, providerId, success: true });
 
-      if (!effectiveClientId) {
-        throw new Error(`${ LOG_PREFIX } Missing client_id for OAuth provider ${ providerId }`);
+      await custody.store({ integrationId, accountId, providerId }, tokens);
+      if (custody.kind === 'memory') {
+        firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'pending' });
+        return tokens;
       }
-
-      // Build authorize URL
-      const authorizeUrl = this.buildAuthorizeUrl(cfg, effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
-
-      if (cfg.openInEmbeddedWindow) {
-        // Render the sign-in page inside Sulla Desktop rather than handing off
-        // to the host's default browser. Required for providers whose tokens
-        // are materialized for an in-VM consumer (e.g. Codex's
-        // ~/.codex/auth.json) — an external browser would finish the handshake
-        // outside Sulla and the in-VM tool would never see the credentials.
-        console.log(`${ LOG_PREFIX } Opening embedded auth window for ${ cfg.name }...`);
-        authWindow = this.openEmbeddedAuthWindow(authorizeUrl, cfg.name);
-      } else {
-        console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
-        await shell.openExternal(authorizeUrl);
-      }
-
-      // Wait for the user to complete authorization. The localhost callback
-      // server captures the code regardless of which browser rendered the page;
-      // when we own the window, also treat the user closing it as a cancel.
-      const { code } = await this.awaitAuthorizationCode(codePromise, authWindow);
-      console.log(`${ LOG_PREFIX } Received authorization code`);
-
-      // Exchange code for tokens
-      const tokens = normalizeTokenExpiry(
-        await this.exchangeCode(
-          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId, persist,
-        ),
-      );
-      if (cfg.registrationEndpoint) {
-        tokens.oauth_client_id = effectiveClientId;
-      }
-      console.log(`${ LOG_PREFIX } Token exchange successful`);
-
-      if (!persist) {
-        // First run may happen before the vault, Postgres, or Redis exists.
-        // Return the token set to the main-process caller for memory-only
-        // custody; never run provider persistence hooks on this path.
+      if (custody.kind === 'vault') {
+        this.scheduleRefresh(custody, integrationId, accountId, providerId, effectiveClientId, '', tokens);
         return tokens;
       }
 
-      if (usesContainerVaultAuthority()) {
-        // The authority persisted the token response before returning this
-        // metadata-only acknowledgement. No provider hook may receive it as a
-        // token set and the legacy OAuth table must remain untouched.
-        this.scheduleRefresh(integrationId, accountId, providerId, effectiveClientId, '', tokens);
-        return tokens;
-      }
-
-      // Let the provider do post-processing
       await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
-
-      // Persist tokens
-      await this.storeTokens(integrationId, accountId, providerId, tokens);
-
-      // Mark integration as connected
-      const integrationService = getIntegrationService();
-      await integrationService.setConnectionStatus(integrationId, true, accountId);
-
-      // Schedule proactive refresh
-      this.scheduleRefresh(integrationId, accountId, providerId, effectiveClientId, effectiveClientSecret, tokens);
-
+      await getIntegrationService().setConnectionStatus(integrationId, true, accountId);
+      this.scheduleRefresh(custody, integrationId, accountId, providerId, effectiveClientId, effectiveClientSecret, tokens);
+      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: true, custody: 'persisted' });
       return tokens;
-    } catch (err) {
-      shutdown();
-      throw err;
+    } catch (error) {
+      firstRunTrace('oauth', 'provider flow completed', { integrationId, providerId, success: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
     } finally {
-      // Always tear down the in-app window we opened — on success (after the
-      // brief callback "you can close this" page) and on any error/cancel.
-      if (authWindow && !authWindow.isDestroyed()) {
-        authWindow.destroy();
-      }
+      if (this.activeFlows.get(flowKey) === session) this.activeFlows.delete(flowKey);
     }
-  }
-
-  // ── Embedded auth window (in-app browser) ─────────────────────
-
-  /** Open the authorize URL in a Sulla-owned Electron window. */
-  private openEmbeddedAuthWindow(url: string, providerName: string): BrowserWindow {
-    // Contained: no hand-offs to other apps, popups stay in Sulla, and the
-    // code can only come back through our localhost callback server.
-    const win = createContainedAuthWindow({
-      width:     820,
-      height:    720,
-      title:     `Sign in — ${ providerName }`,
-      partition: 'persist:integration-oauth',
-      logPrefix: LOG_PREFIX,
-    });
-    win.loadURL(url).catch((err) => {
-      console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);
-    });
-    return win;
-  }
-
-  /**
-   * Resolve with the captured auth code. When an embedded window is in use,
-   * a manual close of that window rejects as a user cancellation so the flow
-   * doesn't hang on a promise that will never resolve.
-   */
-  private awaitAuthorizationCode(
-    codePromise: Promise<{ code: string }>,
-    authWindow: BrowserWindow | null,
-  ): Promise<{ code: string }> {
-    if (!authWindow) {
-      return codePromise;
-    }
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      codePromise.then(
-        (res) => {
-          if (settled) return;
-          settled = true;
-          resolve(res);
-        },
-        (err) => {
-          if (settled) return;
-          settled = true;
-          reject(err);
-        },
-      );
-      authWindow.on('closed', () => {
-        if (settled) return;
-        settled = true;
-        reject(new Error(`${ LOG_PREFIX } Sign-in window closed before authorization completed`));
-      });
-    });
-  }
-
-  // ── Build authorize URL ───────────────────────────────────────
-
-  private buildAuthorizeUrl(
-    cfg: OAuthProviderConfig,
-    clientId: string,
-    redirectUri: string,
-    state: string,
-    extraScopes: string[],
-    codeChallenge?: string,
-  ): string {
-    const sep = cfg.scopeSeparator ?? ' ';
-    const allScopes = [...cfg.scopes, ...extraScopes];
-
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id:     clientId,
-      redirect_uri:  redirectUri,
-      scope:         allScopes.join(sep),
-      state,
-      ...cfg.extraAuthorizeParams,
-    });
-
-    // PKCE code_challenge
-    if (codeChallenge) {
-      params.set('code_challenge', codeChallenge);
-      params.set('code_challenge_method', 'S256');
-    }
-
-    return `${ cfg.authorizeUrl }?${ params.toString() }`;
   }
 
   // ── Dynamic Client Registration ───────────────────────────────
 
   private async registerDynamicClient(
+    custody: ResolvedTokenCustody,
     cfg: OAuthProviderConfig,
     redirectUri: string,
     integrationId: string,
@@ -396,7 +263,7 @@ export class OAuthService {
       redirect_uris:              [redirectUri],
     };
 
-    if (usesContainerVaultAuthority()) {
+    if (custody.kind === 'vault') {
       const context = await issueLocalBrokerContext({
         agentId:         'oauth-register',
         podId:           'desktop-main',
@@ -416,6 +283,7 @@ export class OAuthService {
         body:       metadata,
         injections: [],
       }));
+      firstRunTrace('oauth', 'token exchange response', { integrationId, providerId: cfg.id, status: result.status, success: result.status >= 200 && result.status < 300 });
       const body = result.body;
       const clientId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).client_id === 'string'
         ? (body as Record<string, string>).client_id
@@ -449,99 +317,21 @@ export class OAuthService {
     return { clientId: json.client_id };
   }
 
-  // ── Exchange auth code for tokens ─────────────────────────────
-
-  private async exchangeCode(
-    cfg: OAuthProviderConfig,
-    clientId: string,
-    clientSecret: string,
-    code: string,
-    redirectUri: string,
-    codeVerifier?: string,
-    integrationId?: string,
-    accountId?: string,
-    useVault = true,
-  ): Promise<OAuthTokenSet> {
-    const body: Record<string, string> = {
-      grant_type:   'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      ...cfg.extraTokenParams,
-    };
-
-    // PKCE code_verifier
-    if (codeVerifier) {
-      body.code_verifier = codeVerifier;
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept:         'application/json',
-      'User-Agent':   'Sulla-Desktop/1.0',
-    };
-
-    if (usesContainerVaultAuthority() && useVault) {
-      if (!integrationId || !accountId) throw new Error(`${ LOG_PREFIX } OAuth exchange is missing its vault scope`);
-      const injections = cfg.clientAuthMethod === 'header'
-        ? [{ field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const }]
-        : cfg.clientAuthMethod === 'none'
-          ? []
-          : [
-            { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
-            { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
-          ];
-      if (cfg.clientAuthMethod === 'none') body.client_id = clientId;
-      const context = await issueLocalBrokerContext({
-        agentId:         'oauth-exchange',
-        podId:           'desktop-main',
-        credentialScope: { integration_id: integrationId, account_id: accountId },
-      });
-      const broker = requireConfiguredCredentialBroker();
-      const result = await broker.execute(broker.requestFor(context, {
-        operation: 'oauth.exchange',
-        ref:       { integrationId, accountId },
-        url:       cfg.tokenUrl,
-        method:    'POST',
-        headers,
-        body,
-        injections,
-      }));
-      if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
-        throw new Error(`${ LOG_PREFIX } Vault-owned token exchange failed`);
-      }
-      return result.body as OAuthTokenSet;
-    }
-
-    if (cfg.clientAuthMethod === 'header') {
-      const basic = Buffer.from(`${ clientId }:${ clientSecret }`).toString('base64');
-      headers.Authorization = `Basic ${ basic }`;
-    } else if (cfg.clientAuthMethod === 'none') {
-      // Public client — only send client_id, no secret
-      body.client_id = clientId;
-    } else {
-      body.client_id = clientId;
-      body.client_secret = clientSecret;
-    }
-
-    const res = await fetch(cfg.tokenUrl, {
-      method:  'POST',
-      headers,
-      body:    new URLSearchParams(body).toString(),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${ LOG_PREFIX } Token exchange failed (${ res.status }): ${ text }`);
-    }
-
-    const json = await res.json() as OAuthTokenSet;
-
-    return normalizeTokenExpiry(json);
-  }
-
   // ── Refresh tokens ────────────────────────────────────────────
 
   async refreshAccessToken(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    clientId: string,
+    clientSecret: string,
+  ): Promise<OAuthTokenSet> {
+    const custody = this.custodyResolver.resolve();
+    return this.refreshAccessTokenWithCustody(custody, integrationId, accountId, providerId, clientId, clientSecret);
+  }
+
+  private async refreshAccessTokenWithCustody(
+    custody: ResolvedTokenCustody,
     integrationId: string,
     accountId: string,
     providerId: string,
@@ -554,17 +344,17 @@ export class OAuthService {
     }
     const cfg = provider.config;
 
-    if (usesContainerVaultAuthority()) {
+    if (custody.kind === 'vault') {
       const key = timerKey(integrationId, accountId);
-      const pending = vaultRefreshes.get(key);
+      const pending = this.scheduler.inFlight.get(key);
       if (pending) return pending;
-      const refresh = this.refreshInVault(cfg, integrationId, accountId, providerId, clientId)
-        .finally(() => vaultRefreshes.delete(key));
-      vaultRefreshes.set(key, refresh);
+      const refresh = this.refreshInVault(custody, cfg, integrationId, accountId, providerId, clientId)
+        .finally(() => this.scheduler.inFlight.delete(key));
+      this.scheduler.inFlight.set(key, refresh);
       return refresh;
     }
 
-    const stored = await this.getStoredTokens(integrationId, accountId);
+    const stored = await custody.getRawTokens(integrationId, accountId);
     if (!stored?.refresh_token) {
       throw new Error(`${ LOG_PREFIX } No refresh token for ${ integrationId }/${ accountId }`);
     }
@@ -610,10 +400,10 @@ export class OAuthService {
 
     normalizeTokenExpiry(json);
 
-    await this.storeTokens(integrationId, accountId, providerId, json);
+    await custody.store({ integrationId, accountId, providerId }, json);
 
     // Reschedule the next refresh
-    this.scheduleRefresh(integrationId, accountId, providerId, clientId, clientSecret, json);
+    this.scheduleRefresh(custody, integrationId, accountId, providerId, clientId, clientSecret, json);
 
     await provider.onTokenReceived(json, { integrationId, accountId, providerId, clientId });
 
@@ -627,6 +417,7 @@ export class OAuthService {
    * only; Desktop reschedules from that metadata's expiry.
    */
   private async refreshInVault(
+    custody: TokenCustody,
     cfg: OAuthProviderConfig,
     integrationId: string,
     accountId: string,
@@ -669,13 +460,14 @@ export class OAuthService {
       injections,
     }));
     if (result.status < 200 || result.status >= 300 || !result.body || typeof result.body !== 'object') {
-      throw new Error(`${ LOG_PREFIX } Vault-owned token refresh failed`);
+      const reason = refreshFailureReason(result.body);
+      throw new Error(`Token refresh failed: status ${ result.status }${ reason ? ` (${ reason })` : '' }`);
     }
     // The authority persisted the rotated credentials and deliberately
     // returns metadata only. Keep that boundary explicit in the legacy
     // return type until all callers consume refresh metadata directly.
     const metadata = result.body as OAuthTokenSet;
-    this.scheduleRefresh(integrationId, accountId, providerId, clientId, '', metadata);
+    this.scheduleRefresh(custody, integrationId, accountId, providerId, clientId, '', metadata);
     console.log(`${ LOG_PREFIX } Token refreshed in vault for ${ integrationId }/${ accountId }`);
     return metadata;
   }
@@ -683,41 +475,52 @@ export class OAuthService {
   /**
    * Request-time guard for vault mode: refresh before an outbound provider
    * call when the access token is expired or inside the refresh buffer.
-   * Never throws — a failed refresh is logged and retried on the usual
-   * backoff, and the caller's request proceeds (and fails upstream if the
-   * token really is dead).
+   * A failed refresh is retried on the usual backoff and propagated with its
+   * real cause so callers do not continue with a token known to be stale.
    */
   async ensureVaultTokenFresh(integrationId: string, accountId: string): Promise<void> {
-    if (!usesContainerVaultAuthority()) return;
-    const cached = vaultRefreshAt.get(timerKey(integrationId, accountId));
+    const custody = this.custodyResolver.resolve();
+    if (custody.kind !== 'vault') return;
+    await this.ensureVaultTokenFreshWithCustody(custody, integrationId, accountId);
+  }
+
+  private async ensureVaultTokenFreshWithCustody(
+    custody: TokenCustody,
+    integrationId: string,
+    accountId: string,
+  ): Promise<void> {
+    const cached = this.scheduler.refreshAt.get(timerKey(integrationId, accountId));
     if (cached !== undefined && Date.now() < cached) return;
     let target: VaultRefreshTarget | null = null;
     try {
       // Looks due (or unknown): confirm against the vault's current metadata
       // in case the token was already rotated by a reconnect or another call.
-      target = await this.vaultRefreshTarget(integrationId, accountId);
+      target = await this.vaultRefreshTarget(custody, integrationId, accountId);
       if (!target) {
         // No OAuth session for this account (missing/never-created credential).
         // Cache the negative result so every upstream request doesn't re-query the vault.
-        vaultRefreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
+        this.scheduler.refreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
         return;
       }
       if (Date.now() < target.refreshAt) return;
-      await this.refreshAccessToken(integrationId, accountId, target.providerId, target.clientId, '');
+      await this.refreshAccessTokenWithCustody(custody, integrationId, accountId, target.providerId, target.clientId, '');
     } catch (err) {
       console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
-      if (target) this.scheduleRefreshRetry(integrationId, accountId, target.providerId, target.clientId, '');
-      else vaultRefreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
+      if (target) this.scheduleRefreshRetry(custody, integrationId, accountId, target.providerId, target.clientId, '');
+      else this.scheduler.refreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`OAuth refresh failed: ${ reason }`, { cause: err });
     }
   }
 
   /** Force a vault refresh (after an upstream 401). Resolves true when the vault rotated the token. */
   async forceVaultRefresh(integrationId: string, accountId: string): Promise<boolean> {
-    if (!usesContainerVaultAuthority()) return false;
+    const custody = this.custodyResolver.resolve();
+    if (custody.kind !== 'vault') return false;
     try {
-      const target = await this.vaultRefreshTarget(integrationId, accountId);
+      const target = await this.vaultRefreshTarget(custody, integrationId, accountId);
       if (!target) return false;
-      await this.refreshAccessToken(integrationId, accountId, target.providerId, target.clientId, '');
+      await this.refreshAccessTokenWithCustody(custody, integrationId, accountId, target.providerId, target.clientId, '');
       return true;
     } catch (err) {
       console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
@@ -731,19 +534,15 @@ export class OAuthService {
    * stored rows. Returns null for accounts that are not OAuth sessions.
    */
   private async vaultRefreshTarget(
+    custody: TokenCustody,
     integrationId: string,
     accountId: string,
     fallbackProviderId?: string,
-    knownProperties?: Record<string, string>,
   ): Promise<VaultRefreshTarget | null> {
-    const properties = knownProperties ?? Object.fromEntries(
-      (await getIntegrationService().getMetadataValues(integrationId, accountId))
-        .filter(value => value.account_id === accountId)
-        .map(value => [value.property, value.value]),
-    );
+    const metadata = await custody.getMetadata(integrationId, accountId);
     // Only OAuth sessions carry token metadata; API-key accounts are skipped.
-    if (!properties.expires_at && !properties.token_type) return null;
-    let providerId = [properties.provider_id, properties.provider, fallbackProviderId]
+    if (!metadata) return null;
+    let providerId = [metadata.providerId, fallbackProviderId]
       .find(candidate => !!candidate && !!getOAuthProvider(candidate));
     if (!providerId) {
       const { integrations } = await import('../integrations/catalog');
@@ -753,16 +552,16 @@ export class OAuthService {
     const provider = providerId ? getOAuthProvider(providerId) : undefined;
     if (!providerId || !provider) return null;
     const key = timerKey(integrationId, accountId);
-    const expiresAt = metadataExpiry(properties.expires_at);
+    const expiresAt = metadata.expiresAt;
     const bufferMs = (provider.config.refreshBufferSeconds ?? DEFAULT_REFRESH_BUFFER_SECONDS) * 1000;
     // Unknown expiry: keep the current schedule, else allow the usual window.
     const refreshAt = expiresAt
       ? expiresAt - bufferMs
-      : vaultRefreshAt.get(key) ?? Date.now() + UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
-    vaultRefreshAt.set(key, refreshAt);
+      : this.scheduler.refreshAt.get(key) ?? Date.now() + UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
+    this.scheduler.refreshAt.set(key, refreshAt);
     return {
       providerId,
-      clientId: provider.config.builtInClientId || properties.oauth_client_id || properties.client_id || '',
+      clientId: provider.config.builtInClientId || metadata.clientId || '',
       expiresAt,
       refreshAt,
     };
@@ -782,7 +581,8 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
-    if (usesContainerVaultAuthority()) {
+    const custody = this.custodyResolver.resolve();
+    if (custody.kind === 'vault') {
       throw new Error('unsupported_secret_egress: OAuth token adoption must complete inside the local vault authority');
     }
     const provider = getOAuthProvider(providerId);
@@ -793,19 +593,20 @@ export class OAuthService {
     normalizeTokenExpiry(tokens);
 
     await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId });
-    await this.storeTokens(integrationId, accountId, providerId, tokens);
+    await custody.store({ integrationId, accountId, providerId }, tokens);
 
     const integrationService = getIntegrationService();
     await integrationService.setConnectionStatus(integrationId, true, accountId);
     await integrationService.setActiveAccount(integrationId, accountId);
 
-    this.scheduleRefresh(integrationId, accountId, providerId, clientId, '', tokens);
+    this.scheduleRefresh(custody, integrationId, accountId, providerId, clientId, '', tokens);
     console.log(`${ LOG_PREFIX } Adopted tokens for ${ integrationId }/${ accountId }`);
   }
 
   // ── Schedule proactive refresh ────────────────────────────────
 
   private scheduleRefresh(
+    custody: ResolvedTokenCustody,
     integrationId: string,
     accountId: string,
     providerId: string,
@@ -816,29 +617,29 @@ export class OAuthService {
     const key = timerKey(integrationId, accountId);
 
     // Clear any existing timer
-    const existing = refreshTimers.get(key);
+    const existing = this.scheduler.get(key);
     if (existing) {
       clearTimeout(existing);
     }
 
     // In vault mode Desktop never holds the refresh token; the authority does.
-    if (!tokens.refresh_token && !usesContainerVaultAuthority()) {
+    if (!tokens.refresh_token && custody.kind !== 'vault') {
       return; // No refresh token — nothing to schedule
     }
 
     const provider = getOAuthProvider(providerId);
     const bufferMs = ((provider?.config.refreshBufferSeconds ?? DEFAULT_REFRESH_BUFFER_SECONDS) * 1000);
     const delayMs = refreshDelayMs(metadataExpiry(tokens.expires_at), bufferMs);
-    if (usesContainerVaultAuthority()) vaultRefreshAt.set(key, Date.now() + delayMs);
+    if (custody.kind === 'vault') this.scheduler.refreshAt.set(key, Date.now() + delayMs);
 
     console.log(`${ LOG_PREFIX } Scheduling refresh for ${ integrationId }/${ accountId } in ${ Math.round(delayMs / 1000) }s`);
 
     const timer = setTimeout(async() => {
       try {
-        await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
+        await this.refreshAccessTokenWithCustody(custody, integrationId, accountId, providerId, clientId, clientSecret);
       } catch (err) {
         console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
-        this.scheduleRefreshRetry(integrationId, accountId, providerId, clientId, clientSecret);
+        this.scheduleRefreshRetry(custody, integrationId, accountId, providerId, clientId, clientSecret);
       }
     }, delayMs);
 
@@ -847,10 +648,11 @@ export class OAuthService {
       timer.unref();
     }
 
-    refreshTimers.set(key, timer);
+    this.scheduler.set(key, timer);
   }
 
   private scheduleRefreshRetry(
+    custody: ResolvedTokenCustody,
     integrationId: string,
     accountId: string,
     providerId: string,
@@ -858,37 +660,37 @@ export class OAuthService {
     clientSecret: string,
   ): void {
     const key = timerKey(integrationId, accountId);
-    const existing = refreshTimers.get(key);
+    const existing = this.scheduler.get(key);
     if (existing) clearTimeout(existing);
     // Back off exponentially so a missing/dead credential doesn't retry forever at 60s.
-    const failures = (refreshRetryCounts.get(key) ?? 0) + 1;
-    refreshRetryCounts.set(key, failures);
+    const failures = (this.scheduler.retryCounts.get(key) ?? 0) + 1;
+    this.scheduler.retryCounts.set(key, failures);
     const delayMs = refreshRetryDelayMs(failures);
     // Request-time checks wait for the retry instead of hammering the vault.
-    if (usesContainerVaultAuthority()) vaultRefreshAt.set(key, Date.now() + delayMs);
+    if (custody.kind === 'vault') this.scheduler.refreshAt.set(key, Date.now() + delayMs);
     const retryTimer = setTimeout(async() => {
       try {
-        await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
-        refreshRetryCounts.delete(key);
+        await this.refreshAccessTokenWithCustody(custody, integrationId, accountId, providerId, clientId, clientSecret);
+        this.scheduler.retryCounts.delete(key);
       } catch (err) {
         console.error(`${ LOG_PREFIX } Auto-refresh retry failed for ${ integrationId }/${ accountId }:`, err);
-        this.scheduleRefreshRetry(integrationId, accountId, providerId, clientId, clientSecret);
+        this.scheduleRefreshRetry(custody, integrationId, accountId, providerId, clientId, clientSecret);
       }
     }, delayMs);
 
     if (retryTimer.unref) {
       retryTimer.unref();
     }
-    refreshTimers.set(key, retryTimer);
+    this.scheduler.set(key, retryTimer);
   }
 
   // ── Revoke tokens ─────────────────────────────────────────────
 
   async revokeTokens(integrationId: string, accountId = 'default'): Promise<void> {
-    if (usesContainerVaultAuthority()) {
-      const metadata = await getIntegrationService().getMetadataValues(integrationId, accountId);
-      const values = Object.fromEntries(metadata.map(value => [value.property, value.value]));
-      const provider = getOAuthProvider(values.provider_id || values.provider || '');
+    const custody = this.custodyResolver.resolve();
+    if (custody.kind === 'vault') {
+      const metadata = await custody.getMetadata(integrationId, accountId);
+      const provider = getOAuthProvider(metadata?.providerId || '');
       if (!provider?.config.revokeUrl) throw new Error(`${ LOG_PREFIX } OAuth provider does not expose a revoke endpoint`);
       const context = await issueLocalBrokerContext({
         agentId:         'oauth-revoke',
@@ -905,13 +707,15 @@ export class OAuthService {
         body:       {},
         injections: [{ field: 'access_token', target: 'form', name: 'token', scheme: 'raw' }],
       }));
+      await custody.remove(integrationId, accountId);
       this.clearRefreshTimer(integrationId, accountId);
       return;
     }
-    const stored = await this.getStoredTokens(integrationId, accountId);
+    const stored = await custody.getRawTokens(integrationId, accountId);
     if (!stored) return;
 
-    const provider = getOAuthProvider(stored.provider_id);
+    const metadata = await custody.getMetadata(integrationId, accountId);
+    const provider = getOAuthProvider(metadata?.providerId || '');
     const revokeUrl = provider?.config.revokeUrl;
 
     if (revokeUrl && stored.access_token) {
@@ -928,7 +732,7 @@ export class OAuthService {
     }
 
     // Remove from DB
-    await this.deleteStoredTokens(integrationId, accountId);
+    await custody.remove(integrationId, accountId);
 
     this.clearRefreshTimer(integrationId, accountId);
 
@@ -943,7 +747,7 @@ export class OAuthService {
       await provider?.onTokensRevoked({
         integrationId,
         accountId,
-        providerId: stored.provider_id,
+        providerId: metadata?.providerId || '',
       });
     } catch (err) {
       console.warn(`${ LOG_PREFIX } provider onTokensRevoked failed (non-fatal):`, err);
@@ -954,13 +758,13 @@ export class OAuthService {
 
   private clearRefreshTimer(integrationId: string, accountId: string): void {
     const key = timerKey(integrationId, accountId);
-    const timer = refreshTimers.get(key);
+    const timer = this.scheduler.get(key);
     if (timer) {
       clearTimeout(timer);
-      refreshTimers.delete(key);
+      this.scheduler.clearTimer(key);
     }
-    vaultRefreshAt.delete(key);
-    refreshRetryCounts.delete(key);
+    this.scheduler.refreshAt.delete(key);
+    this.scheduler.retryCounts.delete(key);
   }
 
   // ── Get a valid access token (auto-refreshes if expired) ──────
@@ -971,10 +775,11 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<string> {
-    if (usesContainerVaultAuthority()) {
+    const custody = this.custodyResolver.resolve();
+    if (!isRawTokenCustody(custody)) {
       throw new Error('unsupported_secret_egress: OAuth access tokens stay inside the local vault authority');
     }
-    const tokens = await this.ensureFreshTokens(integrationId, accountId, clientId, clientSecret);
+    const tokens = await this.ensureFreshTokensWithCustody(custody, integrationId, accountId, clientId, clientSecret);
 
     return tokens.access_token;
   }
@@ -985,30 +790,43 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<OAuthTokenSet> {
-    if (usesContainerVaultAuthority()) {
+    const custody = this.custodyResolver.resolve();
+    if (!isRawTokenCustody(custody)) {
       // Keep the vault copy fresh for brokered callers, but the token set
       // itself never leaves the authority.
-      await this.ensureVaultTokenFresh(integrationId, accountId);
+      await this.ensureVaultTokenFreshWithCustody(custody, integrationId, accountId);
       throw new Error('unsupported_secret_egress: OAuth token sets stay inside the local vault authority');
     }
-    const stored = await this.getStoredTokens(integrationId, accountId);
+    return this.ensureFreshTokensWithCustody(custody, integrationId, accountId, clientId, clientSecret);
+  }
+
+  private async ensureFreshTokensWithCustody(
+    custody: RawTokenCustody,
+    integrationId: string,
+    accountId: string,
+    clientId?: string,
+    clientSecret?: string,
+  ): Promise<OAuthTokenSet> {
+    const stored = await custody.getRawTokens(integrationId, accountId);
     if (!stored) {
       throw new Error(`${ LOG_PREFIX } No OAuth tokens for ${ integrationId }/${ accountId }`);
     }
 
-    const provider = getOAuthProvider(stored.provider_id);
+    const metadata = await custody.getMetadata(integrationId, accountId);
+    const providerId = metadata?.providerId || '';
+    const provider = getOAuthProvider(providerId);
     const providerCfg = provider?.config;
     const bufferMs = ((providerCfg?.refreshBufferSeconds ?? DEFAULT_REFRESH_BUFFER_SECONDS) * 1000);
     const derivedExpiry = stored.expires_at ?? decodeAccessTokenExpiry(stored.access_token);
     const hasKnownExpiry = !!derivedExpiry;
     const unknownExpiryLooksStale = !hasKnownExpiry &&
       !!stored.refresh_token &&
-      Date.now() - updatedAtMs(stored) > UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
+      Date.now() - (metadata?.updatedAt ?? Date.now()) > UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
 
     // Still valid, or no expiry is tracked and it was refreshed recently enough.
     if ((hasKnownExpiry && Date.now() < derivedExpiry - bufferMs) ||
         (!hasKnownExpiry && !unknownExpiryLooksStale)) {
-      return this.rowToTokenSet(stored);
+      return stored;
     }
 
     // Need to refresh — resolve client credentials
@@ -1036,198 +854,85 @@ export class OAuthService {
       clientSecret = csVal.value;
     }
 
-    const refreshed = await this.refreshAccessToken(
-      integrationId, accountId, stored.provider_id, clientId, clientSecret ?? '',
+    const refreshed = await this.refreshAccessTokenWithCustody(
+      custody, integrationId, accountId, providerId, clientId, clientSecret ?? '',
     );
 
     return refreshed;
   }
 
-  // ── DB: Store tokens ──────────────────────────────────────────
-
-  private async storeTokens(
-    integrationId: string,
-    accountId: string,
-    providerId: string,
-    tokens: OAuthTokenSet,
-  ): Promise<void> {
-    if (usesContainerVaultAuthority()) {
-      throw new Error('unsupported_secret_egress: OAuth token storage is owned by the local vault authority');
-    }
-    normalizeTokenExpiry(tokens);
-
-    await postgresClient.query(
-      `INSERT INTO oauth_tokens
-         (integration_id, account_id, provider_id, access_token, refresh_token, token_type, scope, expires_at, raw_response, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
-       ON CONFLICT (integration_id, account_id)
-       DO UPDATE SET
-         provider_id   = EXCLUDED.provider_id,
-         access_token  = EXCLUDED.access_token,
-         refresh_token = COALESCE(EXCLUDED.refresh_token, oauth_tokens.refresh_token),
-         token_type    = EXCLUDED.token_type,
-         scope         = EXCLUDED.scope,
-         expires_at    = EXCLUDED.expires_at,
-         raw_response  = EXCLUDED.raw_response,
-         updated_at    = CURRENT_TIMESTAMP`,
-      [
-        integrationId,
-        accountId,
-        providerId,
-        tokens.access_token,
-        tokens.refresh_token ?? null,
-        tokens.token_type || 'Bearer',
-        tokens.scope ?? null,
-        tokens.expires_at ?? null,
-        JSON.stringify(tokens),
-      ],
-    );
-
-    console.log(`${ LOG_PREFIX } Tokens stored for ${ integrationId }/${ accountId }`);
-  }
-
   // ── DB: Read tokens ───────────────────────────────────────────
 
   async getStoredTokens(integrationId: string, accountId = 'default'): Promise<OAuthTokenRow | null> {
-    if (usesContainerVaultAuthority()) {
+    const custody = this.custodyResolver.resolve();
+    if (!isRawTokenCustody(custody)) {
       throw new Error('unsupported_secret_egress: OAuth token records stay inside the local vault authority');
     }
-    return postgresClient.queryOne<OAuthTokenRow>(
-      `SELECT * FROM oauth_tokens WHERE integration_id = $1 AND account_id = $2`,
-      [integrationId, accountId],
-    );
-  }
-
-  private rowToTokenSet(row: OAuthTokenRow): OAuthTokenSet {
-    const raw = (row.raw_response && typeof row.raw_response === 'object' && !Array.isArray(row.raw_response))
-      ? row.raw_response
-      : {};
-    const expiresAt = row.expires_at ??
-      (typeof raw.expires_at === 'number' ? raw.expires_at : undefined) ??
-      decodeAccessTokenExpiry(row.access_token) ??
-      undefined;
-
+    const [tokens, metadata] = await Promise.all([
+      custody.getRawTokens(integrationId, accountId),
+      custody.getMetadata(integrationId, accountId),
+    ]);
+    if (!tokens || !metadata) return null;
     return {
-      ...raw,
-      access_token:  row.access_token,
-      refresh_token: row.refresh_token ?? (typeof raw.refresh_token === 'string' ? raw.refresh_token : undefined),
-      token_type:    row.token_type,
-      expires_at:    expiresAt,
-      scope:         row.scope ?? (typeof raw.scope === 'string' ? raw.scope : undefined),
+      integration_id: integrationId, account_id: accountId, provider_id: metadata.providerId,
+      access_token: tokens.access_token, refresh_token: tokens.refresh_token || null,
+      token_type: tokens.token_type || 'Bearer', scope: tokens.scope || null,
+      expires_at: tokens.expires_at || null, raw_response: tokens,
+      updated_at: new Date(metadata.updatedAt || Date.now()),
     };
-  }
-
-  // ── DB: Delete tokens ─────────────────────────────────────────
-
-  private async deleteStoredTokens(integrationId: string, accountId: string): Promise<void> {
-    await postgresClient.query(
-      `DELETE FROM oauth_tokens WHERE integration_id = $1 AND account_id = $2`,
-      [integrationId, accountId],
-    );
   }
 
   // ── Resume refresh timers on startup ──────────────────────────
 
   async resumeRefreshTimers(): Promise<void> {
-    if (usesContainerVaultAuthority()) {
-      await this.resumeVaultRefreshTimers();
-      return;
-    }
+    const custody = this.custodyResolver.resolve();
     try {
-      const rows = await postgresClient.query<OAuthTokenRow>(
-        `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL`,
-      );
-
+      const accounts = await custody.listRefreshable();
       const integrationService = getIntegrationService();
 
-      for (const row of rows) {
+      for (const account of accounts) {
         // Read client credentials — use built-in for public clients
-        const provider = getOAuthProvider(row.provider_id);
+        const provider = getOAuthProvider(account.providerId);
         const providerCfg = provider?.config;
-        let cid = providerCfg?.builtInClientId || '';
+        let cid = providerCfg?.builtInClientId || account.clientId || '';
         let cs = '';
 
         if (!cid) {
-          const cidVal = await integrationService.getIntegrationValue(row.integration_id, 'oauth_client_id', row.account_id) ||
-            await integrationService.getIntegrationValue(row.integration_id, 'client_id', row.account_id);
+          const cidVal = await integrationService.getIntegrationValue(account.integrationId, 'oauth_client_id', account.accountId) ||
+            await integrationService.getIntegrationValue(account.integrationId, 'client_id', account.accountId);
           cid = cidVal?.value || '';
         }
-        if (providerCfg?.clientAuthMethod !== 'none') {
-          const csVal = await integrationService.getIntegrationValue(row.integration_id, 'client_secret', row.account_id);
+        if (custody.kind !== 'vault' && providerCfg?.clientAuthMethod !== 'none') {
+          const csVal = await integrationService.getIntegrationValue(account.integrationId, 'client_secret', account.accountId);
           cs = csVal?.value || '';
         }
 
-        if (!cid || (providerCfg?.clientAuthMethod !== 'none' && !cs)) {
-          console.warn(`${ LOG_PREFIX } Skipping refresh timer for ${ row.integration_id }/${ row.account_id } — missing client credentials`);
+        if (!cid || (custody.kind !== 'vault' && providerCfg?.clientAuthMethod !== 'none' && !cs)) {
+          console.warn(`${ LOG_PREFIX } Skipping refresh timer for ${ account.integrationId }/${ account.accountId } — missing client credentials`);
           continue;
         }
 
         this.scheduleRefresh(
-          row.integration_id,
-          row.account_id,
-          row.provider_id,
+          custody,
+          account.integrationId,
+          account.accountId,
+          account.providerId,
           cid,
           cs,
-          this.rowToTokenSet(row),
+          { access_token: '', refresh_token: account.refreshable ? 'custodied' : undefined, token_type: account.tokenType || 'Bearer', expires_at: account.expiresAt },
         );
       }
 
-      console.log(`${ LOG_PREFIX } Resumed ${ rows.length } refresh timer(s)`);
+      console.log(`${ LOG_PREFIX } Resumed ${ accounts.length } refresh timer(s)`);
     } catch (err) {
       console.warn(`${ LOG_PREFIX } Failed to resume refresh timers (table may not exist yet):`, err);
-    }
-  }
-
-  /**
-   * Vault mode: enumerate OAuth-backed catalog integrations from vault
-   * metadata (expiry, provider id only — never token material) and schedule
-   * each account's refresh. Already-expired tokens refresh right away.
-   */
-  private async resumeVaultRefreshTimers(): Promise<void> {
-    try {
-      const { integrations } = await import('../integrations/catalog');
-      const broker = requireConfiguredCredentialBroker();
-      let scheduled = 0;
-
-      for (const [integrationId, integration] of Object.entries(integrations)) {
-        const fallbackProviderId = integration.oauthProviderId;
-        if (!fallbackProviderId || !getOAuthProvider(fallbackProviderId)) continue;
-        let metadata: BrokerIntegrationMetadataResponse;
-        try {
-          metadata = await broker.integrationMetadata(integrationId);
-        } catch {
-          continue; // no vault items for this integration
-        }
-        for (const account of metadata.accounts) {
-          if (!account.connected) continue;
-          const target = await this.vaultRefreshTarget(
-            integrationId, account.accountId, fallbackProviderId, account.properties,
-          );
-          if (!target) continue;
-          this.scheduleRefresh(integrationId, account.accountId, target.providerId, target.clientId, '', {
-            access_token: '',
-            token_type:   account.properties.token_type || 'Bearer',
-            expires_at:   target.expiresAt,
-          });
-          scheduled++;
-        }
-      }
-
-      console.log(`${ LOG_PREFIX } Resumed ${ scheduled } vault refresh timer(s)`);
-    } catch (err) {
-      console.warn(`${ LOG_PREFIX } Failed to resume vault refresh timers:`, err);
     }
   }
 
   // ── Shutdown ──────────────────────────────────────────────────
 
   shutdown(): void {
-    for (const [key, timer] of refreshTimers) {
-      clearTimeout(timer);
-    }
-    refreshTimers.clear();
-    vaultRefreshAt.clear();
-    refreshRetryCounts.clear();
+    this.scheduler.shutdown();
     console.log(`${ LOG_PREFIX } All refresh timers cleared`);
   }
 }

@@ -4,10 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /* eslint-disable */
-// Hard-coded integration definitions that are newer than (or missing from) the
-// per-category files in this folder: azure_devops, forgejo, gitea, meta-ads, n8n
-// (new) and bitbucket, cloudflare, cohere, gitlab, google_drive, openai, r2
-// (updated). Spread LAST in ./index.ts so these win by id.
+// Integration definitions that do not exist in the per-category files.
+// Duplicate ids are rejected by ./index.ts, so an integration must have exactly
+// one native definition.
 import type { Integration } from '../types';
 
 export const nativeAdditionalIntegrations: Record<string, Integration> = {
@@ -575,50 +574,10 @@ export const nativeAdditionalIntegrations: Record<string, Integration> = {
       {
         "key": "base_url",
         "title": "Base URL",
-        "hint": "n8n instance URL (default: http://127.0.0.1:30119)",
+        "hint": "n8n instance URL (default: the local n8n URL)",
         "type": "url",
         "required": false,
-        "placeholder": "http://127.0.0.1:30119"
-      }
-    ]
-  },
-  "openai": {
-    "id": "openai",
-    "name": "OpenAI",
-    "description": "Connect OpenAI models for chat, reasoning, and multimodal generation.",
-    "category": "AI Infrastructure",
-    "icon": "openai.svg",
-    "paid": true,
-    "sort": 4,
-    "beta": false,
-    "comingSoon": false,
-    "connected": false,
-    "version": "1.0.0",
-    "lastUpdated": "2026-02-28 11:42:00",
-    "developer": "OpenAI",
-    "oauth": true,
-    "oauthProviderId": "openai",
-    "formGuide": "Paste your OpenAI API key or sign in with OAuth for unlimited access via your ChatGPT Plus/Pro subscription.",
-    "properties": [
-      {
-        "key": "api_key",
-        "title": "OpenAI API Key",
-        "hint": "Generate this in your OpenAI dashboard.",
-        "type": "password",
-        "required": true,
-        "placeholder": "sk-..."
-      },
-      {
-        "key": "model",
-        "title": "Model",
-        "hint": "Select an OpenAI model to use for completions.",
-        "type": "select",
-        "required": true,
-        "placeholder": "Select a model...",
-        "selectBoxId": "openai_models",
-        "selectDependsOn": [
-          "api_key"
-        ]
+        "placeholder": "the local n8n URL"
       }
     ]
   },

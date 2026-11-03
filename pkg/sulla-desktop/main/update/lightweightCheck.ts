@@ -24,6 +24,8 @@ import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import semver from 'semver';
 import yaml from 'yaml';
 
+import { readUpdateChannelState } from './channelState';
+
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.update;
@@ -41,6 +43,8 @@ export interface LightweightCheckResult {
   releaseNotes?:   string;
   /** The feed file that was read (for debugging). */
   feedUrl:         string;
+  /** Whether the feed has not been published yet. */
+  feedMissing?:    boolean;
 }
 
 interface UpdateYaml {
@@ -74,7 +78,7 @@ async function readYaml<T>(file: string): Promise<T | undefined> {
  * (written by electron-builder from packaging/electron-builder.yml), falling
  * back to `dev-app-update.yml` when running from source.
  */
-async function resolveFeedBaseUrl(): Promise<string> {
+export async function resolveDefaultFeedBaseUrl(): Promise<string> {
   const candidates = [
     new ElectronAppAdapter().appUpdateConfigPath,
     path.join(app.getAppPath(), 'dev-app-update.yml'),
@@ -97,9 +101,27 @@ async function resolveFeedBaseUrl(): Promise<string> {
  */
 export async function performLightweightCheck(): Promise<LightweightCheckResult> {
   const currentVersion = app.getVersion();
-  const base = await resolveFeedBaseUrl();
-  const feedUrl = new URL(FEED_FILE, base.endsWith('/') ? base : `${ base }/`).toString();
+  const configuredBase = await resolveDefaultFeedBaseUrl();
+  const state = readUpdateChannelState();
+  const configured = new URL(configuredBase.endsWith('/') ? configuredBase : `${ configuredBase }/`);
+  const base = state.pinnedVersion
+    ? new URL(`../../releases/v${ state.pinnedVersion }/`, configured).toString()
+    : state.channel === 'nightly'
+      ? new URL('../nightly/', configured).toString()
+      : configured.toString();
+  const feedUrl = new URL(FEED_FILE, base).toString();
   const response = await net.fetch(feedUrl, { cache: 'no-store' });
+
+  // A missing feed is expected before the first release is published. Treat
+  // it as an empty release channel rather than surfacing a noisy 404 error.
+  if (response.status === 404) {
+    return {
+      updateAvailable: false,
+      currentVersion,
+      feedUrl,
+      feedMissing: true,
+    };
+  }
 
   if (!response.ok) {
     throw new Error(`Update feed ${ feedUrl } returned HTTP ${ response.status }`);
@@ -111,7 +133,7 @@ export async function performLightweightCheck(): Promise<LightweightCheckResult>
     throw new Error(`Update feed ${ feedUrl } has no valid version`);
   }
   const current = semver.parse(currentVersion, { loose: true });
-  const updateAvailable = current ? semver.gt(latest, current) : false;
+  const updateAvailable = current ? semver.neq(latest, current) && (semver.gt(latest, current) || !!state.pinnedVersion || (state.channel === 'lts' && semver.prerelease(current) !== null)) : false;
 
   return {
     updateAvailable,

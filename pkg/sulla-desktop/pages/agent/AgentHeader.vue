@@ -6,10 +6,10 @@
 -->
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between bg-page pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
+    class="app-titlebar relative flex flex-none items-end justify-between pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
-    <div class="relative flex shrink-0 items-center pb-1">
+    <div class="relative flex shrink-0 items-center self-stretch">
       <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
@@ -183,7 +183,7 @@
         class="flex gap-2"
       >
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle left pane"
           @click="$emit('toggle-left-pane')"
@@ -195,7 +195,7 @@
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <rect
               x="3"
@@ -226,7 +226,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle center pane"
           @click="$emit('toggle-center-pane')"
@@ -245,7 +245,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle right pane"
           @click="$emit('toggle-right-pane')"
@@ -282,7 +282,7 @@
       >
         <label class="sr-only">Theme</label>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
@@ -291,7 +291,7 @@
             v-if="isDark"
             aria-hidden="true"
             viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <path
               fill-rule="evenodd"
@@ -303,7 +303,7 @@
             v-else
             aria-hidden="true"
             viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <path
               fill-rule="evenodd"
@@ -317,7 +317,7 @@
       <div class="relative hidden lg:flex">
         <button
           type="button"
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           aria-label="More options"
           @click="openMoreMenu"
         >
@@ -359,7 +359,7 @@
             fill="none"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-5 w-5 stroke-slate-500"
+            class="h-5 w-5 stroke-[var(--text-muted)]"
           >
             <path d="M4 7h16M4 12h16M4 17h16" />
           </svg>
@@ -377,7 +377,7 @@
     class="fixed inset-0 z-40 lg:hidden"
   >
     <div
-      class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
+      class="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
     <div class="fixed top-10 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
@@ -1329,6 +1329,11 @@ function handleTabContextMenuAction(
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
+  /* One surface for the whole bar: the logo, the tab strip and the right-hand
+     controls share the tab strip's glass background and a single bottom
+     border that runs edge to edge. */
+  background: linear-gradient(var(--bg-glass), var(--bg-glass)), var(--bg-page);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .app-titlebar a,
@@ -1409,7 +1414,7 @@ function handleTabContextMenuAction(
 .tab-item {
   --tab-bg: var(--bg-surface-alt);
   --tab-bg-hover: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
-  --tab-accent: var(--accent-primary);
+  --tab-accent: var(--accent);
 
   display: flex;
   align-items: center;
@@ -1583,7 +1588,7 @@ function handleTabContextMenuAction(
   top: 28%;
   height: 44%;
   width: 1px;
-  background: color-mix(in srgb, var(--border-default) 70%, transparent);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
@@ -1608,39 +1613,39 @@ function handleTabContextMenuAction(
 */
 .tab-mode-routines,
 .tab-mode-marketplace {
-  --tab-bg: #0b1426;
-  --tab-bg-hover: rgba(74, 111, 165, 0.12);
-  --tab-accent: #7ea6d6;
+  --tab-bg: var(--bg-page);
+  --tab-bg-hover: color-mix(in srgb, var(--accent) 12%, transparent);
+  --tab-accent: var(--accent-hover);
 }
 
 .tab-mode-chat {
   --tab-bg: var(--bg-surface-alt);
-  --tab-accent: var(--accent-primary);
+  --tab-accent: var(--accent);
 }
 
 .tab-mode-vault {
   --tab-bg: var(--bg-surface-alt);
-  --tab-accent: #d97757;
+  --tab-accent: var(--status-warning);
 }
 
 .tab-mode-calendar {
-  --tab-accent: #8ab4f8;
+  --tab-accent: var(--accent-hover);
 }
 
 .tab-mode-integrations {
-  --tab-accent: #7ecfa8;
+  --tab-accent: var(--status-success);
 }
 
 .tab-mode-account {
-  --tab-accent: #c9a15c;
+  --tab-accent: var(--status-warning);
 }
 
 .tab-mode-secretary {
-  --tab-accent: #b98cf0;
+  --tab-accent: var(--accent);
 }
 
 .tab-mode-history {
-  --tab-accent: #8b949e;
+  --tab-accent: var(--text-muted);
 }
 
 .tab-new {
@@ -1724,7 +1729,7 @@ function handleTabContextMenuAction(
   top: 25%;
   width: 1px;
   height: 50%;
-  background: var(--border-default);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
@@ -1734,19 +1739,19 @@ function handleTabContextMenuAction(
 
 /* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
    global .tab selectors. */
-.theme-noir .app-titlebar .tab-scroll-wrapper {
+.app-titlebar .tab-scroll-wrapper {
   --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 
   align-items: center;
   height: 43px;
   padding: 3px 5px 5px;
   margin-left: 14px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
-  border-bottom: 1px solid var(--nx-hair);
-  backdrop-filter: blur(10px);
+  /* The background and bottom border live on .app-titlebar so they span the
+     full width instead of stopping where the tabs begin. */
+  background: transparent;
 }
 
-.theme-noir .app-titlebar .tab-scroll-container {
+.app-titlebar .tab-scroll-container {
   align-items: center;
   gap: 4px;
   height: 40px;
@@ -1755,30 +1760,26 @@ function handleTabContextMenuAction(
   scroll-behavior: smooth;
 }
 
-.theme-noir .app-titlebar .tab-active-indicator {
+.app-titlebar .tab-active-indicator {
   position: absolute;
   display: block;
   top: 1px;
   left: 0;
   height: 34px;
   border-radius: 17px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 50%, transparent), inset 0 1px 0 rgba(232, 240, 247, .07), 0 0 22px color-mix(in srgb, var(--nx-accent) 20%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent-hover) 50%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 20%, transparent);
   pointer-events: none;
   z-index: 0;
   transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
 }
 
-.theme-noir-light .app-titlebar .tab-scroll-wrapper {
-  background: var(--nx-glass);
+.app-titlebar .tab-active-indicator {
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent-border), 0 4px 14px color-mix(in srgb, var(--accent-hover) 18%, transparent);
 }
 
-.theme-noir-light .app-titlebar .tab-active-indicator {
-  background: var(--nx-indicator-bg);
-  box-shadow: inset 0 0 0 1px var(--nx-indicator-edge), 0 4px 14px color-mix(in srgb, var(--nx-accent-2) 18%, transparent);
-}
-
-.theme-noir .app-titlebar .tab-active-indicator::after {
+.app-titlebar .tab-active-indicator::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -1787,11 +1788,11 @@ function handleTabContextMenuAction(
   height: 3px;
   margin-left: -11px;
   border-radius: 3px 3px 0 0;
-  background: var(--nx-accent-2);
-  box-shadow: 0 0 10px var(--nx-accent-2);
+  background: var(--accent-hover);
+  box-shadow: 0 0 10px var(--accent-hover);
 }
 
-.theme-noir .app-titlebar .tab-item {
+.app-titlebar .tab-item {
   width: 136px;
   min-width: 112px;
   max-width: 176px;
@@ -1801,7 +1802,7 @@ function handleTabContextMenuAction(
   padding: 0 8px 0 12px;
   border: 0;
   border-radius: 17px;
-  color: var(--read-3, var(--nx-read-3));
+  color: var(--read-3, var(--text-secondary));
   background: transparent;
   font-size: 12.5px;
   font-weight: 500;
@@ -1809,36 +1810,36 @@ function handleTabContextMenuAction(
   transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
 }
 
-.theme-noir .app-titlebar .tab-item:hover {
-  color: var(--read-2, var(--nx-read-2));
-  background: color-mix(in srgb, var(--nx-accent) 9%, transparent);
+.app-titlebar .tab-item:hover {
+  color: var(--read-2, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
-.theme-noir .app-titlebar .tab-item:active {
+.app-titlebar .tab-item:active {
   transform: scale(.95);
   transition: transform .08s;
 }
 
-.theme-noir .app-titlebar .tab-active,
-.theme-noir .app-titlebar .tab-active-native {
-  color: var(--read-1, var(--nx-read-1));
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  color: var(--read-1, var(--text-primary));
   background: transparent;
   border: 0;
   border-radius: 17px;
   font-weight: 500;
 }
 
-.theme-noir .app-titlebar .tab-accent-bar {
+.app-titlebar .tab-accent-bar {
   display: none;
 }
 
-.theme-noir .app-titlebar .tab-active::before,
-.theme-noir .app-titlebar .tab-active::after,
-.theme-noir .app-titlebar .tab-inactive::before {
+.app-titlebar .tab-active::before,
+.app-titlebar .tab-active::after,
+.app-titlebar .tab-inactive::before {
   display: none;
 }
 
-.theme-noir .app-titlebar .tab-pinned {
+.app-titlebar .tab-pinned {
   width: 36px;
   min-width: 36px;
   max-width: 36px;
@@ -1848,15 +1849,15 @@ function handleTabContextMenuAction(
   padding: 0;
 }
 
-.theme-noir .app-titlebar .tab-pinned .tab-label {
+.app-titlebar .tab-pinned .tab-label {
   display: none;
 }
 
-.theme-noir .app-titlebar .tab-pinned-boundary {
+.app-titlebar .tab-pinned-boundary {
   margin-left: 18px;
 }
 
-.theme-noir .app-titlebar .tab-pinned-boundary::before {
+.app-titlebar .tab-pinned-boundary::before {
   content: '';
   display: block;
   position: absolute;
@@ -1864,44 +1865,44 @@ function handleTabContextMenuAction(
   top: 8px;
   width: 1px;
   height: 18px;
-  background: var(--nx-hair-strong);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
-.theme-noir .app-titlebar .tab-preview {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+.app-titlebar .tab-preview {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent);
 }
 
-.theme-noir .app-titlebar .tab-icon {
+.app-titlebar .tab-icon {
   position: relative;
   width: 16px;
   height: 16px;
   opacity: .85;
 }
 
-.theme-noir .app-titlebar .tab-favicon-img,
-.theme-noir .app-titlebar .tab-favicon-svg {
+.app-titlebar .tab-favicon-img,
+.app-titlebar .tab-favicon-svg {
   width: 16px;
   height: 16px;
 }
 
-.theme-noir .app-titlebar .tab-active .tab-icon,
-.theme-noir .app-titlebar .tab-active-native .tab-icon {
-  color: var(--read-1, var(--nx-read-1));
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--nx-accent-2) 70%, transparent));
+.app-titlebar .tab-active .tab-icon,
+.app-titlebar .tab-active-native .tab-icon {
+  color: var(--read-1, var(--text-primary));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent-hover) 70%, transparent));
 }
 
-.theme-noir .app-titlebar .tab-working .tab-icon::after {
+.app-titlebar .tab-working .tab-icon::after {
   content: '';
   position: absolute;
   inset: -4px;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 55%, var(--nx-accent-2) 85%, transparent);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.5px));
+  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent-hover) 85%, transparent);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), currentColor calc(100% - 1.5px));
   animation: tab-working-spin 1s linear infinite;
 }
 
-.theme-noir .app-titlebar .tab-working-streak {
+.app-titlebar .tab-working-streak {
   position: absolute;
   display: block;
   left: 14px;
@@ -1913,12 +1914,12 @@ function handleTabContextMenuAction(
   pointer-events: none;
 }
 
-.theme-noir .app-titlebar .tab-working-streak::after {
+.app-titlebar .tab-working-streak::after {
   content: '';
   position: absolute;
   inset: 0;
   width: 40%;
-  background: linear-gradient(90deg, transparent, var(--nx-accent-2), transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
   animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
 }
 
@@ -1931,107 +1932,107 @@ function handleTabContextMenuAction(
   to { transform: translateX(260%); }
 }
 
-.theme-noir .app-titlebar .tab-close {
+.app-titlebar .tab-close {
   width: 18px;
   height: 18px;
   margin-left: auto;
   border-radius: 9px;
-  color: var(--read-4, var(--nx-read-4));
+  color: var(--read-4, var(--text-muted));
   opacity: 0;
   transform: scale(.6);
   transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
 }
 
-.theme-noir .app-titlebar .tab-item:hover .tab-close {
+.app-titlebar .tab-item:hover .tab-close {
   opacity: 1;
   transform: scale(1);
 }
 
-.theme-noir .app-titlebar .tab-close:hover {
-  color: var(--read-1, var(--nx-read-1));
-  background: color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
+.app-titlebar .tab-close:hover {
+  color: var(--read-1, var(--text-primary));
+  background: var(--bg-surface-hover);
 }
 
-.theme-noir .app-titlebar .tab-new {
+.app-titlebar .tab-new {
   width: 34px;
   height: 34px;
   padding: 0;
   margin-left: 4px;
   border-radius: 17px;
-  color: var(--read-3, var(--nx-read-3));
+  color: var(--read-3, var(--text-secondary));
   transition: background .16s, color .16s, transform .5s var(--tab-spring);
 }
 
-.theme-noir .app-titlebar .tab-new svg {
+.app-titlebar .tab-new svg {
   transition: transform .5s var(--tab-spring);
 }
 
-.theme-noir .app-titlebar .tab-new:hover {
-  color: var(--read-1, var(--nx-read-1));
-  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+.app-titlebar .tab-new:hover {
+  color: var(--read-1, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.theme-noir .app-titlebar .tab-new:hover svg {
+.app-titlebar .tab-new:hover svg {
   transform: rotate(90deg);
 }
 
-.theme-noir .app-titlebar .tab-new:active {
+.app-titlebar .tab-new:active {
   transform: scale(.88);
 }
 
-.theme-noir .app-titlebar .tab-scroll-chevron {
+.app-titlebar .tab-scroll-chevron {
   width: 24px;
-  color: var(--read-3, var(--nx-read-3));
+  color: var(--read-3, var(--text-secondary));
   border-radius: 12px;
 }
 
-.theme-noir .app-titlebar .tab-scroll-chevron:hover {
-  color: var(--read-1, var(--nx-read-1));
-  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.app-titlebar .tab-scroll-chevron:hover {
+  color: var(--read-1, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .app-titlebar .tab-peek {
+.app-titlebar .tab-peek {
   position: absolute;
   display: block;
   top: 46px;
   width: 240px;
   padding: 12px;
-  border: 1px solid var(--nx-hair-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 14px;
-  color: var(--read-1, var(--nx-read-1));
-  background: rgba(12, 18, 28, .97);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+  color: var(--read-1, var(--text-primary));
+  background: var(--bg-elevated);
+  box-shadow: 0 14px 40px var(--elev-float);
   pointer-events: none;
   z-index: 20;
   animation: tab-peek-in .4s var(--tab-spring) both;
 }
 
-.theme-noir-light .app-titlebar .tab-peek {
-  background: color-mix(in srgb, var(--nx-surface) 97%, transparent);
-  box-shadow: var(--nx-shadow-lg);
+.app-titlebar .tab-peek {
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  box-shadow: var(--elev-raised);
 }
 
-.theme-noir .app-titlebar .tab-peek-title,
-.theme-noir .app-titlebar .tab-peek-status {
+.app-titlebar .tab-peek-title,
+.app-titlebar .tab-peek-status {
   display: block;
 }
 
-.theme-noir .app-titlebar .tab-peek-title {
+.app-titlebar .tab-peek-title {
   margin-bottom: 4px;
   font-size: 12.5px;
   font-weight: 600;
 }
 
-.theme-noir .app-titlebar .tab-peek-status {
+.app-titlebar .tab-peek-status {
   overflow: hidden;
-  color: var(--read-4, var(--nx-read-4));
+  color: var(--read-4, var(--text-muted));
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.theme-noir .app-titlebar .tab-tooltip {
+.app-titlebar .tab-tooltip {
   width: auto;
   max-width: 240px;
   padding: 6px 10px;
@@ -2048,18 +2049,18 @@ function handleTabContextMenuAction(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .app-titlebar .tab-active-indicator,
-  .theme-noir .app-titlebar .tab-item,
-  .theme-noir .app-titlebar .tab-close,
-  .theme-noir .app-titlebar .tab-new,
-  .theme-noir .app-titlebar .tab-new svg,
-  .theme-noir .app-titlebar .tab-peek {
+  .app-titlebar .tab-active-indicator,
+  .app-titlebar .tab-item,
+  .app-titlebar .tab-close,
+  .app-titlebar .tab-new,
+  .app-titlebar .tab-new svg,
+  .app-titlebar .tab-peek {
     animation: none;
     transition-duration: 0s;
   }
 
-  .theme-noir .app-titlebar .tab-working .tab-icon::after,
-  .theme-noir .app-titlebar .tab-working-streak::after {
+  .app-titlebar .tab-working .tab-icon::after,
+  .app-titlebar .tab-working-streak::after {
     animation: none;
   }
 }
@@ -2067,7 +2068,7 @@ function handleTabContextMenuAction(
 
 <style>
 /* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
-.theme-noir .tab-anim-enter-from {
+.tab-anim-enter-from {
   opacity: 0;
   width: 0;
   min-width: 0;
@@ -2077,29 +2078,29 @@ function handleTabContextMenuAction(
   overflow: hidden;
 }
 
-.theme-noir .tab-anim-enter-active {
+.tab-anim-enter-active {
   overflow: hidden;
   transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.theme-noir .tab-anim-enter-to {
+.tab-anim-enter-to {
   opacity: 1;
   width: 136px;
   max-width: 176px;
 }
 
-.theme-noir .tab-anim-leave-from {
+.tab-anim-leave-from {
   opacity: 1;
   width: 136px;
   max-width: 176px;
 }
 
-.theme-noir .tab-anim-leave-active {
+.tab-anim-leave-active {
   overflow: hidden;
   transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
 }
 
-.theme-noir .tab-anim-leave-to {
+.tab-anim-leave-to {
   opacity: 0;
   width: 0;
   min-width: 0;
@@ -2109,14 +2110,14 @@ function handleTabContextMenuAction(
   overflow: hidden;
 }
 
-.theme-noir .tab-anim-move {
+.tab-anim-move {
   transition: transform .58s var(--tab-spring);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .tab-anim-enter-active,
-  .theme-noir .tab-anim-leave-active,
-  .theme-noir .tab-anim-move {
+  .tab-anim-enter-active,
+  .tab-anim-leave-active,
+  .tab-anim-move {
     transition-duration: 0s;
   }
 }

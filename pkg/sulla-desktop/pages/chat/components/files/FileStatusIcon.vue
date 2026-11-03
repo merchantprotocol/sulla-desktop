@@ -65,10 +65,10 @@ const label = computed(() => ({ local: 'Available in Files', online: 'Online onl
 </script>
 
 <style scoped>
-.file-status { width:18px;height:18px;display:inline-grid;place-items:center;flex:none;color:var(--ok) }
+.file-status { width:18px;height:18px;display:inline-grid;place-items:center;flex:none;color:var(--status-success) }
 .file-status svg { width:14px;height:14px }
-.file-status.online { color:var(--nx-read-4) }
-.file-status.syncing { color:var(--nx-accent-2) }
+.file-status.online { color:var(--text-dim) }
+.file-status.syncing { color:var(--accent-hover) }
 .file-status.syncing svg { animation:chat-spin 1.6s linear infinite }
-.file-status.conflict { color:var(--err) }
+.file-status.conflict { color:var(--status-error) }
 </style>

@@ -191,6 +191,11 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'process-manager.html'),
       filename: 'process-manager.html',
     },
+    support: {
+      entry:    path.join(import.meta.dirname, 'entry', 'support.ts'),
+      template: path.join(import.meta.dirname, 'public', 'support.html'),
+      filename: 'support.html',
+    },
     updates: {
       entry:    path.join(import.meta.dirname, 'entry', 'updates.ts'),
       template: path.join(import.meta.dirname, 'public', 'updates.html'),

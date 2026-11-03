@@ -81,6 +81,6 @@ defineExpose({ scroller, scrollToBottom });
 }
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
-.scroller::-webkit-scrollbar-thumb { background: rgba(168, 192, 220, 0.18); border-radius: 4px; }
-.scroller::-webkit-scrollbar-thumb:hover { background: rgba(168, 192, 220, 0.35); }
+.scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }
+.scroller::-webkit-scrollbar-thumb:hover { background: var(--accent-glow); }
 </style>

@@ -20,6 +20,7 @@ import { queryNativeSourcePage, type NativeSourcePage, type NativeSourcePageRow 
 import { streamFileContent } from './fileStream.js';
 import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
+import { collectionIdFor } from './systemAreas.js';
 import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
 
 import type { FilesIdentity } from './auth.js';
@@ -139,12 +140,6 @@ function conflictPath(path:string, device:string):string {
   const date = new Date().toISOString().replace(/T.*/, '');
   return `${ stem } (conflicted copy ${ device.replace(/[^\w-]/g, '-') } ${ date })${ extension }`;
 }
-function collectionIdFor(userId:string, rootId = 'default'):string {
-  const identity = rootId === 'default' ? `sulla-files:v1:${ userId }` : `sulla-files:root:v1:${ userId }:${ rootId }`;
-  const value = createHash('sha256').update(identity).digest('hex').slice(0, 32).split(''); value[12] = '4'; value[16] = '8';
-  return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
-}
-
 function serializeFingerprint(value:PublicationReceipt['fingerprint']):NonNullable<PathOperationReceipt['fingerprint']> {
   return { dev: value.dev.toString(), ino: value.ino.toString(), size: value.size, mtimeMs: value.mtimeMs };
 }
@@ -1265,7 +1260,9 @@ export class LocalFilesManager {
     try {
       await client.query('BEGIN');
       const existing = await client.query(`SELECT c.id FROM collections c WHERE c.owner_user_id=$2 AND c.kind='knowledge' AND c.published=TRUE AND c.legacy_source=FALSE
-        AND (c.id=$1 OR c.id=(SELECT shadow_collection_id FROM files_legacy_collection_map WHERE source_collection_id=$1)) ORDER BY (c.id=$1) DESC LIMIT 1`, [id, this.config.userId]);
+        AND (c.id=$1 OR c.id=(SELECT shadow_collection_id FROM files_legacy_collection_map WHERE source_collection_id=$1)
+          OR ($3 AND c.system_area IS NULL AND c.explorer_path=''))
+        ORDER BY (c.id=$1) DESC,c.created_at LIMIT 1`, [id, this.config.userId, root.primary]);
       if (!existing.rows[0]) {
         await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
           VALUES($1,$2,$3,$4,'knowledge',$5,'{}','{}',$6)`, [id, this.config.orgId ?? null, this.config.userId, root.primary ? 'Files' : root.name, root.syncMode === 'server' && this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);

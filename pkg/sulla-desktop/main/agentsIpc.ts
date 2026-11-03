@@ -104,12 +104,25 @@ export interface AgentDefinitionResponse {
   provider:           string | null;
   model:              string | null;
   modelSlot:          import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot | null;
+  modelChoice:        import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice;
   prompt:             string;
   sourceKind:         string;
   marketplaceVersion: string | null;
   status:             string;
   enabled:            boolean;
   runLocation:        'vm' | 'container';
+  /** Directory card fields (migration 0110_add_agent_directory_fields). */
+  whenToCall:         string;
+  whenNotToCall:      string;
+  send:               string;
+  returns:            string;
+  costTier:           import('@pkg/agent/database/models/AgentDefinitionModel').AgentCostTier | null;
+  canCall:            string[];
+  isBuiltin:          boolean;
+  frontDoor:          boolean | null;
+  updatedAt:          string;
+  /** config.type ('lead' | 'planner' | 'worker' | 'designer' | ...): the other half of the Manager/Worker split, alongside canCall. */
+  type:               string | null;
 }
 
 export interface AgentConversationSummary {
@@ -193,12 +206,23 @@ export function initAgentsIpc(): void {
       provider:           a.provider,
       model:              a.model,
       modelSlot:          a.model_slot,
+      modelChoice:        a.model_choice ?? (a.provider && a.model ? { mode: 'pin', provider: a.provider, model: a.model } : { mode: 'list' }),
       prompt:             a.prompt_content,
       sourceKind:         a.source_kind,
       marketplaceVersion: a.marketplace_version,
       status:             a.status,
       enabled:            a.enabled,
       runLocation:        a.run_location,
+      whenToCall:         a.when_to_call,
+      whenNotToCall:      a.when_not_to_call,
+      send:               a.send,
+      returns:            a.returns,
+      costTier:           a.cost_tier,
+      canCall:            a.can_call,
+      isBuiltin:          a.is_builtin,
+      frontDoor:          a.front_door,
+      updatedAt:          toIso(a.updated_at),
+      type:               typeof a.config?.type === 'string' ? a.config.type : null,
     }));
   });
 
@@ -219,7 +243,7 @@ export function initAgentsIpc(): void {
     });
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt?: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.update(id, {
       ...patch,

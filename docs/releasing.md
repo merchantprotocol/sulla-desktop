@@ -56,8 +56,9 @@ For a stable "download the latest" link, read
    (`.github/workflows/update-feed.yaml`). It reads
    `releases/v<version>/latest.json`, checks every zip again, adds the GitHub
    release notes, refuses to replace a newer version, and writes
-   `channels/latest/latest.json` and then `channels/latest/latest-mac.yml`.
-   The feed goes last, so the app never sees a feed that points at a missing
+   `channels/latest/latest.json` and then `channels/latest/latest-mac.yml`. It then
+   fetches the live channel and downloads every advertised zip to recompute and
+   compare its sha512. The feed goes last, so the app never sees a feed that points at a missing
    file. Prereleases are not promoted.
 
 Until step 4, nothing users see changes. Installed apps pick the new version up

@@ -1131,9 +1131,12 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
 async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise<void> {
   try {
     const { buildTeamRecallContext } = await import('../services/AgentTeamRecall');
+    const { resolveAgentDepth } = await import('../tools/agents/jobRegistry');
+    const meta = state.metadata as any;
     (state.metadata as any).teamDirectoryContext = await buildTeamRecallContext({
       agentSlug,
-      text: latestUserText(state.messages),
+      text:  latestUserText(state.messages),
+      depth: await resolveAgentDepth(meta.subAgentDepth, meta.threadId),
     });
   } catch (err) {
     console.warn('[SubconsciousMiddleware] team recall failed:', err instanceof Error ? err.message : err);

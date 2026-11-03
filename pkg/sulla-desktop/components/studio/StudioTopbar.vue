@@ -16,6 +16,7 @@
     <label class="search">
       <UseCaseIcon name="search" />
       <input
+        ref="searchInput"
         :value="search"
         type="search"
         :placeholder="searchPlaceholder"
@@ -27,12 +28,16 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
+
 import UseCaseIcon from '@pkg/components/routines/UseCaseIcon.vue';
 
 // Top bar shared by every Studio section page: breadcrumb, page search and
 // page actions. Matches the Use Cases top bar in PackagesTab.
 withDefaults(defineProps<{ crumbs: string[]; search?: string; searchPlaceholder?: string }>(), { search: '', searchPlaceholder: 'Search' });
 const emit = defineEmits<{ (e: 'crumb', index: number): void; (e: 'update:search', value: string): void }>();
+const searchInput = ref<HTMLInputElement | null>(null);
+defineExpose({ focusSearch: () => searchInput.value?.focus() });
 </script>
 
 <style scoped>

@@ -11,7 +11,7 @@
  *   - Look-ahead prefetch (fetch next sentence while current plays)
  *   - Sequence counter to prevent race conditions
  *   - Content deduplication (10s window)
- *   - No fallback voice: a unit the selected engine can't render is skipped
+ *   - System-voice fallback while the default Kokoro model becomes ready
  *
  * This service is the ONLY component that plays TTS audio. All TTS goes through
  * enqueue() -> playNext() -> IPC 'audio-speak'. The enqueue() method logs a caller
@@ -233,7 +233,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       const cfg = await this.getTtsConfig();
 
       // Native OS voice: speak in-renderer via SpeechSynthesis — no IPC, no prefetch, no audio blob.
-      if (cfg.provider === 'system') {
+      if (cfg.provider === 'system' || await this.kokoroNeedsSystemFallback(cfg.provider)) {
         if (seq !== this.sequence) {
           this.playing = false;
 
@@ -339,9 +339,6 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         console.warn('[TTSPlayer] No audio data in result');
       }
     } catch (err) {
-      // No fallback to the OS voice: a unit the selected engine (e.g. Kokoro
-      // while its model downloads) can't render is skipped, not read in a
-      // different voice.
       logTTSSynthFailed(text);
       voiceTrace(this.traceTurnId, 'tts_error', { segment, durationMs: Date.now() - playStartTime, error: err instanceof Error ? err.message : String(err) });
       console.warn('[TTSPlayer] Synthesis failed, skipping unit:', err);
@@ -375,7 +372,9 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     // unit ahead is enough, and overlapping requests would only compete for CPU.
     if (this.queue.length === 0 || this.prefetchedAudio || this.prefetchingText !== null) return;
     // Native OS voice is synthesized locally on demand — nothing to prefetch over IPC.
-    if ((this.ttsConfig ?? await this.getTtsConfig()).provider === 'system') return;
+    const provider = (this.ttsConfig ?? await this.getTtsConfig()).provider;
+
+    if (provider === 'system' || await this.kokoroNeedsSystemFallback(provider)) return;
     if (this.queue.length === 0 || this.prefetchedAudio || this.prefetchingText !== null) return;
     const nextText = this.queue[0]; // peek, don't shift
 
@@ -408,8 +407,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
 
   /**
    * Reads the selected TTS provider, voice, and rate from settings (cached until
-   * stop() clears it). Defaults to on-device Kokoro (Bella) — free and keyless; while
-   * its model downloads, nothing is spoken (no native OS voice fallback).
+   * stop() clears it). Defaults to on-device Kokoro (Bella) — free and keyless;
+   * the native OS voice covers the one-time model download.
    */
   private async getTtsConfig(): Promise<{ provider: string; voiceURI: string; rate: number }> {
     if (this.ttsConfig) return this.ttsConfig;
@@ -436,6 +435,23 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     }
 
     return this.ttsConfig;
+  }
+
+  /** Keep replies audible while Kokoro is missing, downloading, extracting, or retrying an error. */
+  private async kokoroNeedsSystemFallback(provider: string): Promise<boolean> {
+    if (provider !== 'kokoro') return false;
+    try {
+      const status = await this.ipcInvoke('voice-kokoro-status');
+
+      if (status?.phase === 'ready') return false;
+      // Warm is idempotent and retries a previous download/checksum error.
+      this.ipcInvoke('voice-kokoro-warm').catch(() => { /* best-effort */ });
+
+      return true;
+    } catch {
+      // A status IPC failure must not make an otherwise speakable reply silent.
+      return true;
+    }
   }
 
   // ─── Native (OS) Voice ────────────────────────────────────────

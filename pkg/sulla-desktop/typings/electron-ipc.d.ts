@@ -64,6 +64,9 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
+  'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
+  'support:open': (section?: string) => void;
   'backend-state-check':   () => string;
   'k8s-restart':           () => void;
   'settings-read':         () => void;
@@ -272,7 +275,14 @@ export interface IpcMainInvokeEvents {
 
   // #region main/update (centralized UpdateManager)
   'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
-  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup' | 'support') => void;
+  'support:update-status':  () => import('@pkg/main/update/UpdateManager').RichUpdateState;
+  'support:update-install': () => void;
+  'support-session:get':      (id: string) => { session: any };
+  'support-session:events':   (id: string) => any;
+  'support-session:end':      (id: string, reason?: string) => any;
+  'support-session:extend':   (id: string, hours: number) => any;
+  'support-session:presence': (id: string) => { online: boolean; lastSeenAt: string | null };
   'updater:install':   () => void;
   // #endregion
 
@@ -291,6 +301,14 @@ export interface IpcMainInvokeEvents {
   'first-run-wizard-step':  (step: number) => void;
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
+  'first-run-ai:connect-api-key': (payload: { providerId: 'anthropic' | 'openai' | 'grok'; apiKey: string; workspaceId?: string }) => { success: boolean; error?: string; models?: string[] };
+  'integration:connect-form': (payload: { integrationId: string; accountId: string; label: string; values: Record<string, string> }) => { success: boolean; error?: string };
+  /** Whether the first chat can start right away; never blocks closing the wizard. */
+  'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
+  /** Retry the managed services now (the Repair action). */
+  'sulla-runtime:repair-services': () => void;
+  /** Why the last backend start failed, until the next start. */
+  'sulla-runtime:start-failure': () => { reason: string; message: string } | undefined;
   'app-quit':               () => void;
 
   // Accounts owner sessions and authorization URLs remain main-only. These
@@ -370,11 +388,8 @@ export interface IpcMainInvokeEvents {
   'system-prompt-edits:deny':         (id: string) => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord | null;
 
   /** Claude Code OAuth flow */
-  'claude-oauth:start':  (options?: { firstRun?: boolean }) => { success?: boolean; token?: string; error?: string };
-  'claude-oauth:cancel': () => void;
-
-  /** OpenAI OAuth flow */
-  'openai-oauth:start': () => { success: boolean; error?: string };
+  'claude-oauth:start':  (options?: { firstRun?: boolean }) => import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult;
+  'claude-oauth:cancel': () => import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult;
 
   /** Generic integration OAuth flow — runs in main so embedded auth windows (Codex, Grok) can construct BrowserWindow */
   'integration-oauth:start': (payload: {
@@ -389,6 +404,11 @@ export interface IpcMainInvokeEvents {
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
   'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:recovery-key-status': () => { location: string; label: string; checkedAt: string };
+  'sulla-cloud:recovery-key-rotate': () => { recoveryKey: string; storage: unknown; madeAt: string; [key: string]: unknown };
+  'sulla-cloud:recovery-key-copy':   (recoveryKey: string) => void;
+  'sulla-cloud:recovery-key-print':  (recoveryKey: string) => void;
+  'sulla-cloud:recovery-key-save':   (recoveryKey: string) => unknown;
   'sulla-cloud:send-otp':              (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:verify-otp':            (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-login':           (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
@@ -396,9 +416,14 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:apple-sign-in':         (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:logout':                () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:email-code-availability': () => { available: boolean };
+  'sulla-cloud:first-run-session':       () => { sessionInMemory: boolean; masterKeyRetained: boolean; email?: string; oldVaultLocked: boolean };
+  'sulla-cloud:account-exists':          (email: string) => { exists: boolean | null; error?: string };
+  'sulla-cloud:recovery-key-pending':    () => { recoveryKey: string; storage: { location: string; label: string; checkedAt: string }; madeAt: string } | undefined;
+  'sulla-cloud:recovery-key-shown':      () => void;
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
-  'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-settings:wait-for-backends': () => void;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
@@ -624,13 +649,17 @@ export interface IpcMainInvokeEvents {
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
-  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
-  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
+  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
   'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
   'agent-definitions:publish-check': (slug: string) => { secret: string | null; warnings: string[] } | { error: string };
   'agent-definitions:publish':     (slug: string) => import('@pkg/main/marketplace/publish').PublishResult | { error: string };
+  // Model routing (Preferences → AI models); contract in agent/languagemodels/modelRoutingTypes.ts.
+  'model-routing:get':   () => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
+  'model-routing:set':   (patch: Partial<Pick<import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
+  'model-routing:reset': (target: { section: 'agents' | 'subconscious' | 'classes'; class?: import('@pkg/agent/languagemodels/modelRoutingTypes').ModelClass }) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
@@ -1207,6 +1236,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
 
@@ -1223,7 +1253,12 @@ export interface IpcRendererEvents {
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;
+  /** Pushed when the first-chat readiness changes. */
+  'first-run:chat-ready-status':    (status: import('@pkg/main/chatReadiness').ChatReadyStatus) => void;
   'claude-oauth:url':               (url: string) => void;
+  'sulla-cloud:other-device-signin-code': (payload: { requestId: string; code: string; expiresAt: string; requestingDeviceId: string; requestingDeviceName: string }) => void;
+  'claude-oauth:stage':             (text: string) => void;
+  'claude-oauth:result':            (result: import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
   'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;

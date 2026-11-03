@@ -24,6 +24,7 @@ import { EventEmitter } from 'events';
 import { app, ipcMain } from 'electron';
 
 import type { UpdateState as RawUpdateState } from './index';
+import { reconcileCompletedUpdate, setUpdateChannel, type UpdateChannel, type UpdateChannelSetter, type UpdateChannelState } from './channelState';
 
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
@@ -40,7 +41,7 @@ export type UpdatePhase =
   | 'downloaded'
   | 'error';
 
-export type UpdateTrigger = 'manual' | 'auto' | 'startup';
+export type UpdateTrigger = 'manual' | 'auto' | 'startup' | 'support';
 
 export interface RichUpdateState {
   phase:              UpdatePhase;
@@ -67,6 +68,34 @@ export interface RichUpdateState {
   isPackaged:     boolean;
   /** Whether the latest server version is newer than our current one. */
   updateAvailable: boolean;
+  channel: UpdateChannel;
+  pinnedVersion?: string;
+  lastUpdateResult?: UpdateChannelState['lastUpdateResult'];
+}
+
+function formatUpdateError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = (error as { status?: number; statusCode?: number } | null)?.status
+    ?? (error as { statusCode?: number } | null)?.statusCode;
+
+  if ((status && status >= 500) || /HTTP 5\d\d\b/.test(message)) {
+    return 'The update server is unavailable right now. Try again later.';
+  }
+  if (/network|fetch failed|timed out|timeout|enotfound|econn|offline/i.test(message)) {
+    return 'Couldn’t reach the update server. Check your connection and try again.';
+  }
+
+  // Keep provider internals, headers, and stack traces out of Preferences.
+  return message.split('\n', 1)[0].replace(/https?:\/\/\S+/g, '').trim().slice(0, 240)
+    || 'The update check failed. Try again later.';
+}
+
+function isMissingFeedError(error: unknown): boolean {
+  const status = (error as { status?: number; statusCode?: number } | null)?.status
+    ?? (error as { statusCode?: number } | null)?.statusCode;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return status === 404 || (/404/.test(message) && /latest-mac\.yml|update feed/i.test(message));
 }
 
 /**
@@ -85,13 +114,19 @@ class UpdateManager extends EventEmitter {
     updaterEnabled:  false,
     isPackaged:      app.isPackaged,
     updateAvailable: false,
+    channel:         'lts',
   };
 
   /** The currently-requested trigger, carried through until the next terminal phase. */
   private pendingTrigger: UpdateTrigger | undefined;
+  private missingFeedLogged = false;
 
   constructor() {
     super();
+    const channelState = reconcileCompletedUpdate();
+    this.state.channel = channelState.channel;
+    this.state.pinnedVersion = channelState.pinnedVersion;
+    this.state.lastUpdateResult = channelState.lastUpdateResult;
 
     // Subscribe to low-level events immediately — the background.ts startup
     // path calls setupUpdate() directly, so we must be listening before any
@@ -131,6 +166,14 @@ class UpdateManager extends EventEmitter {
 
     updateEvents.on('raw-state', (raw: RawUpdateState) => {
       this.translateRawState(raw);
+    });
+
+    updateEvents.on('install-failed', (result: UpdateChannelState['lastUpdateResult']) => {
+      this.setState({
+        phase: 'error',
+        error: result?.error || 'Squirrel could not stage the update.',
+        lastUpdateResult: result,
+      });
     });
 
     // Register IPC handlers eagerly so any early window open can query state
@@ -232,6 +275,10 @@ class UpdateManager extends EventEmitter {
       const result = await performLightweightCheck();
 
       lightweightSucceeded = true;
+      if (result.feedMissing && !this.missingFeedLogged) {
+        this.missingFeedLogged = true;
+        console.info('[UpdateManager] update feed is not published yet; treating it as up to date');
+      }
       this.setState({
         updateAvailable:  result.updateAvailable,
         availableVersion: result.latestVersion,
@@ -265,7 +312,7 @@ class UpdateManager extends EventEmitter {
       if (!this.state.isPackaged) {
         this.setState({
           phase: 'error',
-          error: err?.message ?? String(err),
+          error: formatUpdateError(err),
         });
         this.pendingTrigger = undefined;
 
@@ -289,7 +336,7 @@ class UpdateManager extends EventEmitter {
       console.error('[UpdateManager] electron-updater stage failed:', err);
       this.setState({
         phase: 'error',
-        error: err?.message ?? String(err),
+        error: formatUpdateError(err),
       });
     }
   }
@@ -315,7 +362,7 @@ class UpdateManager extends EventEmitter {
     }
     const { installQueuedUpdate } = await import('./index');
 
-    installQueuedUpdate();
+    await installQueuedUpdate();
   }
 
   /**
@@ -341,9 +388,21 @@ class UpdateManager extends EventEmitter {
       };
     }
 
+    if (raw.error && isMissingFeedError(raw.error)) {
+      if (!this.missingFeedLogged) {
+        this.missingFeedLogged = true;
+        console.info('[UpdateManager] update feed is not published yet; treating it as up to date');
+      }
+      patch.phase = 'not-available';
+      patch.error = undefined;
+      this.setState(patch);
+
+      return;
+    }
+
     if (raw.error) {
       patch.phase = 'error';
-      patch.error = raw.error.message ?? String(raw.error);
+      patch.error = formatUpdateError(raw.error);
       this.setState(patch);
 
       return;
@@ -401,6 +460,53 @@ class UpdateManager extends EventEmitter {
     }
   }
 
+  /** Durable API used by Settings and the allowlisted remote-support handlers. */
+  async setChannel(channel: UpdateChannel, options: { pinnedVersion?: string; setBy: UpdateChannelSetter }): Promise<RichUpdateState> {
+    const channelState = setUpdateChannel(channel, options);
+    const { reconfigureUpdater } = await import('./index');
+    reconfigureUpdater();
+    this.setState({
+      channel: channelState.channel,
+      pinnedVersion: channelState.pinnedVersion,
+      lastUpdateResult: channelState.lastUpdateResult,
+      phase: 'idle', availableVersion: undefined, updateAvailable: false, progress: undefined, error: undefined,
+    });
+    return this.getState();
+  }
+
+  async checkAndInstall(): Promise<RichUpdateState> {
+    await this.checkForUpdates('support');
+    if (this.state.phase === 'downloaded') {
+      await this.installUpdate();
+      return this.getState();
+    }
+    if (!['available', 'downloading', 'checking'].includes(this.state.phase)) return this.getState();
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Timed out waiting for the update download.')) }, 30 * 60_000);
+      const onState = (next: RichUpdateState) => {
+        if (next.phase === 'downloaded') { cleanup(); resolve() }
+        else if (next.phase === 'error' || next.phase === 'not-available') { cleanup(); reject(new Error(next.error || 'No update is available.')) }
+      };
+      const cleanup = () => { clearTimeout(timeout); this.off('state', onState) };
+      this.on('state', onState);
+    });
+    await this.installUpdate();
+    return this.getState();
+  }
+
+  status(): { currentVersion: string; channel: UpdateChannel; pinnedVersion?: string; available?: string; downloading?: number; status: UpdatePhase; error?: string; lastUpdateResult?: UpdateChannelState['lastUpdateResult'] } {
+    return {
+      currentVersion: this.state.currentVersion,
+      channel: this.state.channel,
+      pinnedVersion: this.state.pinnedVersion,
+      available: this.state.updateAvailable ? this.state.availableVersion : undefined,
+      downloading: this.state.phase === 'downloading' ? this.state.progress?.percent ?? 0 : undefined,
+      status: this.state.phase,
+      error: this.state.error,
+      lastUpdateResult: this.state.lastUpdateResult,
+    };
+  }
+
   /**
    * Update the cached updater-enabled flag when the user toggles the setting.
    */
@@ -413,4 +519,9 @@ class UpdateManager extends EventEmitter {
 }
 
 export const updateManager = new UpdateManager();
+export const supportUpdateApi = {
+  setChannel: (channel: UpdateChannel, options: { pinnedVersion?: string; setBy: UpdateChannelSetter }) => updateManager.setChannel(channel, options),
+  checkAndInstall: () => updateManager.checkAndInstall(),
+  status: () => updateManager.status(),
+};
 export default updateManager;

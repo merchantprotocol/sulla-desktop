@@ -8,6 +8,8 @@ import fs, { constants } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
+import { hostPort } from '@pkg/utils/instance';
+
 const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS = 4;
 const MAX_TOTAL_INFLIGHT_BYTES = MAX_CONCURRENT_REQUESTS * MAX_SOURCE_BYTES;
@@ -87,7 +89,7 @@ export class SullaFilesSourceGateway {
   /** URL for a job container on the isolated, hostname-routed agent network. */
   get containerUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
-    return `http://sulla-host-relay:30124/_sulla/${ this.port }`;
+    return `http://sulla-host-relay:${ hostPort(30124) }/_sulla/${ this.port }`;
   }
 
   get loopbackUrl():string {

@@ -48,53 +48,53 @@ const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'runnin
 <style scoped>
 .tool {
   padding: 10px 0 10px 22px;
-  border-left: 1px solid rgba(80, 150, 179, 0.22);
+  border-left: 1px solid var(--accent-dim);
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px;
-  font-family: var(--mono); font-size: 11.5px;
-  color: var(--read-3); position: relative;
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--text-secondary); position: relative;
   transition: border-color 0.2s ease;
 }
-.tool:hover { border-left-color: rgba(106, 176, 204, 0.5); }
+.tool:hover { border-left-color: var(--accent-glow); }
 .tool::before {
   content: ""; position: absolute; left: -3px; top: 14px;
   width: 5px; height: 5px; border-radius: 50%;
-  background: rgba(80, 150, 179, 0.45);
+  background: var(--accent-glow);
 }
 .tool .kind {
   font-weight: 700; font-size: 9.5px; letter-spacing: 0.2em; text-transform: uppercase;
-  color: var(--steel-200); padding: 2px 7px; border-radius: 3px;
-  background: rgba(168, 192, 220, 0.1);
-  border: 1px solid rgba(168, 192, 220, 0.22);
+  color: var(--text-muted); padding: 2px 7px; border-radius: 3px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
   flex-shrink: 0;
 }
-.tool .desc { color: var(--read-2); flex: 1; }
-.tool .meta { color: var(--read-4); font-size: 10.5px; white-space: nowrap; }
-.tool.ok::before { background: var(--ok); }
-.tool.ok .meta  { color: var(--ok); opacity: 0.7; }
+.tool .desc { color: var(--text-primary); flex: 1; }
+.tool .meta { color: var(--text-muted); font-size: 10.5px; white-space: nowrap; }
+.tool.ok::before { background: var(--status-success); }
+.tool.ok .meta  { color: var(--status-success); opacity: 0.7; }
 .tool.run::before {
-  background: var(--steel-400); box-shadow: 0 0 12px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 12px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
 .tool.run .kind {
-  background: rgba(106, 176, 204, 0.14); color: var(--steel-400);
-  border-color: rgba(106, 176, 204, 0.38);
+  background: var(--accent-dim); color: var(--accent-hover);
+  border-color: var(--accent-glow);
 }
-.tool.run .meta { color: var(--steel-400); }
-.tool.err::before { background: var(--err); }
-.tool.err .kind   { background: rgba(252,165,165,0.12); color: var(--err); border-color: rgba(252,165,165,0.3); }
+.tool.run .meta { color: var(--accent-hover); }
+.tool.err::before { background: var(--status-error); }
+.tool.err .kind   { background: var(--status-warning-soft); color: var(--status-error); border-color: var(--status-warning); }
 .tool-output {
   flex-basis: 100%; margin-top: 6px;
-  color: var(--read-3);
+  color: var(--text-secondary);
 }
-.tool-output summary { cursor: pointer; color: var(--steel-300); }
+.tool-output summary { cursor: pointer; color: var(--accent-hover); }
 .tool-output span {
   display: block; margin-top: 8px;
-  color: var(--read-4); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-muted); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .tool-output pre {
   margin: 4px 0 0; padding: 8px 10px; max-height: 280px; overflow: auto;
   white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 5px;
-  color: var(--read-2); font: 10.5px/1.45 var(--mono);
+  color: var(--text-primary); font: 10.5px/1.45 var(--font-mono);
 }
 </style>

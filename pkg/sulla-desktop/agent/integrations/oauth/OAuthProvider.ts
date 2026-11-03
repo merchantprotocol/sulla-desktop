@@ -118,6 +118,28 @@ export interface OAuthProviderHookContext {
 export abstract class OAuthProvider {
   abstract readonly config: OAuthProviderConfig;
 
+  buildAuthorizeUrl(
+    clientId: string,
+    redirectUri: string,
+    state: string,
+    extraScopes: string[] = [],
+    codeChallenge?: string,
+  ): string {
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: [...this.config.scopes, ...extraScopes].join(this.config.scopeSeparator ?? ' '),
+      state,
+      ...this.config.extraAuthorizeParams,
+    });
+    if (codeChallenge) {
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
+    return `${ this.config.authorizeUrl }?${ params.toString() }`;
+  }
+
   /** Override to post-process token responses (e.g. extract user info) */
   async onTokenReceived(_tokens: OAuthTokenSet, _context?: OAuthProviderHookContext): Promise<void> {}
 

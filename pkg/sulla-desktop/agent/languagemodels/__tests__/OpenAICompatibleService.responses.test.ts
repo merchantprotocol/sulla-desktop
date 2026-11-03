@@ -3,15 +3,45 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { prepareProviderMessages } from '../../nodes/contextBudget';
+
 import { OpenAICompatibleService } from '../OpenAICompatibleService';
 
 class TestOpenAICompatibleService extends OpenAICompatibleService {
+  wire(messages: any[]): string {
+    const prepared = prepareProviderMessages(messages, 128_000);
+    const body = this.transformToResponsesAPI(this.buildRequestBody(prepared.messages, {}));
+
+    return this.buildFetchOptions(body).body as string;
+  }
+
   toResponses(body: any): any {
     return this.transformToResponsesAPI(body);
   }
 }
 
 describe('OpenAICompatibleService Responses API conversion', () => {
+  it.each(['head', 'tail'])('keeps %s compaction boundaries valid for strict Unicode JSON decoders', (boundary) => {
+    const service = new TestOpenAICompatibleService({ id: 'test', model: 'grok-4.7', baseUrl: 'https://example.invalid/v1' });
+    // Include actual ANSI, literal escaped ANSI, and incomplete literal escapes.
+    // These are ordinary text; only a split UTF-16 pair makes the wire invalid.
+    const prefix = '\u001b[31m \\u001b \\u00 \\x';
+    const text = boundary === 'head'
+      ? 'a'.repeat(699) + '😀' + prefix + 'x'.repeat(3000)
+      : prefix + 'x'.repeat(3000) + '😀' + 'z'.repeat(499);
+    const wire = service.wire([
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'synthetic', name: 'exec', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic', content: text }] },
+    ]);
+    const parsed = JSON.parse(wire);
+    const output = parsed.input.find((item: any) => item.type === 'function_call_output').output;
+
+    expect(output).toContain('tool result compacted');
+    // JSON.parse alone accepts lone surrogates, unlike strict Unicode parsers.
+    // UTF-8 roundtrip replaces them, so equality asserts Unicode scalar validity.
+    expect(Buffer.from(output, 'utf8').toString('utf8')).toBe(output);
+  });
+
   it('converts parallel chat tool calls and results into linked Responses items', () => {
     const service = new TestOpenAICompatibleService({
       id:      'test',

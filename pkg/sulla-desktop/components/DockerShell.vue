@@ -124,9 +124,9 @@ onBeforeUnmount(() => processHandle?.close());
   white-space: pre-wrap;
   cursor: text;
 }
-.dshell .command { color: #c9d4e3; }
-.dshell .error { color: #f8716b; }
-.dshell .hint { color: #66788f; }
+.dshell .command { color: var(--text-secondary); }
+.dshell .error { color: var(--status-error); }
+.dshell .hint { color: var(--text-muted); }
 .dshell .prompt {
   display: flex;
   gap: 8px;
@@ -139,7 +139,7 @@ onBeforeUnmount(() => processHandle?.close());
   padding: 0;
   height: auto;
   background: transparent !important;
-  color: #c9d4e3 !important;
+  color: var(--text-secondary) !important;
   font: inherit;
 }
 </style>

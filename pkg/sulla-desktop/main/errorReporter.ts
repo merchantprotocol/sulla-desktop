@@ -18,6 +18,8 @@ import Electron from 'electron';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { getInstallId } from '@pkg/main/installId';
+import { SupportStateStore } from '@pkg/main/supportState';
+import { recordSupportTimeline } from '@pkg/main/supportTimeline';
 
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 const MAX_ERROR_MESSAGE_LENGTH = 1_024;
@@ -91,6 +93,9 @@ export interface ErrorReportPayload {
  * Never throws — silently fails if the network is down.
  */
 export async function submitErrorReport(report: ErrorReportPayload): Promise<{ success: boolean; action?: string; issue_number?: number }> {
+  // Diagnostics are local and vault-independent; an error enables every source for 24 hours.
+  let supportState: SupportStateStore | undefined;
+  try { supportState = new SupportStateStore(Electron.app.getPath('userData')); supportState.noteError() } catch { /* Reporting must never fail on state I/O. */ }
   const payload: ErrorReportPayload = {
     error_type:    report.error_type || 'unknown',
     error_message: report.error_message || 'No error message provided',
@@ -104,6 +109,10 @@ export async function submitErrorReport(report: ErrorReportPayload): Promise<{ s
   if (report.notify_email) {
     payload.notify_email = report.notify_email;
   }
+
+  void recordSupportTimeline('error', { errorType: payload.error_type, message: truncateUtf8(payload.error_message, MAX_ERROR_MESSAGE_LENGTH) });
+
+  if (supportState && !supportState.read().privacy.errorReports) return { success: false, action: 'support_error_reports_disabled' };
 
   if (shouldSuppress(payload)) {
     return { success: false, action: 'suppressed_duplicate' };

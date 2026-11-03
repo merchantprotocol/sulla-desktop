@@ -151,8 +151,8 @@ const grouped = computed(() => {
 <style scoped>
 .history {
   overflow: hidden;
-  border-right: 1px solid rgba(168, 192, 220, 0.08);
-  background: rgba(7, 13, 26, 0.4);
+  border-right: 1px solid var(--accent-dim);
+  background: var(--accent-glow);
   backdrop-filter: blur(8px);
   display: flex; flex-direction: column;
   height: 100%;
@@ -160,29 +160,29 @@ const grouped = computed(() => {
 .history-panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 14px 10px;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.06);
+  border-bottom: 1px solid var(--accent-dim);
 }
 .history-panel-title {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
 }
 .history-close {
   background: none; border: none; cursor: pointer;
-  color: var(--read-4); font-size: 13px; line-height: 1;
+  color: var(--text-muted); font-size: 13px; line-height: 1;
   padding: 2px 4px; border-radius: 4px;
   transition: color 0.15s, background 0.15s;
 }
 .history-close:hover {
-  color: var(--read-2); background: rgba(80, 150, 179, 0.1);
+  color: var(--text-primary); background: var(--accent-dim);
 }
 .history-head {
   padding: 22px 18px 12px;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
   display: flex; align-items: center; gap: 10px;
 }
 .history-head::before {
-  content: ""; width: 18px; height: 1px; background: var(--steel-500); opacity: 0.6;
+  content: ""; width: 18px; height: 1px; background: var(--accent); opacity: 0.6;
 }
 /* Recent-list uses flex:1; pinned list is compact and doesn't grow. */
 .history-list { overflow-y: auto; padding: 8px 10px 14px; }
@@ -190,23 +190,23 @@ const grouped = computed(() => {
 
 .history-item {
   padding: 10px 12px; border-radius: 8px;
-  font-family: var(--serif); font-style: italic;
-  font-size: 14px; color: var(--read-3);
+  font-family: var(--font-display); font-style: italic;
+  font-size: 14px; color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s ease;
   display: flex; align-items: baseline; gap: 10px;
 }
-.history-item:hover { background: rgba(80, 150, 179, 0.08); color: var(--read-2); }
-.history-item.active { background: rgba(80, 150, 179, 0.14); color: var(--read-1); }
+.history-item:hover { background: var(--accent-dim); color: var(--text-primary); }
+.history-item.active { background: var(--accent-dim); color: var(--text-primary); }
 .history-item.archived {
   opacity: 0.55;
   cursor: default;
 }
 .history-item.archived:hover {
   background: transparent;
-  color: var(--read-3);
+  color: var(--text-secondary);
 }
 .archived-mark {
-  color: var(--read-5);
+  color: var(--text-dim);
   margin-right: 6px;
   font-style: normal;
   font-size: 10px;
@@ -214,25 +214,25 @@ const grouped = computed(() => {
 }
 .row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .history-item .date {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
-  color: var(--read-5); font-style: normal; margin-left: auto;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em;
+  color: var(--text-dim); font-style: normal; margin-left: auto;
 }
 
 /* ─── Pinned-message row ─── */
 .history-item.pinned {
   align-items: flex-start; gap: 10px;
   padding: 9px 12px;
-  border-left: 2px solid rgba(80, 150, 179, 0.35);
+  border-left: 2px solid var(--accent-glow);
   border-radius: 0 8px 8px 0;
-  background: rgba(80, 150, 179, 0.04);
+  background: var(--accent-dim);
   font-style: normal;
 }
 .history-item.pinned:hover {
-  background: rgba(80, 150, 179, 0.12);
-  border-left-color: var(--steel-400);
+  background: var(--accent-dim);
+  border-left-color: var(--accent-hover);
 }
 .pin-icon {
-  color: var(--steel-400); font-size: 12px;
+  color: var(--accent-hover); font-size: 12px;
   margin-top: 1px; flex-shrink: 0;
 }
 .pin-body {
@@ -240,19 +240,19 @@ const grouped = computed(() => {
   gap: 2px; min-width: 0; flex: 1;
 }
 .pin-text {
-  font-family: var(--serif); font-style: italic;
-  font-size: 13px; color: var(--read-2);
+  font-family: var(--font-display); font-style: italic;
+  font-size: 13px; color: var(--text-primary);
   overflow: hidden; text-overflow: ellipsis;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   line-height: 1.35;
 }
 .pin-origin {
-  font-family: var(--mono); font-size: 9.5px;
-  letter-spacing: 0.1em; color: var(--read-5);
+  font-family: var(--font-mono); font-size: 9.5px;
+  letter-spacing: 0.1em; color: var(--text-dim);
 }
 .history-day {
   padding: 14px 14px 6px;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--read-4);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--text-muted);
 }
 </style>

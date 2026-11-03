@@ -18,6 +18,22 @@ import type { ChildProcess } from 'child_process';
 
 let caffeinateProcess: ChildProcess | null = null;
 const activeHolders = new Set<string>();
+const chatActivityHolders = new Set<string>();
+let appSuspensionBlockerId: number | null = null;
+
+type PowerSaveBlocker = Pick<import('electron').PowerSaveBlocker, 'start' | 'stop' | 'isStarted'>;
+let powerSaveBlockerOverride: PowerSaveBlocker | null = null;
+
+/** Electron's blocker, loaded lazily so this module imports fine outside Electron. */
+function getPowerSaveBlocker(): PowerSaveBlocker {
+  if (powerSaveBlockerOverride) return powerSaveBlockerOverride;
+  return (require('electron') as typeof import('electron')).powerSaveBlocker;
+}
+
+/** Test seam: swap in a fake powerSaveBlocker (pass null to restore). */
+export function setPowerSaveBlockerForTests(blocker: PowerSaveBlocker | null): void {
+  powerSaveBlockerOverride = blocker;
+}
 
 // ── Caffeinate (sleep prevention) ──
 
@@ -74,6 +90,56 @@ export function stopCaffeinate(label: string): void {
 /** Returns the set of labels currently holding sleep prevention. */
 export function getActiveHolders(): ReadonlySet<string> {
   return activeHolders;
+}
+
+/**
+ * Keep both macOS and Electron awake while chat work can still make progress.
+ * Callers use stable, per-activity keys; duplicate acquire/release calls are
+ * harmless and the two underlying assertions exist only while the set is non-empty.
+ */
+export function acquireChatActivity(key: string): void {
+  if (!key || chatActivityHolders.has(key)) return;
+  chatActivityHolders.add(key);
+  if (chatActivityHolders.size > 1) {
+    console.log(`[SleepPrevention] +chat:${ key } (chat holders: ${ chatActivityHolders.size })`);
+    return;
+  }
+
+  startCaffeinate('chat-activity');
+  try {
+    appSuspensionBlockerId = getPowerSaveBlocker().start('prevent-app-suspension');
+    console.log(`[SleepPrevention] prevent-app-suspension started (ID ${ appSuspensionBlockerId }) — chat:${ key }`);
+  } catch (err) {
+    console.error('[SleepPrevention] Failed to start prevent-app-suspension:', err);
+  }
+}
+
+export function releaseChatActivity(key: string): void {
+  if (!chatActivityHolders.delete(key)) return;
+  if (chatActivityHolders.size > 0) {
+    console.log(`[SleepPrevention] -chat:${ key } (chat holders: ${ chatActivityHolders.size })`);
+    return;
+  }
+
+  stopCaffeinate('chat-activity');
+  if (appSuspensionBlockerId === null) return;
+  try {
+    const powerSaveBlocker = getPowerSaveBlocker();
+    if (powerSaveBlocker.isStarted(appSuspensionBlockerId)) powerSaveBlocker.stop(appSuspensionBlockerId);
+    console.log(`[SleepPrevention] prevent-app-suspension stopped (ID ${ appSuspensionBlockerId }) — last chat holder released`);
+  } catch (err) {
+    console.error('[SleepPrevention] Failed to stop prevent-app-suspension:', err);
+  }
+  appSuspensionBlockerId = null;
+}
+
+/** Release every chat assertion during app/service teardown. */
+export function releaseAllChatActivity(): void {
+  for (const key of [...chatActivityHolders]) releaseChatActivity(key);
+}
+
+export function getChatActivityHolders(): ReadonlySet<string> {
+  return chatActivityHolders;
 }
 
 // ── Wake scheduling (pmset) ──

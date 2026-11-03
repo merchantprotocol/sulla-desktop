@@ -12,17 +12,15 @@ import PrefCard from '../PrefCard.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 import PromptEditorCard from '../PromptEditorCard.vue';
-import { fieldValue } from '../fieldValue';
 
-import { useModelSettings } from '@pkg/composables/preferences/useModelSettings';
 import { usePromptSections } from '@pkg/composables/preferences/usePromptSections';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 
-const enabled = useSullaSetting('heartbeatEnabled', true, 'boolean', { refreshOnFocus: true });
+const enabled = useSullaSetting('heartbeatEnabled', false, 'boolean', { refreshOnFocus: true });
 const delay = useSullaSetting('heartbeatDelayMinutes', 15, 'number');
-const provider = useSullaSetting('heartbeatProvider', 'default', 'string');
-const models = useModelSettings();
 const prompts = usePromptSections();
+// Who runs the heartbeat moved to AI models → Defaults (it replaced heartbeatProvider / heartbeatModelId).
+const emit = defineEmits<{ (e: 'go', section: 'models'): void }>();
 
 const heartbeat = computed(() => prompts.find('heartbeat'));
 const goal = computed(() => prompts.find('heartbeat_goal'));
@@ -72,33 +70,23 @@ function saveDelay(event: Event) {
         > <span class="dimc">minutes</span>
       </PrefRow>
       <PrefRow
-        title="Model"
+        title="Who runs it"
+        subtitle="Pick the agent or model under AI models → Defaults."
         :off="!enabled.value.value"
       >
-        <select
-          class="sel"
-          aria-label="Heartbeat model"
-          :value="provider.value.value"
-          :disabled="!enabled.value.value"
-          @change="provider.save(fieldValue($event))"
+        <button
+          type="button"
+          class="link"
+          @click="emit('go', 'models')"
         >
-          <option value="default">
-            Same as main model
-          </option>
-          <option
-            v-for="p in models.providers.value"
-            :key="p.id"
-            :value="p.id"
-          >
-            {{ p.name }}{{ p.connected ? '' : ' (not connected)' }}
-          </option>
-        </select>
+          Open Defaults
+        </button>
       </PrefRow>
       <p
-        v-if="enabled.error.value || delay.error.value || provider.error.value"
+        v-if="enabled.error.value || delay.error.value"
         class="note badc"
       >
-        {{ enabled.error.value || delay.error.value || provider.error.value }}
+        {{ enabled.error.value || delay.error.value }}
       </p>
     </PrefCard>
 

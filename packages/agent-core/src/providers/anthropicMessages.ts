@@ -5,7 +5,7 @@
 
 /**
  * Anthropic Messages API adapter (`POST /v1/messages`). The host's
- * KeyBroker adds `x-api-key`; this adapter only sets the version header.
+ * KeyBroker adds `x-api-key`; this adapter sets non-secret Anthropic headers.
  */
 
 import { asObject, parseToolArguments, sanitizeSchema, wireToolName } from '../toolCalls.js';
@@ -19,6 +19,8 @@ import type { ContentBlock, FinishReason, NormalizedResponse, ToolCall } from '.
 export interface AnthropicMessagesOptions {
   baseUrl?: string;
   version?: string;
+  /** Required by Anthropic user-level API keys; metadata, never a credential. */
+  workspaceId?: string;
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -74,6 +76,7 @@ function mapStopReason(reason: unknown): FinishReason {
 export function createAnthropicMessagesAdapter(options: AnthropicMessagesOptions = {}): ProviderAdapter {
   const baseUrl = (options.baseUrl ?? 'https://api.anthropic.com').replace(/\/+$/, '');
   const version = options.version ?? '2023-06-01';
+  const workspaceId = options.workspaceId?.trim();
 
   const adapter: ProviderAdapter = {
     api: 'anthropic-messages',
@@ -111,7 +114,11 @@ export function createAnthropicMessagesAdapter(options: AnthropicMessagesOptions
       return {
         url:     `${ baseUrl }/v1/messages`,
         method:  'POST',
-        headers: { 'content-type': 'application/json', 'anthropic-version': version },
+        headers: {
+          'content-type':      'application/json',
+          'anthropic-version': version,
+          ...(workspaceId ? { 'anthropic-workspace-id': workspaceId } : {}),
+        },
         body:    JSON.stringify(body),
       };
     },

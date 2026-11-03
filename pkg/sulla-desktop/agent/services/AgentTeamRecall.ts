@@ -18,6 +18,7 @@
 import { agentDefinitionService } from './AgentDefinitionService';
 import { formatCardLine, listAgentDirectory, scoreCard } from './AgentDirectoryService';
 import { callingYourTeamSection } from '../prompts/callingYourTeam';
+import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
 
 import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
 
@@ -44,6 +45,16 @@ export interface TeamRecallOptions {
   /** Situation text to rank by. */
   text:      string;
   maxChars?: number;
+  /** This agent's own sub-agent depth, when known, for the budget line. */
+  depth?:    number;
+}
+
+/** "You are at sub-agent depth N of 3; you can launch K more levels." */
+export function depthBudgetLine(depth: number): string {
+  const remaining = Math.max(MAX_SUBAGENT_DEPTH - depth, 0);
+  return remaining > 0
+    ? `You are at sub-agent depth ${ depth } of ${ MAX_SUBAGENT_DEPTH }; you can launch ${ remaining } more level${ remaining === 1 ? '' : 's' }.`
+    : `You are at sub-agent depth ${ depth } of ${ MAX_SUBAGENT_DEPTH }; you cannot launch sub-agents (max depth reached).`;
 }
 
 /**
@@ -73,10 +84,11 @@ export async function buildTeamRecallContext(opts: TeamRecallOptions): Promise<s
 
   const header = [
     '## Team directory',
+    ...(typeof opts.depth === 'number' ? [depthBudgetLine(opts.depth)] : []),
     fits.size
       ? 'Agents you can call, ranked for the current situation. "fits right now" is a keyword suggestion, not an order; you decide.'
       : 'Agents you can call. Nothing in the current situation clearly points to one of them.',
-    'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; add `"visibility":"tab"` to a task for leads that run their own team. Full cards: `sulla agents/directory`.',
+    'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; every child runs hidden (never open visible tabs). Full cards: `sulla agents/directory`.',
   ].join('\n');
 
   const maxChars = opts.maxChars ?? TEAM_DIRECTORY_MAX_CHARS;

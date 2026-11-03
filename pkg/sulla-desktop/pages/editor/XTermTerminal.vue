@@ -16,6 +16,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import '@xterm/xterm/css/xterm.css';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 export default defineComponent({
   name: 'XTermTerminal',
@@ -27,7 +28,7 @@ export default defineComponent({
     },
     wsUrl: {
       type:    String,
-      default: 'ws://127.0.0.1:6108',
+      default: loopbackOrigin('ws', 6108),
     },
     sessionId: {
       type:    String,

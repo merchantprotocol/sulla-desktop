@@ -39,10 +39,12 @@
       />
 
       <SubAgentRail
+        ref="subAgentRail"
         :parent-thread-id="subAgentParentThreadId"
         :collapsed="subAgentsCollapsed"
+        :selected-key="selectedSubAgentKey"
         @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
-        @open="openSubAgentConversation"
+        @select="selectSubAgent"
         @visibility="subAgentRailVisible = $event"
       />
 
@@ -77,7 +79,10 @@
 
       <ArtifactSidebar
         :collapsed="artifactCollapsed"
+        :agent="selectedSubAgent"
         @toggle-collapse="artifactCollapsed = !artifactCollapsed"
+        @open-agent="openSubAgentCard"
+        @dismiss-agent="dismissSubAgent"
       />
       <ChatFilesDrawer
         :open="chatFilesOpen"
@@ -116,6 +121,7 @@ import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
+import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -174,6 +180,8 @@ const props = defineProps<{
   /** Whether this tab is the currently visible tab. Suppresses keyboard
    *  shortcut handlers on background (visibility:hidden) tabs. */
   isActive?: boolean;
+  supportSessionId?: string;
+  supportToolNames?: string[];
 }>();
 
 // ─── Emits (to BrowserTab for URL opening) ─────────────────────────
@@ -288,9 +296,16 @@ modelSelector.start().then(() => {
 // the registry; otherwise we synthesize a minimal descriptor so the UI
 // still reflects whatever label the backend says is active.
 watch(
-  [modelSelector.activeModelId, modelSelector.activeModelLabel],
-  ([id, label]) => {
-    if (!id) return;
+  [modelSelector.activePrimaryProvider, modelSelector.activeModelId, modelSelector.activeModelLabel],
+  ([providerId, id, label]) => {
+    if (!providerId) {
+      controller.switchModel({ id: '', name: 'Connect an AI', tier: 'hosted', ctx: '' });
+      return;
+    }
+    if (!id) {
+      controller.switchModel({ id: '', name: 'Auto', tier: 'hosted', ctx: '' });
+      return;
+    }
     const known = findModel(id);
     controller.switchModel(known ?? {
       id, name: label || id, tier: 'hosted', ctx: '',
@@ -318,7 +333,16 @@ const adapter = new PersonaAdapter(controller, {
   tabId:              props.tabId,
   agentTabContractId: props.agentTabContractId,
   agentTabThreadId:   props.agentTabThreadId,
+  supportSessionId:    props.supportSessionId,
+  supportToolNames:    props.supportToolNames,
 });
+const onSupportPrompt = (event:Event) => {
+  const detail = (event as CustomEvent<{tabId?:string;text?:string}>).detail;
+  if (!props.supportSessionId || detail?.tabId !== props.tabId || !detail.text) return;
+  void adapter.send(detail.text, []);
+};
+window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
+onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
 const subAgentRailVisible = ref(false);
 
 // Side panels can be tucked away to a tab on the edge; the choice
@@ -333,7 +357,35 @@ watch([subAgentsCollapsed, artifactCollapsed], ([subagents, artifact]) => {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ subagents, artifact })) } catch { /* storage full/unavailable */ }
 });
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
+const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
+const selectedSubAgent = ref<ThreadAgentCard | null>(null);
+const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+
+function selectSubAgent(card: ThreadAgentCard): void {
+  const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;
+  selectedSubAgent.value = card;
+  if (isNewSelection) artifactCollapsed.value = false;
+}
+
+function openSubAgentCard(card: ThreadAgentCard): void {
+  if (card.kind === 'tab' && card.agentTab) {
+    const info = card.agentTab;
+    let tab = tabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
+    if (!tab) {
+      tab = createTab('about:blank', { mode: 'chat', title: card.label, agentChat: { threadId: info.threadId, agentId: card.agentId, agentName: info.agentName, parentThreadId: subAgentParentThreadId.value || '', parentAgentId: info.parentAgentId, parentAgentName: info.parentAgentId, contractId: info.contractId, depth: info.depth } });
+      localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
+    }
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  } else if (card.conversationId) {
+    openSubAgentConversation({ agentId: card.agentId, label: card.label, conversationId: card.conversationId });
+  }
+}
+
+function dismissSubAgent(card: ThreadAgentCard): void {
+  void subAgentRail.value?.dismiss(card);
+  selectedSubAgent.value = null;
+}
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -347,7 +399,7 @@ onBeforeUnmount(() => {
 });
 
 // ─── Derived state ────────────────────────────────────────────────
-const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
+const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0 || !!selectedSubAgent.value);
 // The persona's hasSentMessage lives in a per-tab localStorage scope that is
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
@@ -694,9 +746,9 @@ onBeforeUnmount(() => {
   width: 100%; height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #050810;
-  color: var(--read-2);
-  font-family: var(--sans);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
 }
 .shell {
   position: absolute; inset: 0; z-index: 5;
@@ -726,23 +778,23 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    rgba(5, 8, 16, 0.92) 0%,
-    rgba(5, 8, 16, 0.78) 55%,
-    rgba(5, 8, 16, 0) 100%
+    var(--bg-page) 0%,
+    color-mix(in srgb, var(--bg-page) 78%, transparent) 55%,
+    transparent 100%
   );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 1) 65%,
-    rgba(0, 0, 0, 0) 100%
+    var(--bg-page) 0%,
+    var(--bg-page) 65%,
+    var(--bg-hover) 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 1) 65%,
-    rgba(0, 0, 0, 0) 100%
+    var(--bg-page) 0%,
+    var(--bg-page) 65%,
+    var(--bg-hover) 100%
   );
 }
 
@@ -761,9 +813,9 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to top,
-    rgba(5, 8, 16, 0.92) 0%,
-    rgba(5, 8, 16, 0.78) 45%,
-    rgba(5, 8, 16, 0) 100%
+    var(--bg-page) 0%,
+    color-mix(in srgb, var(--bg-page) 78%, transparent) 45%,
+    transparent 100%
   );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -773,22 +825,22 @@ onBeforeUnmount(() => {
      - fade out toward the RIGHT (originally so the Canvas glow showed
        through; the glow is gone, the fade is kept as it was). */
   mask-image:
-    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
-    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+    linear-gradient(to top,   var(--text-primary) 0%, var(--text-primary) 55%, transparent 100%),
+    linear-gradient(to right, var(--text-primary) 0%, var(--text-primary) 55%, transparent 92%);
   mask-composite: intersect;
   -webkit-mask-image:
-    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
-    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+    linear-gradient(to top,   var(--text-primary) 0%, var(--text-primary) 55%, transparent 100%),
+    linear-gradient(to right, var(--text-primary) 0%, var(--text-primary) 55%, transparent 92%);
   -webkit-mask-composite: source-in;
 }
 
 .chat-root.history-open   .main { left: 260px; }
 .chat-root.subagents-open .main { left: 272px; }
 .chat-root.subagents-open.history-open .main { left: 532px; }
-.chat-root.artifact-open  .main { right: 560px; }
+.chat-root.artifact-open  .main { right: 436px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 .chat-root.chat-files-open .main { right: 300px; }
-.chat-root.chat-files-open.artifact-open .main { right: 860px; }
+.chat-root.chat-files-open.artifact-open .main { right: 736px; }
 .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: calc(70vw + 300px); }
 
 /* Rails float over the left/right edges at fixed widths. */
@@ -798,26 +850,25 @@ onBeforeUnmount(() => {
   width: 260px;
   z-index: 6;
 }
-.chat-root.history-open .shell :deep(.subagent-rail),
-.chat-root.history-open .shell :deep(.subagent-rail-tab) { left: 260px; }
-.shell :deep(.artifact) {
+.chat-root.history-open .shell :deep(.sd-agent-rail) { left: 260px; }
+/* The drawer sizes itself (420px + 8px margins = the 436px .main leaves free);
+   this only docks it to the right edge. */
+.shell :deep(.sd-artifact-panel) {
   position: absolute;
-  top: 0; bottom: 0; right: 0;
-  width: 560px;
+  top: 0; right: 0;
   z-index: 6;
 }
-.chat-root.chat-files-open .shell :deep(.artifact) { right: 300px; }
+.chat-root.chat-files-open .shell :deep(.sd-artifact-panel) { right: 300px; }
 
 @media (max-width: 1200px) {
-  .shell :deep(.subagent-rail),
-  .shell :deep(.subagent-rail-tab) { display: none; }
+  .shell :deep(.sd-agent-rail) { display: none; }
   .chat-root.subagents-open .main { left: 0; }
   .chat-root.subagents-open.history-open .main { left: 260px; }
 }
 @media (max-width: 1000px) {
   .shell :deep(.chat-files-drawer) { display: none; }
   .chat-root.chat-files-open .main { right: 0; }
-  .chat-root.chat-files-open.artifact-open .main { right: 560px; }
+  .chat-root.chat-files-open.artifact-open .main { right: 436px; }
   .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: 70vw; }
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
 }

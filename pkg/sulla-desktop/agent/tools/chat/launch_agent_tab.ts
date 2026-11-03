@@ -7,8 +7,9 @@ import { BaseTool, ToolResponse } from '../base';
 import { SpawnAgentWorker } from '../agents/spawn_agent';
 
 /**
- * Alias of spawn_agent with visibility "tab". One delegation path: the tab is
- * an agent_jobs job with a contract, shown in the parent's sub-agent rail.
+ * Legacy alias of spawn_agent. Agents never open visible tabs (Jonathon,
+ * 2026-11-02), so this launches a hidden async child with the same contract;
+ * it shows in the parent's sub-agent rail and the human can open it there.
  */
 export class LaunchAgentTabWorker extends BaseTool {
   name = '';
@@ -25,9 +26,9 @@ export class LaunchAgentTabWorker extends BaseTool {
         label:         typeof input.title === 'string' ? input.title : undefined,
         contract:      input.contract,
         projectTaskId: input.projectTaskId,
-        focus:         input.focus === true,
-        visibility:    'tab',
+        visibility:    'hidden',
       }],
+      async: true,
     }, this.state);
     if (!result.successBoolean) return result;
 
@@ -35,9 +36,9 @@ export class LaunchAgentTabWorker extends BaseTool {
     return {
       successBoolean: true,
       responseString: JSON.stringify({
-        contractId:    launched.contractId,
-        jobId:         launched.jobId,
-        childThreadId: launched.childThreadId,
+        contractId: launched.contractId ?? launched.jobId,
+        jobId:      launched.jobId,
+        visibility: 'hidden',
       }),
     };
   }

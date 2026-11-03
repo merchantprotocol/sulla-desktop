@@ -7,6 +7,7 @@ import http from 'http';
 import net from 'net';
 
 import Logging from '@pkg/utils/logging';
+import { describePortOwner } from '@pkg/utils/portOwner';
 
 const console = Logging.sullaRuntime;
 
@@ -15,6 +16,8 @@ const console = Logging.sullaRuntime;
 // userland proxy listens for every published port.
 const FORWARD_STREAM_PORT = 2376;
 const RECONNECT_DELAY_MS = 2_000;
+/** How often a port another Mac process held is tried again. */
+const UNAVAILABLE_RETRY_MS = 30_000;
 
 interface ContainerPort {
   IP?:         string;
@@ -32,11 +35,12 @@ interface ContainerPort {
  */
 export class SullaRuntimePortForwarder {
   readonly #listeners = new Map<number, net.Server>();
-  // Ports another Mac process owns; retried once no container publishes them.
+  // Ports another Mac process owns; retried every 30s while a container publishes them.
   readonly #unavailable = new Set<number>();
   #events: http.ClientRequest | undefined;
   #stopped = true;
   #reconnectTimer: NodeJS.Timeout | undefined;
+  #retryTimer: NodeJS.Timeout | undefined;
   #syncing: Promise<void> = Promise.resolve();
 
   constructor(private readonly dockerSocket: string, private readonly guestSocket: string) {}
@@ -49,6 +53,8 @@ export class SullaRuntimePortForwarder {
   stop(): void {
     this.#stopped = true;
     clearTimeout(this.#reconnectTimer);
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer = undefined;
     this.#events?.destroy();
     this.#events = undefined;
     for (const [port, server] of this.#listeners) {
@@ -162,14 +168,28 @@ export class SullaRuntimePortForwarder {
 
     this.#listeners.set(port, server);
     server.on('error', (error: NodeJS.ErrnoException) => {
-      // Something else on the Mac owns the port; carry on without it.
-      console.warn(`[sulla-runtime] cannot forward 127.0.0.1:${ port }: ${ error.code ?? error.message }`);
+      // Something else on the Mac owns the port; carry on without it and try again later.
+      void describePortOwner(port).then(owner => console.warn(
+        `[sulla-runtime] cannot forward 127.0.0.1:${ port }: ${ error.code ?? error.message }${ owner ? `; it is used by ${ owner }` : '' }`));
       if (this.#listeners.get(port) === server) {
         this.#listeners.delete(port);
         this.#unavailable.add(port);
+        this.scheduleUnavailableRetry();
       }
     });
     server.listen(port, '127.0.0.1', () => console.log(`[sulla-runtime] forwarding 127.0.0.1:${ port }`));
+  }
+
+  /** Try the ports another process held again in 30s; sync drops the ones no longer wanted. */
+  protected scheduleUnavailableRetry(): void {
+    if (this.#retryTimer || this.#stopped) return;
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined;
+      if (this.#stopped || !this.#unavailable.size) return;
+      this.#unavailable.clear();
+      this.scheduleSync();
+    }, UNAVAILABLE_RETRY_MS);
+    this.#retryTimer.unref?.();
   }
 
   protected relay(client: net.Socket, port: number): void {

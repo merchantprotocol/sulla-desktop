@@ -8,7 +8,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
@@ -44,6 +44,8 @@ export interface BrowserTab {
    */
   lastAccessedAt?: number;
   /** Durable launch metadata for a visible agent-owned chat thread. */
+  /** Super-admin remote support tab. The session id is opaque and all details are refreshed from Cloud. */
+  supportSession?: { sessionId: string };
   agentChat?: {
     threadId:        string;
     agentId:         string;
@@ -475,7 +477,7 @@ export function useBrowserTabs() {
     docker:       'Docker',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -491,6 +493,7 @@ export function useBrowserTabs() {
       ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
       ...(opts?.studioSection ? { studioSection: opts.studioSection } : {}),
       ...(opts?.section ? { section: opts.section } : {}),
+      ...(opts?.supportSession ? { supportSession: opts.supportSession } : {}),
     };
 
     tabs.push(tab);

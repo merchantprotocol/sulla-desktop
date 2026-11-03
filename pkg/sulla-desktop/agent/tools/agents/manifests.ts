@@ -8,7 +8,7 @@ import type { ToolManifest } from '../registry';
 export const agentToolManifests: ToolManifest[] = [
   {
     name:        'spawn_agent',
-    description: 'The one way to delegate. Launch one or more child agents, each with a return contract. visibility "hidden" (default) runs the child in the background; visibility "tab" opens it as a live chat tab the human can join (use for leads that run their own team or keep a visible Playbook). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
+    description: 'The one way to delegate. Launch one or more child agents, each with a return contract. Every child runs hidden in the background (visible tabs are disabled; the human can open any child from the sub-agent rail). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
     category:    'meta',
     schemaDef:   {
       tasks: {
@@ -29,8 +29,8 @@ export const agentToolManifests: ToolManifest[] = [
               optional:    true,
               description: 'Container agents only: explicit existing worktree under /mnt/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
             },
-            label:     { type: 'string', description: 'Optional human-readable label for this task (the tab title for visibility "tab").', optional: true },
-            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: '"hidden" (default): background worker. "tab": a live chat tab that stays open across turns until the child returns its contract or you stop it. Max 5 open tabs per chat.' },
+            label:     { type: 'string', description: 'Optional human-readable label for this task .', optional: true },
+            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: 'Always "hidden". "tab" is accepted for compatibility but runs hidden: agents never open visible tabs.' },
             contract:  {
               type:        'object',
               optional:    true,

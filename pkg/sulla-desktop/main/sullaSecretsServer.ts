@@ -6,7 +6,7 @@
 // sullaSecretsServer
 //
 // A tiny HTTP server hosted by the Electron main process. Runtime containers
-// running inside the Sulla VM reach this server via `host.sulla.internal:30121`
+// running inside the Sulla VM reach this server via `the instance-specific secrets port`
 // during a single function invocation to fetch secrets, using a short-lived
 // capability token that the playbook minted for that exact invocation.
 //
@@ -24,8 +24,9 @@ import {
   getSecretsCapabilityService,
   SecretsResolveError,
 } from '@pkg/agent/services/SecretsCapabilityService';
+import { hostPort } from '@pkg/utils/instance';
 
-const DEFAULT_PORT = 30121;
+const DEFAULT_PORT = hostPort(30121);
 const BIND_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 4 * 1024;
 

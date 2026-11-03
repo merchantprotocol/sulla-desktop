@@ -90,10 +90,12 @@ export function parseManifestPlain(value:unknown):ManifestPlain {
   if (typeof manifest.deleted !== 'boolean') integrity('manifest deleted flag invalid');
   if (manifest.parentVersionId !== null && !isUuid(manifest.parentVersionId)) integrity('manifest parent invalid');
   if (!Array.isArray(manifest.chunks)) integrity('manifest chunks invalid');
+  const legacyEmptyChunk = manifest.size === 0 && !manifest.deleted && manifest.chunks.length === 1 &&
+    Array.isArray(manifest.chunks[0]) && manifest.chunks[0].length === 2 && manifest.chunks[0][1] === 0;
   let total = 0;
   for (const entry of manifest.chunks) {
     if (!Array.isArray(entry) || entry.length !== 2 || !HEX64.test(entry[0])) integrity('manifest chunk invalid');
-    if (!Number.isSafeInteger(entry[1]) || entry[1] < 1 || entry[1] > MAX_PLAIN_CHUNK_BYTES) integrity('manifest chunk size invalid');
+    if (!Number.isSafeInteger(entry[1]) || (entry[1] === 0 ? !legacyEmptyChunk : entry[1] < 1) || entry[1] > MAX_PLAIN_CHUNK_BYTES) integrity('manifest chunk size invalid');
     total += entry[1];
   }
   if (total !== manifest.size) integrity('manifest size does not match its chunks');

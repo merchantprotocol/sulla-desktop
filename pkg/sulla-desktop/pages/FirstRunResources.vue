@@ -11,12 +11,13 @@
         <div class="frw-eyebrow">Sulla can't run on this computer</div>
         <h1 class="frw-title">This computer is too small for Sulla.</h1>
         <p class="frw-lead">
-          Sulla needs at least {{ MIN_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
+          Sulla needs a computer with at least {{ MIN_MEMORY_GB + MIN_HOST_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
           This computer has {{ totalMemoryLabel }} GB of memory and {{ availNumCPUs }} CPUs.
         </p>
         <p class="frw-muted">Nothing has been changed. You can quit safely.</p>
       </template>
       <template v-else>
+      <div class="fr-step-body">
       <div class="frw-eyebrow">
         Welcome to Sulla
       </div>
@@ -72,14 +73,17 @@
             <system-preferences
               :memory-in-g-b="settings!.virtualMachine.memoryInGB"
               :number-c-p-us="settings!.virtualMachine.numberCPUs"
-              :avail-memory-in-g-b="availMemoryInGB"
-              :avail-num-c-p-us="availNumCPUs"
-              :reserved-memory-in-g-b="6"
-              :reserved-num-c-p-us="1"
+              :avail-memory-in-g-b="maxMemoryInGB"
+              :avail-num-c-p-us="maxCPUs"
+              :min-memory-in-g-b="sliderMinMemoryInGB"
+              :min-num-c-p-us="sliderMinCPUs"
+              :reserved-memory-in-g-b="0"
+              :reserved-num-c-p-us="0"
               :is-locked-memory="false"
               :is-locked-cpu="false"
               @update:memory="onMemoryChange"
               @update:cpu="onCpuChange"
+              @error="onResourceInputError"
             />
           </rd-fieldset>
 
@@ -100,6 +104,7 @@
         {{ resourceError }}
       </div>
 
+      </div>
       <div class="frw-actions">
         <button
           type="submit"
@@ -107,6 +112,15 @@
           :disabled="checkingPreflight"
         >
           {{ checkingPreflight ? 'Checking this computer…' : preflightAttempted ? 'Retry →' : 'Get started →' }}
+        </button>
+        <button
+          v-if="networkCheckFailed"
+          type="button"
+          class="frw-link"
+          :disabled="checkingPreflight"
+          @click="continueWithoutNetworkCheck"
+        >
+          Continue anyway
         </button>
         <span class="frw-trust">You choose what syncs on the next screens and can change it later.</span>
       </div>
@@ -121,6 +135,8 @@ import os from 'os';
 import { ipcRenderer } from 'electron';
 import { ref, computed, inject, onMounted, Ref } from 'vue';
 
+import { traceFirstRun } from './firstRunWizard';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import SystemPreferences from '@pkg/components/SystemPreferences.vue';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
@@ -131,12 +147,13 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 const settings = inject<Ref<Settings>>('settings')!;
 const commitChanges = inject<(settings: RecursivePartial<Settings>) => Promise<void>>('commitChanges')!;
 const emit = defineEmits<{
-  next: [];
-  back: [];
+  next: [from?: number];
+  back: [from?: number];
 }>();
 
 const props = defineProps<{
   showBack?: boolean;
+  stepIndex?: number;
 }>();
 
 // Reactive ref for telemetry
@@ -149,6 +166,9 @@ const isOptionsOpen = ref(false);
 const resourceError = ref('');
 const checkingPreflight = ref(false);
 const preflightAttempted = ref(false);
+// Only the internet check failed. The account step tests the connection for
+// real, so the user may go on.
+const networkCheckFailed = ref(false);
 
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
@@ -179,36 +199,61 @@ const availNumCPUs = computed(() => os.cpus().length);
 // Minimums the AI services need (enforced in handleNext).
 const MIN_MEMORY_GB = 5;
 const MIN_CPUS = 3;
+// macOS needs memory of its own. The VM gets at most the total minus this,
+// and never leaves the Mac less than MIN_HOST_MEMORY_GB.
+const HOST_RESERVE_GB = 4;
+const MIN_HOST_MEMORY_GB = 2;
 const totalMemoryInGB = computed(() => os.totalmem() / 2 ** 30);
 const totalMemoryLabel = computed(() => totalMemoryInGB.value.toFixed(1));
-const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
+const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB + MIN_HOST_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
+// The most Welcome lets the VM take: the Mac keeps memory and one CPU.
+const maxMemoryInGB = computed(() => Math.max(MIN_MEMORY_GB, Math.floor(totalMemoryInGB.value) - HOST_RESERVE_GB));
+const maxCPUs = computed(() => Math.max(MIN_CPUS, availNumCPUs.value - 1));
+// The slider needs min < max; handleNext enforces the real minimums.
+const sliderMinMemoryInGB = computed(() => Math.min(MIN_MEMORY_GB, maxMemoryInGB.value - 1));
+const sliderMinCPUs = computed(() => Math.min(MIN_CPUS, maxCPUs.value - 1));
+// A typed value the slider refused (out of range); handleNext won't go on with it.
+const resourceInputError = ref('');
 
 /**
  * Pick sensible VM resources so nobody has to understand sliders before they
  * see any value: half the machine, clamped to the service minimums and a
  * reasonable ceiling. Existing allocations that already meet the minimums are
- * kept, so re-running setup never shrinks a user's choice.
+ * kept, so re-running setup never shrinks a user's choice, unless it would
+ * starve the Mac itself.
  */
 function applyRecommendedResources() {
   const vm = settings.value.virtualMachine;
 
   if (vm.memoryInGB < MIN_MEMORY_GB) {
-    vm.memoryInGB = Math.min(Math.max(MIN_MEMORY_GB, Math.floor(availMemoryInGB.value / 2)), 16);
+    vm.memoryInGB = Math.min(Math.max(MIN_MEMORY_GB, Math.floor(availMemoryInGB.value / 2)), 16, maxMemoryInGB.value);
   }
   if (vm.numberCPUs < MIN_CPUS) {
-    vm.numberCPUs = Math.min(Math.max(MIN_CPUS, Math.floor(availNumCPUs.value / 2)), 8);
+    vm.numberCPUs = Math.min(Math.max(MIN_CPUS, Math.floor(availNumCPUs.value / 2)), 8, maxCPUs.value);
   }
+  vm.memoryInGB = Math.min(vm.memoryInGB, maxMemoryInGB.value);
+  vm.numberCPUs = Math.min(vm.numberCPUs, maxCPUs.value);
 }
 
 // Show the recommendation immediately; settings-read re-applies it to the loaded values.
 applyRecommendedResources();
 
 const onMemoryChange = (value: number) => {
+  resourceInputError.value = '';
   settings.value.virtualMachine.memoryInGB = value;
 };
 
 const onCpuChange = (value: number) => {
+  resourceInputError.value = '';
   settings.value.virtualMachine.numberCPUs = value;
+};
+
+// The slider refused a typed value. Keep it from going on silently with the
+// last good one while the box shows something else.
+const onResourceInputError = (key: string) => {
+  resourceInputError.value = key === 'cpu'
+    ? `Pick between ${ MIN_CPUS } and ${ maxCPUs.value } CPUs.`
+    : `Pick between ${ MIN_MEMORY_GB } and ${ maxMemoryInGB.value } GB of memory.`;
 };
 
 const onTelemetryChange = async() => {
@@ -217,39 +262,74 @@ const onTelemetryChange = async() => {
   });
 };
 
-const handleNext = async() => {
-  if (computerTooSmall.value || checkingPreflight.value) return;
+/** Show why the chosen VM size can't be used. Returns false when it can't. */
+function checkResources(): boolean {
+  const { memoryInGB, numberCPUs } = settings.value.virtualMachine;
 
-  if (settings.value.virtualMachine.memoryInGB < MIN_MEMORY_GB || settings.value.virtualMachine.numberCPUs < MIN_CPUS) {
+  if (resourceInputError.value) {
+    resourceError.value = resourceInputError.value;
+  } else if (!Number.isInteger(Number(memoryInGB)) || !Number.isInteger(Number(numberCPUs))) {
+    resourceError.value = 'Use whole numbers for memory and CPUs.';
+  } else if (memoryInGB < MIN_MEMORY_GB || numberCPUs < MIN_CPUS) {
     resourceError.value = `Sulla needs at least ${ MIN_MEMORY_GB } GB of memory and ${ MIN_CPUS } CPUs. Use Adjust to raise them.`;
+  } else if (memoryInGB > maxMemoryInGB.value || numberCPUs > maxCPUs.value) {
+    // The Mac itself needs memory and a CPU, or everything slows to a crawl.
+    resourceError.value = `That leaves too little for your Mac. Use at most ${ maxMemoryInGB.value } GB of memory and ${ maxCPUs.value } CPUs.`;
   } else {
     resourceError.value = '';
   }
 
   if (resourceError.value) {
-    return;
+    isOptionsOpen.value = true;
+    traceFirstRun('wizard', 'Get started blocked by the VM size', { memoryInGB, numberCPUs, maxMemoryInGB: maxMemoryInGB.value, maxCPUs: maxCPUs.value });
+
+    return false;
   }
+
+  return true;
+}
+
+const handleNext = async() => {
+  if (computerTooSmall.value || checkingPreflight.value || !checkResources()) return;
 
   checkingPreflight.value = true;
   preflightAttempted.value = true;
+  networkCheckFailed.value = false;
+  traceFirstRun('wizard', 'Get started clicked', { memoryInGB: settings.value.virtualMachine.memoryInGB, numberCPUs: settings.value.virtualMachine.numberCPUs });
   try {
     const preflight = await ipcRenderer.invoke('first-run-preflight');
 
+    traceFirstRun('wizard', preflight?.ok ? 'preflight passed' : 'preflight stopped setup', { kind: preflight?.kind, canContinue: preflight?.canContinue });
     if (!preflight?.ok) {
       resourceError.value = preflight?.message || 'Sulla could not check this computer. Retry to check again.';
+      networkCheckFailed.value = preflight?.kind === 'network' && preflight?.canContinue === true;
+      checkingPreflight.value = false;
 
       return;
     }
   } catch (err) {
     console.warn('[FirstRunResources] Preflight failed:', err);
+    traceFirstRun('wizard', 'preflight call failed', { error: err instanceof Error ? err.message : String(err) });
     resourceError.value = 'Sulla could not check disk space and internet access. Retry to check again.';
+    checkingPreflight.value = false;
 
     return;
-  } finally {
-    checkingPreflight.value = false;
   }
 
-  // Save the VM resources
+  // Stays busy until the next screen replaces this one, so a second click
+  // can't skip a step.
+  await saveResourcesAndContinue();
+};
+
+const continueWithoutNetworkCheck = async() => {
+  if (checkingPreflight.value || !checkResources()) return;
+  checkingPreflight.value = true;
+  resourceError.value = '';
+  traceFirstRun('wizard', 'Continue anyway clicked after the internet check failed');
+  await saveResourcesAndContinue();
+};
+
+const saveResourcesAndContinue = async() => {
   await commitChanges({
     virtualMachine: {
       memoryInGB: (settings.value as any).virtualMachine.memoryInGB,
@@ -257,11 +337,15 @@ const handleNext = async() => {
     },
   });
 
-  emit('next');
+  emit('next', props.stepIndex);
 };
 </script>
 
 <style lang="scss" scoped>
+.frw, .frw form { height: 100%; min-height: 0; }
+.frw form { display: flex; flex-direction: column; }
+.fr-step-body { min-height: 0; overflow-y: auto; }
+
 .model-disabled {
   color: var(--disabled);
 }
@@ -308,7 +392,7 @@ const handleNext = async() => {
 .vue-slider :deep(.vue-slider-process) {
   position: absolute;
   height: 100%;
-  background: var(--accent-primary);
+  background: var(--accent);
   border-radius: 3px;
   top: 0;
   left: 0;
@@ -334,7 +418,7 @@ const handleNext = async() => {
   width: 20px;
   height: 20px;
   background: var(--bg-surface);
-  border: 2px solid var(--accent-primary);
+  border: 2px solid var(--accent);
   border-radius: 50%;
   cursor: grab;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -344,7 +428,7 @@ const handleNext = async() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: var(--accent-primary);
+  background: var(--accent);
   cursor: grab;
 }
 
@@ -408,7 +492,7 @@ input:hover, select:hover {
 }
 
 .fr-border-error {
-  border-color: var(--border-error);
+  border-color: var(--status-error);
 }
 
 .fr-muted {
@@ -416,13 +500,13 @@ input:hover, select:hover {
 }
 
 .fr-error {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 
 .fr-error-box {
-  background-color: var(--bg-error);
-  border-color: var(--border-error);
-  color: var(--text-error);
+  background-color: var(--status-error-soft);
+  border-color: var(--status-error);
+  color: var(--status-error);
 }
 
 .fr-btn-toggle {
@@ -444,10 +528,10 @@ input:hover, select:hover {
 
 .fr-btn-primary {
   color: var(--text-on-accent);
-  background-color: var(--accent-primary);
+  background-color: var(--accent);
 
   &:hover {
-    background-color: var(--accent-primary-hover);
+    background-color: var(--accent-hover);
   }
 }
 
@@ -457,7 +541,7 @@ input:hover, select:hover {
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--accent-primary, #3d7fa0);
+  color: var(--accent);
   margin-top: 8px;
 }
 
@@ -467,13 +551,13 @@ input:hover, select:hover {
   font-weight: 800;
   letter-spacing: -.02em;
   margin: 10px 0 12px;
-  color: var(--text-primary, #0f172a);
+  color: var(--text-primary);
 }
 
 .frw-lead {
   font-size: 16px;
   line-height: 1.6;
-  color: var(--text-secondary, #475569);
+  color: var(--text-secondary);
   max-width: 620px;
 }
 
@@ -488,15 +572,15 @@ input:hover, select:hover {
     flex-direction: column;
     gap: 4px;
     padding: 14px;
-    border: 1px solid var(--border-default, #e2e8f0);
+    border: 1px solid var(--border-default);
     border-radius: 12px;
-    background: var(--bg-surface-alt, #f8fafc);
+    background: var(--bg-surface-alt);
     font-size: 13.5px;
-    color: var(--text-secondary, #475569);
+    color: var(--text-secondary);
   }
 
   b {
-    color: var(--text-primary, #0f172a);
+    color: var(--text-primary);
     font-size: 14.5px;
   }
 }
@@ -509,8 +593,8 @@ input:hover, select:hover {
   place-items: center;
   font-size: 12px;
   font-weight: 800;
-  color: var(--accent-primary, #3d7fa0);
-  background: var(--bg-surface-hover, #e4f0f6);
+  color: var(--accent);
+  background: var(--bg-surface-hover);
   margin-bottom: 4px;
 }
 
@@ -520,19 +604,19 @@ input:hover, select:hover {
   gap: 16px;
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px dashed var(--border-default, #cbd5e1);
+  border: 1px dashed var(--border-default);
   font-size: 13.5px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 
   > div { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 
-  b { color: var(--text-primary, #0f172a); font-size: 14px; }
+  b { color: var(--text-primary); font-size: 14px; }
 }
 
 .frw-link {
   background: none;
   border: none;
-  color: var(--accent-primary, #3d7fa0);
+  color: var(--accent);
   font-weight: 700;
   cursor: pointer;
   font-size: 14px;
@@ -551,8 +635,8 @@ input:hover, select:hover {
   border-radius: 11px;
   font-weight: 700;
   font-size: 15px;
-  color: #fff;
-  background: var(--accent-primary, #3d7fa0);
+  color: var(--text-on-accent);
+  background: var(--accent);
   border: none;
   cursor: pointer;
 
@@ -561,146 +645,157 @@ input:hover, select:hover {
 
 .frw-trust {
   font-size: 13px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw {
+.frw-link {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+
+  &:disabled { opacity: .5; cursor: wait; }
+}
+
+.frw {
   --frw-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw-eyebrow {
+.frw-eyebrow {
   margin-top: 5px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: var(--nx-accent-2);
+  color: var(--accent);
 }
 
-.theme-noir .frw-title {
+.frw-title {
   max-width: 650px;
   margin: 9px 0 12px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: var(--font-display);
   font-size: clamp(38px, 5vw, 52px);
   line-height: 1.02;
   font-weight: 600;
   letter-spacing: -.025em;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
   text-wrap: balance;
-  text-shadow: 0 0 34px color-mix(in srgb, var(--nx-accent) 18%, transparent);
+  text-shadow: 0 0 34px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.theme-noir .frw-lead {
+.frw-lead {
   max-width: 680px;
   font-size: 15px;
   line-height: 1.65;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-how {
+.frw-how {
   gap: 10px;
   margin: 26px 0 18px;
 }
 
-.theme-noir .frw-how > div {
+.frw-how > div {
   min-height: 142px;
   gap: 6px;
   padding: 16px;
   border-color: transparent;
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
-  color: var(--nx-read-4);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-muted);
   transition: transform .58s var(--frw-spring), background .22s ease, box-shadow .22s ease;
 }
 
-.theme-noir .frw-how > div:hover {
+.frw-how > div:hover {
   transform: translateY(-3px);
-  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 16px 34px rgba(0, 0, 0, .18);
 }
 
-.theme-noir .frw-how b {
-  color: var(--nx-read-1);
+.frw-how b {
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 600;
 }
 
-.theme-noir .frw-num {
+.frw-num {
   width: 28px;
   height: 28px;
   margin-bottom: 6px;
   border-radius: 14px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
-  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--nx-accent-2) 45%, transparent), 0 0 16px color-mix(in srgb, var(--nx-accent) 15%, transparent);
+  color: rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
-.theme-noir .frw-resources {
+.frw-resources {
   padding: 16px 18px;
   border: 0;
   border-radius: 18px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 3%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  color: var(--nx-read-4);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 3%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-resources b {
-  color: var(--nx-read-1);
+.frw-resources b {
+  color: var(--text-primary);
   font-weight: 600;
 }
 
-.theme-noir .frw-link {
+.frw-link {
   height: 30px;
   padding: 0 13px;
   border-radius: 15px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .06em;
-  color: var(--nx-read-2);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .45);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  color: var(--text-primary);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .45);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw-link:active { transform: scale(.94); }
+.frw-link:active { transform: scale(.94); }
 
-.theme-noir .fr-fieldset {
+.fr-fieldset {
   margin-top: 14px;
   padding: 14px 16px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   border-radius: 18px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent);
-  color: var(--nx-read-2);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw :deep(.vue-slider-rail) {
+.frw :deep(.vue-slider-rail) {
   height: 5px;
   border-radius: 3px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
-.theme-noir .frw :deep(.vue-slider-process) {
-  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 45%, transparent);
+.frw :deep(.vue-slider-process) {
+  background: linear-gradient(90deg, var(--accent), var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.theme-noir .frw :deep(.vue-slider-dot-handle) {
-  background: var(--nx-read-2);
-  box-shadow: inset 0 0 0 2px var(--nx-accent-2), 0 0 14px color-mix(in srgb, var(--nx-accent) 55%, transparent);
+.frw :deep(.vue-slider-dot-handle) {
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 2px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
+.frw :deep(.vue-slider-dot-handle:active) { transform: scale(1.14); }
 
-.theme-noir .frw input[type="checkbox"] {
+.frw input[type="checkbox"] {
   width: 38px;
   height: 22px;
   flex: none;
@@ -708,77 +803,77 @@ input:hover, select:hover {
   appearance: none;
   border: 0;
   border-radius: 11px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
+  background: color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 14%, transparent);
   cursor: pointer;
   transition: background .25s ease, box-shadow .25s ease;
 }
 
-.theme-noir .frw input[type="checkbox"]::after {
+.frw input[type="checkbox"]::after {
   content: "";
   display: block;
   width: 16px;
   height: 16px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--nx-read-2);
+  background: var(--bg-elevated);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
   transition: transform .58s var(--frw-spring), background .2s ease;
 }
 
-.theme-noir .frw input[type="checkbox"]:checked {
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 40%, transparent);
+.frw input[type="checkbox"]:checked {
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.theme-noir .frw input[type="checkbox"]:checked::after {
+.frw input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #fff;
 }
 
-.theme-noir .frw-muted { color: var(--nx-read-4); }
+.frw-muted { color: var(--text-muted); }
 
-.theme-noir .frw-actions { margin-top: 22px; }
+.frw-actions { margin-top: 22px; }
 
-.theme-noir .frw-btn {
+.frw-btn {
   min-height: 42px;
   padding: 0 22px;
   border-radius: 21px;
   font-size: 14px;
   font-weight: 600;
-  color: #fff;
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--nx-accent) 34%, transparent);
+  color: var(--text-on-accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: inset 0 0 0 .5px rgb(from var(--text-primary) calc(r + 12) calc(g + 10) calc(b + 7) / .18), 0 0 22px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: transform .58s var(--frw-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw-btn:hover {
+.frw-btn:hover {
   filter: none;
-  box-shadow: inset 0 0 0 .5px rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--nx-accent) 48%, transparent);
+  box-shadow: inset 0 0 0 .5px rgb(from var(--text-primary) calc(r + 12) calc(g + 10) calc(b + 7) / .22), 0 0 28px color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
-.theme-noir .frw-btn:active { transform: scale(.95); }
+.frw-btn:active { transform: scale(.95); }
 
-.theme-noir .frw-trust {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+.frw-trust {
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .frw-how > div,
-  .theme-noir .frw-link,
-  .theme-noir .frw input[type="checkbox"]::after,
-  .theme-noir .frw-btn {
+  .frw-how > div,
+  .frw-link,
+  .frw input[type="checkbox"]::after,
+  .frw-btn {
     transition-duration: .01ms;
   }
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .frw-how > div:hover {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+.frw-how > div:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 16px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
-.theme-noir-light .frw input[type="checkbox"]::after {
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
+.frw input[type="checkbox"]::after {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 </style>

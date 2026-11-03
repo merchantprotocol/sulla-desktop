@@ -27,6 +27,7 @@ import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
+import { hostPort } from '@pkg/utils/instance';
 
 /**
  * Represents the current or desired state of the backend/main process.
@@ -50,7 +51,7 @@ type DispatchFunctionType = (request: express.Request, response: express.Respons
 type HttpMethod = 'get' | 'put' | 'post';
 
 const console = Logging.server;
-const SERVER_PORT = 6107;
+const SERVER_PORT = hostPort(6107);
 const SERVER_FILE_BASENAME = 'rd-engine.json';
 const MAX_REQUEST_BODY_LENGTH = 4194304; // 4MiB
 

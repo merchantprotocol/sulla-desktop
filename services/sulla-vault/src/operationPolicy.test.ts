@@ -91,3 +91,58 @@ test('existing single-binding operations keep their behavior', () => {
   assert.throws(() => check({ ...cli, url: 'https://api.anthropic.com/v1/models' } as BrokerExecuteRequest), /path_denied/);
   assert.throws(() => check({ ...cli, operation: 'provider.unknown' } as BrokerExecuteRequest), /unknown_operation/);
 });
+
+const INFERENCE_LANES: Array<[string, string, BrokerInjection[]]> = [
+  ['openai', 'https://api.openai.com/v1/chat/completions', [API_KEY_BEARER]],
+  ['anthropic', 'https://api.anthropic.com/v1/messages', [X_API_KEY]],
+  ['google', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+    [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }]],
+  ['grok', 'https://api.x.ai/v1/responses', [API_KEY_BEARER]],
+  ['grok', 'https://cli-chat-proxy.grok.com/v1/responses', [ACCESS_BEARER]],
+  ['kimi', 'https://api.moonshot.ai/v1/chat/completions', [API_KEY_BEARER]],
+  ['kimi', 'https://api.moonshot.cn/v1/chat/completions', [API_KEY_BEARER]],
+  ['nvidia', 'https://integrate.api.nvidia.com/v1/chat/completions', [API_KEY_BEARER]],
+  ['alibaba', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', [API_KEY_BEARER]],
+  ['alibaba', 'https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions', [API_KEY_BEARER]],
+  ['alibaba', 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', [API_KEY_BEARER]],
+  ['alibaba', 'https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions', [API_KEY_BEARER]],
+  ['alibaba', 'https://coding.dashscope.aliyuncs.com/v1/chat/completions', [API_KEY_BEARER]],
+  ['groq', 'https://api.groq.com/openai/v1/chat/completions', [API_KEY_BEARER]],
+  ['mistral', 'https://api.mistral.ai/v1/chat/completions', [API_KEY_BEARER]],
+  ['cerebras', 'https://api.cerebras.ai/v1/chat/completions', [API_KEY_BEARER]],
+  ['together', 'https://api.together.xyz/v1/chat/completions', [API_KEY_BEARER]],
+  ['cohere', 'https://api.cohere.ai/compatibility/v1/chat/completions', [API_KEY_BEARER]],
+  ['deepseek', 'https://api.deepseek.com/chat/completions', [API_KEY_BEARER]],
+  ['arcee', 'https://api.arcee.ai/api/v1/chat/completions', [API_KEY_BEARER]],
+];
+
+test('provider.inference accepts every AI integration chat lane with empty item sites', () => {
+  for (const [integrationId, url, injections] of INFERENCE_LANES) {
+    const req = { ...request(integrationId, url, injections, 'POST'), operation: 'provider.inference' } as BrokerExecuteRequest;
+    assert.doesNotThrow(() => check(req), `${ integrationId } ${ url }`);
+  }
+});
+
+test('provider.inference rejects wrong hosts and item sites can only narrow bindings', () => {
+  for (const [integrationId, url, injections] of INFERENCE_LANES) {
+    const req = { ...request(integrationId, url, injections, 'POST'), operation: 'provider.inference' } as BrokerExecuteRequest;
+    const wrong = new URL(url);
+    wrong.hostname = 'evil.example.com';
+    assert.throws(() => check({ ...req, url: wrong.toString() } as BrokerExecuteRequest), /destination_denied/, integrationId);
+    assert.throws(
+      () => validateOperation(req, new URL(url).hostname, { ...ITEM_POLICY, sites: ['other.example.com'] }),
+      /destination_denied/,
+      `${ integrationId } item sites narrow`,
+    );
+  }
+});
+
+test('provider.inference binds custom to the HTTPS base host stored in item sites', () => {
+  const req = {
+    ...request('custom', 'https://models.example.com/v1/chat/completions', [API_KEY_BEARER], 'POST'),
+    operation: 'provider.inference',
+  } as BrokerExecuteRequest;
+  const policy = { ...ITEM_POLICY, sites: ['models.example.com'] } as AgentPolicy;
+  assert.doesNotThrow(() => validateOperation(req, 'models.example.com', policy));
+  assert.throws(() => validateOperation({ ...req, url: 'https://evil.example.com/v1/chat/completions' }, 'evil.example.com', policy), /destination_denied/);
+});

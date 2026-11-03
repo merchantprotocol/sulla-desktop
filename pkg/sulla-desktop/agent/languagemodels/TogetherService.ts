@@ -6,6 +6,7 @@
 import { type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
+import { resolveFirstChatModel } from './ModelDiscoveryService';
 
 /**
  * Together AI — free credits + large open-model catalog.
@@ -20,9 +21,12 @@ export class TogetherService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    const model = valMap.model || await resolveFirstChatModel('together', valMap.api_key);
+    if (!model) throw new Error('Together returned no chat models; reconnect the account and choose a model');
+
     return new TogetherService({
       id:      'together',
-      model:   valMap.model || '',
+      model,
       baseUrl: 'https://api.together.xyz/v1',
       apiKey:  valMap.api_key || '',
     });

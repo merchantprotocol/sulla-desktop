@@ -53,7 +53,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   box-shadow: -16px 0 40px color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 .drawer :deep(.conv-toolbar), .drawer :deep(.conv-list) { border-color: var(--border-default); }
-.drawer :deep(.conv-back) { color: var(--accent-primary); }
+.drawer :deep(.conv-back) { color: var(--accent); }
 .drawer :deep(.conv-back:hover), .drawer :deep(.conv-item-active) { background: var(--bg-surface-hover); }
 @media (max-width: 760px) { .drawer { width: 100%; } }
 </style>

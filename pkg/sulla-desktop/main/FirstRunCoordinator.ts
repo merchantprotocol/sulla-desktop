@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -63,8 +64,13 @@ export class FirstRunCoordinator {
       return;
     }
     console.log(`[FirstRunCoordinator] Condition met: ${ name }`);
+    firstRunTrace('coordinator', `condition met: ${ name }`, { waitingOn: [...this.conditions].filter(([, met]) => !met).map(([c]) => c).filter(c => c !== name) });
     this.conditions.set(name, true);
     await this.evaluate();
+  }
+
+  isConditionMet(name: string): boolean {
+    return this.conditions.get(name) === true;
   }
 
   /**
@@ -81,11 +87,16 @@ export class FirstRunCoordinator {
       if (allMet) {
         step.fired = true;
         console.log(`[FirstRunCoordinator] Firing step: ${ step.name }`);
+        firstRunTrace('coordinator', `step fired: ${ step.name }`);
         try {
           await step.callback();
           console.log(`[FirstRunCoordinator] Step completed: ${ step.name }`);
         } catch (err) {
+          // Let the next condition change try it again instead of leaving
+          // the flow stuck behind a step that never ran.
+          step.fired = false;
           console.error(`[FirstRunCoordinator] Step "${ step.name }" failed:`, err);
+          firstRunTrace('coordinator', `step failed: ${ step.name }; will retry on the next condition`, { error: err instanceof Error ? err.message : String(err) });
         }
       }
     }

@@ -13,19 +13,19 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
-import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+const router = useRouter();
 const visible = ref(false);
 const requestedIntegration = ref<string | null>(null);
 let openedGuidedConnect = false;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
-function openVaultConnect(integrationId: string) {
-  window.dispatchEvent(new CustomEvent('sulla:open-secure-vault', {
-    detail: { integrationId, connect: true },
-  }));
+async function openIntegration(integrationId: string) {
+  await router.push(`/Integrations/${ encodeURIComponent(integrationId) }`);
+  ipcRenderer.send('first-run:trace' as any, 'main-window', 'opened deferred API connection', { integrationId });
 }
 
 async function refresh() {
@@ -41,26 +41,39 @@ async function refresh() {
   requestedIntegration.value = typeof choice === 'string' ? choice : null;
   visible.value = !status.connected;
 
+  if (status.connected && requestedIntegration.value) {
+    const choices = { ...(firstRun?.choices ?? {}) };
+    delete choices.aiApiProvider;
+    await ipcRenderer.invoke('first-run-state:set' as any, { choices }).catch(() => undefined);
+    requestedIntegration.value = null;
+  }
+
   if (visible.value && requestedIntegration.value && !openedGuidedConnect) {
     openedGuidedConnect = true;
-    openVaultConnect(requestedIntegration.value);
+    void openIntegration(requestedIntegration.value);
   }
 }
 
 function openModels() {
-  if (requestedIntegration.value) openVaultConnect(requestedIntegration.value);
-  else openMainTab('models');
+  if (requestedIntegration.value) void openIntegration(requestedIntegration.value);
+  else void router.push('/Integrations');
 }
 function onModelChanged() { void refresh(); }
+function onOpenConnections() { openModels(); }
+function onVaultUnlocked() { void refresh(); }
 
 onMounted(() => {
   void refresh();
   refreshTimer = setInterval(refresh, 2_000);
   ipcRenderer.on('model-provider:state-changed', onModelChanged);
+  ipcRenderer.on('vault:logged-in' as any, onVaultUnlocked);
+  window.addEventListener('sulla:open-ai-connections', onOpenConnections);
 });
 onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer);
   ipcRenderer.removeListener('model-provider:state-changed', onModelChanged);
+  ipcRenderer.removeListener('vault:logged-in' as any, onVaultUnlocked);
+  window.removeEventListener('sulla:open-ai-connections', onOpenConnections);
 });
 </script>
 

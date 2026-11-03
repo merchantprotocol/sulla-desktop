@@ -34,10 +34,12 @@ export class AnthropicModels extends SelectBoxProvider {
     }
 
     try {
+      const workspaceId = context.formValues.workspace_id?.trim();
       const response = await fetch('https://api.anthropic.com/v1/models', {
         headers: {
           'x-api-key':         apiKey,
           'anthropic-version': '2023-06-01',
+          ...(workspaceId ? { 'anthropic-workspace-id': workspaceId } : {}),
         },
       });
 

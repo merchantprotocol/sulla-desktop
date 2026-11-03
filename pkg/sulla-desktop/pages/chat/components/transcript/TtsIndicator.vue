@@ -28,25 +28,25 @@ const controller = useChatController();
 <style scoped>
 .tts-speaking {
   padding: 14px 0 14px 22px;
-  border-left: 1px solid rgba(80, 150, 179, 0.45);
+  border-left: 1px solid var(--accent-glow);
   position: relative;
   display: flex; align-items: center; gap: 16px;
 }
 .tts-speaking::before {
   content: ""; position: absolute; left: -4px; top: 20px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--steel-400); box-shadow: 0 0 14px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 14px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
 .label {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
   font-weight: 700; flex-shrink: 0;
 }
 .wave { flex: 1; display: flex; align-items: center; gap: 3px; height: 20px; }
 .wave span {
   display: block; width: 2px; border-radius: 1px;
-  background: var(--steel-400); box-shadow: 0 0 3px rgba(106, 176, 204, 0.4);
+  background: var(--accent-hover); box-shadow: 0 0 3px var(--accent-glow);
   animation: wave-bar 0.8s ease-in-out infinite;
 }
 .wave span:nth-child(1)  { animation-delay: 0s; }
@@ -61,11 +61,11 @@ const controller = useChatController();
 .wave span:nth-child(10) { animation-delay: 0.14s; }
 @keyframes wave-bar { 0%, 100% { height: 20%; } 50% { height: 90%; } }
 .stop-tts {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--read-3);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--text-secondary);
   padding: 5px 11px; border-radius: 4px;
-  background: transparent; border: 1px solid rgba(80, 150, 179, 0.3);
+  background: transparent; border: 1px solid var(--accent-glow);
   cursor: pointer; flex-shrink: 0; transition: all 0.15s ease;
 }
-.stop-tts:hover { color: white; border-color: var(--steel-400); background: rgba(80, 150, 179, 0.12); }
+.stop-tts:hover { color: var(--text-on-accent); border-color: var(--accent-hover); background: var(--accent-dim); }
 </style>

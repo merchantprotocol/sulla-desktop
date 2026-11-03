@@ -7,7 +7,7 @@
 # ============================================================================
 # Sulla Desktop — Installer
 # ============================================================================
-# Downloads and installs the latest pre-built Sulla Desktop from GitHub.
+# Downloads and installs the latest pre-built Sulla Desktop from the release CDN.
 # No build tools required.
 #
 # Usage:
@@ -27,7 +27,7 @@ set -eu
 # pipefail is not POSIX; use it where the shell supports it.
 (set -o pipefail) 2>/dev/null && set -o pipefail
 
-GITHUB_REPO="merchantprotocol/sulla-desktop"
+RELEASE_MANIFEST_URL="https://releases.sulladesktop.com/channels/latest/latest.json"
 
 # Colors
 RED='\033[0;31m'
@@ -50,37 +50,29 @@ require_cmd() {
     fi
 }
 
-# Get the latest release tag from GitHub API
+# Fetch the release manifest that the app updater and website also use.
 get_latest_release() {
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
     local release_json
-    release_json=$(curl -fsSL "$api_url" 2>/dev/null) || {
-        error "Failed to fetch latest release from GitHub."
+    release_json=$(curl -fsSL "$RELEASE_MANIFEST_URL" 2>/dev/null) || {
+        error "Failed to fetch the latest release manifest."
         error "Check your internet connection and try again."
         exit 1
     }
     echo "$release_json"
 }
 
-# Extract a download URL from release JSON matching a pattern
+# Extract one architecture entry from the controlled latest.json schema.
 get_asset_url() {
     local json="$1"
-    local pattern="$2"
-    echo "$json" \
-        | grep -o '"browser_download_url": *"[^"]*'"$pattern"'[^"]*"' \
-        | head -1 \
-        | sed 's/"browser_download_url": *"//' \
-        | sed 's/"$//' || true  # no match is not an error; callers check for empty
+    local arch="$2"
+    echo "$json" | tr '\n' ' ' \
+        | sed -n 's/.*"'"$arch"'"[[:space:]]*:[[:space:]]*{[^}]*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
-# Extract version tag from release JSON
 get_release_tag() {
     local json="$1"
-    echo "$json" \
-        | grep -o '"tag_name": *"[^"]*"' \
-        | head -1 \
-        | sed 's/"tag_name": *"//' \
-        | sed 's/"$//' || true
+    echo "$json" | tr '\n' ' ' \
+        | sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
 # ─── macOS installer ────────────────────────────────────────
@@ -123,22 +115,13 @@ install_macos() {
     version=$(get_release_tag "$release_json")
     log "Latest version: $version"
 
-    # Try DMG first, fall back to ZIP
-    local dmg_url
-    dmg_url=$(get_asset_url "$release_json" "${arch_label}[^\"/]*\\.dmg")
-
-    if [ -n "$dmg_url" ]; then
-        install_macos_dmg "$dmg_url" "$version"
-    else
-        local zip_url
-        zip_url=$(get_asset_url "$release_json" "-${arch_label}-mac\\.zip")
-        if [ -n "$zip_url" ]; then
-            install_macos_zip "$zip_url" "$version"
-        else
-            error "No macOS artifact found in release $version"
-            exit 1
-        fi
+    local zip_url
+    zip_url=$(get_asset_url "$release_json" "$arch_label")
+    if [ -z "$zip_url" ]; then
+        error "No macOS $arch_label artifact found in release $version"
+        exit 1
     fi
+    install_macos_zip "$zip_url" "$version"
 }
 
 install_macos_dmg() {
@@ -334,7 +317,7 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: install.sh [--uninstall]"
             echo ""
-            echo "Downloads and installs the latest Sulla Desktop from GitHub."
+            echo "Downloads and installs the latest Sulla Desktop from releases.sulladesktop.com."
             echo ""
             echo "  --uninstall   Remove Sulla Desktop"
             echo ""

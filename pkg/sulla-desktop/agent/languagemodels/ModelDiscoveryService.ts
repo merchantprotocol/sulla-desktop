@@ -16,7 +16,10 @@ import {
   loadProviderRuntimeConfig,
   providerFetch,
 } from './providerBroker';
+import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
+import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl, type OpenAICompatibleProviderDefinition } from './openAICompatibleProviders';
+import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
 
 import type { BrokerInjection } from '../../vault-broker';
 
@@ -93,7 +96,7 @@ export class ModelDiscoveryService {
     google: {
       baseUrl:        'https://generativelanguage.googleapis.com/v1beta',
       modelsEndpoint: '/models',
-      authHeader:     'Authorization',
+      authHeader:     'x-goog-api-key',
       parseResponse:  (data) => data.models?.map((model: any) => ({
         id:           model.name.replace('models/', ''),
         name:         model.displayName || model.name,
@@ -336,15 +339,54 @@ export class ModelDiscoveryService {
         { id: 'trinity-mini', name: 'Trinity Mini', provider: 'arcee', description: 'Fast, efficient model - tool use, quick tasks' },
       ],
     },
+
+    ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((definition: OpenAICompatibleProviderDefinition) => [definition.id, {
+      // Azure needs the user's resource URL, so its base URL can't be built
+      // from empty values. Computing it here at load time must never throw,
+      // or the whole main process fails to start.
+      baseUrl: (() => {
+        try {
+          return providerBaseUrl(definition, {});
+        } catch {
+          return '';
+        }
+      })(),
+      modelsEndpoint: definition.modelsUrl.startsWith('http') ? definition.modelsUrl : definition.modelsUrl,
+      authHeader: 'Authorization',
+      parseResponse: (data: any) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+        return list.map((model: any) => {
+          const id = String(model.id || model.name || model.model || '');
+          return { id, name: model.name || model.display_name || id, provider: definition.id, description: model.description };
+        }).filter((model: ModelInfo) => model.id && definition.defaultModelFilter.test(model.id));
+      },
+      ...(definition.staticModels ? { staticModels: definition.staticModels.map(id => ({ id, name: id, provider: definition.id })) } : {}),
+    }])),
+
+    custom: {
+      baseUrl:        '',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'custom',
+      })) || [],
+    },
   };
 
   /**
    * Fetch available models for a specific provider
    */
-  async fetchModelsForProvider(providerId: string, apiKey = ''): Promise<ModelInfo[]> {
-    const containerAuthority = usesContainerVaultAuthority() && providerId !== 'ollama';
+  async fetchModelsForProvider(providerId: string, apiKey = '', options: { baseUrl?: string; region?: string } = {}): Promise<ModelInfo[]> {
+    // A key supplied by the Connect form is intentionally used for a direct
+    // verification request. Saved accounts have no renderer-visible key and
+    // therefore take the brokered provider.discovery lane below.
+    const containerAuthority = usesContainerVaultAuthority() && !['ollama', 'lm-studio', 'local-server'].includes(providerId) && !apiKey;
     const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
-    const cacheKey = containerAuthority ? `${ providerId }-${ runtime!.accountId }` : `${ providerId }-${ apiKey.slice(-8) }`;
+    const cacheKey = containerAuthority
+      ? `${ providerId }-${ runtime!.accountId }`
+      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }-${ options.region || '' }`;
     const cached = this.cache.get(cacheKey);
 
     // Return cached results if still valid
@@ -356,6 +398,7 @@ export class ModelDiscoveryService {
     if (!provider) {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
+    if (!provider.modelsEndpoint) return provider.staticModels ?? [];
 
     // Always attempt live discovery first for every provider so newly released
     // models appear automatically. Any `staticModels` array is treated purely as
@@ -363,9 +406,20 @@ export class ModelDiscoveryService {
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
+      const tableDefinition = OPENAI_COMPATIBLE_PROVIDERS.find(item => item.id === providerId);
+      const savedValues = { ...(runtime?.values || {}), ...(options.region ? { region: options.region } : {}) };
+      const configuredBaseUrl = tableDefinition
+        ? providerBaseUrl(tableDefinition, savedValues)
+        : providerId === 'kimi'
+          ? kimiBaseUrl(savedValues)
+          : providerId === 'alibaba'
+            ? alibabaBaseUrl(savedValues)
+            : provider.baseUrl;
+      const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
+      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint
-        : `${ provider.baseUrl }${ provider.modelsEndpoint }`;
+        : `${ baseUrl }${ provider.modelsEndpoint }`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent':   'Sulla-Desktop/1.0',
@@ -383,6 +437,17 @@ export class ModelDiscoveryService {
       // Add required headers for specific providers
       if (providerId === 'anthropic') {
         headers['anthropic-version'] = '2023-06-01';
+        let workspaceId = runtime?.values.workspace_id || '';
+        if (!workspaceId) {
+          try {
+            const values = await getIntegrationService().getFormValues('anthropic');
+            workspaceId = values.find((value: { property: string; value: string }) => value.property === 'workspace_id')?.value || '';
+            const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
+            workspaceId = getPendingCredential('anthropic')?.values.workspace_id || workspaceId;
+          } catch { /* optional workspace metadata */ }
+        }
+        workspaceId = workspaceId.trim();
+        if (workspaceId) headers['anthropic-workspace-id'] = workspaceId;
       }
 
       const injections: BrokerInjection[] = provider.authHeader === 'Authorization'
@@ -391,15 +456,18 @@ export class ModelDiscoveryService {
       const executionContext = containerAuthority
         ? await issueServiceProviderExecutionContext('model-discovery', providerId, runtime!.accountId)
         : undefined;
-      const response = await providerFetch(providerId, url, {
+      const requestInit: RequestInit = {
         method: 'GET',
         headers,
         signal: AbortSignal.timeout(10000), // 10 second timeout
-      }, executionContext, {
-        streaming: false,
-        operation: 'provider.discovery',
-        injections,
-      });
+      };
+      const response = containerAuthority
+        ? await providerFetch(providerId, url, requestInit, executionContext, {
+          streaming: false,
+          operation: 'provider.discovery',
+          injections,
+        })
+        : await fetch(url, requestInit);
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -506,4 +574,20 @@ export class ModelDiscoveryService {
 }
 
 export const modelDiscoveryService = new ModelDiscoveryService();
+
+const NON_CHAT_MODEL = /(?:^|[-_/])(embed|embedding|rerank|moderation|transcri|whisper|tts|image|vision-only)(?:$|[-_/])/i;
+
+export function isChatModel(model: ModelInfo): boolean {
+  if (NON_CHAT_MODEL.test(model.id)) return false;
+  if (model.capabilities?.length) {
+    return model.capabilities.some(capability => /generateContent|chat|text|completion/i.test(capability));
+  }
+  return true;
+}
+
+/** Resolve a usable chat model without ever manufacturing an empty/default id. */
+export async function resolveFirstChatModel(providerId: string, apiKey = '', baseUrl?: string): Promise<string> {
+  const models = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey, { baseUrl });
+  return models.find(isChatModel)?.id || '';
+}
 export type { ModelInfo };

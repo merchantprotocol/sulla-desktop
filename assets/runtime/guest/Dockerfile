@@ -37,6 +37,16 @@ COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
 # survives reboots. pip.conf in sys.prefix is read only by the system
 # interpreter, never inside a venv; Alpine's npm already defaults its global
 # prefix to /usr/local (checked below).
+# The provider CLIs Sulla drives in the guest (Claude sign-in and chat, Codex
+# chat and its model catalog). They live in the image's own /usr, because
+# /usr/local is replaced by the data disk at boot. Pinned to the versions the
+# sulla-agent image uses; Desktop still installs them on demand if missing.
+ARG CLAUDE_CODE_VERSION=2.1.312
+ARG CODEX_VERSION=0.162.1
+RUN npm install --global --no-fund --no-audit --prefix /image/rootfs/usr \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+    && test -x /image/rootfs/usr/bin/claude && test -x /image/rootfs/usr/bin/codex \
+    && rm -rf /root/.npm
 COPY assets/runtime/guest/config/pip.conf /image/rootfs/usr/pip.conf
 COPY assets/runtime/guest/config/sulla-usr-local.pth /image/rootfs/usr/sulla-usr-local.pth
 # Only what PID 1 needs before /usr is mounted stays in the initramfs, which

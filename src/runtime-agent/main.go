@@ -104,6 +104,9 @@ func main() {
 	// nosuid/nodev are mount flags; passed as option text the kernel rejects
 	// the whole mount with EINVAL and /dev never gets device nodes.
 	mustMount("devtmpfs", "/dev", "devtmpfs", syscall.MS_NOSUID, "mode=0755")
+	// Pseudo-terminals: interactive CLIs (claude setup-token) need a tty, and
+	// devtmpfs alone provides /dev/ptmx without the devpts instance behind it.
+	mustMount("devpts", "/dev/pts", "devpts", syscall.MS_NOSUID|syscall.MS_NOEXEC, "newinstance,ptmxmode=0666,mode=0620,gid=5")
 	ensureDevices()
 	loadBootModules()
 	mountUsr()

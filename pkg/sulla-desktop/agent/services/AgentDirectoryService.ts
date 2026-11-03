@@ -11,6 +11,14 @@
  * roster. Cards come from the directory columns (when_to_call, send, ...),
  * falling back to the description when an agent has no card yet.
  *
+ * A can_call list containing the wildcard "*" (CAN_CALL_WILDCARD) means
+ * "every enabled, non-archived agent on this install except itself" — it is
+ * resolved against agent_definitions on each read, so a newly installed or
+ * imported agent appears with no reseed. A card's own `canCall` field is left
+ * as stored (it may literally be `["*"]`); the wildcard is only expanded when
+ * it is used to scope a list of callable agents (buildAgentTeamBlock, the
+ * Team directory in AgentTeamRecall).
+ *
  * Interfaces for the subconscious layer:
  *   - buildAgentTeamBlock(opts)   → "<agent_team>" prompt block
  *   - suggestAgentsForText(text)  → ranked cards for the current situation
@@ -45,7 +53,12 @@ export interface AgentDirectoryQuery {
   query?:           string;
   /** Include disabled and archived agents (default false). */
   includeInactive?: boolean;
-  /** Restrict to these slugs (e.g. a lead agent's can_call list). */
+  /**
+   * Restrict to these slugs (e.g. a lead agent's can_call list). A list
+   * containing the can_call wildcard ("*") lifts the restriction instead of
+   * filtering to a literal agent named "*" — it is resolved at read time, so
+   * a newly installed or imported agent shows up with no reseed.
+   */
   slugs?:           string[];
   limit?:           number;
 }
@@ -61,6 +74,9 @@ export interface AgentTeamBlockOptions {
 }
 
 const STOP_WORDS = new Set(['a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'for', 'from', 'how', 'i', 'in', 'is', 'it', 'me', 'my', 'of', 'on', 'or', 'please', 'that', 'the', 'this', 'to', 'we', 'what', 'with', 'you']);
+
+/** A can_call entry meaning "every enabled, non-archived agent on this install except itself". */
+export const CAN_CALL_WILDCARD = '*';
 
 export function isActiveAgent(agent: AgentDefinition): boolean {
   return agent.enabled && agent.status !== 'archive';
@@ -121,7 +137,7 @@ export function scoreCard(card: AgentDirectoryCard, text: string): number {
 
 export async function listAgentDirectory(opts: AgentDirectoryQuery = {}): Promise<AgentDirectoryCard[]> {
   const agents = await agentDefinitionService.list();
-  const slugFilter = opts.slugs?.length ? new Set(opts.slugs) : null;
+  const slugFilter = opts.slugs?.length && !opts.slugs.includes(CAN_CALL_WILDCARD) ? new Set(opts.slugs) : null;
   let cards = agents
     .filter(agent => opts.includeInactive || isActiveAgent(agent))
     .filter(agent => !slugFilter || slugFilter.has(agent.slug))

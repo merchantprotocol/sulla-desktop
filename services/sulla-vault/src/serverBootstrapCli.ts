@@ -77,7 +77,7 @@ async function main(): Promise<void> {
     const confirmation = hiddenLine('Confirm Vault unlock password: ');
     if (password !== confirmation) throw new Error('Passwords do not match');
   }
-  if (password.length < 12) throw new Error('Password must contain at least 12 characters');
+  if (!password) throw new Error('Password is required');
 
   const master = await deriveMasterKey(password);
   const loginHash = await deriveLoginHash(master.key);

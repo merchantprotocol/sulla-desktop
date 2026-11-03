@@ -140,7 +140,9 @@ export function egressPolicyCommand(enforce: boolean): string[] {
  */
 export const ENSURE_AGENT_NETWORK_SCRIPT = `set -eu
 net=$1; bridge=$2
-current() { docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "$net" 2>/dev/null || echo __missing__; }
+# Docker 29 prints an empty line on stdout even when inspect fails, so capture
+# and test the exit status instead of appending to whatever it printed.
+current() { out=$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "$net" 2>/dev/null) || { echo __missing__; return 0; }; printf '%s' "$out"; }
 state=$(current)
 [ "$state" = "$bridge" ] && exit 0
 if [ "$state" != "__missing__" ]; then

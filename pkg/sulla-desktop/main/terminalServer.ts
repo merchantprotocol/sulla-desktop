@@ -9,8 +9,9 @@ import * as pty from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 
 import paths from '@pkg/utils/paths';
+import { hostPort } from '@pkg/utils/instance';
 
-const TERMINAL_PORT = 6108;
+const TERMINAL_PORT = hostPort(6108);
 const PTY_RETRY_INTERVAL_MS = 3000;
 const PTY_MAX_RETRIES = 20;
 

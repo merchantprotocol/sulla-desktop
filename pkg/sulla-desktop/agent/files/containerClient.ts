@@ -14,8 +14,9 @@ import { issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import { sullaFilesCapabilityKey } from '@pkg/runtime/sullaFilesKey';
 
 import type { ToolExecutionContext } from '../tools/executionContext';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
-const DESKTOP_FILES_ORIGIN = 'https://127.0.0.1:30124';
+const DESKTOP_FILES_ORIGIN = loopbackOrigin('https', 30124);
 const CONTAINER_FILES_ORIGIN = 'https://sulla_files:8792';
 const MAX_CA_BYTES = 64 * 1_024;
 

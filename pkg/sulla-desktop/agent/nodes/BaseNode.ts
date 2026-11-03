@@ -11,11 +11,15 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
+import { getAgentOverrideService, getPrimaryService, getServiceByProvider, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
-import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
+import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
+import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
+import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
+import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
+import { ProviderFailure } from '../languagemodels/failures';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
@@ -31,6 +35,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
+import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -496,6 +501,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /** Subclasses set true to run batched tool calls concurrently (results are
    *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
   protected parallelToolCalls = false;
+  private routingCandidates: ModelCandidate[] = [];
+  private routingPinned = false;
 
   constructor(id: string, name: string) {
     this.id = id;
@@ -504,10 +511,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /** Resolve the provider that owns this graph turn. */
   protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
-    const override = await getAgentOverrideService((state.metadata as any).agent);
-    return override ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
-      ? await getSubconsciousService()
-      : await getPrimaryService());
+    const target = resolveModelSlot(state.metadata as any) === 'subconscious' ? 'subconscious' : 'agents';
+    const explicitProvider = String((state.metadata as any).agent?.provider || '').trim();
+    const explicitModel = String((state.metadata as any).agent?.model || '').trim();
+    const agentId = resolveAgentIdentity(state.metadata);
+    const definition = agentId ? await agentDefinitionService.findBySlug(agentId).catch(() => null) : null;
+    // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
+    // own Model setting > the list.
+    const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
+    this.routingPinned = choice.mode === 'pin';
+    this.routingCandidates = await modelRouter.resolve(target, choice);
+    if (this.routingCandidates.length) {
+      const first = this.routingCandidates[0];
+      return getServiceByProvider(first.provider, first.model);
+    }
+    const override = await getAgentOverrideService({ ...(state.metadata as any).agent, modelChoice: choice });
+    return override ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
@@ -636,10 +655,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Detect provider — use the same routing logic as the LLM call itself
     // so the system prompt's provider-conditional sections (e.g. Anthropic
     // cache blocks vs OpenAI response format) match the model we'll invoke.
-    const overrideLLMForPrompt = await getAgentOverrideService((state.metadata as any).agent);
-    const llm = overrideLLMForPrompt ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
-      ? await getSubconsciousService()
-      : await getPrimaryService());
+    const llm = await this.resolveLoopProvider(state);
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
     const mode = options.promptMode || 'full';
@@ -1218,141 +1234,86 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } catch (err) {
       const abortSignal = state.metadata?.options?.abort?.signal;
       throwIfAborted(abortSignal);
-      // A vanished runtime is infrastructure failure, not a provider failure. The
-      // conversation owner rebuilds the lifecycle and retries this same provider.
       if (isContainerLifecycleLost(err)) throw err;
-      const initialRecovery = classifyLLMFailure(err);
-      if (initialRecovery.kind === 'interrupted') throw err;
 
-      const primaryName = this.llm.getProviderName?.() || 'primary';
-      const primaryId = this.llm.getModel?.() || '';
-      let lastErr = err;
-      let lastErrMsg = redactLLMFailureMessage(err);
-      let recovery = initialRecovery;
-      console.warn(
-        `[${ this.name }:BaseNode] Primary LLM failed ` +
-        `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
-      );
+      const fallbackEnabled = await SullaSettingsModel.get('fallbackEnabled', true);
+      const configuredRetries = Math.max(0, Number(await SullaSettingsModel.get('remoteRetryCount', 1)) || 0);
+      const candidates = this.routingCandidates.length
+        ? this.routingCandidates.slice(0, fallbackEnabled && !this.routingPinned ? undefined : 1)
+        : [{ provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '' }];
+      let lastErr: unknown = err;
+      let lastRecovery = classifyLLMFailure(err);
+      const failedFirst = candidates[0];
+      firstRunTrace('chat', 'provider call failed', { provider: failedFirst.provider, model: failedFirst.model, recoveryKind: lastRecovery.kind, error: redactLLMFailureMessage(err) });
 
-      if (recovery.retryPrimary) {
+      for (let index = 0; index < candidates.length; index++) {
+        const candidate = candidates[index];
+        let service: BaseLanguageModel;
         try {
-          throwIfAborted(abortSignal);
-          console.warn(
-            `[${ this.name }:BaseNode] Retrying primary provider once ` +
-            `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind })`,
-          );
-          const retryMessages = this.buildReducedRetryMessages(messages);
-          const retryReply = await this.callLLMStreaming(state, retryMessages, {
-            maxTokens:   options.maxTokens,
-            format:      options.format,
-            temperature: options.temperature,
-            signal:      state.metadata?.options?.abort?.signal,
-            tools:       llmTools,
-            conversationId,
-            nodeName,
-            profileId:   (state.metadata as any).profileId,
-          }, nodeRunContext);
-          if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
-            (retryReply.metadata as any).retry_used = true;
-            (retryReply.metadata as any).retry_provider = primaryName;
-            (retryReply.metadata as any).retry_model = primaryId;
-            (retryReply.metadata as any).retry_reason = recovery.kind;
-            this.appendResponse(state, retryReply.content, retryReply.metadata.rawProviderContent);
-            return retryReply;
-          }
-          throw new Error(`LLM returned empty response on provider retry (model=${ primaryId || this.llm.getModel() }, provider=${ primaryName })`);
-        } catch (retryErr) {
-          throwIfAborted(abortSignal);
-          const retryRecovery = classifyLLMFailure(retryErr);
-          if (retryRecovery.kind === 'interrupted') throw retryErr;
-          lastErr = retryErr;
-          lastErrMsg = redactLLMFailureMessage(retryErr);
-          recovery = retryRecovery;
-          console.warn(
-            `[${ this.name }:BaseNode] Primary retry failed ` +
-            `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
-          );
+          service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model);
+        } catch (serviceError) {
+          lastErr = serviceError;
+          lastRecovery = classifyLLMFailure(serviceError);
+          if (lastRecovery.kind === 'interrupted') throw serviceError;
+          await modelRouter.markFailure(candidate.provider, serviceError);
+          continue;
         }
-      }
+        let recovery = index === 0 ? lastRecovery : classifyLLMFailure(lastErr);
+        const retryCount = recovery.retryPrimary ? Math.min(1, configuredRetries) : 0;
+        const attempts = index === 0 ? retryCount : 1 + Math.min(1, configuredRetries);
 
-      // Fallback to secondary provider. Health check failures are logged, but
-      // the call is still attempted because provider health probes often test
-      // a different endpoint than chat completion.
-      if (recovery.fallbackAllowed && await SullaSettingsModel.get('fallbackEnabled', true)) {
-        try {
-          throwIfAborted(abortSignal);
-          const secondary = await getSecondaryService();
-          throwIfAborted(abortSignal);
-          const secondaryName = secondary.getProviderName?.() || secondary.getModel();
-          const secondaryModel = secondary.getModel?.() || '';
-          const sameRoute = sameLLMRoute(
-            { provider: primaryName, model: primaryId },
-            { provider: secondaryName, model: secondaryModel },
-          );
-
-          if (sameRoute) {
-            console.warn(
-              `[${ this.name }:BaseNode] Secondary provider matches failed primary ` +
-              `(provider=${ secondaryName }, model=${ secondaryModel || '(default)' }) — skipping fallback`,
-            );
-          } else {
-            const initialized = await secondary.initialize();
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          try {
             throwIfAborted(abortSignal);
-            if (!initialized || !secondary.isAvailable()) {
-              console.warn(
-                `[${ this.name }:BaseNode] Secondary provider did not pass health check ` +
-                `(provider=${ secondaryName }, model=${ secondaryModel || '(default)' }) — attempting fallback call anyway`,
-              );
-            }
-            console.warn(
-              `[${ this.name }:BaseNode] Falling back to secondary provider ` +
-              `(from=${ primaryName }/${ primaryId || '(default)' }, to=${ secondaryName }/${ secondaryModel || '(default)' }, reason=${ recovery.kind })`,
-            );
-            // Successful provider failover is intentionally silent in chat.
-            // The warning above retains the diagnostic trail without surfacing
-            // an operational detail that does not require user action.
-            const chatMessages = messages.filter(msg =>
-              ['system', 'user', 'assistant'].includes(msg.role),
-            );
-            const reply = await this.callLLMStreaming(state, chatMessages, {
-              signal:      state.metadata?.options?.abort?.signal,
-              temperature: options.temperature,
-              maxTokens:   options.maxTokens,
-              format:      options.format,
-              tools:       llmTools,
-              conversationId,
-              nodeName,
-              profileId:   (state.metadata as any).profileId,
-            }, nodeRunContext, secondary);
-            if (reply && (reply.content?.trim() || reply.metadata.tool_calls?.length)) {
-            // Annotate the reply so downstream UI can badge it as a fallback.
+            firstRunTrace('chat', attempt === 0 && index > 0 ? 'fallback route started' : 'provider retry started', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1 });
+            const retryMessages = attempt > 0 || index === 0
+              ? this.buildReducedRetryMessages(messages)
+              : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
+            const reply = await this.callLLMStreaming(state, retryMessages, {
+              maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
+              signal: abortSignal, tools: llmTools, conversationId, nodeName,
+              profileId: (state.metadata as any).profileId,
+            }, nodeRunContext, service);
+            if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
+            if (index > 0) {
               (reply.metadata as any).fallback_used = true;
-              (reply.metadata as any).fallback_from = primaryName;
-              (reply.metadata as any).fallback_to = secondaryName;
-              (reply.metadata as any).fallback_reason = recovery.kind;
-              (reply.metadata as any).failed_model = primaryId;
-              (reply.metadata as any).fallback_model = secondaryModel;
-              this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
-              return reply;
+              (reply.metadata as any).fallback_from = failedFirst.provider;
+              (reply.metadata as any).fallback_to = candidate.provider;
+              (reply.metadata as any).fallback_reason = lastRecovery.kind;
+              (reply.metadata as any).failed_model = failedFirst.model;
+              (reply.metadata as any).fallback_model = candidate.model;
+            } else {
+              (reply.metadata as any).retry_used = true;
+              (reply.metadata as any).retry_provider = candidate.provider;
+              (reply.metadata as any).retry_model = candidate.model;
             }
-            throw new Error(`Secondary provider returned empty response (provider=${ secondaryName }, model=${ secondaryModel || '(default)' })`);
+            this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
+            return reply;
+          } catch (candidateError) {
+            throwIfAborted(abortSignal);
+            if (isContainerLifecycleLost(candidateError)) throw candidateError;
+            recovery = classifyLLMFailure(candidateError);
+            if (recovery.kind === 'interrupted' || (candidateError as any)?.unsafeToFallback) throw candidateError;
+            lastErr = candidateError;
+            lastRecovery = recovery;
+            firstRunTrace('chat', 'provider candidate failed', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1, recoveryKind: recovery.kind, error: redactLLMFailureMessage(candidateError) });
+            if (!recovery.retryPrimary) break;
           }
-        } catch (fallbackErr) {
-          const fallbackRecovery = classifyLLMFailure(fallbackErr);
-          if (fallbackRecovery.kind === 'interrupted') throw fallbackErr;
-          lastErr = fallbackErr;
-          lastErrMsg = redactLLMFailureMessage(fallbackErr);
-          console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, lastErrMsg);
+        }
+
+        // Transient errors only consume the one bounded same-candidate retry.
+        // Quota, authentication and hard failures suppress this provider until
+        // its reset/expiry and immediately advance through the ordered list.
+        if (!lastRecovery.retryPrimary || lastRecovery.kind === 'quota' || lastRecovery.kind === 'rate_limit' || lastRecovery.kind === 'auth' || lastRecovery.kind === 'unknown') {
+          await modelRouter.markFailure(candidate.provider, lastErr);
         }
       }
 
-      // Propagate the error so the chat UI can display it to the user
-      throw new Error(
-        `[${ this.name }] LLM provider recovery failed: ${ recovery.userMessage } ` +
-        `Tried ${ primaryName }/${ primaryId || '(default)' }` +
-        `${ recovery.fallbackAllowed ? ' and the configured fallback provider' : '' }. ` +
-        `Last error: ${ redactLLMFailureMessage(lastErr) || lastErrMsg }`,
-      );
+      const message = redactLLMFailureMessage(lastErr);
+      firstRunTrace('chat', 'provider call ended', { success: false, provider: failedFirst.provider, model: failedFirst.model, error: message });
+      console.error(`[${ this.name }:BaseNode] Model routing exhausted ${ candidates.length } candidate(s): ${ message }`);
+      if (lastErr instanceof ProviderFailure) throw lastErr;
+      throw new Error(lastRecovery.userMessage, { cause: lastErr });
     } finally {
       this.currentNodeRunContext = previousRunContext;
       (state.metadata as any).__toolAccessPolicy = previousToolAccessPolicy;
@@ -1690,6 +1651,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const executionContext = providerId && accountId
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
+      // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
+      // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent }, { ...options, state, executionContext });
     } finally {
       // Close partial output on failure too, before recovery starts another stream.

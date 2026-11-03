@@ -23,6 +23,7 @@ import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openMain, openDocker, getWindow, openUrlInApp } from '@pkg/window';
+import { openSupportCenter } from '@pkg/window/supportCenter';
 
 const console = Logging.background;
 
@@ -507,6 +508,11 @@ function registerPanelIpc(): void {
     await SullaSettingsModel.set(setting.property, value, setting.cast);
 
     return capturePreferences();
+  });
+
+  ipcMain.on('tray-panel:open-support', (event: Electron.IpcMainEvent) => {
+    if (!isTrustedTrayRenderer(event)) return;
+    openSupportCenter('home'); panelWindow?.hide();
   });
 
   ipcMain.on('tray-panel:open-url', (event: Electron.IpcMainEvent, url: string) => {
