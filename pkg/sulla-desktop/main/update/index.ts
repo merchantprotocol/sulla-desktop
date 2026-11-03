@@ -103,6 +103,7 @@ export async function installQueuedUpdate(): Promise<void> {
   try {
     if (os.platform() === 'darwin') {
       const staged = await macStagingPromise;
+      if (!staged) throw new Error('The macOS update is not staged.');
 
       // Spawn before coordinated shutdown: if this fails, the app remains alive.
       await launchMacInstaller(staged);
