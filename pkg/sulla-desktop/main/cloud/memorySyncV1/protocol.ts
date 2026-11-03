@@ -7,6 +7,9 @@ import crypto from 'node:crypto';
 export type MemoryStateEntry={id:string;generation:number;deleted:boolean};
 export type MemoryEnvelope={version:1;nonce:string;ciphertext:string};
 const enc=(value:string)=>Buffer.from(value,'utf8');
+export function memoryContentHash(value:unknown):string{return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')}
+export function advanceMemoryCursor(current:number,records:Array<{seq:number}>,head:{seq:number}|null):number{const candidate=records.at(-1)?.seq??head?.seq??current;return Number.isSafeInteger(candidate)&&candidate>=0?candidate:current}
+export function memoryKeySlotWinner(status:number,proposedWrappedKey:string,returnedWrappedKey?:string):string{if(status===201)return proposedWrappedKey;if(status===409&&returnedWrappedKey)return returnedWrappedKey;throw new Error('memory_key_slot_failed')}
 export function memoryAad(userId:string,id:string,generation:number):Buffer{return enc(JSON.stringify(['SVmem001',userId,id,generation]))}
 export function deriveMemoryMacKey(memoryKey:Buffer):Buffer{return Buffer.from(crypto.hkdfSync('sha256',memoryKey,Buffer.alloc(0),'SVmem001',32))}
 export function encryptMemoryRecord(memoryKey:Buffer,userId:string,id:string,generation:number,value:unknown):MemoryEnvelope{

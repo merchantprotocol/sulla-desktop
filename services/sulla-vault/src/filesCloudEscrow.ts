@@ -11,6 +11,7 @@ import type { CloudSyncAuthority } from './browserEnvelope/syncRunner.js';
 import { ensureSyncSchema } from './browserEnvelope/schema.js';
 import type { FilesAuditEmitter } from './filesAudit.js';
 import { createSyncEnvelope, loadSodium } from './browserEnvelope/envelope.js';
+import { unwrapMemorySyncKey, wrapMemorySyncKey } from './memorySyncKeyWrap.js';
 
 const subtle=webcrypto.subtle, enc=new TextEncoder();
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -48,6 +49,15 @@ export class FilesCloudEscrowService {
   private restoredCloudKey?:{userKey:Uint8Array;vaultId:string;vaultEpoch:number;expiresAt:number};
   private readonly restoreKeyTtlMs=5*60_000;
   constructor(private readonly db:Database,private readonly authority:CloudSyncAuthority,private readonly audit?:FilesAuditEmitter){}
+  async wrapMemoryKey(memoryKey:string){
+    const raw=new Uint8Array(Buffer.from(memoryKey,'base64'));if(raw.byteLength!==32)throw new FilesCloudEscrowError('invalid_request',400);
+    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{try{const wrappedKey=await wrapMemorySyncKey(userKey,userId,raw);assertCurrent();return{wrappedKey}}finally{raw.fill(0)}})
+      .catch(error=>{if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423);throw error});
+  }
+  async unwrapMemoryKey(wrappedKey:string){
+    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{const raw=await unwrapMemorySyncKey(userKey,userId,wrappedKey);assertCurrent();try{return{memoryKey:Buffer.from(raw).toString('base64')}}finally{raw.fill(0)}})
+      .catch(error=>{if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423);throw error});
+  }
   async key(requestId:string,recipientPublicKey:string){
     if(!UUID.test(requestId)||typeof recipientPublicKey!=='string'||recipientPublicKey.length>256)throw new FilesCloudEscrowError('invalid_request',400);
     await ensureSyncSchema(this.db);
@@ -113,6 +123,8 @@ export class FilesCloudEscrowService {
   }
 }
 export function registerFilesCloudEscrowRoute(app:express.Express,service:FilesCloudEscrowService,requireDesktopIdentity:(request:express.Request)=>void,requireHumanSession?:(request:express.Request)=>void):void{
+  app.post('/v1/memory-sync/wrap-key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.wrapMemoryKey(request.body?.memoryKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'memory_key_wrap_failed',message:e.message})}});
+  app.post('/v1/memory-sync/unwrap-key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.unwrapMemoryKey(request.body?.wrappedKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'memory_key_unwrap_failed',message:e.message})}});
   app.post('/v1/files/cloud-escrow/key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.key(request.body?.requestId,request.body?.recipientPublicKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_escrow_failed',message:e.message})}});
   app.post('/v1/files/cloud-escrow/restore-key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.restoreKey(request.body?.requestId,request.body?.recipientPublicKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_restore_failed',message:e.message})}});
   app.post('/v1/human/files/cloud-escrow/unlock',async(request,response)=>{try{requireHumanSession?.(request);response.setHeader('Cache-Control','no-store');response.json(await service.unlockCloud(request.body?.password))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_restore_failed',message:e.message})}});
