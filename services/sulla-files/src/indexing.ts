@@ -28,6 +28,15 @@ export async function reconcileIndexingAccounting(db:pg.Pool):Promise<void> {
   try {
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-files:indexing-accounting'))");
+    await client.query(`DELETE FROM file_search_text st USING files f,collections c
+    WHERE st.file_id=f.id AND c.id=f.collection_id
+      AND (f.deleted_at IS NOT NULL OR c.system_area=ANY($1::text[])
+        OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+        OR EXISTS(SELECT 1 FROM file_index_jobs j WHERE j.file_id=f.id AND f.current_version_id IS DISTINCT FROM j.version_id))`, [excluded]);
+    await client.query(`DELETE FROM file_search_chunks ch USING files f,collections c
+    WHERE ch.file_id=f.id AND c.id=f.collection_id
+      AND (f.deleted_at IS NOT NULL OR f.current_version_id IS DISTINCT FROM ch.version_id
+        OR c.system_area=ANY($1::text[]) OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
     await client.query(`DELETE FROM file_index_jobs j USING files f,collections c
     WHERE j.file_id=f.id AND c.id=f.collection_id
       AND (f.deleted_at IS NOT NULL OR f.current_version_id IS DISTINCT FROM j.version_id
@@ -126,11 +135,20 @@ export class IndexingQueue {
     const job = claimed.rows[0]; if (!job) return false;
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
-      const file = (await this.db.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1', [job.file_id])).rows[0];
-      if (!file || file.deleted_at || file.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(file.system_area) || file.protected) {
-        await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-        return true;
-      }
+      const client = await this.db.connect();
+      let file:any;
+      try {
+        await client.query('BEGIN');
+        file = (await client.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
+        if (!file || file.deleted_at || file.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(file.system_area) || file.protected) {
+          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
+          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
+          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
+          await client.query('COMMIT');
+          return true;
+        }
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
       await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
       source = await this.source(file);
       const extracted = await extractIndexText(source.path, file.mime);
@@ -139,6 +157,8 @@ export class IndexingQueue {
         await client.query('BEGIN');
         const current = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [file.id])).rows[0];
         if (!current || current.deleted_at || current.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(current.system_area) || current.protected) {
+          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
+          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
           await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
           await client.query('COMMIT'); return true;
         }
@@ -174,6 +194,10 @@ export class IndexingQueue {
           const updated = await client.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END
             WHERE version_id=$1 AND status='indexing' AND attempts=$6`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason, job.attempts]);
           if (updated.rowCount) await client.query('UPDATE files SET extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,extracted_at=CASE WHEN $3=\'failed\' THEN NOW() ELSE NULL END WHERE id=$1 AND current_version_id=$2', [job.file_id, job.version_id, status, terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
+        } else {
+          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
+          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
+          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
         }
         await client.query('COMMIT');
       } catch (failureError) { await client.query('ROLLBACK'); throw failureError } finally { client.release() }
