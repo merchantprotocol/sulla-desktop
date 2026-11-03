@@ -191,7 +191,7 @@ describe('DesktopRelayClient via the vault relay broker', () => {
     expect(restoreSession).toHaveBeenCalledTimes(1);
     expect(broker.createRelay).toHaveBeenCalledTimes(1);
     expect(client.getStatus().connected).toBe(true);
-    expect(client.getStatus().lastError).toBe('');
+    expect(client.getStatus().lastError).toBeUndefined();
   });
 
   it('backs off exponentially on a broker denial, capped at 5 minutes, logging one line', async() => {
