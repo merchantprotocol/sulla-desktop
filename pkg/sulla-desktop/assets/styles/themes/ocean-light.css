@@ -412,14 +412,7 @@
 }
 
 /* Routines Home */
-.theme-ocean-light .routines-home {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 60%, #f0f9ff 100%) !important;
-  color: var(--text-primary, #0c4a6e) !important;
-}
 
-.theme-ocean-light .routines-home .canvas {
-  background: transparent !important;
-}
 
 /* Tabs */
 .theme-ocean-light .tab {

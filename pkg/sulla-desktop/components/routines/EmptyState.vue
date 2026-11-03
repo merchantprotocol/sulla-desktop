@@ -47,13 +47,13 @@ const hasActions = computed(() => !!slots.default);
   text-align: center;
   border: 1px dashed var(--line);
   border-radius: 8px;
-  background: rgba(11, 20, 40, 0.3);
+  background: var(--bg-surface);
   backdrop-filter: blur(4px);
   max-width: 680px;
   margin: 40px auto;
 }
 .kicker {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.3em;
   color: var(--steel-400);
@@ -61,17 +61,17 @@ const hasActions = computed(() => !!slots.default);
   margin-bottom: 14px;
 }
 .title {
-  font-family: var(--serif);
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 40px;
-  color: white;
+  color: var(--text-primary);
   margin: 0 0 16px;
   line-height: 1;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 .message {
-  font-family: var(--serif);
+  font-family: var(--font-display);
   font-size: 16px;
   font-style: italic;
   color: var(--steel-200);
@@ -85,32 +85,32 @@ const hasActions = computed(() => !!slots.default);
   justify-content: center;
 }
 
-.theme-noir .empty-state {
+.empty-state {
   padding: 68px 40px;
-  border: 1px solid var(--nx-hair);
+  border: 1px solid var(--border-subtle);
   border-radius: 22px;
   background:
-    radial-gradient(70% 100% at 50% 115%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 70%),
-    color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025);
+    radial-gradient(70% 100% at 50% 115%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    color-mix(in srgb, var(--text-primary) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025);
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .kicker {
-  color: var(--nx-accent-2);
+.kicker {
+  color: var(--accent-hover);
   letter-spacing: 0.14em;
 }
 
-.theme-noir .title {
-  font-family: 'Playfair Display', Georgia, serif;
+.title {
+  font-family: var(--font-display), Georgia, serif;
   font-style: normal;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
 }
 
-.theme-noir .message {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+.message {
+  font-family: var(--font-body);
   font-size: 14px;
   font-style: normal;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
 }
 </style>

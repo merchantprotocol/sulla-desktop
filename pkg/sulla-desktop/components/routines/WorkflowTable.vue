@@ -484,15 +484,15 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
 // Colours come from the app theme tokens so every theme (light included)
 // renders this list correctly.
 .wf-list {
-  --wf-line: var(--border-subtle);
+  --wf-line: var(--border-default);
   --wf-line-2: var(--border-default);
   --wf-ok: var(--status-success);
   --wf-bad: var(--status-error);
-  --wf-warn: var(--text-warning);
+  --wf-warn: var(--text-primary);
   --wf-acc: var(--accent-primary);
 
   margin-top: 28px;
-  font-family: var(--sans);
+  font-family: var(--font-body);
   font-size: 12.5px;
   color: var(--text-primary);
 }
@@ -515,8 +515,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   padding: 5px 10px;
   border: 1px solid var(--wf-line-2);
   border-radius: 9px;
-  background: var(--bg-surface);
-  color: var(--text-muted);
+  background: var(--bg-page);
+  color: var(--text-primary);
 
   input {
     flex: 1;
@@ -541,20 +541,20 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   padding: 5px 10px;
   border: 1px solid var(--wf-line-2);
   border-radius: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-page);
   font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
   cursor: pointer;
 
-  > span { color: var(--text-muted); font-weight: 400; }
+  > span { color: var(--text-primary); font-weight: 400; }
   &::after {
     content: "";
     width: 6px;
     height: 6px;
-    border-right: 1.5px solid var(--text-muted);
-    border-bottom: 1.5px solid var(--text-muted);
+    border-right: 1.5px solid var(--text-primary);
+    border-bottom: 1.5px solid var(--text-primary);
     transform: rotate(45deg) translateY(-2px);
   }
   select {
@@ -567,16 +567,16 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     cursor: pointer;
   }
   &.on {
-    border-color: var(--border-accent);
-    background: var(--bg-accent);
-    color: var(--text-accent);
+    border-color: var(--border-default);
+    background: var(--bg-page);
+    color: var(--text-primary);
   }
 }
 
 .wf-clear {
   border: 0;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: 12px;
   padding: 5px 8px;
   border-radius: 7px;
@@ -585,10 +585,10 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
 }
 
 .wf-card {
-  background: var(--bg-surface);
+  background: var(--bg-page);
   border: 1px solid var(--wf-line);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--elev-rest-sm);
 }
 
 .wf-tbl {
@@ -599,7 +599,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     font-size: 10.5px;
     text-transform: uppercase;
     letter-spacing: .07em;
-    color: var(--text-muted);
+    color: var(--text-primary);
     font-weight: 600;
     text-align: left;
     padding: 9px 12px;
@@ -619,7 +619,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
 
 .wf-row {
   cursor: pointer;
-  &:hover td { background: var(--bg-surface-hover); }
+  &:hover td { background: var(--bg-page); }
   &:hover .wf-actions { opacity: 1; }
 }
 
@@ -642,7 +642,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   }
   small {
     display: block;
-    color: var(--text-muted);
+    color: var(--text-primary);
     font-size: 11px;
     white-space: nowrap;
     overflow: hidden;
@@ -656,8 +656,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   display: grid;
   place-items: center;
   flex: none;
-  background: var(--bg-accent);
-  color: var(--text-accent);
+  background: var(--bg-page);
+  color: var(--text-primary);
 
   svg { width: 17px; height: 17px; }
 }
@@ -667,7 +667,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-primary);
   border: 1px solid var(--wf-line-2);
 }
 
@@ -680,9 +680,9 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   font-weight: 600;
   white-space: nowrap;
 
-  &.ok { background: var(--bg-success); color: var(--text-success); }
-  &.idle { background: var(--bg-surface-alt); color: var(--text-secondary); }
-  &.acc { background: var(--bg-accent); color: var(--text-accent); }
+  &.ok { background: var(--bg-page); color: var(--text-primary); }
+  &.idle { background: var(--bg-page); color: var(--text-primary); }
+  &.acc { background: var(--bg-page); color: var(--text-primary); }
 }
 
 .wf-res {
@@ -700,8 +700,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   cursor: pointer;
 
   b { display: block; font-weight: 550; font-size: 12px; }
-  small { display: block; color: var(--text-muted); font-size: 11px; }
-  &:hover b { color: var(--text-accent); }
+  small { display: block; color: var(--text-primary); font-size: 11px; }
+  &:hover b { color: var(--text-primary); }
 }
 
 .wf-dot {
@@ -710,12 +710,12 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--text-muted);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-muted) 16%, transparent);
+  background: var(--text-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-primary) 16%, transparent);
 
-  &.ok { background: var(--wf-ok); box-shadow: 0 0 0 3px var(--bg-success); }
-  &.failed { background: var(--wf-bad); box-shadow: 0 0 0 3px var(--bg-error); }
-  &.running { background: var(--wf-acc); box-shadow: 0 0 0 3px var(--bg-accent); }
+  &.ok { background: var(--wf-ok); box-shadow: 0 0 0 3px var(--bg-page); }
+  &.failed { background: var(--wf-bad); box-shadow: 0 0 0 3px var(--bg-page); }
+  &.running { background: var(--wf-acc); box-shadow: 0 0 0 3px var(--bg-page); }
 }
 
 .wf-spark {
@@ -731,18 +731,18 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     opacity: .8;
     &.failed { background: var(--wf-bad); }
     &.running { background: var(--wf-acc); }
-    &.stopped { background: var(--text-muted); }
+    &.stopped { background: var(--text-primary); }
   }
 }
 
-.wf-muted { color: var(--text-muted); white-space: nowrap; }
+.wf-muted { color: var(--text-primary); white-space: nowrap; }
 .wf-warn { color: var(--wf-warn); white-space: nowrap; }
 
 .wf-src {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   white-space: nowrap;
   font-size: 12px;
 
@@ -765,7 +765,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   margin: 0;
   border-radius: 6px;
   border: 1px solid var(--wf-line-2);
-  background: var(--bg-surface);
+  background: var(--bg-page);
   color: var(--text-primary);
   font-weight: 500;
   white-space: nowrap;
@@ -779,11 +779,11 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     justify-content: center;
     border-color: transparent;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-primary);
     svg { width: 14px; height: 14px; }
-    &:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+    &:hover { background: var(--bg-page); color: var(--text-primary); }
   }
-  &.sm:hover:not(:disabled) { border-color: var(--border-accent); color: var(--text-accent); }
+  &.sm:hover:not(:disabled) { border-color: var(--border-default); color: var(--text-primary); }
   &:disabled { opacity: .5; cursor: default; }
 }
 .wf-bi { width: 12px; height: 12px; }
@@ -798,8 +798,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   padding: 4px;
   border: 1px solid var(--wf-line-2);
   border-radius: 10px;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-md);
+  background: var(--bg-page);
+  box-shadow: var(--elev-rest-md);
 
   button {
     display: block;
@@ -813,15 +813,15 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     font-size: 12.5px;
     text-align: left;
     cursor: pointer;
-    &:hover { background: var(--bg-surface-hover); }
-    &.danger { color: var(--text-error); }
+    &:hover { background: var(--bg-page); }
+    &.danger { color: var(--text-primary); }
   }
 }
 
 .wf-empty {
   padding: 28px 16px !important;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-primary);
 }
 
 .wf-legend {
@@ -830,7 +830,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   flex-wrap: wrap;
   gap: 16px;
   padding: 12px 4px 0;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: 11.5px;
 
   > span { display: inline-flex; align-items: center; gap: 6px; }

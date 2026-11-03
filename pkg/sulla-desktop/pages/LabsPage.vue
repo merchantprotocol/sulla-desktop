@@ -66,8 +66,8 @@ async function openCaptureStudio() {
   height: 100%;
   overflow-y: auto;
   padding: 40px 48px;
-  background: var(--bg, #0a0e17);
-  color: var(--text, #e2e8f0);
+  background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 .labs-header {
@@ -82,35 +82,35 @@ async function openCaptureStudio() {
 }
 
 .labs-icon {
-  color: var(--green, #4ade80);
+  color: var(--status-success);
   opacity: 0.9;
 }
 
 h1 {
-  font-family: var(--font-display, 'Playfair Display', serif);
+  font-family: var(--font-display);
   font-size: 28px;
   font-weight: 700;
-  color: var(--text, #e2e8f0);
+  color: var(--text-primary);
   margin: 0;
 }
 
 .labs-badge {
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--green, #4ade80);
-  background: rgba(74, 222, 128, 0.1);
-  border: 1px solid rgba(74, 222, 128, 0.25);
+  color: var(--status-success);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 4px;
   padding: 2px 8px;
 }
 
 .labs-subtitle {
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -122,8 +122,8 @@ h1 {
 }
 
 .labs-card {
-  background: var(--surface-1, #111827);
-  border: 1px solid var(--border, rgba(255,255,255,0.07));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default));
   border-radius: 12px;
   padding: 24px;
   cursor: pointer;
@@ -134,8 +134,8 @@ h1 {
 }
 
 .labs-card:hover {
-  border-color: rgba(74, 222, 128, 0.3);
-  background: var(--surface-2, #161f2e);
+  border-color: var(--border-default);
+  background: var(--bg-surface);
   transform: translateY(-2px);
 }
 
@@ -143,27 +143,27 @@ h1 {
   width: 52px;
   height: 52px;
   border-radius: 10px;
-  background: rgba(74, 222, 128, 0.08);
-  border: 1px solid rgba(74, 222, 128, 0.15);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--green, #4ade80);
+  color: var(--status-success);
 }
 
 .card-body h3 {
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 15px;
   font-weight: 600;
-  color: var(--text, #e2e8f0);
+  color: var(--text-primary);
   margin: 0 0 6px;
 }
 
 .card-body p {
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-muted, #64748b);
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -173,13 +173,13 @@ h1 {
   justify-content: space-between;
   margin-top: auto;
   padding-top: 10px;
-  border-top: 1px solid var(--border-muted, rgba(255,255,255,0.04));
+  border-top: 1px solid var(--border-default));
 }
 
 .card-status {
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--green, #4ade80);
+  color: var(--status-success);
   opacity: 0.7;
 }
 
@@ -188,7 +188,7 @@ h1 {
 }
 
 .card-footer svg {
-  color: var(--green, #4ade80);
+  color: var(--status-success);
   opacity: 0.5;
   transition: opacity 0.2s, transform 0.2s;
 }
@@ -200,84 +200,84 @@ h1 {
 </style>
 
 <style scoped>
-.theme-noir .labs-page {
+.labs-page {
   padding: 34px 38px;
   background:
-    radial-gradient(90% 65% at 8% 0%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 58%),
-    var(--nx-paper);
+    radial-gradient(90% 65% at 8% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 58%),
+    var(--bg-page);
 }
 
-.theme-noir .labs-header {
+.labs-header {
   margin-bottom: 28px;
   animation: noir-labs-in 0.48s cubic-bezier(.22, 1, .36, 1) both;
 }
 
-.theme-noir .labs-title-row {
+.labs-title-row {
   align-items: baseline;
   gap: 10px;
   margin-bottom: 6px;
 }
 
-.theme-noir .labs-icon {
+.labs-icon {
   display: none;
 }
 
-.theme-noir h1 {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+h1 {
+  color: var(--text-primary);
+  font-family: var(--font-display), Georgia, serif;
   font-size: 32px;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
-.theme-noir .labs-badge {
-  color: var(--nx-accent-2);
-  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
+.labs-badge {
+  color: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 28%, transparent);
   border-radius: 9px;
 }
 
-.theme-noir .labs-subtitle {
-  color: var(--nx-read-3);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+.labs-subtitle {
+  color: var(--text-muted);
+  font-family: var(--font-body);
   font-size: 14px;
 }
 
-.theme-noir .labs-card {
+.labs-card {
   padding: 20px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent), 0 18px 42px color-mix(in srgb, var(--shadow) 20%, transparent);
+  background: color-mix(in srgb, var(--border-subtle) 21.875%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 15.625%, transparent), 0 18px 42px color-mix(in srgb, var(--border-subtle) 20%, transparent);
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), border-color 0.2s ease, background 0.2s ease;
 }
 
-.theme-noir .labs-card:hover {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 35%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 14%, transparent), color-mix(in srgb, var(--nx-accent) 3.5%, transparent));
+.labs-card:hover {
+  border-color: color-mix(in srgb, var(--accent-hover) 35%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent) 3.5%, transparent));
   transform: translateY(-3px);
 }
 
-.theme-noir .card-icon {
+.card-icon {
   width: 48px;
   height: 48px;
-  color: var(--nx-accent-2);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent) 20%, transparent), color-mix(in srgb, var(--nx-accent) 6%, transparent));
-  border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+  color: var(--accent-hover);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   border-radius: 14px;
-  box-shadow: 0 0 24px color-mix(in srgb, var(--nx-accent) 12%, transparent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.theme-noir .card-body h3 {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.card-body h3 {
+  color: var(--text-primary);
+  font-family: var(--font-display), Georgia, serif;
   font-size: 19px;
 }
 
-.theme-noir .card-body p { color: var(--nx-read-3); }
-.theme-noir .card-footer { border-color: var(--nx-hair); }
-.theme-noir .card-status,
-.theme-noir .card-footer svg { color: var(--nx-accent-2); }
+.card-body p { color: var(--text-muted); }
+.card-footer { border-color: var(--border-subtle); }
+.card-status,
+.card-footer svg { color: var(--accent-hover); }
 
 @keyframes noir-labs-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(8px); }
@@ -285,7 +285,7 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .labs-header { animation: none; }
-  .theme-noir .labs-card { transition-duration: 0.01ms; }
+  .labs-header { animation: none; }
+  .labs-card { transition-duration: 0.01ms; }
 }
 </style>

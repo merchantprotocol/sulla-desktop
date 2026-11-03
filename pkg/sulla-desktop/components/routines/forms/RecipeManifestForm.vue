@@ -180,7 +180,7 @@ function updateComposeImage(compose: string, newImage: string): string {
 <style scoped lang="scss">
 .form { display: flex; flex-direction: column; gap: 22px; }
 .section h4 {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.25em;
   text-transform: uppercase;
@@ -188,17 +188,17 @@ function updateComposeImage(compose: string, newImage: string): string {
   margin: 0 0 10px;
 }
 .hint {
-  font-family: var(--sans);
+  font-family: var(--font-body);
   font-size: 11.5px;
   color: var(--steel-400);
   margin: 0 0 10px;
   line-height: 1.5;
 }
 .hint code {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--steel-200);
-  background: rgba(20, 30, 54, 0.5);
+  background: var(--bg-surface);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -210,17 +210,17 @@ function updateComposeImage(compose: string, newImage: string): string {
 .f { display: flex; flex-direction: column; gap: 4px; }
 .f.span-2 { grid-column: 1 / -1; }
 .l {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--steel-400);
 }
 input, textarea {
-  font-family: var(--sans);
+  font-family: var(--font-body);
   font-size: 13px;
-  color: white;
-  background: rgba(10, 18, 36, 0.6);
+  color: var(--text-primary);
+  background: var(--bg-surface);
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 8px 10px;
@@ -228,21 +228,21 @@ input, textarea {
 }
 .body-editor {
   width: 100%;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   resize: vertical;
 }
 
-.theme-noir .section {
+.section {
   padding: 16px;
-  border: 1px solid var(--nx-hair);
+  border: 1px solid var(--border-subtle);
   border-radius: 17px;
-  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
 }
-.theme-noir .section h4 { color: var(--nx-accent-2); letter-spacing: 0.14em; }
-.theme-noir input,
-.theme-noir textarea { min-height: 40px; border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--nx-read-1); background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
-.theme-noir input:focus,
-.theme-noir textarea:focus { border-color: color-mix(in srgb, var(--nx-accent-2) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent); }
+.section h4 { color: var(--accent-hover); letter-spacing: 0.14em; }
+input,
+textarea { min-height: 40px; border-color: color-mix(in srgb, var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--text-primary); background: var(--accent) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
+input:focus,
+textarea:focus { border-color: color-mix(in srgb, var(--accent-hover) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 </style>

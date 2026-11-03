@@ -74,8 +74,8 @@ const appBadge = computed(() => {
   grid-template-columns: 52px 1fr auto;
   gap: 16px;
   align-items: center;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
+  background: var(--bg-surface, var(--bg-page));
+  border: 1px solid var(--border-subtle));
   border-radius: 16px;
   padding: 18px 20px;
   cursor: pointer;
@@ -84,14 +84,14 @@ const appBadge = computed(() => {
 }
 .pkg:hover,
 .pkg:focus-visible {
-  border-color: var(--nx-accent, var(--accent-primary));
+  border-color: var(--accent, var(--accent-primary));
   outline: none;
 }
 .pkg-ic {
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background: var(--nx-paper, var(--bg-page));
+  background: var(--bg-page));
   display: grid;
   place-items: center;
   font-size: 26px;
@@ -101,13 +101,13 @@ const appBadge = computed(() => {
   font-family: var(--font-body, system-ui, sans-serif);
   font-size: 17px;
   font-weight: 600;
-  color: var(--nx-read-1, var(--text-primary));
+  color: var(--text-primary));
 }
 .pkg p {
   margin: 0;
   font-size: 14px;
   line-height: 1.45;
-  color: var(--nx-read-3, var(--text-muted));
+  color: var(--text-muted));
 }
 .pkg-meta {
   display: flex;
@@ -119,15 +119,15 @@ const appBadge = computed(() => {
 .pkg-name {
   font-size: 12px;
   font-weight: 700;
-  color: var(--nx-read-2, var(--text-secondary));
+  color: var(--text-secondary, var(--text-primary));
 }
 .pill {
   font-size: 12px;
   font-weight: 600;
   padding: 2px 9px;
   border-radius: 999px;
-  color: var(--nx-accent-2, var(--accent-primary));
-  background: color-mix(in srgb, var(--nx-accent, var(--accent-primary)) 15%, transparent);
+  color: var(--accent-hover, var(--accent-primary));
+  background: color-mix(in srgb, var(--accent, var(--accent-primary)) 15%, transparent);
 }
 .getbtn {
   font: inherit;
@@ -137,18 +137,18 @@ const appBadge = computed(() => {
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  background: var(--nx-accent, var(--accent-primary));
-  color: var(--text-on-accent, #fff);
+  background: var(--accent, var(--accent-primary));
+  color: var(--text-primary);
   white-space: nowrap;
 }
-.getbtn:hover:not(:disabled) { background: var(--nx-accent-2, var(--accent-primary-hover)); }
+.getbtn:hover:not(:disabled) { background: var(--accent-hover, var(--accent-primary-hover)); }
 .getbtn:disabled { opacity: 0.6; cursor: progress; }
 .state {
   font-size: 13px;
   white-space: nowrap;
 }
 .state.ok {
-  color: var(--nx-success, var(--text-success));
+  color: var(--status-success));
   font-weight: 600;
 }
 

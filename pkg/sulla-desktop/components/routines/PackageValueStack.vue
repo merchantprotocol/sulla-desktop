@@ -66,23 +66,23 @@ defineEmits<(e: 'get') => void>();
 .stack {
   margin-top: 26px;
   padding: 18px 20px;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
+  background: var(--bg-surface, var(--bg-page));
+  border: 1px solid var(--border-subtle));
   border-radius: 16px;
-  box-shadow: 0 1px 2px var(--nx-hair, rgba(0, 0, 0, 0.06)), 0 12px 32px -12px var(--nx-hair-strong, rgba(0, 0, 0, 0.16));
+  box-shadow: 0 1px 2px var(--border-subtle)), 0 12px 32px -12px var(--border-subtle));
 }
 .srow {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   padding: 9px 0;
-  border-bottom: 1px solid var(--nx-hair-strong, var(--border-default));
+  border-bottom: 1px solid var(--border-subtle));
   font-size: 15px;
   line-height: 1.5;
-  color: var(--nx-read-1, var(--text-primary));
+  color: var(--text-primary));
 }
 .srow .cp {
-  color: var(--nx-read-3, var(--text-muted));
+  color: var(--text-muted));
   text-decoration: line-through;
   white-space: nowrap;
 }
@@ -91,7 +91,7 @@ defineEmits<(e: 'get') => void>();
   border: 0;
   font-weight: 800;
   font-size: 18px;
-  color: var(--nx-accent-2, var(--accent-primary));
+  color: var(--accent-hover, var(--accent-primary));
 }
 .cta {
   box-sizing: border-box;
@@ -106,16 +106,16 @@ defineEmits<(e: 'get') => void>();
   font-weight: 700;
   border: 0;
   border-radius: 999px;
-  background: var(--nx-accent, var(--accent-primary));
-  color: var(--text-on-accent, #fff);
+  background: var(--accent, var(--accent-primary));
+  color: var(--text-primary);
   cursor: pointer;
 }
-.cta:hover:not(:disabled):not(.done) { background: var(--nx-accent-2, var(--accent-primary-hover)); }
+.cta:hover:not(:disabled):not(.done) { background: var(--accent-hover, var(--accent-primary-hover)); }
 .cta:disabled { opacity: 0.6; cursor: progress; }
 .cta.done {
   background: transparent;
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  color: var(--nx-success, var(--text-success));
+  border: 1px solid var(--border-subtle));
+  color: var(--status-success));
   cursor: default;
 }
 </style>

@@ -716,7 +716,7 @@ function fallbackArtifactContent(artifact: ChatArtifactRecord): string {
   if (artifact.kind === 'html') return artifact.content;
   const language = artifact.kind === 'code' && artifact.language ? ` · ${ escapeHtml(artifact.language) }` : '';
 
-  return `<main style="max-width:960px;margin:0 auto;padding:32px;color:#d8dee9;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace"><h1 style="font:600 22px/1.3 system-ui,sans-serif">${ escapeHtml(artifact.name) }</h1><p style="color:#8b949e">${ artifact.kind }${ language }</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${ escapeHtml(artifact.content) }</pre></main>`;
+  return `<main style="max-width:960px;margin:0 auto;padding:32px;color:var(--text-primary);font:14px/1.6 var(--font-mono)"><h1 style="font:600 22px/1.3 var(--font-body)">${ escapeHtml(artifact.name) }</h1><p style="color:var(--text-muted)">${ artifact.kind }${ language }</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${ escapeHtml(artifact.content) }</pre></main>`;
 }
 
 async function openArtifact(record: BookmarkRecord): Promise<void> {
@@ -1249,8 +1249,8 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   height: 100%;
   flex-shrink: 0;
   overflow: hidden;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border-muted);
+  background: var(--bg-page);
+  border-right: 1px solid var(--border-default);
   user-select: none;
 }
 
@@ -1260,11 +1260,11 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   height: 35px;
   padding: 0 8px 0 16px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .bm-title {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.28em;
   text-transform: uppercase;
@@ -1287,13 +1287,13 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-primary);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .bm-action:hover:not(:disabled) {
   background: var(--accent-dim);
-  color: var(--text);
+  color: var(--text-primary);
 }
 .bm-action:disabled {
   opacity: 0.35;
@@ -1307,14 +1307,14 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   margin: 10px 10px 6px;
   padding: 0 10px;
   height: 28px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-default);
   border-radius: 7px;
-  color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+  background: var(--bg-surface);
   transition: border-color 0.12s ease;
 }
 .bm-search:focus-within {
-  border-color: var(--accent-border, rgba(80, 150, 179, 0.4));
+  border-color: var(--accent-border, var(--border-default));
 }
 .bm-search input {
   flex: 1;
@@ -1322,11 +1322,11 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border: none;
   outline: none;
   background: none;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: 12px;
 }
 .bm-search input::placeholder {
-  color: var(--text-dim);
+  color: var(--text-primary);
 }
 
 .bm-list {
@@ -1339,7 +1339,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-list::-webkit-scrollbar { width: 4px; }
 .bm-list::-webkit-scrollbar-track { background: transparent; }
 .bm-list::-webkit-scrollbar-thumb {
-  background: var(--border-muted, rgba(80, 150, 179, 0.2));
+  background: var(--border-default));
   border-radius: 2px;
 }
 .bm-list.drop-root {
@@ -1348,7 +1348,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 
 .bm-empty {
   padding: 22px 12px;
-  color: var(--text-dim);
+  color: var(--text-primary);
   font-size: 12px;
   text-align: center;
   line-height: 1.6;
@@ -1365,17 +1365,17 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   height: 30px;
   padding-right: 6px;
   border-radius: 6px;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: 12.5px;
   cursor: pointer;
   transition: background 0.1s ease, color 0.1s ease;
 }
 .bm-row:hover {
-  background: rgba(80, 150, 179, 0.08);
-  color: var(--text);
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 .bm-row.open {
-  color: var(--text);
+  color: var(--text-primary);
 }
 .bm-row.open::before {
   content: "";
@@ -1392,11 +1392,11 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   font-style: italic;
 }
 .bm-row.selected {
-  background: var(--accent-dim, rgba(80, 150, 179, 0.14));
-  color: var(--text);
+  background: var(--accent-dim, var(--bg-surface));
+  color: var(--text-primary);
 }
 .bm-list:focus .bm-row.selected {
-  box-shadow: inset 0 0 0 1px var(--accent-border, rgba(80, 150, 179, 0.4));
+  box-shadow: inset 0 0 0 1px var(--accent-border, var(--border-subtle));
 }
 .bm-row.dragging {
   opacity: 0.4;
@@ -1404,7 +1404,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .bm-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .bm-row.drop-inside {
-  background: var(--accent-dim, rgba(80, 150, 179, 0.14));
+  background: var(--accent-dim, var(--bg-surface));
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
@@ -1415,7 +1415,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   justify-content: center;
   width: 10px;
   flex-shrink: 0;
-  color: var(--text-dim);
+  color: var(--text-primary);
 }
 .bm-chevron svg {
   transition: transform 0.15s ease;
@@ -1437,7 +1437,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   opacity: 0.85;
 }
 .bm-icon-artifact {
-  color: var(--info);
+  color: var(--status-info);
 }
 .bm-favicon {
   object-fit: contain;
@@ -1445,7 +1445,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 }
 .bm-monogram {
   border-radius: 4px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 600;
   line-height: 1;
@@ -1463,7 +1463,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-dim);
+  color: var(--text-primary);
   font-size: 10.5px;
 }
 
@@ -1485,12 +1485,12 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--text-dim);
+  color: var(--text-primary);
   cursor: pointer;
 }
 .bm-row-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text);
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 
 .bm-edit,
@@ -1500,21 +1500,21 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   gap: 6px;
   margin: 2px 0;
   padding: 8px 8px 8px 12px;
-  border: 1px solid var(--accent-border, rgba(80, 150, 179, 0.4));
+  border: 1px solid var(--accent-border, var(--border-default));
   border-radius: 7px;
-  background: rgba(80, 150, 179, 0.06);
-  color: var(--text);
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-size: 12px;
 }
 .bm-input {
   width: 100%;
   height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-default);
   border-radius: 5px;
   outline: none;
-  background: var(--bg-surface);
-  color: var(--text);
+  background: var(--bg-page);
+  color: var(--text-primary);
   font-size: 12px;
   user-select: text;
 }
@@ -1522,13 +1522,13 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border-color: var(--accent);
 }
 .bm-input-url {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-primary);
 }
 .bm-edit-error {
   margin: 0;
-  color: var(--danger, #e06c75);
+  color: var(--status-error, var(--text-primary));
   font-size: 11px;
 }
 .bm-edit-actions {
@@ -1539,29 +1539,29 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-btn {
   height: 24px;
   padding: 0 10px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-default);
   border-radius: 5px;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: 11.5px;
   cursor: pointer;
 }
 .bm-btn:hover {
-  color: var(--text);
-  border-color: var(--accent-border, rgba(80, 150, 179, 0.4));
+  color: var(--text-primary);
+  border-color: var(--accent-border, var(--border-default));
 }
 .bm-btn-primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
 }
 .bm-btn-primary:hover {
-  color: #fff;
+  color: var(--text-primary);
   filter: brightness(1.1);
 }
 .bm-btn-danger {
-  border-color: var(--danger, #e06c75);
-  color: var(--danger, #e06c75);
+  border-color: var(--status-error, var(--border-default));
+  color: var(--status-error, var(--text-primary));
 }
 
 .bm-link {
@@ -1584,17 +1584,17 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   height: 30px;
   padding: 0 14px;
   flex-shrink: 0;
-  border-top: 1px solid var(--border-muted);
+  border-top: 1px solid var(--border-default);
   font-size: 11px;
 }
 .bm-hint {
-  color: var(--text-dim);
-  font-family: var(--mono);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.04em;
 }
 .bm-toast {
-  color: var(--text-muted);
+  color: var(--text-primary);
 }
 .bm-toast-text {
   flex: 1;
@@ -1604,143 +1604,143 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   white-space: nowrap;
 }
 .bm-toast-error {
-  color: var(--danger, #e06c75);
+  color: var(--status-error, var(--text-primary));
 }
 </style>
 
 <style scoped>
-.theme-noir .bm {
+.bm {
   width: 292px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
-  border-color: var(--nx-hair);
-  box-shadow: 16px 0 44px color-mix(in srgb, var(--shadow) 20%, transparent);
+  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
+  border-color: var(--border-subtle);
+  box-shadow: 16px 0 44px color-mix(in srgb, var(--border-subtle) 20%, transparent);
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .bm-header {
+.bm-header {
   height: 46px;
   padding: 0 10px 0 16px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
 }
 
-.theme-noir .bm-title {
-  color: var(--nx-accent-2);
+.bm-title {
+  color: var(--accent-hover);
   font-size: 10px;
   letter-spacing: 0.18em;
 }
 
-.theme-noir .bm-action {
+.bm-action {
   width: 28px;
   height: 28px;
   border-radius: 14px;
-  color: var(--nx-read-4);
+  color: var(--text-dim);
   transition: color 0.16s, background 0.16s, transform 0.45s cubic-bezier(.22, 1, .36, 1);
 }
 
-.theme-noir .bm-action:hover:not(:disabled) {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+.bm-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   transform: translateY(-1px);
 }
 
-.theme-noir .bm-search {
+.bm-search {
   height: 36px;
   margin: 12px 10px 8px;
-  color: var(--nx-read-4);
-  background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 75%, transparent);
   border-radius: 11px;
 }
 
-.theme-noir .bm-search:focus-within {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.bm-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent-hover) 50%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .bm-search input {
-  color: var(--nx-read-2);
+.bm-search input {
+  color: var(--text-secondary);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-.theme-noir .bm-list { padding: 4px 8px 12px; }
-.theme-noir .bm-row {
+.bm-list { padding: 4px 8px 12px; }
+.bm-row {
   height: 36px;
   margin-bottom: 3px;
   border: 1px solid transparent;
   border-radius: 10px;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
   transition: background 0.16s, color 0.16s, border-color 0.16s, transform 0.42s cubic-bezier(.22, 1, .36, 1);
 }
 
-.theme-noir .bm-row:hover {
-  color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
+.bm-row:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 37.5%, transparent);
   transform: translateX(2px);
 }
 
-.theme-noir .bm-row.open,
-.theme-noir .bm-row.selected {
-  color: var(--nx-read-1);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--nx-accent) 20%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
-  border-color: color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
+.bm-row.open,
+.bm-row.selected {
+  color: var(--text-primary);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  border-color: color-mix(in srgb, var(--accent-hover) 24%, transparent);
 }
 
-.theme-noir .bm-row.open::before {
+.bm-row.open::before {
   left: -9px;
   top: 7px;
   bottom: 7px;
   width: 3px;
-  background: var(--nx-accent-2);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 80%, transparent);
+  background: var(--accent-hover);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-hover) 80%, transparent);
 }
 
-.theme-noir .bm-path {
-  color: var(--nx-read-4);
+.bm-path {
+  color: var(--text-dim);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
-.theme-noir .bm-row-btn {
+.bm-row-btn {
   border-radius: 10px;
-  color: var(--nx-read-4);
+  color: var(--text-dim);
 }
-.theme-noir .bm-row-btn:hover {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 15%, transparent);
+.bm-row-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
-.theme-noir .bm-edit,
-.theme-noir .bm-confirm {
+.bm-edit,
+.bm-confirm {
   padding: 12px;
-  border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
-.theme-noir .bm-input {
+.bm-input {
   height: 34px;
-  color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 75%, transparent);
   border-radius: 9px;
 }
 
-.theme-noir .bm-btn { border-radius: 12px; }
-.theme-noir .bm-btn-primary {
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  border-color: var(--nx-accent-2);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 30%, transparent);
+.bm-btn { border-radius: 12px; }
+.bm-btn-primary {
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-.theme-noir .bm-toast,
-.theme-noir .bm-hint {
+.bm-toast,
+.bm-hint {
   height: 36px;
-  border-color: var(--nx-hair);
-  background: color-mix(in srgb, var(--nx-paper) 42%, transparent);
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-page) 42%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .bm-row,
-  .theme-noir .bm-action { transition-duration: 0.01ms; }
+  .bm-row,
+  .bm-action { transition-duration: 0.01ms; }
 }
 </style>
