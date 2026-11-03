@@ -922,7 +922,7 @@ const deleteEvent = async() => {
   color: var(--text-primary);
 }
 
-.calendar-modal-panel button.bg-[var(--accent)] {
+.calendar-modal-panel button.bg-\[var\(--accent\)\] {
   border: 1px solid color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: var(--text-on-accent);
