@@ -166,7 +166,8 @@ integration('restart reconciliation preserves current derivatives when removing 
     await db.query(`UPDATE file_index_jobs SET status='indexed',reason_code='text_extracted',reason='Text indexed locally.',finished_at=NOW()
       WHERE version_id=ANY($1::uuid[])`, [[v1, v2]]);
     await db.query(`INSERT INTO file_search_text(file_id,path,search_text)
-      VALUES($1,'version-mismatch.fixture','current version text')`, [fileId]);
+      VALUES($1,'version-mismatch.fixture','current version text')
+      ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text`, [fileId]);
     await db.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
       VALUES($1,$2,0,'current version chunk'),($1,$3,0,'stale version chunk')`, [fileId, v2, v1]);
 
