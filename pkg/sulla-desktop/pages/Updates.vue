@@ -789,7 +789,7 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 .updates-root {
-  background: radial-gradient(70% 55% at 50% 42%, color-mix(in srgb, var(--accent) 909.0909%, transparent), transparent 70%), var(--bg-page);
+  background: radial-gradient(70% 55% at 50% 42%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%), var(--bg-page);
   color: var(--text-secondary);
 }
 .updates-window { padding: 30px 36px 22px; }
@@ -798,8 +798,8 @@ export default defineComponent({
 .updates-icon {
   border: 0;
   border-radius: 14px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 500%, transparent), color-mix(in srgb, var(--accent) 2500%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 357.1429%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 555.5556%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 20%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 28%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .updates-title { color: var(--text-primary); font-size: 22px; letter-spacing: -.01em; }
 .updates-subtitle { color: var(--accent-hover); }
@@ -807,31 +807,31 @@ export default defineComponent({
   max-width: 500px;
   padding: 30px;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--border-subtle) 457.1429%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 177.7778%, transparent), 0 28px 70px color-mix(in srgb, var(--border-subtle) 321.4286%, transparent);
+  background: color-mix(in srgb, var(--border-subtle) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 56.25%, transparent), 0 28px 70px color-mix(in srgb, var(--border-subtle) 31.1111%, transparent);
   animation: updates-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
 }
 .state-headline { color: var(--text-primary); font-size: 30px; letter-spacing: -.02em; }
 .state-sub { color: var(--text-muted); }
 .btn-primary,
 .btn-secondary { border-radius: 999px; padding: 10px 20px; transition: transform .45s cubic-bezier(.22, 1, .36, 1), box-shadow .2s, background .2s; }
-.btn-primary { color: var(--bg-page); box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 384.6154%, transparent), inset 0 1px color-mix(in srgb, var(--text-primary) 500%, transparent); }
+.btn-primary { color: var(--text-on-accent); box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 26%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 20%, transparent); }
 .btn-primary:hover:not(:disabled),
 .btn-secondary:hover { transform: translateY(-2px); }
-.btn-secondary { border-color: color-mix(in srgb, var(--border-subtle) 114.2857%, transparent); color: var(--text-muted); background: color-mix(in srgb, var(--bg-page) 250%, transparent); }
+.btn-secondary { border-color: color-mix(in srgb, var(--border-subtle) 87.5%, transparent); color: var(--text-muted); background: color-mix(in srgb, var(--bg-page) 40%, transparent); }
 .release-notes,
-.dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-page) 172.4138%, transparent); box-shadow: inset 0 0 0 1px var(--border-subtle); }
-.progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-page) 138.8889%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 160%, transparent); }
+.dev-notice { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--bg-page) 58%, transparent); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.progress-bar { height: 9px; border: 0; border-radius: 9px; background: color-mix(in srgb, var(--bg-page) 72%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 62.5%, transparent); }
 .progress-fill { position: relative; overflow: hidden; border-radius: inherit; }
 .progress-fill::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--text-primary) 172.4138%, transparent) 50%, transparent 75%);
+  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--text-primary) 58%, transparent) 50%, transparent 75%);
   transform: translateX(-100%);
   animation: updates-noir-shimmer 1.7s ease-in-out infinite;
 }
-.info-badge { color: var(--accent-hover); background: color-mix(in srgb, var(--accent) 1000%, transparent); border-color: color-mix(in srgb, var(--accent-hover) 357.1429%, transparent); }
+.info-badge { color: var(--accent-hover); background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent-hover) 28%, transparent); }
 .footer-version { color: var(--text-dim); }
 @keyframes updates-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes updates-noir-shimmer { to { transform: translateX(100%); } }

@@ -91,8 +91,8 @@ const hasActions = computed(() => !!slots.default);
   border-radius: 22px;
   background:
     radial-gradient(70% 100% at 50% 115%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
-    color-mix(in srgb, var(--text-primary) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025);
+    color-mix(in srgb, var(--text-primary) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent);
   backdrop-filter: blur(18px);
 }
 

@@ -123,7 +123,7 @@ h1 {
 
 .labs-card {
   background: var(--bg-surface);
-  border: 1px solid var(--border-default));
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   padding: 24px;
   cursor: pointer;
@@ -173,7 +173,7 @@ h1 {
   justify-content: space-between;
   margin-top: auto;
   padding-top: 10px;
-  border-top: 1px solid var(--border-default));
+  border-top: 1px solid var(--border-default);
 }
 
 .card-status {

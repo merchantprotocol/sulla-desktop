@@ -424,12 +424,12 @@ input:focus, textarea:focus, select:focus {
   padding: 16px;
   border: 1px solid var(--border-subtle);
   border-radius: 17px;
-  background: color-mix(in srgb, var(--bg-surface) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 3.5%, transparent);
 }
 .section h4 { color: var(--accent-hover); letter-spacing: 0.14em; }
 input,
 select,
-textarea { min-height: 40px; border-color: color-mix(in srgb, var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 12%, transparent); border-radius: 12px; color: var(--text-primary); background: var(--accent) calc(r + 2) calc(g + 3) calc(b + 2) / 0.68); }
+textarea { min-height: 40px; border-color: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 12px; color: var(--text-primary); background: color-mix(in srgb, var(--accent) 68%, transparent); }
 input:focus,
 select:focus,
 textarea:focus { border-color: color-mix(in srgb, var(--accent-hover) 48%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }

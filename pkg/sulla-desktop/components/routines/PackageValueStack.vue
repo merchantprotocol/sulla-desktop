@@ -67,22 +67,22 @@ defineEmits<(e: 'get') => void>();
   margin-top: 26px;
   padding: 18px 20px;
   background: var(--bg-surface, var(--bg-page));
-  border: 1px solid var(--border-subtle));
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
-  box-shadow: 0 1px 2px var(--border-subtle)), 0 12px 32px -12px var(--border-subtle));
+  box-shadow: 0 1px 2px var(--border-subtle), 0 12px 32px -12px var(--border-subtle);
 }
 .srow {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   padding: 9px 0;
-  border-bottom: 1px solid var(--border-subtle));
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 15px;
   line-height: 1.5;
-  color: var(--text-primary));
+  color: var(--text-primary);
 }
 .srow .cp {
-  color: var(--text-muted));
+  color: var(--text-muted);
   text-decoration: line-through;
   white-space: nowrap;
 }
@@ -114,8 +114,8 @@ defineEmits<(e: 'get') => void>();
 .cta:disabled { opacity: 0.6; cursor: progress; }
 .cta.done {
   background: transparent;
-  border: 1px solid var(--border-subtle));
-  color: var(--status-success));
+  border: 1px solid var(--border-subtle);
+  color: var(--status-success);
   cursor: default;
 }
 </style>

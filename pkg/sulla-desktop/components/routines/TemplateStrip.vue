@@ -136,13 +136,13 @@ defineEmits<{
   font-size: 14px;
   border: 1px solid var(--border-default);
 }
-.icon.content  { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.research { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.planning { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.leads    { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.learning { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.ops      { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
-.icon.goals    { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
+.icon.content  { background: linear-gradient(135deg, #2c4871, #4a6fa5); }
+.icon.research { background: linear-gradient(135deg, #0891b2, #06b6d4); }
+.icon.planning { background: linear-gradient(135deg, #d97706, #f59e0b); }
+.icon.leads    { background: linear-gradient(135deg, #059669, #10b981); }
+.icon.learning { background: linear-gradient(135deg, #7c3aed, #a78bfa); }
+.icon.ops      { background: linear-gradient(135deg, #475569, #64748b); }
+.icon.goals    { background: linear-gradient(135deg, #be123c, #e11d48); }
 
 .body { min-width: 0; }
 .top {
@@ -284,7 +284,7 @@ defineEmits<{
   padding: 16px 18px;
   border-color: var(--border-subtle);
   border-radius: 17px;
-  background: color-mix(in srgb, var(--bg-surface) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 3.5%, transparent);
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
@@ -322,10 +322,10 @@ defineEmits<{
 }
 
 .chip {
-  border-color: color-mix(in srgb, var(--border-default) calc(r + 62) calc(g + 16) calc(b + 16)) 9%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 9%, transparent);
   border-radius: 9px;
   color: var(--text-dim);
-  background: var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / 0.5);
+  background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
 }
 
 .btn {

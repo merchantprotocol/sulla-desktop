@@ -368,7 +368,7 @@ td:last-child { border-right: 1px solid color-mix(in srgb, var(--border-subtle) 
   height: 6px;
   margin-right: 7px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--border-strong);
 }
 .process-state-dot.state-r { background: var(--status-success); box-shadow: 0 0 7px color-mix(in srgb, var(--status-success) 65%, transparent); }
 .process-state-dot.state-d,

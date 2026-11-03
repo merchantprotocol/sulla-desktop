@@ -384,8 +384,8 @@ const installButtonLabel = computed(() => {
   border-radius: 20px;
   background:
     linear-gradient(155deg, color-mix(in srgb, var(--accent) 7.5%, transparent), transparent 42%),
-    color-mix(in srgb, var(--text-primary) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 12px 34px var(--border-subtle);
+    color-mix(in srgb, var(--text-primary) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent), 0 12px 34px var(--border-subtle);
   flex-direction: column;
   align-items: stretch;
   gap: 14px;
@@ -406,9 +406,9 @@ const installButtonLabel = computed(() => {
   border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background:
     linear-gradient(155deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 48%),
-    color-mix(in srgb, var(--text-primary) calc(r + 62) calc(g + 16) calc(b + 16)) 4.5%, transparent);
+    color-mix(in srgb, var(--text-primary) 4.5%, transparent);
   transform: translateY(-5px);
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px var(--border-subtle), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 3.5%, transparent), 0 22px 48px var(--border-subtle), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .icon {
@@ -418,7 +418,7 @@ const installButtonLabel = computed(() => {
   border-radius: 16px;
   color: var(--text-primary);
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent-hover) 34%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 5%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .icon[class*="kind-"] {
@@ -444,10 +444,10 @@ const installButtonLabel = computed(() => {
 
 .kind-badge,
 .chip {
-  border-color: color-mix(in srgb, var(--border-default) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 10%, transparent);
   border-radius: 9px;
-  color: var(--text-primary) calc(r + 62) calc(g + 16) calc(b + 16));
-  background: var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / 0.52);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-surface) 52%, transparent);
 }
 
 .kind-badge[class*="kind-"] {
@@ -462,7 +462,7 @@ const installButtonLabel = computed(() => {
   align-items: end;
   gap: 10px;
   padding-top: 13px;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 7%, transparent);
 }
 
 .metric b {
@@ -500,9 +500,9 @@ const installButtonLabel = computed(() => {
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
 .strip {
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 12px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent), 0 12px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 .strip:hover {
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px color-mix(in srgb, var(--text-primary) 14%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 3.5%, transparent), 0 22px 48px color-mix(in srgb, var(--text-primary) 14%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 </style>

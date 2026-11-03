@@ -427,7 +427,7 @@ async function onImport() {
   height: 100%;
   overflow: hidden;
   color: var(--text-primary);
-  background: var(--bg-page));
+  background: var(--bg-page);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
 }

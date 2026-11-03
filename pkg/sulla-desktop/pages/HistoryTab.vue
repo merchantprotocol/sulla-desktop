@@ -752,14 +752,14 @@ onUnmounted(() => {
 }
 
 .history-archived-link { border: 1px dashed var(--text-dim, var(--accent)); color: var(--text-muted); }
-.history-archived-link:hover { background: var(--bg-page)); }
+.history-archived-link:hover { background: var(--bg-page); }
 
 .history-entry:hover {
-  background: var(--bg-page));
+  background: var(--bg-page);
 }
 
 .history-page.dark .history-archived-link { border: 1px dashed var(--text-dim, var(--accent)); color: var(--text-muted); }
-.history-archived-link:hover { background: var(--bg-page)); }
+.history-archived-link:hover { background: var(--bg-page); }
 
 .history-entry:hover {
   background: var(--bg-surface);
@@ -830,7 +830,7 @@ onUnmounted(() => {
 }
 
 .history-archived-link { border: 1px dashed var(--text-dim, var(--accent)); color: var(--text-muted); }
-.history-archived-link:hover { background: var(--bg-page)); }
+.history-archived-link:hover { background: var(--bg-page); }
 
 .history-entry:hover {
   background: color-mix(in srgb, var(--accent) 9%, transparent);

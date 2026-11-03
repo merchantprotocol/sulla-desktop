@@ -223,7 +223,7 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
 <style scoped>
 .decide-page {
   padding: 42px clamp(28px, 5vw, 68px);
-  background: radial-gradient(75% 50% at 50% 110%, color-mix(in srgb, var(--accent) 833.3333%, transparent), transparent 65%), var(--bg-page);
+  background: radial-gradient(75% 50% at 50% 110%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 65%), var(--bg-page);
   color: var(--text-secondary);
   font-family: var(--font-body);
 }
@@ -255,16 +255,16 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   margin: 14px auto;
   border: 0;
   border-radius: 18px;
-  background: color-mix(in srgb, var(--status-warning) 2222.2222%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warning) 416.6667%, transparent), 0 18px 50px color-mix(in srgb, var(--border-subtle) 450%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 4.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warning) 24%, transparent), 0 18px 50px color-mix(in srgb, var(--border-subtle) 22%, transparent);
   transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), box-shadow .2s;
   animation: decide-noir-enter .45s cubic-bezier(.22, 1, .36, 1) both;
 }
-.decision:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warning) 294.1176%, transparent), 0 22px 58px color-mix(in srgb, var(--border-subtle) 300%, transparent); }
+.decision:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warning) 34%, transparent), 0 22px 58px color-mix(in srgb, var(--border-subtle) 33.3333%, transparent); }
 .decision-approved,
 .decision-answered {
-  background: color-mix(in srgb, var(--status-success) 2222.2222%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-success) 400%, transparent), 0 18px 50px color-mix(in srgb, var(--border-subtle) 450%, transparent);
+  background: color-mix(in srgb, var(--status-success) 4.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-success) 25%, transparent), 0 18px 50px color-mix(in srgb, var(--border-subtle) 22%, transparent);
 }
 .decision header > span {
   padding: 4px 9px;
@@ -274,14 +274,14 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--status-warning);
-  background: color-mix(in srgb, var(--status-warning) 1000%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
 }
 .decision-approved header > span,
-.decision-answered header > span { color: var(--status-success); background: color-mix(in srgb, var(--status-success) 1000%, transparent); }
+.decision-answered header > span { color: var(--status-success); background: color-mix(in srgb, var(--status-success) 10%, transparent); }
 .decide-page fieldset {
   border: 0;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-page) 200%, transparent);
+  background: color-mix(in srgb, var(--bg-page) 50%, transparent);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 .decide-page input[type='search'],
@@ -290,21 +290,21 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   padding: 0 14px;
   border: 0;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-page) 151.5152%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 133.3333%, transparent);
+  background: color-mix(in srgb, var(--bg-page) 66%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 75%, transparent);
 }
 .decide-page button {
-  border-color: color-mix(in srgb, var(--border-subtle) 114.2857%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 87.5%, transparent);
   border-radius: 999px;
   color: var(--text-muted);
   transition: transform .45s cubic-bezier(.22, 1, .36, 1), background .16s, color .16s;
 }
-.decide-page button:hover { transform: translateY(-1px); color: var(--text-primary); background: color-mix(in srgb, var(--accent) 1111.1111%, transparent); }
+.decide-page button:hover { transform: translateY(-1px); color: var(--text-primary); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .decide-page .decision-primary {
-  border-color: color-mix(in srgb, var(--accent-hover) 222.2222%, transparent);
-  color: var(--bg-page);
+  border-color: color-mix(in srgb, var(--accent-hover) 45%, transparent);
+  color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--accent-hover), var(--accent));
-  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 416.6667%, transparent), inset 0 1px color-mix(in srgb, var(--text-primary) 500%, transparent);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 20%, transparent);
 }
 @keyframes decide-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (prefers-reduced-motion: reduce) {

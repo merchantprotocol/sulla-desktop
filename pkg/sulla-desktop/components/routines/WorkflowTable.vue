@@ -588,7 +588,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   background: var(--bg-page);
   border: 1px solid var(--wf-line);
   border-radius: 12px;
-  box-shadow: var(--elev-rest-sm);
+  box-shadow: var(--elev-rest);
 }
 
 .wf-tbl {
@@ -710,8 +710,8 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--text-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: var(--border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-strong) 16%, transparent);
 
   &.ok { background: var(--wf-ok); box-shadow: 0 0 0 3px var(--bg-page); }
   &.failed { background: var(--wf-bad); box-shadow: 0 0 0 3px var(--bg-page); }
@@ -731,7 +731,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
     opacity: .8;
     &.failed { background: var(--wf-bad); }
     &.running { background: var(--wf-acc); }
-    &.stopped { background: var(--text-primary); }
+    &.stopped { background: var(--border-strong); }
   }
 }
 
@@ -799,7 +799,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu));
   border: 1px solid var(--wf-line-2);
   border-radius: 10px;
   background: var(--bg-page);
-  box-shadow: var(--elev-rest-md);
+  box-shadow: var(--elev-raised);
 
   button {
     display: block;

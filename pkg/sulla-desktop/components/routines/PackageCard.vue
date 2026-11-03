@@ -74,8 +74,8 @@ const appBadge = computed(() => {
   grid-template-columns: 52px 1fr auto;
   gap: 16px;
   align-items: center;
-  background: var(--bg-surface, var(--bg-page));
-  border: 1px solid var(--border-subtle));
+  background: var(--bg-surface, var(--bg-page);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   padding: 18px 20px;
   cursor: pointer;
@@ -91,7 +91,7 @@ const appBadge = computed(() => {
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background: var(--bg-page));
+  background: var(--bg-page);
   display: grid;
   place-items: center;
   font-size: 26px;
@@ -101,13 +101,13 @@ const appBadge = computed(() => {
   font-family: var(--font-body, system-ui, sans-serif);
   font-size: 17px;
   font-weight: 600;
-  color: var(--text-primary));
+  color: var(--text-primary);
 }
 .pkg p {
   margin: 0;
   font-size: 14px;
   line-height: 1.45;
-  color: var(--text-muted));
+  color: var(--text-muted);
 }
 .pkg-meta {
   display: flex;
@@ -119,7 +119,7 @@ const appBadge = computed(() => {
 .pkg-name {
   font-size: 12px;
   font-weight: 700;
-  color: var(--text-secondary, var(--text-primary));
+  color: var(--text-secondary, var(--text-primary);
 }
 .pill {
   font-size: 12px;
@@ -148,7 +148,7 @@ const appBadge = computed(() => {
   white-space: nowrap;
 }
 .state.ok {
-  color: var(--status-success));
+  color: var(--status-success);
   font-weight: 600;
 }
 

@@ -787,7 +787,7 @@ function formatRelative(iso: string): string {
   background: var(--bg-surface);
 }
 .rail-item[class*="kind-"] .dot { background: var(--kind-color); }
-.rail-item.kind-all      .dot { background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface)); }
+.rail-item.kind-all      .dot { background: linear-gradient(135deg, #4a6fa5, #c026d3); }
 
 .rail-footer {
   margin-top: 18px;
@@ -1096,8 +1096,8 @@ function formatRelative(iso: string): string {
   padding: 12px 14px;
   border-color: var(--border-subtle);
   border-radius: 20px;
-  background: var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / 0.62);
-  box-shadow: inset 0 1px 0 var(--border-subtle) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025);
+  background: color-mix(in srgb, var(--bg-surface) 62%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent);
   backdrop-filter: blur(20px);
 }
 
@@ -1131,9 +1131,9 @@ function formatRelative(iso: string): string {
   flex-direction: row;
   gap: 2px;
   padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--border-default) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-default) 10%, transparent);
   border-radius: 16px;
-  background: var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / 0.72);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
 }
 
 .rail-item,
@@ -1189,10 +1189,10 @@ function formatRelative(iso: string): string {
 .search-box {
   min-height: 42px;
   padding: 0 14px;
-  border-color: color-mix(in srgb, var(--border-default) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 10%, transparent);
   border-radius: 13px;
-  background: var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / 0.65);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) calc(r + 62) calc(g + 16) calc(b + 16)) 2.5%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 65%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 2.5%, transparent);
 }
 
 .search-box:focus-within {
@@ -1211,7 +1211,7 @@ function formatRelative(iso: string): string {
 .banner {
   border-color: var(--border-subtle);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-surface) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 3.5%, transparent);
 }
 
 .btn {
