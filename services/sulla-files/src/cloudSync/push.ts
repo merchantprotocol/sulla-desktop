@@ -22,12 +22,63 @@ import {
 } from './envelope.js';
 import type { PgCloudSyncRepository, SyncRow, UploadSession } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
-import { serializeNamespaceEvent } from './namespaceSerializer.js';
+import { serializeNamespaceEvent, type RecursiveDeleteBatch } from './namespaceSerializer.js';
 
 const MAX_MANIFEST_ENVELOPE_BYTES = 192 * 1024;
 const MAX_DECLARED_CHUNKS = 4096;
 
 export interface CommitRequest { body:string; sha256:string; head:SyncHead }
+export type RecursiveDeleteMetadata=Omit<RecursiveDeleteBatch,'versions'>;
+
+export interface RecursiveDeleteProgress { batchId:string; rootItemId:string; deviceId:string; nextIndex:number; sessions:UploadSession[] }
+export interface RecursiveDeleteProgressStore {
+  load(rootItemId:string):Promise<RecursiveDeleteProgress|null>;
+  save(progress:RecursiveDeleteProgress):Promise<void>;
+  clear(batchId:string):Promise<void>;
+}
+export interface NamespaceBatchStatus { rootItemId:string; deviceId:string; lastIndex:number; final:boolean }
+
+/**
+ * Drives already-staged tombstones through the commit sender. Progress is saved
+ * after every acknowledged commit and reconciled with Cloud before resuming.
+ */
+export async function resumeRecursiveDeleteBatches(input:{
+  batchId:string; rootItemId:string; deviceId:string; sessions:UploadSession[];
+  progress:RecursiveDeleteProgressStore;
+  status:(batchId:string)=>Promise<NamespaceBatchStatus|null>;
+  send:(metadata:RecursiveDeleteMetadata,sessions:UploadSession[])=>Promise<void>;
+}):Promise<void> {
+  const local=await input.progress.load(input.rootItemId);
+  if (local&&(local.batchId!==input.batchId||local.rootItemId!==input.rootItemId||local.deviceId!==input.deviceId)) throw new Error('recursive delete resume identity changed');
+  const remote=await input.status(input.batchId);
+  if (remote&&(remote.rootItemId!==input.rootItemId||remote.deviceId!==input.deviceId)) throw new Error('recursive delete remote identity changed');
+  const sessions=local?.sessions??input.sessions;
+  if(!local) await input.progress.save({batchId:input.batchId,rootItemId:input.rootItemId,deviceId:input.deviceId,nextIndex:0,sessions});
+  const count=Math.ceil(sessions.length/256);
+  let index=Math.max(local?.nextIndex??0,(remote?.lastIndex??-1)+1);
+  for (;index<count;index++) {
+    const part=sessions.slice(index*256,(index+1)*256);
+    await input.send({batchId:input.batchId,type:'recursive-delete',rootItemId:input.rootItemId,index,final:index===count-1},part);
+    await input.progress.save({batchId:input.batchId,rootItemId:input.rootItemId,deviceId:input.deviceId,nextIndex:index+1,sessions});
+  }
+  await input.progress.clear(input.batchId);
+}
+
+/** Re-pulls and re-enumerates after every final batch so concurrent descendants cannot escape deletion. */
+export async function drainRecursiveDelete(input:{
+  rootItemId:string; deviceId:string; initial:UploadSession[]; newBatchId:()=>string;
+  progress:RecursiveDeleteProgressStore;
+  status:(batchId:string)=>Promise<NamespaceBatchStatus|null>;
+  send:(metadata:RecursiveDeleteMetadata,sessions:UploadSession[])=>Promise<void>;
+  refreshAndEnumerate:()=>Promise<UploadSession[]>;
+}):Promise<void> {
+  let sessions=input.initial;
+  while(sessions.length){
+    const saved=await input.progress.load(input.rootItemId);
+    await resumeRecursiveDeleteBatches({...input,batchId:saved?.batchId??input.newBatchId(),sessions});
+    sessions=await input.refreshAndEnumerate();
+  }
+}
 
 export function sha256Text(text:string):string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -40,14 +91,25 @@ export function sha256Text(text:string):string {
  * the full list of pushed versions.
  */
 export function commitStateHash(cloudHeads:StateEntry[], committed:StateEntry):Promise<string> {
+  return commitStateHashMany(cloudHeads,[committed]);
+}
+
+export function commitStateHashMany(cloudHeads:StateEntry[], committed:StateEntry[]):Promise<string> {
   const heads = new Map<string, StateEntry>();
   for (const entry of cloudHeads) heads.set(entry.fileId, entry);
-  heads.set(committed.fileId, committed);
+  for (const entry of committed) heads.set(entry.fileId, entry);
   return stateHash([...heads.values()]);
 }
 
 export async function buildCommit(sync:Pick<SyncRow, 'collectionId' | 'keyVersion' | 'lastSeq' | 'head'>, session:UploadSession, cloudHeads:StateEntry[], root:Uint8Array):Promise<CommitRequest> {
-  const projected = await commitStateHash(cloudHeads, { fileId: session.fileId, versionId: session.versionId, deleted: session.deleted });
+  return buildCommitBatch(sync,[session],cloudHeads,root);
+}
+
+/** Builds the exact signed body used by the commit transport for a bounded recursive delete. */
+export async function buildCommitBatch(sync:Pick<SyncRow, 'collectionId' | 'keyVersion' | 'lastSeq' | 'head'>, sessions:UploadSession[], cloudHeads:StateEntry[], root:Uint8Array, batch?:RecursiveDeleteMetadata):Promise<CommitRequest> {
+  if (!sessions.length || sessions.length>256) throw new Error('commit batch must contain 1 to 256 versions');
+  if (batch && sessions.some(session=>!session.deleted)) throw new Error('recursive delete batches may contain only tombstones');
+  const projected = await commitStateHashMany(cloudHeads,sessions.map(session=>({fileId:session.fileId,versionId:session.versionId,deleted:session.deleted})));
   const head = await signHead(root, {
     collectionId: sync.collectionId,
     keyVersion: sync.keyVersion,
@@ -58,7 +120,8 @@ export async function buildCommit(sync:Pick<SyncRow, 'collectionId' | 'keyVersio
   const body = JSON.stringify({
     baseSeq: sync.lastSeq,
     head,
-    versions: [{
+    ...(batch?{batch}:{}),
+    versions: sessions.map(session=>({
       fileId: session.fileId,
       versionId: session.versionId,
       parentVersionId: session.parentVersionId,
@@ -66,7 +129,7 @@ export async function buildCommit(sync:Pick<SyncRow, 'collectionId' | 'keyVersio
       deleted: session.deleted,
       manifest: session.manifest,
       chunkIds: session.chunkIds,
-    }],
+    })),
   });
   return { body, sha256: sha256Text(body), head };
 }
