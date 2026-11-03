@@ -170,9 +170,11 @@ export class Tray {
     error:    path.join(paths.resources, 'icons', 'logo-tray-error-Template@2x.png'),
   };
 
-  private readonly appIcon = process.env.SULLA_E2E_REPO_ROOT
-    ? path.join(process.env.SULLA_E2E_REPO_ROOT, 'resources', 'icons', 'sulla-app-icon.png')
-    : path.join(paths.resources, 'icons', 'sulla-app-icon.png');
+  private readonly appIcon = path.join(
+    Electron.app.isPackaged ? paths.resources : path.join(Electron.app.getAppPath(), 'resources'),
+    'icons',
+    'sulla-app-icon.png',
+  );
 
   private readonly trayIcons = {
     stopped:  '',
