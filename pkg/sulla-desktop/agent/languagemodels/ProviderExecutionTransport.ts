@@ -85,6 +85,21 @@ export interface ProviderTerminationRequest {
   signal:         'TERM' | 'KILL' | 'INT';
   remotePidFile?: string;
   remotePid?:     number;
+  /**
+   * Reject unless the remote process is confirmed gone. Used where resuming
+   * with the old process still alive is unsafe (the background-hold handoff).
+   * Without it, termination stays best-effort and never rejects.
+   */
+  confirm?:       boolean;
+}
+
+/**
+ * Exit codes of buildRemoteKillCommand that mean the process is gone: 0 (gone,
+ * or the pidfile now names a different process) and 2 (no readable pidfile).
+ * 3 (kill failed) and 4 (still alive after KILL) are unconfirmed.
+ */
+export function remoteKillConfirmed(code: number | null): boolean {
+  return code === 0 || code === 2;
 }
 
 export type ProviderFilePurpose = 'attachment' | 'mcp-config' | 'system-prompt';
@@ -192,12 +207,13 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
       return;
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
-      const finish = () => {
+      const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
-        resolve();
+        if (error && request.confirm) reject(error);
+        else resolve();
       };
       try {
         const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
@@ -205,11 +221,11 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
           stdio:    'ignore',
           detached: true,
         });
-        proc.once('error', finish);
-        proc.once('close', finish);
+        proc.once('error', error => finish(error));
+        proc.once('close', (code: number | null) => finish(remoteKillConfirmed(code) ? undefined : new Error(`remote kill exited with code ${ code }`)));
         proc.unref();
-      } catch {
-        finish();
+      } catch (error) {
+        finish(error as Error);
       }
     });
   }

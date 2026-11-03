@@ -154,6 +154,12 @@ const HANDOFF_STOP_GRACE_MS = 2_000;
 const HANDOFF_STOP_MAX_WAIT_MS = 15_000;
 
 /**
+ * After an unconfirmed handoff stop, how many later turns retry the confirmed
+ * KILL (failing closed each time it fails) before the conversation moves on.
+ */
+const HANDOFF_CONFIRM_RETRIES = 3;
+
+/**
  * Per-turn state shared by every recovery attempt of one user turn. Only the
  * turn that actually stopped a held process is a handoff turn; nothing about
  * it outlives the turn, so a later ordinary turn's faults stay the provider's.
@@ -172,12 +178,14 @@ export async function awaitBackgroundHandoff(
   signal?: AbortSignal,
   maxWaitMs = HANDOFF_STOP_MAX_WAIT_MS,
 ): Promise<'stopped' | 'timed_out' | 'failed'> {
+  // Observe the stop first, so it can never reject unhandled.
+  const outcome = stop.then(() => 'stopped' as const, () => 'failed' as const);
   if (signal?.aborted) throw handoffAbortError();
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
-      stop.then(() => 'stopped' as const, () => 'failed' as const),
+      outcome,
       new Promise<'timed_out'>((resolve) => {
         timer = setTimeout(() => resolve('timed_out'), maxWaitMs);
         timer.unref?.();
@@ -1167,10 +1175,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // Targeted by pidfile, never `pkill -f 'claude -p'`: that also killed
         // every concurrent run (other agents, and the run a steering/queued
         // message had just started), which died as "returned no output".
-        const killRemoteClaude = async(sig: 'TERM' | 'KILL') => {
+        const killRemoteClaude = async(sig: 'TERM' | 'KILL', confirm = false) => {
           try {
             await transport.terminate({
-              context: transportContext, process: proc, signal: sig, remotePidFile: pidFile,
+              context: transportContext, process: proc, signal: sig, remotePidFile: pidFile, confirm,
             });
           } catch (err) {
             log.log(`[ClaudeCodeService] Remote kill failed: ${ (err as Error)?.message ?? err }`);
@@ -1709,27 +1717,47 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const stopHoldSettle = () => {
           if (holdSettleTimer) { clearTimeout(holdSettleTimer); holdSettleTimer = null }
         };
-        // Rejects when the remote KILL could not be confirmed. Fire-and-forget
-        // callers (hold limit, a newer hold replacing this one) only log it;
-        // the next-turn handoff must see it so it never resumes the session.
-        let heldStopFailed = false;
+        // Best-effort stop for fire-and-forget callers (hold limit, a newer
+        // hold replacing this one): failures are only logged.
         const stopHeldProcess = (reason: string, graceMs?: number): Promise<void> => {
           if (!holding) return Promise.resolve();
           log.log(`[ClaudeCodeService] stopping held proc for convId=${ convId } (${ reason }; ${ bgTracker.liveTaskCount } background task(s) live)`);
-          // After an unconfirmed stop, a later call runs the teardown again
-          // rather than reusing the cached failure. terminationPromise stays
-          // set throughout, so the held process's output stays muted.
-          const stopping = heldStopFailed
-            ? (terminationPromise = terminateCliChild(proc, killRemoteClaude, graceMs))
-            : killSpawn(graceMs);
-          heldStopFailed = false;
+          return killSpawn(graceMs).catch((error) => {
+            log.warn(`[ClaudeCodeService] held proc stop for convId=${ convId } could not be confirmed: ${ (error as Error)?.message ?? error }`);
+          });
+        };
+        // A confirmed remote KILL of this process, for a turn that is about
+        // to resume its session. If it is not confirmed, the registry keeps a
+        // retry (which endHold leaves alone) so the next turns keep failing
+        // closed instead of resuming beside a live copy, a few times at most.
+        const confirmRemoteStop = (attemptsLeft: number): (() => Promise<void>) => {
+          const retry = () => killRemoteClaude('KILL', true).then(() => {
+            if (backgroundHolds.get(convId) === retry) backgroundHolds.delete(convId);
+          }, (error) => {
+            log.warn(`[ClaudeCodeService] held proc for convId=${ convId } still not confirmed stopped: ${ (error as Error)?.message ?? error }`);
+            if (backgroundHolds.get(convId) === retry) {
+              if (attemptsLeft > 1) backgroundHolds.set(convId, confirmRemoteStop(attemptsLeft - 1));
+              else backgroundHolds.delete(convId);
+            }
+            throw error;
+          });
+          return retry;
+        };
+        const onNextTurn = (): Promise<void> => {
+          if (!holding) return Promise.resolve();
+          log.log(`[ClaudeCodeService] stopping held proc for convId=${ convId } (next turn started; ${ bgTracker.liveTaskCount } background task(s) live)`);
+          // Its own teardown, confirming the KILL; terminationPromise stays
+          // set so the held process's output stays muted.
+          const stopping = terminateCliChild(proc, sig => killRemoteClaude(sig, sig === 'KILL'), HANDOFF_STOP_GRACE_MS);
+          terminationPromise = stopping;
           return stopping.catch((error) => {
             log.warn(`[ClaudeCodeService] held proc stop for convId=${ convId } could not be confirmed: ${ (error as Error)?.message ?? error }`);
-            heldStopFailed = true;
+            if (!backgroundHolds.has(convId) || backgroundHolds.get(convId) === onNextTurn) {
+              backgroundHolds.set(convId, confirmRemoteStop(HANDOFF_CONFIRM_RETRIES));
+            }
             throw error;
           });
         };
-        const onNextTurn = () => stopHeldProcess('next turn started', HANDOFF_STOP_GRACE_MS);
         // Release everything the hold kept: timers, the registry entry, and the
         // MCP session / config / attachments the background work was using.
         const endHold = () => {
@@ -1768,7 +1796,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           stopStallWatchdog();
           options.signal?.removeEventListener('abort', onAbort);
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-          backgroundHolds.get(convId)?.().catch(() => { /* logged by stopHeldProcess */ });
+          backgroundHolds.get(convId)?.().catch(() => { /* already logged */ });
           backgroundHolds.set(convId, onNextTurn);
           holdTimer = setTimeout(() => {
             holdTimer = null;

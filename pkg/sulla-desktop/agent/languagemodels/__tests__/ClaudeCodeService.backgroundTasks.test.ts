@@ -46,10 +46,12 @@ const fakeTransport = {
   files:     { write: () => ({ path: '/tmp/claude-system-test.md', dispose: () => {} }) },
   terminate: async(request: any) => {
     terminations.push(request.signal);
+    terminateRequests.push({ signal: request.signal, confirm: !!request.confirm });
     if (request.signal === 'KILL' && failRemoteKill) throw new Error('remote kill helper exited with code 1');
   },
 };
 const terminations: string[] = [];
+const terminateRequests: { signal: string; confirm: boolean }[] = [];
 let failRemoteKill = false;
 jest.unstable_mockModule('../ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: () => fakeTransport,
@@ -57,7 +59,7 @@ jest.unstable_mockModule('../ProviderExecutionTransport', () => ({
   requireContainerToolConfig:    () => undefined,
 }));
 
-const { ClaudeCodeService } = await import('../ClaudeCodeService');
+const { ClaudeCodeService, awaitBackgroundHandoff } = await import('../ClaudeCodeService');
 const { classifyLLMFailure } = await import('../providerRecovery');
 
 /**
@@ -285,7 +287,7 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
     expect(error.code).toBeUndefined();
   });
 
-  it('an unconfirmed stop of the held process fails the turn as Sulla\'s and never resumes the session', async() => {
+  it('an unconfirmed stop of the held process fails closed until the KILL is confirmed', async() => {
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
     try {
       const { service } = makeService();
@@ -293,6 +295,7 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
       answer(first.proc, first.sent, 'STARTED', [liveOne]);
       await first.run;
       failRemoteKill = true;
+      terminateRequests.length = 0;
 
       const run = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-unconfirmed' });
       for (let i = 0; i < 5; i++) await flush();
@@ -301,8 +304,30 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
 
       expect(error).toMatchObject({ name: 'CliHandoffFailure', code: 'SULLA_INFRA' });
       expect(classifyLLMFailure(error).kind).toBe('infrastructure');
+      // The handoff asks the transport to confirm the KILL.
+      expect(terminateRequests).toContainEqual({ signal: 'KILL', confirm: true });
       // The old CLI may still be alive: no second process on its session.
       expect(spawned).toHaveLength(1);
+
+      // Even after the held process's local side closes, a resend still fails
+      // closed while the remote KILL stays unconfirmed.
+      first.proc.emit('close', null);
+      await flush();
+      const resend: any = await service.runClaude([{ role: 'user', content: 'again' }], {}, { conversationId: 'conv-unconfirmed' }).catch((e: unknown) => e);
+      expect(resend).toMatchObject({ name: 'CliHandoffFailure' });
+      expect(spawned).toHaveLength(1);
+
+      // Once the KILL is confirmed, the next turn resumes normally.
+      failRemoteKill = false;
+      const ok = service.runClaude([{ role: 'user', content: 'third' }], {}, { conversationId: 'conv-unconfirmed' });
+      while (spawned.length === 1) await flush();
+      const second = spawned[1];
+      const sent = await new Promise<any>(resolve => second.stdin.once('data', (c: Buffer) => resolve(JSON.parse(c.toString().trim()))));
+      second.emit('spawn');
+      answer(second, sent, 'Back.');
+      await flush();
+      second.emit('close', 0);
+      await expect(ok).resolves.toMatchObject({ text: 'Back.' });
     } finally {
       failRemoteKill = false;
       jest.useRealTimers();
@@ -377,6 +402,32 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
       proc.emit('close', null);
     } finally {
       jest.useRealTimers();
+    }
+  });
+});
+
+describe('awaitBackgroundHandoff', () => {
+  it('a stop that rejects is failed, never stopped', async() => {
+    await expect(awaitBackgroundHandoff(Promise.reject(new Error('kill not confirmed')))).resolves.toBe('failed');
+    await expect(awaitBackgroundHandoff(Promise.resolve())).resolves.toBe('stopped');
+  });
+
+  it('a stop that never settles times out', async() => {
+    await expect(awaitBackgroundHandoff(new Promise<void>(() => {}), undefined, 10)).resolves.toBe('timed_out');
+  });
+
+  it('an already-aborted turn rejects with AbortError and leaves no unhandled rejection', async() => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const abort = new AbortController();
+      abort.abort();
+      await expect(awaitBackgroundHandoff(Promise.reject(new Error('kill not confirmed')), abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
     }
   });
 });

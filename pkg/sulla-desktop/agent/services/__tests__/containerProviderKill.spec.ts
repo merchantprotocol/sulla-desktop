@@ -95,6 +95,27 @@ describeLinux('container provider kill script', () => {
     expect(await waitFor(() => !alive(provider.pid!))).toBe(true);
   });
 
+  it('the KILL pass still stops a TERM-ignoring child after the provider exited', async() => {
+    const pidsFile = path.join(dir, 'stubborn');
+    const provider = spawn('sh', ['-c', `sh -c 'trap "" TERM; exec sleep 60' & echo $! >> "$1"; wait`, 'provider', pidsFile], { stdio: 'ignore' });
+    started.push(provider);
+    await waitFor(() => fs.existsSync(pidsFile) && fs.readFileSync(pidsFile, 'utf8').trim() !== '');
+    const child = Number(fs.readFileSync(pidsFile, 'utf8').trim());
+    await waitFor(() => fs.existsSync(`/proc/${ child }/stat`) && fs.readFileSync(`/proc/${ child }/stat`, 'utf8').includes('(sleep)'));
+    const pidFile = path.join(dir, 'provider.pid');
+    fs.writeFileSync(pidFile, `${ provider.pid } ${ starttime(provider.pid!) }\n`);
+
+    expect(runScript(pidFile, 'TERM').status).toBe(0);
+    expect(await waitFor(() => !alive(provider.pid!))).toBe(true);
+    // Ignored TERM, and now reparented away from the provider.
+    expect(alive(child)).toBe(true);
+
+    expect(runScript(pidFile, 'KILL').status).toBe(0);
+    expect(await waitFor(() => !alive(child))).toBe(true);
+    expect(fs.existsSync(pidFile)).toBe(false);
+    expect(fs.existsSync(`${ pidFile }.desc`)).toBe(false);
+  });
+
   it('never signals PID 1', () => {
     const pidFile = path.join(dir, 'init.pid');
     fs.writeFileSync(pidFile, `1 ${ starttime(1) }\n`);

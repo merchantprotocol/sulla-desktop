@@ -267,6 +267,13 @@ class GuestExecError extends InfrastructureFailure {
   }
 }
 
+/** `docker exec` failed because the container is gone or stopped, so nothing inside it runs. */
+export function isContainerGoneError(error: unknown): boolean {
+  const text = `${ (error as { stderr?: string })?.stderr ?? '' } ${ (error as Error)?.message ?? '' }`;
+
+  return /no such container|is not running/i.test(text);
+}
+
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
@@ -990,7 +997,18 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     if (!pidFile) return;
     const signal = request.signal === 'INT' ? 'TERM' : request.signal;
     const script = buildContainerProviderKillScript();
-    await guestExec(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
+    const run = guestExec(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]);
+    if (!request.confirm) {
+      await run.catch(() => {});
+      return;
+    }
+    try {
+      await run;
+    } catch (error) {
+      // A container that no longer exists holds no live provider process.
+      if (isContainerGoneError(error)) return;
+      throw error;
+    }
   }
 
   private ensureToolConfig(sessionId: string): Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }> {
