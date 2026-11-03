@@ -25,6 +25,7 @@ import {
   initializeAccountsOnboarding,
 } from './accountsOnboarding.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
+import { UPSTREAM_RETRY_AFTER_SECONDS } from './upstreamEgress.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
@@ -1852,11 +1853,19 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
 
   app.use((error: unknown, request: AuthenticatedRequest, response: Response, _next: NextFunction) => {
     if (error instanceof LocalVaultError) {
-      if (request.path.startsWith('/v1/broker/')) response.setHeader('X-Sulla-Vault-Error', error.code);
+      // Egress failures are transient path problems (network change, DNS, VPN), not policy decisions.
+      const retryable = error.code === 'upstream_failed' || error.code === 'upstream_timeout';
+      if (request.path.startsWith('/v1/broker/')) {
+        response.setHeader('X-Sulla-Vault-Error', error.code);
+        if (error.reason) response.setHeader('X-Sulla-Vault-Error-Reason', error.reason);
+        if (retryable && error.status !== 499) response.setHeader('Retry-After', String(UPSTREAM_RETRY_AFTER_SECONDS));
+      }
       response.status(error.status).json({
         error: error.code,
         message: error.code === 'approval_required' ? 'Owner approval is required' : error.message,
         ...(error.code === 'approval_required' ? { operationId: error.message } : {}),
+        ...(error.reason ? { reason: error.reason } : {}),
+        ...(retryable && error.status !== 499 ? { retryable: true } : {}),
       });
       return;
     }
