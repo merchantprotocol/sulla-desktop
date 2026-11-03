@@ -46,6 +46,7 @@ export interface AgentDefinition {
   provider:                string | null;
   model:                   string | null;
   model_slot:              AgentModelSlot | null;
+  model_choice:            import('../../languagemodels/modelRoutingTypes').AgentModelChoice | null;
   source_kind:             AgentSourceKind;
   marketplace_template_id: string | null;
   marketplace_slug:        string | null;
@@ -98,6 +99,7 @@ export interface AgentDefinitionInput {
   provider?:              string | null;
   model?:                 string | null;
   modelSlot?:             AgentModelSlot | null;
+  modelChoice?:           import('../../languagemodels/modelRoutingTypes').AgentModelChoice | null;
   sourceKind?:            AgentSourceKind;
   marketplaceTemplateId?: string | null;
   marketplaceSlug?:       string | null;
@@ -136,6 +138,7 @@ export interface AgentDefinitionPatch {
   provider?:              string | null;
   model?:                 string | null;
   modelSlot?:             AgentModelSlot | null;
+  modelChoice?:           import('../../languagemodels/modelRoutingTypes').AgentModelChoice | null;
   sourceKind?:            AgentSourceKind;
   marketplaceTemplateId?: string | null;
   marketplaceSlug?:       string | null;
@@ -216,6 +219,7 @@ function rowToDefinition(row: any): AgentDefinition {
     provider:                row.provider == null ? null : String(row.provider),
     model:                   row.model == null ? null : String(row.model),
     model_slot:              toAgentModelSlot(row.model_slot),
+    model_choice:            row.model_choice ?? null,
     source_kind:             (row.source_kind ?? 'local') as AgentSourceKind,
     marketplace_template_id: row.marketplace_template_id == null ? null : String(row.marketplace_template_id),
     marketplace_slug:        row.marketplace_slug == null ? null : String(row.marketplace_slug),
@@ -277,12 +281,12 @@ export class AgentDefinitionModel {
         id, slug, name, description, system_prompt, soul_content,
         allowed_tools, skill_refs, routine_refs, model_priority,
         version, status, enabled, source_template_slug, content_hash,
-        config, prompt_content, goals_content, prompt_files, provider, model, model_slot,
+        config, prompt_content, goals_content, prompt_files, provider, model, model_slot, model_choice,
         source_kind, marketplace_template_id, marketplace_slug, marketplace_version, marketplace_author,
         when_to_call, when_not_to_call, send, returns, cost_tier, can_call, is_builtin, builtin_hash, front_door, run_location
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
-        $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23,$24,$25,$26,$27,
-        $28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
+        $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23::jsonb,$24,$25,$26,$27,$28,
+        $29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
       RETURNING *
     `, [
       `agent-${ randomUUID() }`, slug, name, input.description ?? '', input.systemPrompt ?? '', input.soulContent ?? '',
@@ -290,7 +294,7 @@ export class AgentDefinitionModel {
       JSON.stringify(validateModelPriority(input.modelPriority)), input.version ?? null,
       input.status ?? 'draft', input.enabled !== false, input.sourceTemplateSlug ?? null, input.contentHash ?? null,
       JSON.stringify(input.config ?? {}), input.promptContent ?? input.systemPrompt ?? '', input.goalsContent ?? '',
-      JSON.stringify(input.promptFiles ?? {}), input.provider ?? null, input.model ?? null, toAgentModelSlot(input.modelSlot),
+      JSON.stringify(input.promptFiles ?? {}), input.provider ?? null, input.model ?? null, toAgentModelSlot(input.modelSlot), JSON.stringify(input.modelChoice ?? { mode: 'list' }),
       input.sourceKind ?? 'local', input.marketplaceTemplateId ?? null, input.marketplaceSlug ?? null,
       input.marketplaceVersion ?? null, input.marketplaceAuthor ?? null,
       input.whenToCall ?? '', input.whenNotToCall ?? '', input.send ?? '', input.returns ?? '',
@@ -334,6 +338,7 @@ export class AgentDefinitionModel {
     if (patch.provider !== undefined) add('provider', patch.provider);
     if (patch.model !== undefined) add('model', patch.model);
     if (patch.modelSlot !== undefined) add('model_slot', toAgentModelSlot(patch.modelSlot));
+    if (patch.modelChoice !== undefined) add('model_choice', JSON.stringify(patch.modelChoice));
     if (patch.sourceKind !== undefined) add('source_kind', patch.sourceKind);
     if (patch.marketplaceTemplateId !== undefined) add('marketplace_template_id', patch.marketplaceTemplateId);
     if (patch.marketplaceSlug !== undefined) add('marketplace_slug', patch.marketplaceSlug);

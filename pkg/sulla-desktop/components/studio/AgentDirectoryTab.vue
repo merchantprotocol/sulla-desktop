@@ -30,7 +30,7 @@
       <div v-if="!hasRoutingCard(selectedAgent)" class="ad-warn ad-detail-warn"><UseCaseIcon name="warn" /><span>No routing card yet: managers only see the description. Fill in <b>When to call</b>, <b>When NOT to call</b>, <b>What to send</b> and <b>What it returns</b> so they route work here correctly.</span></div>
       <div class="ad-detail-grid">
         <section class="ad-main-sections"><div class="ad-sec"><h2>When to call</h2><p v-if="selectedAgent.whenToCall">{{ selectedAgent.whenToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>When NOT to call</h2><p v-if="selectedAgent.whenNotToCall">{{ selectedAgent.whenNotToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What to send it</h2><p v-if="selectedAgent.send">{{ selectedAgent.send }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What it returns</h2><p v-if="selectedAgent.returns">{{ selectedAgent.returns }}</p><p v-else class="ad-none">Not written yet.</p></div></section>
-        <aside class="ad-details-card"><h2>Details</h2><dl class="ad-kv"><dt>Cost tier</dt><dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd><dt>Model</dt><dd class="ad-mono">{{ modelLabel(selectedAgent) }}<span v-if="!selectedAgent.model" class="ad-slotnote"> · set in Preferences</span></dd><dt>Status</dt><dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" /> {{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd><dt>Source</dt><dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd><dt>Updated</dt><dd>{{ updatedLabel || 'Not available' }}</dd></dl><div class="ad-rel"><h3>Can call</h3><span v-if="selectedAgent.canCall.includes('*')">Everyone</span><span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openDetail(s)">{{ s }}</button></span></div><div class="ad-rel"><h3>Called by</h3><span v-if="!calledBySelected.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openDetail(a.slug)">{{ a.slug }}</button></span></div><small class="ad-note">{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : '' }}</small></aside>
+        <aside class="ad-details-card"><h2>Details</h2><dl class="ad-kv"><dt>Cost tier</dt><dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd><dt>Model</dt><dd class="ad-mono">{{ modelLabel(selectedAgent) }}<span v-if="!selectedAgent.modelChoice || selectedAgent.modelChoice.mode === 'list'" class="ad-slotnote"> · set in Preferences</span></dd><dt>Status</dt><dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" /> {{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd><dt>Source</dt><dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd><dt>Updated</dt><dd>{{ updatedLabel || 'Not available' }}</dd></dl><div class="ad-rel"><h3>Can call</h3><span v-if="selectedAgent.canCall.includes('*')">Everyone</span><span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openDetail(s)">{{ s }}</button></span></div><div class="ad-rel"><h3>Called by</h3><span v-if="!calledBySelected.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openDetail(a.slug)">{{ a.slug }}</button></span></div><small class="ad-note">{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : '' }}</small></aside>
       </div>
     </article>
   </div>
@@ -41,13 +41,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import UseCaseIcon from '@pkg/components/routines/UseCaseIcon.vue';
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
+import type { AgentModelChoice } from '@pkg/agent/languagemodels/modelRoutingTypes';
 
 import {
   calledBy, costLabel, DIRECTORY_FILTERS, filterAgents, formatUpdated, groupAgents, hasRoutingCard, isManager, modelLabel, type DirectoryFilterKey,
 } from './agentDirectory';
 
-const props = defineProps<{ agents: AgentDefinitionResponse[]; loading: boolean; search: string }>();
-const emit = defineEmits<{ (e: 'edit', agent: AgentDefinitionResponse): void; (e: 'detail-change', agent: AgentDefinitionResponse | null): void; (e: 'update:search', value: string): void }>();
+type DirectoryResponse = AgentDefinitionResponse & { modelChoice?: AgentModelChoice };
+const props = defineProps<{ agents: DirectoryResponse[]; loading: boolean; search: string }>();
+const emit = defineEmits<{ (e: 'edit', agent: DirectoryResponse): void; (e: 'detail-change', agent: AgentDefinitionResponse | null): void; (e: 'update:search', value: string): void }>();
 
 const filter = ref<DirectoryFilterKey>('all');
 const missingOnly = ref(false);
@@ -98,7 +100,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-chip.on { border-color: var(--uc-accent-line); background: var(--uc-accent-soft); color: var(--uc-accent); font-weight: 600; }
 .ad-chip.on em { color: var(--uc-accent); }
 .ad-sum { margin-left: auto; color: var(--uc-dim); font-size: 12px; }
-.ad-missing { padding: 0; border: 0; background: none; color: #c47a00; cursor: pointer; text-decoration: underline; text-decoration-color: #f1d9a6; text-underline-offset: 3px; font: inherit; }
+.ad-missing { padding: 0; border: 0; background: none; color: var(--status-warning); cursor: pointer; text-decoration: underline; text-decoration-color: var(--status-warning-soft); text-underline-offset: 3px; font: inherit; }
 
 .ad-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .ad-group { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; margin: 10px 0 0; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
@@ -116,7 +118,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-ico.ad-lg { width: 44px; height: 44px; border-radius: 11px; }
 .ad-tt { min-width: 0; flex: 1; }
 .ad-name { display: block; font-size: 14px; font-weight: 600; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ad-slug { display: block; margin-top: 1px; color: var(--uc-dim); font: 11px var(--font-mono, ui-monospace, Menlo, monospace); }
+.ad-slug { display: block; margin-top: 1px; color: var(--uc-dim); font: 11px var(--font-mono); }
 .ad-badges { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 52%; }
 .ad-tag { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border: 1px solid var(--uc-line); border-radius: 9px; background: var(--uc-paper); color: var(--uc-muted); font-size: 10.5px; line-height: 16px; white-space: nowrap; }
 .ad-tag.ad-door { border-color: var(--uc-accent-line); background: var(--uc-accent-soft); color: var(--uc-accent); }
@@ -126,11 +128,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-when { padding: 9px 11px; border-radius: 9px; background: var(--uc-paper); font-size: 12px; color: var(--uc-text); }
 .ad-when small { display: block; margin-bottom: 2px; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 .ad-when p { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ad-warn { display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px; border: 1px solid #f1d9a6; border-radius: 9px; background: #fff8e8; color: #8a5a00; font-size: 12px; }
-.ad-warn :deep(svg) { flex: none; margin-top: 1px; color: #c47a00; font-size: 14px; }
+.ad-warn { display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--status-warning); border-radius: 9px; background: var(--status-warning-soft); color: var(--status-warning); font-size: 12px; }
+.ad-warn :deep(svg) { flex: none; margin-top: 1px; color: var(--status-warning); font-size: 14px; }
 .ad-foot { display: flex; align-items: center; gap: 12px; margin-top: auto; padding-top: 2px; color: var(--uc-dim); font-size: 11.5px; min-width: 0; }
 .ad-foot > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.ad-foot .ad-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 11px; }
+.ad-foot .ad-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 11px; }
 .ad-foot .ad-calls { margin-left: auto; }
 .ad-cost { display: inline-flex; gap: 2px; align-items: flex-end; }
 .ad-cost i { display: block; width: 3px; border-radius: 1px; background: var(--uc-line-strong); }
@@ -139,7 +141,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-cost i:nth-child(3) { height: 12px; }
 .ad-cost[data-t="low"] i:nth-child(-n+1), .ad-cost[data-t="medium"] i:nth-child(-n+2), .ad-cost[data-t="high"] i:nth-child(-n+3) { background: var(--uc-muted); }
 .ad-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--uc-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--uc-success) 12%, transparent); }
-.ad-dot.ad-dot-off { background: #b3bdca; box-shadow: none; }
+.ad-dot.ad-dot-off { background: var(--border-muted); box-shadow: none; }
 
 .ad-skel { height: 178px; border: 1px solid var(--uc-line); border-radius: 12px; background: var(--uc-card); padding: 16px; }
 .ad-skel i { display: block; height: 10px; margin-bottom: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--uc-paper), color-mix(in srgb, var(--uc-paper) 60%, var(--uc-card)), var(--uc-paper)); background-size: 200% 100%; animation: adShim 1.2s ease infinite; }
@@ -176,14 +178,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-kv { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 12.5px; }
 .ad-kv dt { color: var(--uc-dim); }
 .ad-kv dd { min-width: 0; margin: 0; color: var(--uc-text); overflow-wrap: anywhere; }
-.ad-kv .ad-mono { font: 11.5px var(--font-mono, ui-monospace, Menlo, monospace); }
+.ad-kv .ad-mono { font: 11.5px var(--font-mono); }
 .ad-cost-row { display: flex; align-items: center; gap: 6px; }
-.ad-slotnote { font-family: var(--font-body, system-ui, sans-serif); color: var(--uc-dim); }
+.ad-slotnote { font-family: var(--font-body); color: var(--uc-dim); }
 .ad-dimtext { color: var(--uc-dim); }
 .ad-rel { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--uc-line); font-size: 12.5px; }
 .ad-rel h3 { margin: 0 0 8px; color: var(--uc-dim); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .ad-links { display: flex; flex-wrap: wrap; gap: 5px; }
-.ad-link { padding: 3px 8px; border: 1px solid var(--uc-line); border-radius: 9px; background: var(--uc-paper); color: var(--uc-text); font: 11px var(--font-mono, ui-monospace, Menlo, monospace); cursor: pointer; transition: border-color 160ms ease, background 160ms ease; }
+.ad-link { padding: 3px 8px; border: 1px solid var(--uc-line); border-radius: 9px; background: var(--uc-paper); color: var(--uc-text); font: 11px var(--font-mono); cursor: pointer; transition: border-color 160ms ease, background 160ms ease; }
 .ad-link:hover { border-color: var(--uc-accent-line); background: var(--uc-accent-soft); color: var(--uc-accent); }
 .ad-link[disabled] { cursor: default; color: var(--uc-dim); }
 .ad-note { display: block; margin-top: 18px; color: var(--uc-dim); font-size: 11.5px; }

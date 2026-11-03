@@ -11,8 +11,10 @@
  */
 
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
+import type { AgentModelChoice } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
 
-export type DirectoryAgent = AgentDefinitionResponse;
+export type DirectoryAgent = AgentDefinitionResponse & { modelChoice?: AgentModelChoice };
 
 export const WILDCARD_CALLEE = '*';
 
@@ -31,7 +33,8 @@ export function calledBy(agents: DirectoryAgent[], slug: string): DirectoryAgent
   return agents.filter(a => a.slug !== slug && (a.canCall.includes(slug) || a.canCall.includes(WILDCARD_CALLEE)));
 }
 
-export function modelLabel(agent: Pick<DirectoryAgent, 'provider' | 'model' | 'modelSlot'>): string {
+export function modelLabel(agent: Pick<DirectoryAgent, 'provider' | 'model' | 'modelSlot' | 'modelChoice'>): string {
+  if (agent.modelChoice) return choiceLabel(agent.modelChoice);
   if (agent.model) return `${ agent.provider ?? '' } · ${ agent.model }`.replace(/^ · /, '');
   if (agent.modelSlot) return `${ agent.modelSlot[0].toUpperCase() }${ agent.modelSlot.slice(1) } slot`;
 

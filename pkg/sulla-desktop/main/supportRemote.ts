@@ -493,7 +493,7 @@ export class RemoteSupportService {
       exactKeys(raw, []); try { const state = await updateApi().checkAndInstall(); return textResult({ status: state.phase === 'not-available' ? 'up_to_date' : state.phase === 'downloading' ? 'downloading' : state.phase === 'downloaded' ? 'restart_pending' : state.phase === 'error' ? 'error' : 'installing', version: state.availableVersion || null, error: state.error || null }) } catch (error) { return textResult({ status: 'error', version: null, error: redacted(error instanceof Error ? error.message : String(error)) }) }
     }
     if (name === 'support.update.status') {
-      exactKeys(raw, []); const status = updateApi().status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
+      exactKeys(raw, []); const status = updateApi().status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.status, lastCheckedAt: null, error: status.error || null, lastUpdateResult: status.lastUpdateResult || null });
     }
     throw new Error('Tool is not in the support allowlist.');
   }
