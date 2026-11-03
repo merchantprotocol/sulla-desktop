@@ -311,7 +311,7 @@ onUnmounted(() => {
 }
 
 .frw-progress-bar {
-  background: var(--accent-primary);
+  background: var(--accent);
 }
 
 .frw-muted {
@@ -319,19 +319,19 @@ onUnmounted(() => {
 }
 
 .frw-success {
-  color: var(--text-success);
+  color: var(--status-success);
 }
 
 .frw-error {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 
 .frw-btn-accent {
-  background: var(--accent-primary);
+  background: var(--accent);
   color: var(--text-on-accent);
 
   &:hover {
-    background: var(--accent-primary-hover);
+    background: var(--accent-hover);
   }
 }
 
@@ -340,64 +340,64 @@ onUnmounted(() => {
   cursor: wait;
 }
 
-.theme-noir .frw-container {
+.frw-container {
   --fr-wait-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background: transparent;
-  color: var(--nx-read-2);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw-container::before {
+.frw-container::before {
   content: "FINISHING";
   display: block;
   margin-top: 5px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: .14em;
-  color: var(--nx-accent-2);
+  color: var(--accent);
 }
 
-.theme-noir .frw-container > .frw-title {
+.frw-container > .frw-title {
   max-width: 650px;
   margin: 7px 0 8px;
-  font-family: "Playfair Display", Georgia, serif;
+  font-family: var(--font-display);
   font-size: 36px;
   line-height: 1.08;
   font-weight: 600;
   letter-spacing: -.02em;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
 }
 
-.theme-noir .frw-subtitle {
+.frw-subtitle {
   font-size: 14px;
   line-height: 1.6;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-muted {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+.frw-muted {
+  font-family: var(--font-mono);
   font-size: 10.5px;
   line-height: 1.6;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
 }
 
-.theme-noir .frw-progress-track {
+.frw-progress-track {
   height: 5px;
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
+  background: rgb(from var(--bg-surface) calc(r + 2) calc(g + 3) calc(b + 2) / .7);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--accent) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
 }
 
-.theme-noir .frw-progress-bar {
+.frw-progress-bar {
   height: 5px;
-  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 52%, transparent);
+  background: linear-gradient(90deg, var(--accent), var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 52%, transparent);
   transition: width .58s var(--fr-wait-spring);
 }
 
-.theme-noir .frw-success { color: var(--nx-success); }
-.theme-noir .frw-error { color: rgb(from var(--nx-danger) calc(r - 4) calc(g + 82) calc(b + 86)); }
+.frw-success { color: var(--status-success); }
+.frw-error { color: rgb(from var(--status-error) calc(r - 4) calc(g + 82) calc(b + 86)); }
 
-.theme-noir .frw-btn-accent {
+.frw-btn-accent {
   min-height: 36px;
   padding-inline: 16px;
   border-radius: 18px;
@@ -405,17 +405,17 @@ onUnmounted(() => {
   transition: transform .58s var(--fr-wait-spring), box-shadow .2s ease;
 }
 
-.theme-noir .frw-btn-accent {
-  color: #fff;
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 34%, transparent);
+.frw-btn-accent {
+  color: var(--text-on-accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-.theme-noir .frw-btn-accent:active { transform: scale(.95); }
+.frw-btn-accent:active { transform: scale(.95); }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .frw-progress-bar,
-  .theme-noir .frw-btn-accent {
+  .frw-progress-bar,
+  .frw-btn-accent {
     transition-duration: .01ms;
   }
 }

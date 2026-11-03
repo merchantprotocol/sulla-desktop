@@ -2172,7 +2172,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
   --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
   --shadow-lg: 0 2px 4px rgba(26, 35, 50, .06), 0 30px 60px -20px rgba(26, 35, 50, .28);
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --mono: ui-monospace, var(--font-mono), "SF Mono", Menlo, Consolas, monospace;
   --r: 12px;
 
   position: relative;
@@ -2232,7 +2232,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 .resize-handle { position:absolute; z-index:2; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; }
 .marquee { position:fixed; z-index:900; pointer-events:none; border:1px solid var(--accent); background:var(--accent-soft); }
 .drag-count { position:fixed; z-index:1200; display:grid; place-items:center; min-width:24px; height:24px; padding:0 7px; border-radius:999px; background:var(--accent); color:#fff; box-shadow:var(--shadow-sm); font-weight:700; pointer-events:none; }
-.quick-look { position:fixed; z-index:1400; inset:0; display:grid; grid-template-columns:minmax(44px,1fr) minmax(320px,900px) minmax(44px,1fr); place-items:center; padding:48px; background:rgba(10,16,25,.76); backdrop-filter:blur(18px); font:13px var(--sans, system-ui); color:#fff; }
+.quick-look { position:fixed; z-index:1400; inset:0; display:grid; grid-template-columns:minmax(44px,1fr) minmax(320px,900px) minmax(44px,1fr); place-items:center; padding:48px; background:var(--bg-overlay); backdrop-filter:blur(18px); font:13px var(--sans); color:var(--text-on-accent); }
 .quick-look-close { position:absolute; top:18px; right:18px; width:36px; height:36px; display:grid; place-items:center; border:0; border-radius:999px; background:rgba(255,255,255,.14); color:#fff; }
 .quick-look-close :deep(svg) { width:20px; height:20px; }
 .quick-look-card { grid-column:2; width:100%; max-height:calc(100vh - 96px); display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,.18); border-radius:14px; background:#101722; box-shadow:0 30px 100px rgba(0,0,0,.5); }

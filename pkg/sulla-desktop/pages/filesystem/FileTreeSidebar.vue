@@ -649,7 +649,7 @@ export default defineComponent({
   height: 100%;
   background: var(--bg-surface);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-body);
   font-size: var(--fs-code);
   user-select: none;
   overflow: hidden;
@@ -697,13 +697,13 @@ export default defineComponent({
 
 .file-tree-scroll.drop-active {
   background: var(--bg-surface,rgba(0, 120, 212, 0.06));
-  outline: 2px dashed var(--accent-primary, rgba(0, 120, 212, 0.3));
+  outline: 2px dashed var(--accent, rgba(0, 120, 212, 0.3));
   outline-offset: -2px;
 }
 
 .dark .file-tree-scroll.drop-active {
   background: var(--bg-surface,rgba(0, 120, 212, 0.1));
-  outline-color: var(--accent-primary, rgba(0, 120, 212, 0.4));
+  outline-color: var(--accent, rgba(0, 120, 212, 0.4));
 }
 
 .file-tree-loading {
@@ -734,49 +734,49 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.theme-noir .file-tree-sidebar {
+.file-tree-sidebar {
   background: color-mix(in srgb, var(--bg-surface-alt) 74%, transparent);
-  color: var(--nx-read-2);
-  border-right: 1px solid var(--nx-hair);
-  font-family: ui-monospace, 'SF Mono', monospace;
+  color: var(--text-primary);
+  border-right: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .file-tree-header {
+.file-tree-header {
   height: 44px;
   padding: 0 10px 0 14px;
-  color: var(--nx-accent-2);
+  color: var(--accent);
   background: color-mix(in srgb, var(--bg-surface-alt) 50%, transparent);
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   font-size: 10px;
   letter-spacing: 0.16em;
 }
 
-.theme-noir .action-btn {
+.action-btn {
   width: 28px;
   height: 28px;
-  color: var(--nx-read-4);
+  color: var(--text-muted);
   border-radius: 14px;
   transition: background 0.16s, color 0.16s, transform 0.4s cubic-bezier(.22, 1, .36, 1);
 }
 
-.theme-noir .action-btn:hover {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 12%, transparent);
+.action-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   transform: translateY(-1px);
 }
 
-.theme-noir .file-tree-scroll { padding: 7px 6px; }
-.theme-noir .file-tree-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--nx-hair-strong) 87.5%, transparent);
+.file-tree-scroll { padding: 7px 6px; }
+.file-tree-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border-strong) 87.5%, transparent);
 }
 
-.theme-noir .file-tree-loading {
-  color: var(--nx-read-4);
-  font-family: ui-monospace, 'SF Mono', monospace;
+.file-tree-loading {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .action-btn { transition-duration: 0.01ms; }
+  .action-btn { transition-duration: 0.01ms; }
 }
 </style>

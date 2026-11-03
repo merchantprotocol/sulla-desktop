@@ -449,7 +449,7 @@ export default defineComponent({
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-body);
   font-size: var(--fs-code);
 }
 
@@ -472,11 +472,11 @@ export default defineComponent({
 }
 
 .context-menu-item.danger {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 
 .context-menu-item.danger:hover {
-  background: var(--bg-error);
+  background: var(--status-error-soft);
 }
 
 .context-menu-shortcut {
@@ -501,36 +501,36 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.theme-noir .context-menu {
+.context-menu {
   min-width: 200px;
   padding: 6px;
-  color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-surface) 97%, transparent);
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 93.75%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 93.75%, transparent);
   border-radius: 16px;
-  box-shadow: 0 20px 54px color-mix(in srgb, var(--shadow) 68.8889%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
+  box-shadow: var(--elev-float), inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 15.625%, transparent);
   backdrop-filter: blur(20px);
-  font-family: ui-monospace, 'SF Mono', monospace;
+  font-family: var(--font-mono);
 }
 
-.theme-noir .context-menu-item {
+.context-menu-item {
   min-height: 34px;
   padding: 7px 10px;
-  color: var(--nx-read-3);
+  color: var(--text-muted);
   border-radius: 10px;
   transition: color 0.14s, background 0.14s, transform 0.35s cubic-bezier(.22, 1, .36, 1);
 }
 
-.theme-noir .context-menu-item:hover {
-  color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+.context-menu-item:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   transform: translateX(2px);
 }
 
-.theme-noir .context-menu-shortcut { color: var(--nx-read-5); }
-.theme-noir .context-menu-sep { background: var(--nx-hair); }
-.theme-noir .context-menu-subheader {
-  color: var(--nx-accent-2);
+.context-menu-shortcut { color: var(--text-dim); }
+.context-menu-sep { background: var(--border-subtle); }
+.context-menu-subheader {
+  color: var(--accent);
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -538,6 +538,6 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .context-menu-item { transition-duration: 0.01ms; }
+  .context-menu-item { transition-duration: 0.01ms; }
 }
 </style>

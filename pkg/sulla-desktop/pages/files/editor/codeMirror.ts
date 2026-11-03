@@ -25,9 +25,9 @@ export function createEditor(parent:HTMLElement, content:string, readOnly:boolea
         markdownMode ? [markdown({ base: markdownLanguage }), EditorView.lineWrapping] : [], ...extra,
         EditorView.updateListener.of(update => { if (update.docChanged) onChange(update.state.doc.toString()) }),
         EditorView.theme({
-          '&': { color: 'var(--text, #1a2332)', backgroundColor: 'transparent', height: '100%' },
-          '.cm-content': { caretColor: 'var(--accent, #3a7fa0)', padding: '4px 0 80px', fontFamily: markdownMode ? '-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif' : '"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: markdownMode ? '16px' : '14.5px', lineHeight: markdownMode ? '1.75' : '1.8' },
-          '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--text-muted, #8a96a6)', border: '0', paddingRight: '12px' },
+          '&': { color: 'var(--text-primary)', backgroundColor: 'transparent', height: '100%' },
+          '.cm-content': { caretColor: 'var(--accent)', padding: '4px 0 80px', fontFamily: markdownMode ? '-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif' : 'var(--font-mono)', fontSize: markdownMode ? '16px' : '14.5px', lineHeight: markdownMode ? '1.75' : '1.8' },
+          '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--text-muted)', border: '0', paddingRight: '12px' },
           '.cm-activeLine,.cm-activeLineGutter': { backgroundColor: 'var(--accent-dim, rgba(58,127,160,.06))' },
           '.cm-scroller': { overflow: 'visible' },
           '&.cm-focused': { outline: 'none' },
