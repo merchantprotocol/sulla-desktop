@@ -18,6 +18,22 @@ import { requireHumanFilesSync, type FilesSyncCaller } from './humanGuard';
 
 const console=Logging.background;
 const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
+
+/**
+ * A collection created by Mobile or Cloud does not exist in Desktop's local
+ * catalog yet, so the normal per-collection pull loop cannot discover it.
+ * Restore it first; the Files service then uses its ordinary verified pull to
+ * materialize files (and their parent folders) without re-uploading versions.
+ */
+export async function restoreMissingCloudCollections(
+  list:()=>Promise<{collections:CloudFilesCollection[]}>,
+  restore:()=>Promise<CloudRestoreAllResult>,
+):Promise<CloudRestoreAllResult|null> {
+  const remote=await list();
+  if(!remote.collections.some(collection=>collection.local===false&&collection.status==='active'))return null;
+  return restore();
+}
+
 class FilesSyncV1Impl {
   private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
   start():void { this.stopped=false; this.schedule(0) }
@@ -88,6 +104,12 @@ class FilesSyncV1Impl {
     const wrapped=await FilesSyncContainer.vaultEscrowKey(request);
     await FilesSyncContainer.escrowKey({requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch});
   }
+  private async restoreMissing():Promise<void> {
+    await restoreMissingCloudCollections(
+      ()=>FilesSyncContainer.cloudCollections(),
+      async()=>FilesSyncContainer.restoreAll(await this.restoreKey()),
+    );
+  }
   // The driver only runs while Files is on, so queued deletes are sent here.
   private async drainDeletes():Promise<void> {
     for(let i=0;this.running&&i<100;i++)await new Promise(resolve=>setTimeout(resolve,100));
@@ -109,6 +131,7 @@ class FilesSyncV1Impl {
     try {
       const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.files){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}
+      await this.restoreMissing();
       await this.enrollCollections();
       const status=await this.status(); const enabled=status.collections.filter(c=>c.enabled);
       if(!enabled.length){this.backoff=1_000;this.schedule(IDLE_MS);return}

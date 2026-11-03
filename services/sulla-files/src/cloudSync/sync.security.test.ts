@@ -87,14 +87,30 @@ function manifestFor(path:string, parentVersionId:string | null, content:string)
   };
 }
 
-async function remoteVersion(root:Uint8Array, fileId:string, versionId:string, parentVersionId:string | null, seq:number, content:string) {
-  const manifest = manifestFor('notes.txt', parentVersionId, content);
+async function remoteVersion(root:Uint8Array, fileId:string, versionId:string, parentVersionId:string | null, seq:number, content:string, path='notes.txt') {
+  const manifest = manifestFor(path, parentVersionId, content);
   return {
     fileId, versionId, parentVersionId, deleted: false, seq, deviceId: 'other-device', createdAt: NOW.toISOString(),
     manifest: await sealManifest(root, COLLECTION, 1, fileId, versionId, manifest),
     chunkIds: manifest.chunks.map(([id]) => id),
   };
 }
+
+test('a new remote file is added locally, including its remote parent folder, and is marked known to Cloud',async()=>{
+  const root=new Uint8Array(randomBytes(32));
+  const repository=new MemoryRepository();
+  const fileId=randomUUID();
+  const versionId=randomUUID();
+  const remote=await remoteVersion(root,fileId,versionId,null,1,'from phone','Phone folder/new file.txt');
+  const head=await signHead(root,{collectionId:COLLECTION,keyVersion:1,seq:1,stateHash:await stateHash([{fileId,versionId,deleted:false}]),prevMac:''});
+
+  const result=await puller(repository,[{versions:[remote],head}]).pull({collectionId:COLLECTION,keyVersion:1,lastSeq:0,head:null},root);
+
+  assert.equal(result.applied,1);
+  assert.equal(repository.files.get(fileId)?.path,'Phone folder/new file.txt');
+  assert.equal(repository.files.get(fileId)?.current,versionId);
+  assert.equal(await repository.isCloudVersion(versionId),true,'the pulled version cannot become an upload candidate');
+});
 
 /** Collection where file F was pushed at seq 1 as V0, plus a valid seq-1 head. */
 async function fixture() {
