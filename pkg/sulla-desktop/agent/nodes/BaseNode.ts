@@ -490,6 +490,9 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
 /**
  *
  */
+/** Pauses between routed retries of one provider (1s, then 3s). Exported so tests can shorten them. */
+export const routingRetryDelays = { firstMs: 1_000, laterMs: 3_000 };
+
 export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   id:                            string;
   name:                          string;
@@ -1219,6 +1222,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const abortSignal = state.metadata?.options?.abort?.signal;
       throwIfAborted(abortSignal);
       if (isContainerLifecycleLost(err)) throw err;
+      // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
+      if ((err as any)?.unsafeToFallback) throw err;
 
       const candidates = this.routingCandidates.length
         ? this.routingCandidates.slice(0, this.routingPinned ? 1 : undefined)
@@ -1251,7 +1256,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             throwIfAborted(abortSignal);
             if (index === 0 || attempt > 0) {
               const retryNumber = index === 0 ? attempt : attempt - 1;
-              const delayMs = retryNumber === 0 ? 1_000 : 3_000;
+              const delayMs = retryNumber === 0 ? routingRetryDelays.firstMs : routingRetryDelays.laterMs;
               await new Promise<void>((resolve, reject) => {
                 const timer = setTimeout(resolve, delayMs);
                 abortSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(abortSignal.reason) }, { once: true });

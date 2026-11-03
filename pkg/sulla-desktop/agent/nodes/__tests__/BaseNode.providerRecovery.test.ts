@@ -136,7 +136,9 @@ jest.unstable_mockModule('../../tools/registry', () => ({
 }));
 
 describe('BaseNode provider recovery', () => {
-  beforeEach(() => {
+  beforeEach(async() => {
+    const { routingRetryDelays } = await import('../BaseNode');
+    routingRetryDelays.firstMs = 0; routingRetryDelays.laterMs = 0;
     primaryChatStreamMock.mockReset();
     primaryChatMock.mockReset();
     secondaryChatMock.mockReset();
@@ -299,9 +301,9 @@ describe('BaseNode provider recovery', () => {
       .mockRejectedValueOnce(new Error('HTTP 503 unavailable'))
       .mockResolvedValueOnce({ content: 'third attempt', metadata: {} });
     const { BaseNode } = await import('../BaseNode');
-    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    class TestNode extends BaseNode<any> { async execute(state: any) { const reply = await this.normalizedChat(state, 'System', { disableTools: true }); return { state, decision: { type: 'end' as const }, response: reply } } }
     const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'quota', wsChannel: 'quota', options: {} } };
-    await expect(new TestNode('quota', 'Quota').execute(state)).resolves.toMatchObject({ content: 'third attempt' });
+    await expect(new TestNode('quota', 'Quota').execute(state)).resolves.toMatchObject({ response: { content: 'third attempt' } });
     expect(primaryChatStreamMock).toHaveBeenCalledTimes(1);
     expect(secondaryChatStreamMock).toHaveBeenCalledTimes(3);
   });
@@ -313,7 +315,7 @@ describe('BaseNode provider recovery', () => {
       throw new Error('HTTP 503 unavailable');
     });
     const { BaseNode } = await import('../BaseNode');
-    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    class TestNode extends BaseNode<any> { async execute(state: any) { const reply = await this.normalizedChat(state, 'System', { disableTools: true }); return { state, decision: { type: 'end' as const }, response: reply } } }
     const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'tool', wsChannel: 'tool', options: {} } };
     await expect(new TestNode('tool', 'Tool').execute(state)).rejects.toThrow('HTTP 503');
     expect(primaryChatStreamMock).toHaveBeenCalledTimes(1);
@@ -323,9 +325,9 @@ describe('BaseNode provider recovery', () => {
   it('falls back for a non-pinned turn even when the legacy setting is false', async() => {
     settingsGetMock.mockImplementation(async(key: string, fallback: any) => key === 'fallbackEnabled' ? false : fallback);
     const { BaseNode } = await import('../BaseNode');
-    class TestNode extends BaseNode<any> { async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) } }
+    class TestNode extends BaseNode<any> { async execute(state: any) { const reply = await this.normalizedChat(state, 'System', { disableTools: true }); return { state, decision: { type: 'end' as const }, response: reply } } }
     const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'legacy', wsChannel: 'legacy', options: {} } };
-    await expect(new TestNode('legacy', 'Legacy').execute(state)).resolves.toMatchObject({ content: 'fallback response ok' });
+    await expect(new TestNode('legacy', 'Legacy').execute(state)).resolves.toMatchObject({ response: { content: 'fallback response ok' } });
     expect(secondaryChatStreamMock).toHaveBeenCalledTimes(1);
   });
 
@@ -374,7 +376,7 @@ describe('BaseNode pinned model routing', () => {
     primaryChatStreamMock.mockRejectedValueOnce(new Error('quota exceeded'));
     const { BaseNode } = await import('../BaseNode');
     class PinnedNode extends BaseNode<any> {
-      async execute(state: any) { const reply = await this.normalizedChat(state, 'System', { disableTools: true }); return { state, decision: { type: 'end' as const }, response: reply?.content ?? '' } }
+      async execute(state: any) { const reply = await this.normalizedChat(state, 'System', { disableTools: true }); return { state, decision: { type: 'end' as const }, response: reply } }
     }
     const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'pinned', wsChannel: 'pinned', options: {} } };
     await expect(new PinnedNode('pinned', 'Pinned').execute(state)).rejects.toThrow();
