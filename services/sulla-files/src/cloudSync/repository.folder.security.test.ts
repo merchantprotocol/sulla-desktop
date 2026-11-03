@@ -52,12 +52,7 @@ class FolderDb {
       return { rows: [], rowCount: 1 };
     }
     if (text.startsWith('UPDATE file_folders SET path=')) {
-      for (const [path, id] of [...this.folders]) {
-        if (path === params[1] || path.startsWith(`${ params[1] }/`)) {
-          this.folders.delete(path);
-          this.folders.set(`${ params[2] }${ path.slice(params[1].length) }`, id);
-        }
-      }
+      this.moveFolders(params[1], params[2]);
       return { rows: [], rowCount: 1 };
     }
     if (text.startsWith('UPDATE files SET path=')) {
@@ -73,6 +68,15 @@ class FolderDb {
       this.cloud.set(params[1], { path: params[3] ?? this.cloud.get(params[1])?.path ?? null, deleted: deleted || Boolean(params[4]) });
       return { rows: [], rowCount: 1 };
     }
+    if (text.startsWith('UPDATE files_cloud_folders SET path=')) {
+      for (const row of this.cloud.values()) {
+        const path = row.path;
+        if (path === params[1] || path?.startsWith(`${ params[1] }/`)) {
+          row.path = `${ params[2] }${ path.slice(params[1].length) }`;
+        }
+      }
+      return { rows: [], rowCount: 1 };
+    }
     if (text.startsWith('INSERT INTO files_cloud_file_heads')) return { rows: [], rowCount: 1 };
     throw new Error(`unexpected SQL: ${ text }`);
   }
@@ -81,6 +85,19 @@ class FolderDb {
     for (const [key, value] of [...rows]) {
       if (value === from || value.startsWith(`${ from }/`)) rows.set(key, `${ to }${ value.slice(from.length) }`);
     }
+  }
+
+  private moveFolders(from:string, to:string) {
+    const moving = [...this.folders].filter(([path]) => path === from || path.startsWith(`${ from }/`));
+    const movingPaths = new Set(moving.map(([path]) => path));
+    const targets = moving.map(([path, id]) => [`${ to }${ path.slice(from.length) }`, id] as const);
+    for (const [path] of targets) {
+      if (this.folders.has(path) && !movingPaths.has(path)) {
+        throw Object.assign(new Error('duplicate key value violates unique constraint file_folders_collection_path_key'), { code:'23505' });
+      }
+    }
+    for (const [path] of moving) this.folders.delete(path);
+    for (const [path, id] of targets) this.folders.set(path, id);
   }
 }
 
@@ -109,12 +126,14 @@ test('rename collision retains the other identity and moves nested children to a
   const remoteId = randomUUID(), occupiedId = randomUUID(), childId = randomUUID();
   db.folders.set('Old', remoteId); db.folders.set('Old/Child', childId); db.folders.set('Taken', occupiedId);
   db.files.set(randomUUID(), 'Old/Child/note.txt');
-  db.cloud.set(remoteId, { path:'Old', deleted:false }); db.cloud.set(occupiedId, { path:'Taken', deleted:false });
+  db.cloud.set(remoteId, { path:'Old', deleted:false }); db.cloud.set(childId, { path:'Old/Child', deleted:false });
+  db.cloud.set(occupiedId, { path:'Taken', deleted:false });
   await new PgCloudSyncRepository(db as any, { kind:'human', userId:'user', deviceId:'desktop' } as any).applyRemoteFolderVersion(input(remoteId, 'Taken'));
   const moved = db.cloud.get(remoteId)?.path ?? '';
   assert.match(moved, /^Taken \(conflicted copy phone /);
   assert.equal(db.folders.get('Taken'), occupiedId);
   assert.ok([...db.files.values()].includes(`${ moved }/Child/note.txt`));
+  assert.equal(db.cloud.get(childId)?.path, `${ moved }/Child`, 'stable child identity follows the renamed subtree');
 });
 
 test('deleting one folder identity retains independently versioned nested children', async() => {

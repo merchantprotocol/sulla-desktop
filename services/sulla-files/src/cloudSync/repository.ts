@@ -466,8 +466,14 @@ export class PgCloudSyncRepository implements PullRepository {
         if (prior?.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2 AND id=$3', [collectionId, prior.path, remote.fileId]);
       } else {
         const path = await this.freeFolderPath(client, collectionId, manifest.path, remote.fileId, input.remoteDeviceLabel, !prior?.path);
-        await ensureStoredFileParents(client, collectionId, `${ path }/.folder`, this.actor);
-        if (prior?.path && prior.path !== path) await this.moveStoredSubtree(client, collectionId, prior.path, path);
+        if (prior?.path && prior.path !== path) {
+          // Create only the destination's parents. Creating `path` itself first makes the
+          // subtree move collide with file_folders(collection_id,path)'s unique key.
+          await ensureStoredFileParents(client, collectionId, path, this.actor);
+          await this.moveStoredSubtree(client, collectionId, prior.path, path);
+        } else {
+          await ensureStoredFileParents(client, collectionId, `${ path }/.folder`, this.actor);
+        }
         const existing = (await client.query('SELECT id::text AS id FROM file_folders WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
         if (existing && existing.id !== remote.fileId) {
           // Parent synthesis has no Cloud identity. Adopt it rather than replacing the UUID.
@@ -632,9 +638,13 @@ export class PgCloudSyncRepository implements PullRepository {
       WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
     await client.query(`UPDATE files SET path=$3||substring(path,length($2)+1),updated_at=NOW()
       WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
+    await client.query(`UPDATE files_cloud_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, from, token]);
     await client.query(`UPDATE file_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
       WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
     await client.query(`UPDATE files SET path=$3||substring(path,length($2)+1),updated_at=NOW()
+      WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
+    await client.query(`UPDATE files_cloud_folders SET path=$3||substring(path,length($2)+1),updated_at=NOW()
       WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`, [collectionId, token, to]);
   }
 }

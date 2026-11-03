@@ -163,7 +163,7 @@ export class CloudPuller {
       } catch {
         throw new CloudSyncIntegrityError('cloud manifest failed authentication');
       }
-      const parsed = parseManifestPlain(plain);
+      const parsed = parseManifestPlain(plain, remote);
       let manifest = parsed.v === 2
         ? await this.normalizeNamespaceManifest(state.collectionId, remote, parsed, folderPaths)
         : parsed;

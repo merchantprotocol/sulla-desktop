@@ -351,6 +351,35 @@ test('a zero-byte chunk remains invalid when the manifest declares non-empty con
   }), /chunk size invalid/);
 });
 
+test('actual Mobile and Web Goal-M v1 manifests project safely after outer binding', () => {
+  const fileId = randomUUID(), folderId = randomUUID();
+  const fileChunk = 'a'.repeat(64);
+  const file = parseManifestPlain({
+    // Web vault-core prepareFileVersion output: additive identity fields on v1.
+    v:1, itemId:fileId, name:'page.html', parentFolderId:folderId, path:'Parent/page.html', kind:'file',
+    mime:'text/html', size:4, mtime:NOW.toISOString(), sha256:'b'.repeat(64), chunks:[[fileChunk, 4]],
+    deleted:false, parentVersionId:null,
+  }, { fileId, parentVersionId:null, deleted:false, chunkIds:[fileChunk] });
+  assert.deepEqual(file, {
+    v:1, path:'Parent/page.html', kind:'file', mime:'text/html', size:4, mtime:NOW.toISOString(),
+    sha256:'b'.repeat(64), chunks:[[fileChunk, 4]], deleted:false, parentVersionId:null,
+  });
+
+  const folder = parseManifestPlain({
+    // Mobile FilesPreviewModule.swift manifest: empty folders use nullable payload metadata.
+    v:1, itemId:folderId, name:'Parent', parentFolderId:null, path:'Parent', kind:'folder',
+    mime:null, size:0, mtime:NOW.toISOString(), sha256:null, chunks:[], deleted:false, parentVersionId:null,
+  }, { fileId:folderId, parentVersionId:null, deleted:false, chunkIds:[] });
+  assert.deepEqual(folder, {
+    v:1, path:'Parent', kind:'folder', mime:'application/x-directory', size:0, mtime:NOW.toISOString(),
+    sha256:'0'.repeat(64), chunks:[], deleted:false, parentVersionId:null,
+  });
+  assert.throws(() => parseManifestPlain({
+    v:1, itemId:randomUUID(), name:'Parent', parentFolderId:null, path:'Parent', kind:'folder',
+    mime:null, size:0, mtime:NOW.toISOString(), sha256:null, chunks:[], deleted:false, parentVersionId:null,
+  }, { fileId:folderId, parentVersionId:null, deleted:false, chunkIds:[] }), /manifest item id invalid/);
+});
+
 async function legacyParentPull(manifestParent:string | null) {
   const root = new Uint8Array(randomBytes(32));
   const fileId = randomUUID(), grandparent = randomUUID(), parent = randomUUID(), versionId = randomUUID();
