@@ -29,7 +29,12 @@ const waitFor = async(check: () => boolean, ms = 3_000) => {
   return check();
 };
 
-const starttime = (pid: number) => fs.readFileSync(`/proc/${ pid }/stat`, 'utf8').split(' ')[21];
+// Field 22 of stat; counted after the last ')' so a command name with spaces cannot shift it.
+const starttime = (pid: number) => {
+  const stat = fs.readFileSync(`/proc/${ pid }/stat`, 'utf8');
+
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+};
 
 describeLinux('container provider kill script', () => {
   let dir: string;
@@ -75,6 +80,19 @@ describeLinux('container provider kill script', () => {
 
     expect(runScript(pidFile, 'KILL').status).toBe(0);
     expect(alive(bystander.pid!)).toBe(true);
+  });
+
+  it('reads the start time correctly when the command name has spaces', async() => {
+    const script = path.join(dir, 'sulla provider');
+    fs.writeFileSync(script, '#!/bin/sh\nsleep 60 &\nwait\n', { mode: 0o755 });
+    const provider = spawn(script, [], { stdio: 'ignore' });
+    started.push(provider);
+    await waitFor(() => fs.existsSync(`/proc/${ provider.pid }/stat`) && fs.readFileSync(`/proc/${ provider.pid }/stat`, 'utf8').includes('(sulla provider)'));
+    const pidFile = path.join(dir, 'spaced.pid');
+    fs.writeFileSync(pidFile, `${ provider.pid } ${ starttime(provider.pid!) }\n`);
+
+    expect(runScript(pidFile, 'KILL').status).toBe(0);
+    expect(await waitFor(() => !alive(provider.pid!))).toBe(true);
   });
 
   it('never signals PID 1', () => {

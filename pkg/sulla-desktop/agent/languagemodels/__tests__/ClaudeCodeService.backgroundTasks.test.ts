@@ -44,9 +44,13 @@ const fakeTransport = {
     return proc;
   },
   files:     { write: () => ({ path: '/tmp/claude-system-test.md', dispose: () => {} }) },
-  terminate: async(request: any) => { terminations.push(request.signal) },
+  terminate: async(request: any) => {
+    terminations.push(request.signal);
+    if (request.signal === 'KILL' && failRemoteKill) throw new Error('remote kill helper exited with code 1');
+  },
 };
 const terminations: string[] = [];
+let failRemoteKill = false;
 jest.unstable_mockModule('../ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: () => fakeTransport,
   requireBrokeredContainerAuth:  () => undefined,
@@ -279,6 +283,66 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
     const error: any = await run.catch((e: unknown) => e);
     expect(error).toMatchObject({ cliFault: true, sullaInternal: false });
     expect(error.code).toBeUndefined();
+  });
+
+  it('an unconfirmed stop of the held process fails the turn as Sulla\'s and never resumes the session', async() => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    try {
+      const { service } = makeService();
+      const first = await startTurn(service, 'conv-unconfirmed');
+      answer(first.proc, first.sent, 'STARTED', [liveOne]);
+      await first.run;
+      failRemoteKill = true;
+
+      const run = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-unconfirmed' });
+      for (let i = 0; i < 5; i++) await flush();
+      jest.advanceTimersByTime(2_000);
+      const error: any = await run.catch((e: unknown) => e);
+
+      expect(error).toMatchObject({ name: 'CliHandoffFailure', code: 'SULLA_INFRA' });
+      expect(classifyLLMFailure(error).kind).toBe('infrastructure');
+      // The old CLI may still be alive: no second process on its session.
+      expect(spawned).toHaveLength(1);
+    } finally {
+      failRemoteKill = false;
+      jest.useRealTimers();
+    }
+  });
+
+  it('an ordinary turn right after a successful handoff keeps provider attribution for its faults', async() => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    try {
+      const { service } = makeService();
+      const first = await startTurn(service, 'conv-after');
+      answer(first.proc, first.sent, 'STARTED', [liveOne]);
+      await first.run;
+
+      const handoff = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-after' });
+      for (let i = 0; i < 5; i++) await flush();
+      jest.advanceTimersByTime(2_000);
+      while (spawned.length === 1) await flush();
+      first.proc.emit('close', null);
+      const second = spawned[1];
+      const sent = await new Promise<any>(resolve => second.stdin.once('data', (c: Buffer) => resolve(JSON.parse(c.toString().trim()))));
+      second.emit('spawn');
+      answer(second, sent, 'Next answer.');
+      await flush();
+      second.emit('close', 0);
+      await expect(handoff).resolves.toMatchObject({ text: 'Next answer.' });
+
+      // Same conversation, seconds later, no held process: a genuine CLI fault.
+      const ordinary = service.runClaude([{ role: 'user', content: 'again' }], {}, { conversationId: 'conv-after' });
+      while (spawned.length === 2) await flush();
+      spawned[2].emit('spawn');
+      spawned[2].emit('close', 137);
+
+      const error: any = await ordinary.catch((e: unknown) => e);
+      expect(error).toMatchObject({ cliFault: true, sullaInternal: false });
+      expect(error.code).toBeUndefined();
+      expect(classifyLLMFailure(error).kind).not.toBe('infrastructure');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not touch a held process that belongs to another conversation', async() => {

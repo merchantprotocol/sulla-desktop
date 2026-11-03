@@ -24,7 +24,7 @@ import {
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
 import {
-  CliFaultError, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
+  CliFaultError, CliHandoffFailure, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
 } from './cliFaultRecovery';
 import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
@@ -147,37 +147,37 @@ const backgroundHolds = new Map<string, () => Promise<void>>();
 const HANDOFF_STOP_GRACE_MS = 2_000;
 
 /**
- * Upper bound on how long a new turn waits for the held process to be gone
- * before resuming the same session anyway. Normal handoff takes ~2-3 s.
+ * Upper bound on how long a new turn waits for the held process to be
+ * confirmed gone. Normal handoff takes ~2-3 s; the remote kill helper itself
+ * times out well inside this, so hitting it means the stop is unconfirmed.
  */
 const HANDOFF_STOP_MAX_WAIT_MS = 15_000;
 
 /**
- * A CLI that dies without answering within this window after a handoff died
- * of the handoff (Sulla's process/container plumbing), not of the provider.
+ * Per-turn state shared by every recovery attempt of one user turn. Only the
+ * turn that actually stopped a held process is a handoff turn; nothing about
+ * it outlives the turn, so a later ordinary turn's faults stay the provider's.
  */
-const HANDOFF_FAULT_WINDOW_MS = 60_000;
-
-/** conversationId → when a turn last had to stop a held process. */
-const lastHandoffAt = new Map<string, number>();
+interface ClaudeTurnState { handedOff: boolean }
 
 /**
  * Wait for a held process to be fully stopped before its session is resumed:
  * two live CLIs on one session (and a teardown racing the new spawn in the
  * same container) is what failed handoff turns. Bounded, and abortable so an
- * intentional Stop during the handoff ends the turn without a retry.
+ * intentional Stop during the handoff ends the turn without a retry. A stop
+ * that rejects (remote KILL not confirmed) is `failed`, never `stopped`.
  */
 export async function awaitBackgroundHandoff(
   stop: Promise<void>,
   signal?: AbortSignal,
   maxWaitMs = HANDOFF_STOP_MAX_WAIT_MS,
-): Promise<'stopped' | 'timed_out'> {
+): Promise<'stopped' | 'timed_out' | 'failed'> {
   if (signal?.aborted) throw handoffAbortError();
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
-      stop.then(() => 'stopped' as const, () => 'stopped' as const),
+      stop.then(() => 'stopped' as const, () => 'failed' as const),
       new Promise<'timed_out'>((resolve) => {
         timer = setTimeout(() => resolve('timed_out'), maxWaitMs);
         timer.unref?.();
@@ -420,7 +420,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    return runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), {}, options), {
+    const turn: ClaudeTurnState = { handedOff: false };
+    return runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), {}, options, false, turn), {
       signal:   options.signal,
       canRetry: () => true,
       onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
@@ -474,7 +475,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
         streamedText += token;
         callbacks.onToken?.(token);
       };
-      const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
+      const turn: ClaudeTurnState = { handedOff: false };
+      const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options, false, turn), {
         signal:   options.signal,
         canRetry: () => !toolStarted,
         onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
@@ -764,12 +766,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
    *
    * @param retryWithoutSession — internal flag for the session-lock retry
    *   path; do not pass from callers.
+   * @param turn — state shared by every recovery attempt of this user turn.
    */
   private async runClaude(
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
+    turn: ClaudeTurnState = { handedOff: false },
   ): Promise<{ text: string; usage?: any }> {
     const runPhaseStart = Date.now();
     const runPhaseMarks: Record<string, number> = {};
@@ -784,14 +788,19 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // once raced the teardown against the new process on the same session.
     const heldStop = backgroundHolds.get(convId);
     if (heldStop) {
-      lastHandoffAt.set(convId, Date.now());
+      turn.handedOff = true;
       try { callbacks.onActivity?.('Wrapping up the previous background task…') } catch { /* renderer unavailable */ }
       const handoff = await awaitBackgroundHandoff(heldStop(), options.signal);
-      if (handoff === 'timed_out') log.warn(`[ClaudeCodeService] held proc for convId=${ convId } not confirmed stopped after ${ HANDOFF_STOP_MAX_WAIT_MS }ms; resuming anyway`);
+      if (handoff !== 'stopped') {
+        // The old CLI may still be alive on this session: resuming it now
+        // would run two copies of one session. Sulla's fault, never Claude's,
+        // and not a CLI fault, so recovery does not retry into the same race.
+        log.warn(`[ClaudeCodeService] held proc for convId=${ convId } not confirmed stopped (${ handoff }); not resuming its session`);
+        throw new CliHandoffFailure('transport', new Error(`held process stop ${ handoff }`));
+      }
     }
-    // Faults in this run that follow a handoff closely are Sulla's, not Claude's.
-    const afterHandoff = Date.now() - (lastHandoffAt.get(convId) ?? 0) < HANDOFF_FAULT_WINDOW_MS;
-    const handoffFault = <E extends Error>(error: E): E => afterHandoff && isCliFault(error) ? markSullaInternalFault(error) : error;
+    // Faults in a turn that had to stop a held process are Sulla's, not Claude's.
+    const handoffFault = <E extends Error>(error: E): E => turn.handedOff && isCliFault(error) ? markSullaInternalFault(error) : error;
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
     markPhase('session');
     const transport = getProviderExecutionTransport();
@@ -1700,11 +1709,24 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const stopHoldSettle = () => {
           if (holdSettleTimer) { clearTimeout(holdSettleTimer); holdSettleTimer = null }
         };
+        // Rejects when the remote KILL could not be confirmed. Fire-and-forget
+        // callers (hold limit, a newer hold replacing this one) only log it;
+        // the next-turn handoff must see it so it never resumes the session.
+        let heldStopFailed = false;
         const stopHeldProcess = (reason: string, graceMs?: number): Promise<void> => {
           if (!holding) return Promise.resolve();
           log.log(`[ClaudeCodeService] stopping held proc for convId=${ convId } (${ reason }; ${ bgTracker.liveTaskCount } background task(s) live)`);
-          return killSpawn(graceMs).catch((error) => {
+          // After an unconfirmed stop, a later call runs the teardown again
+          // rather than reusing the cached failure. terminationPromise stays
+          // set throughout, so the held process's output stays muted.
+          const stopping = heldStopFailed
+            ? (terminationPromise = terminateCliChild(proc, killRemoteClaude, graceMs))
+            : killSpawn(graceMs);
+          heldStopFailed = false;
+          return stopping.catch((error) => {
             log.warn(`[ClaudeCodeService] held proc stop for convId=${ convId } could not be confirmed: ${ (error as Error)?.message ?? error }`);
+            heldStopFailed = true;
+            throw error;
           });
         };
         const onNextTurn = () => stopHeldProcess('next turn started', HANDOFF_STOP_GRACE_MS);
@@ -1746,12 +1768,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           stopStallWatchdog();
           options.signal?.removeEventListener('abort', onAbort);
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-          void backgroundHolds.get(convId)?.();
+          backgroundHolds.get(convId)?.().catch(() => { /* logged by stopHeldProcess */ });
           backgroundHolds.set(convId, onNextTurn);
           holdTimer = setTimeout(() => {
             holdTimer = null;
             log.warn(`[ClaudeCodeService] background task(s) for convId=${ convId } still live after ${ Math.round(BACKGROUND_TASK_MAX_HOLD_MS / 60_000) }min`);
-            void stopHeldProcess('hold limit reached');
+            stopHeldProcess('hold limit reached').catch(() => { /* logged by stopHeldProcess */ });
           }, BACKGROUND_TASK_MAX_HOLD_MS);
           holdTimer.unref?.();
           log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — holding proc until they finish)`);
@@ -1817,7 +1839,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // fresh session so the user doesn't see a dead-end error.
           if (sessionInUse && !retryWithoutSession) {
             log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
-            this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true)).then(
+            this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true, turn)).then(
               r => resolve(r),
               reject,
             ).catch(reject);
