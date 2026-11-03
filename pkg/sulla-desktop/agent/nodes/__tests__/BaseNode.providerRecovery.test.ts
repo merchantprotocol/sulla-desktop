@@ -9,6 +9,11 @@ const primaryChatStreamMock: any = jest.fn();
 const primaryChatMock: any = jest.fn();
 const secondaryChatMock: any = jest.fn();
 const secondaryChatStreamMock: any = jest.fn();
+const routingResolveMock: any = jest.fn(async() => [
+  { provider: 'claude-code', model: 'claude-code' },
+  { provider: 'openai', model: 'gpt-5' },
+]);
+const routingMarkFailureMock: any = jest.fn(async() => undefined);
 
 const primaryService = {
   getContextWindow: jest.fn(() => 100_000),
@@ -55,7 +60,13 @@ jest.unstable_mockModule('../../languagemodels', () => ({
   getAgentOverrideService: jest.fn(async() => null),
   getPrimaryService:       jest.fn(async() => primaryService),
   getSecondaryService:     jest.fn(async() => secondaryService),
+  getServiceByProvider:    jest.fn(async(provider: string) => provider === 'openai' ? secondaryService : primaryService),
   getSubconsciousService:  jest.fn(async() => primaryService),
+}));
+
+
+jest.unstable_mockModule('../../languagemodels/modelRouter', () => ({
+  modelRouter: { resolve: routingResolveMock, markFailure: routingMarkFailureMock },
 }));
 
 jest.unstable_mockModule('../../controllers/ChatController', () => ({
@@ -128,6 +139,12 @@ describe('BaseNode provider recovery', () => {
     primaryChatMock.mockReset();
     secondaryChatMock.mockReset();
     secondaryChatStreamMock.mockReset();
+    routingResolveMock.mockReset();
+    routingResolveMock.mockResolvedValue([
+      { provider: 'claude-code', model: 'claude-code' },
+      { provider: 'openai', model: 'gpt-5' },
+    ]);
+    routingMarkFailureMock.mockReset();
 
     primaryChatStreamMock.mockRejectedValue(new Error('Codex app-server event stream lag dropped events'));
     primaryChatMock.mockRejectedValue(new Error('Non-streaming recovery must not be called'));
@@ -299,5 +316,21 @@ describe('BaseNode provider recovery', () => {
     expect(primaryChatStreamMock).not.toHaveBeenCalled();
     expect(primaryChatMock).not.toHaveBeenCalled();
     expect(secondaryChatMock).not.toHaveBeenCalled();
+  });
+});
+
+// A pinned route resolves to exactly one candidate; BaseNode must not consult the
+// general-list fallback even when that provider reports quota exhaustion.
+describe('BaseNode pinned model routing', () => {
+  it('does not fall back beyond the single pinned candidate', async() => {
+    routingResolveMock.mockResolvedValueOnce([{ provider: 'claude-code', model: 'claude-code' }]);
+    primaryChatStreamMock.mockRejectedValueOnce(new Error('quota exceeded'));
+    const { BaseNode } = await import('../BaseNode');
+    class PinnedNode extends BaseNode<any> {
+      async execute(state: any) { return this.normalizedChat(state, 'System', { disableTools: true }) }
+    }
+    const state: any = { messages: [{ role: 'user', content: 'answer' }], metadata: { threadId: 'pinned', wsChannel: 'pinned', options: {} } };
+    await expect(new PinnedNode('pinned', 'Pinned').execute(state)).rejects.toThrow();
+    expect(secondaryChatStreamMock).not.toHaveBeenCalled();
   });
 });
