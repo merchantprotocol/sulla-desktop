@@ -6,6 +6,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { MODEL_ROUTING_IPC, type ModelRoutingState } from '../agent/languagemodels/modelRoutingTypes';
 import { modelRouter } from '../agent/languagemodels/modelRouter';
+import { getIntegrationService } from '../agent/services/IntegrationService';
 
 async function state(): Promise<ModelRoutingState> {
   return { ...(await modelRouter.getEditableState()), providers: await modelRouter.providerInfo() };
@@ -25,7 +26,11 @@ export function initModelRoutingIpc(): void {
     await modelRouter.reset(target);
     return state();
   });
-  modelRouter.onStatusChange(() => void modelRouter.providerInfo().then(providers => {
+  const pushStatus = () => void modelRouter.providerInfo().then(providers => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send(MODEL_ROUTING_IPC.status, providers);
-  }));
+  });
+  modelRouter.onStatusChange(pushStatus);
+  getIntegrationService().onValueChange(value => {
+    if (value.property === 'connection_status' || value.property === 'model') pushStatus();
+  });
 }
