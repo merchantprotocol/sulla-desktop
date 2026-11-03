@@ -88,7 +88,7 @@ export async function buildTeamRecallContext(opts: TeamRecallOptions): Promise<s
     fits.size
       ? 'Agents you can call, ranked for the current situation. "fits right now" is a keyword suggestion, not an order; you decide.'
       : 'Agents you can call. Nothing in the current situation clearly points to one of them.',
-    'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; add `"visibility":"tab"` to a task for leads that run their own team. Full cards: `sulla agents/directory`.',
+    'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; every child runs hidden (never open visible tabs). Full cards: `sulla agents/directory`.',
   ].join('\n');
 
   const maxChars = opts.maxChars ?? TEAM_DIRECTORY_MAX_CHARS;
