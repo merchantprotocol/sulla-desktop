@@ -8,26 +8,23 @@
  * mandatory. `placements` lists the hosts that are *eligible* to run a tool:
  * a host only offers a tool when it is eligible here AND it implements it.
  *
- * The three type aliases below mirror `packages/agent-core/src/types.ts`
- * (T1, PR #1720) character for character; a test fails if they drift. Import
- * them from agent-core once that package is on main.
+ * Placement types and the canonical tool id come directly from the portable
+ * core so Desktop and mobile consumers cannot silently drift.
  */
 
+import {
+  toolId,
+  type ToolCredential,
+  type ToolPlacement,
+  type ToolPlacementMetadata,
+  type ToolSideEffect,
+} from '../../../../packages/agent-core/src/types';
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
 import policy from './tool-placement-policy.json';
 
 import type { ToolOperation } from './base';
 
-export type ToolSideEffect = 'read' | 'write' | 'irreversible';
-export type ToolPlacement = 'desktop' | 'cloud' | 'mobile';
-export type ToolCredential = 'none' | { integration: string } | { vaultItem: true };
-
-export interface ToolPlacementMetadata {
-  placements: ToolPlacement[];
-  relayable:  boolean;
-  sideEffect: ToolSideEffect;
-  credential: ToolCredential;
-}
+export type { ToolCredential, ToolPlacement, ToolPlacementMetadata, ToolSideEffect };
 
 /** The fields of a `ToolManifest` that placement reads. */
 export interface PlacementManifest {
@@ -43,10 +40,7 @@ export interface PlacementManifest {
 
 type FamilyName = keyof typeof policy.families;
 
-/** Portable tool id, the same `category/name` form agent-core's ToolSpec uses. */
-export function toolId(category: string, name: string): string {
-  return `${ category }/${ name }`;
-}
+export { toolId };
 
 /**
  * Name segments that mean sends, posts, pays or deletes (or edits something
