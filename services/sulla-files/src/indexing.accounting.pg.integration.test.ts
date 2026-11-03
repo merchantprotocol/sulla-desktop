@@ -123,7 +123,9 @@ integration('restart reconciliation accounts for every eligible current file and
     assert.equal(eligible.find(row => row.path === 'interrupted.txt')?.attempts, 0);
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=ANY($1::uuid[])', [[deleted.fileId, protectedFile.fileId, excluded.fileId]])).rows[0].count, 0);
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=$1 AND version_id=$2', [stale.fileId, stale.versionId])).rows[0].count, 0);
-    await assertDerivedRemoved([deleted.fileId, protectedFile.fileId, excluded.fileId, stale.fileId], derivedChunkIds);
+    await assertDerivedRemoved([deleted.fileId, protectedFile.fileId, excluded.fileId], derivedChunkIds.slice(0, 3));
+    assert.equal((await db.query('SELECT count(*)::int count FROM file_search_text WHERE file_id=$1', [stale.fileId])).rows[0].count, 1, 'version mismatch keeps file text');
+    assert.equal((await db.query('SELECT count(*)::int count FROM file_search_chunks WHERE file_id=$1', [stale.fileId])).rows[0].count, 0, 'version mismatch removes stale chunks');
 
     const beforeSecondRestart = (await db.query(`SELECT f.path,f.extraction_status,f.extraction_reason_code,f.extraction_reason,j.status,j.reason_code,j.reason,j.attempts
       FROM files f JOIN file_index_jobs j ON j.version_id=f.current_version_id WHERE f.collection_id=$1 ORDER BY f.path`, [collectionId])).rows;
@@ -141,6 +143,40 @@ integration('restart reconciliation accounts for every eligible current file and
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=$1 AND version_id=$2', [indexedContradiction.fileId, indexedContradiction.versionId])).rows[0].count, 1, 'old terminal history remains until restart cleanup');
     await reconcileIndexingAccounting(db);
     assert.equal((await db.query('SELECT count(*)::int count FROM file_index_jobs WHERE file_id=$1', [indexedContradiction.fileId])).rows[0].count, 1, 'restart removes the stale version job');
+  } finally {
+    await db.end();
+  }
+});
+
+integration('restart reconciliation preserves current derivatives when removing a stale version job', async() => {
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+  try {
+    await migrate(db);
+    await db.query('TRUNCATE collections CASCADE');
+    const collectionId = (await db.query(`INSERT INTO collections
+      (owner_user_id,name,kind,home,explorer_path,encrypted_data_key,dedup_key_ciphertext,compatibility_state)
+      VALUES('version-owner','Version mismatch','knowledge','desktop-only','version-mismatch','{}','{}','native') RETURNING id`)).rows[0].id;
+    const fileId = (await db.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime)
+      VALUES($1,'version-mismatch.fixture','user','version-owner','text/plain') RETURNING id`, [collectionId])).rows[0].id;
+    const v1 = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,size,created_by_type,created_by_id,device_id)
+      VALUES($1,$2,1,'user','version-owner','version-device') RETURNING id`, [fileId, collectionId])).rows[0].id;
+    const v2 = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,size,created_by_type,created_by_id,device_id)
+      VALUES($1,$2,$3,2,'user','version-owner','version-device') RETURNING id`, [fileId, collectionId, v1])).rows[0].id;
+    await db.query('UPDATE files SET current_version_id=$2,size=2,extraction_status=\'indexed\',extraction_reason_code=\'text_extracted\',extraction_reason=\'Text indexed locally.\',extracted_at=NOW() WHERE id=$1', [fileId, v2]);
+    await db.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,finished_at)
+      VALUES($1,$2,'indexed','text_extracted','Text indexed locally.',NOW())`, [fileId, v2]);
+    await db.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,finished_at)
+      VALUES($1,$2,'indexed','text_extracted','Text indexed locally.',NOW())`, [fileId, v1]);
+    await db.query(`INSERT INTO file_search_text(file_id,path,search_text)
+      VALUES($1,'version-mismatch.fixture','current version text')`, [fileId]);
+    await db.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content)
+      VALUES($1,$2,0,'current version chunk'),($1,$3,0,'stale version chunk')`, [fileId, v2, v1]);
+
+    await reconcileIndexingAccounting(db);
+
+    assert.deepEqual((await db.query('SELECT version_id,content FROM file_search_chunks WHERE file_id=$1 ORDER BY content', [fileId])).rows, [{ version_id: v2, content: 'current version chunk' }]);
+    assert.deepEqual((await db.query('SELECT search_text FROM file_search_text WHERE file_id=$1', [fileId])).rows, [{ search_text: 'current version text' }]);
+    assert.deepEqual((await db.query('SELECT version_id FROM file_index_jobs WHERE file_id=$1', [fileId])).rows, [{ version_id: v2 }]);
   } finally {
     await db.end();
   }
