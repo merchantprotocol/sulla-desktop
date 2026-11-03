@@ -68,6 +68,8 @@ const log = { log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn()
 const mockAuth = { getCurrentAccessToken: jest.fn(async() => { throw new Error('token read must not happen in vault mode') }) };
 const restoreSession = jest.fn(async() => { broker.unlocked = true; return true });
 
+mockModules({ electron: undefined });
+
 mockModules({
   '@pkg/agent/database/models/SullaSettingsModel': {
     SullaSettingsModel: {
@@ -189,7 +191,7 @@ describe('DesktopRelayClient via the vault relay broker', () => {
     expect(restoreSession).toHaveBeenCalledTimes(1);
     expect(broker.createRelay).toHaveBeenCalledTimes(1);
     expect(client.getStatus().connected).toBe(true);
-    expect(client.getStatus().lastError).toBe('');
+    expect(client.getStatus().lastError).toBeUndefined();
   });
 
   it('backs off exponentially on a broker denial, capped at 5 minutes, logging one line', async() => {
