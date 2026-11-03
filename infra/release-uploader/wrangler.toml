@@ -16,4 +16,5 @@ enabled = true
 binding = "BUCKET"
 bucket_name = "sulla-desktop-releases"
 
-# Secret (never committed): UPLOAD_TOKEN. Set with `wrangler secret put UPLOAD_TOKEN`.
+# Secrets (never committed): UPLOAD_TOKEN (CI) and optional LOCAL_UPLOAD_TOKEN
+# (owner's Mac, for locally built nightlies). Set with `wrangler secret put <NAME>`.

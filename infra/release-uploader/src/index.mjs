@@ -41,20 +41,31 @@ async function sha256(value) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
 }
 
-async function authorized(request, env) {
-  const match = /^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '');
-
-  if (!match || !env.UPLOAD_TOKEN) {
+async function tokenMatches(given, expectedToken) {
+  if (!expectedToken) {
     return false;
   }
-  const [given, expected] = await Promise.all([sha256(match[1]), sha256(env.UPLOAD_TOKEN)]);
+  const [a, b] = await Promise.all([sha256(given), sha256(expectedToken)]);
   let diff = 0;
 
-  for (let i = 0; i < given.length; i++) {
-    diff |= given[i] ^ expected[i];
+  for (let i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];
   }
 
   return diff === 0;
+}
+
+// UPLOAD_TOKEN is CI's token. LOCAL_UPLOAD_TOKEN (optional) lets the owner
+// publish locally built nightlies from his Mac without touching CI's secret.
+async function authorized(request, env) {
+  const match = /^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '');
+
+  if (!match) {
+    return false;
+  }
+  const [ci, local] = await Promise.all([tokenMatches(match[1], env.UPLOAD_TOKEN), tokenMatches(match[1], env.LOCAL_UPLOAD_TOKEN)]);
+
+  return ci || local;
 }
 
 function validKey(key) {
