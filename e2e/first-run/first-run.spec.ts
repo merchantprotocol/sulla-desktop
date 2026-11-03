@@ -3,88 +3,102 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import fs from 'node:fs/promises'; import os from 'node:os'; import path from 'node:path';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFakeServer, type FakeMode } from './fakes';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '../..');
-
-type Install = { app: ElectronApplication; page: Page; home: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>> };
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+type Install = { app: ElectronApplication; page: Page; home: string; userData: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>>; output: string[]; urls: string[] };
 const mainTracePath = (home: string) => path.join(home, 'sulla-e2e-main.log');
-async function diagnosticText(home: string, lines: string[], urls: string[]): Promise<string> {
-  const logRoot = process.platform === 'darwin' ? path.join(home, 'Library/Logs/sulla-desktop') : path.join(home, '.local/share/sulla-desktop/logs');
-  const fileLines: string[] = [];
-  const visit = async(directory: string): Promise<void> => {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const candidate = path.join(directory, entry.name);
-      if (entry.isDirectory()) await visit(candidate);
-      else if (entry.isFile()) {
-        const content = await fs.readFile(candidate, 'utf8').catch(() => '');
-        if (content) fileLines.push(`--- ${ path.relative(logRoot, candidate) } ---`, ...content.split(/\r?\n/).filter(Boolean));
-      }
+const expectedUserData = (home: string) => process.platform === 'darwin'
+  ? path.join(home, 'Library/Application Support/sulla-desktop/electron')
+  : path.join(home, '.local/share/sulla-desktop/electron');
+
+async function diagnosticText(home: string, output: string[], urls: string[]) {
+  const root = process.platform === 'darwin' ? path.join(home, 'Library/Logs/sulla-desktop') : path.join(home, '.local/share/sulla-desktop/logs');
+  const files: string[] = [];
+  const visit = async(dir: string): Promise<void> => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) await visit(file);
+      else if (entry.isFile()) files.push(`--- ${ path.relative(root, file) } ---`, ...(await fs.readFile(file, 'utf8').catch(() => '')).split(/\r?\n/).filter(Boolean));
     }
   };
-  await visit(logRoot);
-  // Written synchronously by bootstrapEntry, so it survives crashes that happen
-  // before Playwright attaches its stdout/stderr listeners.
+  await visit(root);
   const trace = (await fs.readFile(mainTracePath(home), 'utf8').catch(() => '')).split(/\r?\n/).filter(Boolean);
-  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Main-process startup trace:', ...(trace.length ? trace.slice(-40) : ['(none: main bundle never reached bootstrapEntry)']), 'Electron stdout/stderr:', ...lines.slice(-80), 'Electron log files:', ...fileLines.slice(-80)].join('\n');
+  return [`Windows: ${ urls.join(', ') || '(none)' }`, 'Main-process startup trace:', ...(trace.length ? trace.slice(-40) : ['(none)']), 'Electron stdout/stderr:', ...output.slice(-80), 'Electron log files:', ...files.slice(-80)].join('\n');
 }
-async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string,string> = {}): Promise<Install> {
+
+async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string, string> = {}): Promise<Install> {
   home ||= await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-first-run-'));
   const fake = await startFakeServer(mode);
-  const output: string[] = [];
-  const urls: string[] = [];
+  const output: string[] = []; const urls: string[] = [];
+  const app = await electron.launch({ args: ['.'], cwd: repoRoot, env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_OAUTH_URL: `${ fake.url }/oauth`, SULLA_E2E_VAULT_URL: `${ fake.url }/vault/write`, SULLA_E2E_MAIN_LOG: mainTracePath(home), ...extra } });
   const append = (chunk: Buffer | string) => output.push(...String(chunk).split(/\r?\n/).filter(Boolean));
-  const app = await electron.launch({ args: ['.'], cwd: repoRoot, env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_CLOUD_URL: fake.url, SULLA_E2E_OAUTH_URL: `${fake.url}/oauth`, SULLA_E2E_VAULT_URL: `${fake.url}/vault/write`, SULLA_E2E_MAIN_LOG: mainTracePath(home), ...extra } });
-  app.process().stdout?.on('data', append);
-  app.process().stderr?.on('data', append);
-  const remember = (candidate: Page) => {
-    const url = candidate.url();
-    if (!urls.includes(url)) urls.push(url);
-    candidate.on('framenavigated', frame => {
-      if (frame === candidate.mainFrame() && !urls.includes(frame.url())) urls.push(frame.url());
-    });
-  };
-  app.windows().forEach(remember);
-  app.on('window', remember);
+  app.process().stdout?.on('data', append); app.process().stderr?.on('data', append);
+  const remember = (candidate: Page) => { if (!urls.includes(candidate.url())) urls.push(candidate.url()); candidate.on('framenavigated', frame => { if (frame === candidate.mainFrame() && !urls.includes(frame.url())) urls.push(frame.url()); }); };
+  app.windows().forEach(remember); app.on('window', remember);
   try {
-    // BrowserWindow is emitted while its URL is still about:blank, so a window
-    // event predicate sees the pre-navigation URL once and never matches. Poll
-    // the live windows until the renderer has navigated to the FirstRun route.
-    const deadline = Date.now() + 30_000;
-    let page: Page | undefined;
-    while (!page && Date.now() < deadline) {
-      page = app.windows().find(candidate => candidate.url().includes('FirstRun'));
-      if (!page) await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    // Production Cloud auth intentionally has no configurable base URL. Install this
+    // before any form submission, redirect only that exact origin, and fail closed.
+    await app.evaluate((_, origin) => {
+      const real = globalThis.fetch.bind(globalThis); const production = 'https://sulla-workers.merchantprotocol.workers.dev';
+      globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => { const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; const url = new URL(raw); if (url.origin === production) return real(`${ origin }${ url.pathname }${ url.search }`, init); if (url.origin === origin) return real(input, init); return Promise.reject(new Error(`E2E blocked unexpected network origin: ${ url.origin }`)); };
+    }, fake.url);
+    const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+    const deadline = Date.now() + 30_000; let page: Page | undefined;
+    while (!page && Date.now() < deadline) { page = app.windows().find(candidate => candidate.url().includes('FirstRun')); if (!page) await new Promise(resolve => setTimeout(resolve, 50)); }
     if (!page) throw new Error('Timed out after 30000ms waiting for the FirstRun route');
-    const statePath = process.platform === 'darwin' ? path.join(home, 'Library/Application Support/sulla-desktop/electron/first-run-state.json') : path.join(home, '.local/share/sulla-desktop/electron/first-run-state.json');
-    return { app, page, home, statePath, fake };
+    // The route exists before Vue finishes mounting. Wait for the wizard shell
+    // so resume assertions inspect the rendered step, not a provisional page.
+    await page.locator('.fr-step.is-active').waitFor({ state: 'visible', timeout: 30_000 });
+    return { app, page, home, userData, statePath: path.join(userData, 'first-run-state.json'), fake, output, urls };
   } catch (error) {
     const detail = await diagnosticText(home, output, urls);
     console.error(`::error title=Electron first-run window did not open::${ detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A') }`);
-    await app.close().catch(() => {});
-    await fake.close().catch(() => {});
+    await app.close().catch(() => {}); await fake.close().catch(() => {});
     throw new Error(`${ error instanceof Error ? error.message : String(error) }\n${ detail }`);
   }
 }
+async function closeApp(app: ElectronApplication) {
+  const child = app.process();
+  const graceful = app.close().catch(() => {});
+  await Promise.race([graceful, new Promise(resolve => setTimeout(resolve, 5_000))]);
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  if (child.exitCode === null && child.signalCode === null) {
+    await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5_000))]);
+  }
+}
+async function close(i: Install) { await closeApp(i.app); await i.fake.close().catch(() => {}); }
+async function waitForMainWindow(app: ElectronApplication) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const page = app.windows().find(candidate => !candidate.url().includes('FirstRun') && candidate.url() !== 'about:blank');
+    if (page) { await page.waitForLoadState('domcontentloaded'); return page; }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Timed out after 30000ms waiting for the main Sulla window');
+}
 async function state(i: Install) { return JSON.parse(await fs.readFile(i.statePath, 'utf8')); }
-async function welcome(i: Install) { await i.page.getByRole('button', { name: /Get started/ }).click(); await expect(i.page.getByText('Create your Sulla account')).toBeVisible(); expect((await state(i)).step).toBe(1); }
-async function macOnly(i: Install) { await welcome(i); await i.page.getByRole('button', { name: 'Continue without an account' }).click(); await i.page.getByRole('button', { name: 'Continue', exact: true }).click(); await expect(i.page.getByText('Connect the AI you already use.')).toBeVisible(); }
-async function finishLater(i: Install) { await macOnly(i); await i.page.getByRole('button', { name: "I'll do this later" }).click(); await i.page.getByRole('button', { name: "I'll explore on my own" }).click(); await expect.poll(async() => (await state(i)).onboardingComplete).toBe(true); }
-async function close(i: Install) { await i.app.close().catch(() => {}); await i.fake.close().catch(() => {}); }
+async function welcome(i: Install) { await i.page.getByRole('button', { name: /Get started/ }).click(); await expect(i.page.getByText('Create or connect your Sulla account')).toBeVisible(); }
+async function enterAccount(i: Install) { await welcome(i); await i.page.locator('#email').fill('person@example.test'); await i.page.locator('form.fr-account-step').getByRole('button', { name: 'Continue', exact: true }).click(); await i.page.locator('#cloudPassword').fill('password123'); }
+async function submitCloud(i: Install) { await i.page.locator('form.fr-account-step').getByRole('button', { name: /^(Continue|Retry|Create account and continue|Sign in and continue)$/ }).click(); }
+async function reachAi(i: Install) { await enterAccount(i); await submitCloud(i); await i.page.getByRole('button', { name: 'Turn on recommended' }).click(); await expect(i.page.getByText('Connect the AI you already use.')).toBeVisible(); }
+async function reachFinishing(i: Install) { await reachAi(i); await i.page.getByRole('button', { name: "I'll do this later" }).click(); await expect(i.page.getByText('Finishing setup')).toBeVisible(); await expect.poll(async() => (await state(i)).step).toBe(3); }
+async function writeState(home: string, value: unknown) { const dir = expectedUserData(home); await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'first-run-state.json'), `${ JSON.stringify(value) }\n`, { mode: 0o600 }); }
 
-test('happy path Cloud + Claude', async() => { const i=await launch(); try { await welcome(i); await i.page.locator('#email').fill('person@example.test'); await i.page.getByRole('button',{name:'Continue',exact:true}).click(); await i.page.locator('#cloudPassword').fill('password123'); await i.page.getByRole('button',{name:/Create account/}).click(); await i.page.getByRole('button',{name:'Continue',exact:true}).click(); await i.page.getByRole('button',{name:'Connect',exact:true}).first().click(); await expect(i.page.getByText(/connected/i)).toBeVisible(); } finally { await close(i); } });
-test("This Mac only + I'll do this later", async()=>{const i=await launch();try{await finishLater(i);expect(await state(i)).toMatchObject({step:0,onboardingComplete:true,choices:{accountChoice:'mac-only'}});}finally{await close(i);}});
-test('quit at every top-level step resumes and completion never reruns', async()=>{let i=await launch();const home=i.home;try{await welcome(i);expect((await state(i)).step).toBe(1);await close(i);i=await launch(home);await expect(i.page.getByText('Create your Sulla account')).toBeVisible();await i.page.getByRole('button',{name:'Continue without an account'}).click();await i.page.getByRole('button',{name:'Continue',exact:true}).click();await close(i);i=await launch(home);await expect(i.page.getByText('Connect the AI you already use.')).toBeVisible();await i.page.getByRole('button',{name:"I'll do this later"}).click();await close(i);i=await launch(home);await expect(i.page.getByText('What should Sulla take off your plate first?')).toBeVisible();await i.page.getByRole('button',{name:"I'll explore on my own"}).click();await expect.poll(async()=> (await state(i)).onboardingComplete).toBe(true);await close(i);i=await launch(home);await expect(i.page.getByText('Create your Sulla account')).toHaveCount(0);}finally{await close(i);await fs.rm(home,{recursive:true,force:true});}});
-test('close-window confirm keeps setup open',async()=>{const i=await launch();try{await welcome(i);const dialog=i.app.waitForEvent('window').catch(()=>null);await i.page.close({runBeforeUnload:true}).catch(()=>{});expect((await state(i)).onboardingComplete).toBe(false);void dialog;}finally{await close(i);}});
-test('existing Cloud user signs in',async()=>{const i=await launch(undefined,'existing-user');try{await welcome(i);await i.page.locator('#email').fill('person@example.test');await i.page.getByRole('button',{name:'Continue',exact:true}).click();await i.page.locator('#cloudPassword').fill('password123');await i.page.getByRole('button',{name:/Create account/}).click();await expect(i.page.getByText('Choose what syncs')).toBeVisible();}finally{await close(i);}});
-test('Cloud timeout can be abandoned for Mac-only',async()=>{const i=await launch(undefined,'timeout');try{await welcome(i);await i.page.locator('#email').fill('person@example.test');await i.page.getByRole('button',{name:'Continue',exact:true}).click();await i.page.locator('#cloudPassword').fill('password123');void i.page.getByRole('button',{name:/Create account/}).click();await i.page.getByRole('button',{name:'This Mac only, for now'}).click();await expect(i.page.getByText('Choose what syncs')).toBeVisible();}finally{await close(i);}});
-test('Cloud down leaves Mac-only usable',async()=>{const i=await launch(undefined,'error');try{await welcome(i);await i.page.locator('#email').fill('person@example.test');await i.page.getByRole('button',{name:'Continue',exact:true}).click();await i.page.locator('#cloudPassword').fill('password123');await i.page.getByRole('button',{name:/Create account/}).click();await expect(i.page.getByText(/Could not|unavailable/)).toBeVisible();await i.page.getByRole('button',{name:'This Mac only, for now'}).click();await expect(i.page.getByText('Choose what syncs')).toBeVisible();}finally{await close(i);}});
-test('OAuth close retries once then leaves usable error',async()=>{const i=await launch(undefined,'new-user',{SULLA_E2E_OAUTH_RESULT:'closed'});try{await macOnly(i);await i.page.getByRole('button',{name:'Connect',exact:true}).first().click();await expect(i.page.getByText(/still didn't finish signing in/)).toBeVisible({timeout:10_000});await expect(i.page.getByRole('button',{name:'Connect',exact:true}).first()).toBeEnabled();}finally{await close(i);}});
-test('vault absent during setup does not block completion',async()=>{const i=await launch(undefined,'new-user',{SULLA_E2E_VAULT:'absent'});try{await finishLater(i);expect((await state(i)).onboardingComplete).toBe(true);}finally{await close(i);}});
-test('API intent persists for post-setup vault Connect',async()=>{const i=await launch();try{await macOnly(i);await i.page.getByRole('button',{name:'Connect through API instead'}).click();await i.page.getByRole('button',{name:'Use Claude API'}).click();expect((await state(i)).choices.aiApiProvider).toBe('anthropic');}finally{await close(i);}});
-for(const [name,value,copy] of [['offline preflight','offline','could not reach the internet'],['low-disk preflight','low-disk','needs at least 10 GB']] as const)test(name,async()=>{const i=await launch(undefined,'new-user',{SULLA_E2E_PREFLIGHT:value});try{await i.page.getByRole('button',{name:/Get started/}).click();await expect(i.page.getByText(new RegExp(copy,'i'))).toBeVisible();expect((await state(i)).step).toBe(0);}finally{await close(i);}});
-test('upgrade with existing vault files skips wizard',async()=>{const home=await fs.mkdtemp(path.join(os.tmpdir(),'sulla-upgrade-'));const vault=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/vault-control-token.enc'):path.join(home,'.local/share/sulla-desktop/vault-control-token.enc');await fs.mkdir(path.dirname(vault),{recursive:true});await fs.writeFile(vault,'existing');const fake=await startFakeServer();const app=await electron.launch({args:['.'],cwd:repoRoot,env:{...process.env,HOME:home,SULLA_E2E:'1',SULLA_MOCK_BACKEND:'1',SULLA_E2E_CLOUD_URL:fake.url,SULLA_E2E_MAIN_LOG:mainTracePath(home)}});try{await new Promise(resolve=>setTimeout(resolve,2000));expect(app.windows().some(page=>page.url().includes('FirstRun'))).toBe(false);const statePath=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/electron/first-run-state.json'):path.join(home,'.local/share/sulla-desktop/electron/first-run-state.json');expect(JSON.parse(await fs.readFile(statePath,'utf8')).onboardingComplete).toBe(true);}finally{await app.close().catch(()=>{});await fake.close();await fs.rm(home,{recursive:true,force:true});}});
+// Reaching Finishing completes the wizard, but credentialsSaved remains false
+// until the real vault service is ready and is intentionally not faked here.
+test('mandatory account reaches Finishing without pretending credentials are saved', async() => { const i = await launch(); try { await reachFinishing(i); expect(await state(i)).toMatchObject({ step: 3, onboardingComplete: true, credentialsSaved: false, choices: { accountChoice: 'cloud', cloudPreferences: { enabled: true } } }); expect(i.fake.requests.map(r => r.path)).toContain('/auth/email/register'); } finally { await close(i); } });
+test('existing account falls back register 409 to prelogin and login', async() => { const i = await launch(undefined, 'existing-user'); try { await enterAccount(i); await submitCloud(i); await expect(i.page.getByText('Use Sulla on all your devices')).toBeVisible(); expect(i.fake.requests.map(r => r.path)).toEqual(expect.arrayContaining(['/auth/email/register', '/auth/prelogin', '/auth/email/login'])); } finally { await close(i); } });
+test('auth failure retries once and advances without an extra register click', async() => { const i = await launch(undefined, 'auth-failure'); try { await enterAccount(i); await submitCloud(i); await expect(i.page.getByText(/Sulla Cloud had a problem|temporarily unavailable|Could not connect/i)).toBeVisible(); await submitCloud(i); await expect(i.page.getByText('Use Sulla on all your devices')).toBeVisible(); expect(i.fake.requests.filter(r => r.path === '/auth/email/register')).toHaveLength(2); } finally { await close(i); } });
+test('OAuth success is synthetic and can advance', async() => { const i = await launch(); try { await reachAi(i); const row = i.page.locator('.frm-option').filter({ hasText: 'ChatGPT' }); await row.getByRole('button', { name: 'Connect', exact: true }).click(); await expect(row.getByRole('button', { name: 'Connected', exact: true })).toBeVisible(); await i.page.getByRole('button', { name: 'Continue', exact: true }).click(); await expect.poll(async() => (await state(i)).step).toBe(3); expect(i.fake.requests.map(r => r.path)).toContain('/oauth'); } finally { await close(i); } });
+test('OAuth cancel is recoverable without running real OAuth', async() => { const i = await launch(undefined, 'new-user', { SULLA_E2E_OAUTH_RESULT: 'closed' }); try { await reachAi(i); const row = i.page.locator('.frm-option').filter({ hasText: 'ChatGPT' }); await row.getByRole('button', { name: 'Connect', exact: true }).click(); await expect(i.page.getByText(/closed|cancelled/i)).toBeVisible(); await expect(row.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled(); } finally { await close(i); } });
+test('API intent persists for post-setup vault Connect', async() => { const i = await launch(); try { await reachAi(i); await i.page.getByRole('button', { name: 'Connect through API instead' }).click(); await i.page.getByRole('button', { name: 'Use Claude API' }).click(); await i.page.getByRole('button', { name: "I'll do this later" }).click(); expect((await state(i)).choices.aiApiProvider).toBe('anthropic'); } finally { await close(i); } });
+for (const [name, value, copy] of [['offline preflight', 'offline', 'could not reach the internet'], ['low-disk preflight', 'low-disk', 'needs at least 10 GB']] as const) test(name, async() => { const i = await launch(undefined, 'new-user', { SULLA_E2E_PREFLIGHT: value }); try { await i.page.getByRole('button', { name: /Get started/ }).click(); await expect(i.page.getByText(new RegExp(copy, 'i'))).toBeVisible(); expect((await state(i)).step).toBe(0); } finally { await close(i); } });
+test('vault absence does not block reaching Finishing', async() => { const i = await launch(undefined, 'new-user', { SULLA_E2E_VAULT: 'absent' }); try { await reachFinishing(i); expect((await state(i)).credentialsSaved).toBe(false); } finally { await close(i); } });
+test('current top-level steps resume according to the session contract', async() => { const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-resume-')); try { await writeState(home, { version: 1, step: 1, onboardingComplete: false, choices: { sullaEmail: 'person@example.test' } }); let i = await launch(home); try { await expect(i.page.locator('.fr-step.is-active')).toContainText('Account'); await expect(i.page.getByLabel('Email', { exact: true })).toHaveValue('person@example.test'); } finally { await close(i); } await writeState(home, { version: 1, step: 2, onboardingComplete: false, choices: { accountChoice: 'cloud', sullaEmail: 'person@example.test' } }); i = await launch(home); try { await expect(i.page.getByText('Enter your password again')).toBeVisible(); expect((await state(i)).step).toBe(1); } finally { await close(i); } await writeState(home, { version: 1, step: 3, onboardingComplete: false, credentialsSaved: false, choices: { accountChoice: 'cloud' } }); i = await launch(home); try { await expect(i.page.getByText('Finishing setup')).toBeVisible(); expect((await state(i)).step).toBe(3); } finally { await close(i); } } finally { await fs.rm(home, { recursive: true, force: true }); } });
+test('completed wizard does not rerun', async() => { const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-complete-')); const fake = await startFakeServer(); let app: ElectronApplication | undefined; try { await writeState(home, { version: 1, step: 3, onboardingComplete: true, credentialsSaved: true, choices: {} }); app = await electron.launch({ args: ['.'], cwd: repoRoot, env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_MAIN_LOG: mainTracePath(home) } }); await waitForMainWindow(app); expect(app.windows().some(page => page.url().includes('FirstRun'))).toBe(false); } finally { if (app) await closeApp(app); await fake.close(); await fs.rm(home, { recursive: true, force: true }); } });
+test('legacy fixture without vault skips wizard only with durable fallback marker', async() => { const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-upgrade-')); const fake = await startFakeServer(); let app: ElectronApplication | undefined; try { const dir = expectedUserData(home); await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'sulla-settings-fallback.json'), JSON.stringify({ firstRunCredentialsNeeded: false })); app = await electron.launch({ args: ['.'], cwd: repoRoot, env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_MAIN_LOG: mainTracePath(home) } }); const actual = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData')); expect(actual).toBe(dir); await waitForMainWindow(app); expect(app.windows().some(page => page.url().includes('FirstRun'))).toBe(false); const saved = JSON.parse(await fs.readFile(path.join(actual, 'first-run-state.json'), 'utf8')); expect(saved.onboardingComplete).toBe(true); expect(await fs.readdir(actual)).not.toContain('vault-control-token.enc'); } finally { if (app) await closeApp(app); await fake.close(); await fs.rm(home, { recursive: true, force: true }); } });
