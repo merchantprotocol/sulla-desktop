@@ -78,16 +78,6 @@
     <b>{{ agent && !active ? 'Agent' : `Artifacts · ${count}` }}</b>
   </button>
 </template>
-    <section v-else-if="agent" class="sd-agent-detail">
-      <header><span class="sd-avatar">{{ agentName(agent.agentId).charAt(0) }}</span><div><h3>{{ agent.label }}</h3><small>{{ agent.agentId }} · {{ agent.kind === 'job' ? 'hidden' : 'own tab' }}</small></div></header>
-      <div class="sd-facts"><div><b><i class="sd-dot" :class="`is-${agent.status}`"/>{{ statusLabel }}</b><small>status</small></div><div><b>{{ elapsed }}</b><small>elapsed</small></div></div>
-      <h4>{{ agent.status === 'running' ? 'Doing now' : 'Last activity' }}</h4><p>{{ agent.lastActivity }}</p>
-      <h4>Job id</h4><pre>{{ agent.jobId }}</pre>
-      <div class="sd-actions"><button v-if="agent.conversationId || agent.agentTab" class="primary" @click="emit('open-agent', agent)">Open chat</button><button v-if="agent.status === 'running'" class="danger" :disabled="stopping" @click="stopAgent">{{ stopping ? 'Stopping…' : 'Stop' }}</button><button v-else @click="emit('dismiss-agent', agent)">Dismiss</button></div>
-    </section>
-  </aside>
-  <button v-else-if="visible" type="button" class="sd-artifact-tab" :class="{ working }" title="Show side panel" aria-label="Show side panel" @click="emit('toggle-collapse')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/></svg><b>{{ agent && !active ? 'Agent' : `Artifacts · ${count}` }}</b></button>
-</template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
