@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -31,7 +32,7 @@ export async function startFakeServer(mode: FakeMode = 'new-user') {
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { url, requests, close: () => new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())) };
+  return { url, requests, close: () => { server.closeAllConnections(); return new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); } };
 }
 function kdf() { return { alg: 'argon2id13', salt: 'MDEyMzQ1Njc4OWFiY2RlZg', memoryBytes: 67_108_864, ops: 3 }; }
 function session() { return { contractor: { id: 'test-user', email: 'person@example.test', phone: '', business_name: null, name: 'Test' }, accessToken: 'synthetic-access-token', refreshToken: 'synthetic-refresh-token' }; }
