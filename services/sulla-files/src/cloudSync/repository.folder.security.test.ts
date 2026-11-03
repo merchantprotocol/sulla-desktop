@@ -71,7 +71,7 @@ class FolderDb {
     if (text.startsWith('UPDATE files_cloud_folders SET path=')) {
       for (const row of this.cloud.values()) {
         const path = row.path;
-        if (path === params[1] || path?.startsWith(`${ params[1] }/`)) {
+        if (typeof path === 'string' && (path === params[1] || path.startsWith(`${ params[1] }/`))) {
           row.path = `${ params[2] }${ path.slice(params[1].length) }`;
         }
       }
