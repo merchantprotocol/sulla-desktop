@@ -155,13 +155,13 @@ export default {
   display: none;
 }
 
-.theme-noir .general-noir-intro {
+.general-noir-intro {
   display: block;
   margin-bottom: 10px;
 
   .general-noir-eyebrow {
     margin-bottom: 6px;
-    color: var(--nx-accent-2);
+    color: var(--accent-hover);
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10.5px;
     letter-spacing: .14em;
@@ -170,8 +170,8 @@ export default {
 
   h1 {
     margin: 0 0 6px;
-    color: var(--nx-read-1);
-    font-family: 'Playfair Display', Georgia, serif;
+    color: var(--text-primary);
+    font-family: var(--font-display);
     font-size: 30px;
     font-weight: 600;
     line-height: 1.1;
@@ -179,20 +179,20 @@ export default {
 
   p {
     margin: 0 0 14px;
-    color: var(--nx-read-3);
+    color: var(--text-secondary);
     font-size: 14px;
   }
 }
 
-.theme-noir .general > div:not(.general-noir-intro),
-.theme-noir .general > .network-status {
+.general > div:not(.general-noir-intro),
+.general > .network-status {
   padding: 18px;
   border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  background: var(--bg-surface-alt);
+  box-shadow: inset 0 0 0 1px var(--border-default);
 }
 
-.theme-noir .general > hr {
+.general > hr {
   display: none;
 }
 </style>

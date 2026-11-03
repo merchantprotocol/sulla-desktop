@@ -53,9 +53,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.vault-waiting { position: fixed; z-index: 100001; top: 52px; left: 50%; transform: translateX(-50%); display: flex; gap: .5rem; padding: .55rem .8rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 12px; }
+.vault-waiting { position: fixed; z-index: 100001; top: 52px; left: 50%; transform: translateX(-50%); display: flex; gap: .5rem; padding: .55rem .8rem; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface-alt); color: var(--text-primary); font-size: 12px; }
 .vault-waiting span { color: var(--text-muted); }
-.vault-unlock-screen { position: fixed; inset: 0; z-index: 99999; display: flex; background: var(--bg-page, #0d1117); }
+.vault-unlock-screen { position: fixed; inset: 0; z-index: 99999; display: flex; background: var(--bg-page); }
 .vault-drag-logo { position: fixed; top: 10px; left: 80px; z-index: 100000; }
 .vault-secure-surface { flex: 1; margin-top: 42px; min-height: 0; }
 </style>
