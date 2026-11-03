@@ -25,11 +25,11 @@ integration('restart reconciliation accounts for every eligible current file and
     await migrate(db);
     await db.query('TRUNCATE collections CASCADE');
     const collectionId = (await db.query(`INSERT INTO collections
-      (owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,compatibility_state)
-      VALUES('index-owner','Index accounting','knowledge','desktop-only','{}','{}','native') RETURNING id`)).rows[0].id;
+      (owner_user_id,name,kind,home,explorer_path,encrypted_data_key,dedup_key_ciphertext,compatibility_state)
+      VALUES('index-owner','Index accounting','knowledge','desktop-only','index-accounting','{}','{}','native') RETURNING id`)).rows[0].id;
     const logsCollectionId = (await db.query(`INSERT INTO collections
-      (owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,compatibility_state,system_area)
-      VALUES('index-system','Logs','knowledge','desktop-only','{}','{}','native','logs') RETURNING id`)).rows[0].id;
+      (owner_user_id,name,kind,home,explorer_path,encrypted_data_key,dedup_key_ciphertext,compatibility_state,system_area)
+      VALUES('index-owner','Logs','knowledge','desktop-only','index-logs','{}','{}','native','logs') RETURNING id`)).rows[0].id;
 
     const createFile = async(path:string, status:Outcome, reasonCode:string | null = null, reason:string | null = null, targetCollectionId = collectionId) => {
       const fileId = (await db.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime)
