@@ -351,7 +351,10 @@ export class Tray {
         item.enabled = !this.backendIsLocked;
       });
 
-    this.trayMenu.setImage(logo);
+    // Linux/Windows use '' for stopped/stopping (no state icon); Electron throws on an empty path.
+    if (logo) {
+      this.trayMenu.setImage(logo);
+    }
 
     // Forward state to the custom panel
     sendPanelState({ docker: ready ? 'STARTED' : 'STOPPED' });
