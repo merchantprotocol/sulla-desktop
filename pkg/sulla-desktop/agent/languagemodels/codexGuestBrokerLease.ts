@@ -36,14 +36,11 @@ export async function createGuestCodexBrokerLease(input: {
   const integrations = getIntegrationService();
   const accountId = await integrations.getActiveAccountId('codex');
 
-  // Codex routes ChatGPT plan usage through the chatgpt_account_id claim the
-  // vault extracted at sign-in. A silently empty header here would route the
-  // call to the wrong — or no — account deep inside the run; fail before spawn.
-  const metadataValues = await integrations.getMetadataValues('codex', accountId);
-  const hasAccountRoutingClaim = metadataValues.some(value => value.property === 'chatgpt_account_id' && value.value.trim());
-  if (!hasAccountRoutingClaim) {
-    throw new Error('Codex account is missing its ChatGPT account routing claim');
-  }
+  // Codex routes ChatGPT plan usage through the chatgpt_account_id claim.
+  // The vault derives it from the stored id/access token per request
+  // (deriveChatgptAccountRoutingForRequest) and never exposes it as
+  // integration metadata, so Desktop must not pre-check metadata for it —
+  // doing so rejected every vault-mode Codex spawn (regression from #1843).
 
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
   const base = await issueLocalBrokerContext({
