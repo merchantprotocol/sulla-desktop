@@ -750,7 +750,7 @@ onUnmounted(() => {
 }
 
 .welcome-title {
-  font-family: var(--font-mono), var(--font-mono), 'Fira Code', monospace;
+  font-family: var(--font-mono), 'Fira Code', monospace;
   font-size: 24px;
   font-weight: 600;
   color: var(--text, var(--text-primary));
@@ -759,7 +759,7 @@ onUnmounted(() => {
 
 .welcome-subtitle {
   font-size: 12px;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   margin-bottom: 0.25rem;
 }
 
@@ -787,7 +787,7 @@ onUnmounted(() => {
 .welcome-card-cta {
   padding: 0.625rem;
   text-align: center;
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -832,9 +832,9 @@ onUnmounted(() => {
 .dt-title {
   flex: 1;
   text-align: center;
-  font-family: var(--font-mono), var(--font-mono), 'Fira Code', monospace;
+  font-family: var(--font-mono), 'Fira Code', monospace;
   font-size: 11px;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
 }
 
 .dt-header-right {
@@ -847,7 +847,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 10px;
   color: var(--red, var(--status-error));
 }
@@ -866,7 +866,7 @@ onUnmounted(() => {
 }
 
 .dt-wake-indicator {
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -888,7 +888,7 @@ onUnmounted(() => {
 .dt-level-bar {
   width: 2px;
   border-radius: 1px;
-  background: var(--text-dim, var(--text-dim));
+  background: var(--border-strong);
   transition: height 100ms, background-color 100ms;
   height: 3px;
 }
@@ -901,7 +901,7 @@ onUnmounted(() => {
 .dt-level-bar:nth-child(5).active { height: 14px; }
 
 .dt-btn {
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -937,7 +937,7 @@ onUnmounted(() => {
 .dt-notice {
   padding: 0.375rem 1rem;
   font-size: 11px;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   background: var(--surface-2, var(--bg-surface-alt));
   border-bottom: 1px solid var(--border-muted, var(--border-subtle));
   flex-shrink: 0;
@@ -972,7 +972,7 @@ onUnmounted(() => {
 .dt-body {
   display: flex;
   min-height: 0;
-  font-family: var(--font-mono), var(--font-mono), 'Fira Code', monospace;
+  font-family: var(--font-mono), 'Fira Code', monospace;
   font-size: 11px;
 }
 
@@ -1001,17 +1001,17 @@ onUnmounted(() => {
 }
 
 .dt-line {
-  color: var(--text-muted, var(--text-muted));
+  color: var(--text-muted);
   margin-bottom: 0.375rem;
   line-height: 1.6;
 }
 
 .dt-line.dt-dim {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
 }
 
 .dt-ts {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   margin-right: 0.75rem;
 }
 
@@ -1038,11 +1038,11 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.375rem 0.75rem;
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   background: var(--surface-1, var(--bg-surface));
   border-bottom: 1px solid var(--border-muted, var(--border-subtle));
   flex-shrink: 0;
@@ -1050,7 +1050,7 @@ onUnmounted(() => {
 
 .dt-pane-count {
   font-weight: 400;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
 }
 
 .dt-analyzing {
@@ -1068,7 +1068,7 @@ onUnmounted(() => {
 }
 
 .dt-empty {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   font-style: italic;
   padding: 0.5rem 0;
 }
@@ -1134,7 +1134,7 @@ onUnmounted(() => {
 
 .dt-bubble-time {
   font-size: 9px;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
 }
 
 .dt-bubble-text {
@@ -1149,7 +1149,7 @@ onUnmounted(() => {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   margin-bottom: 0.25rem;
   margin-top: 0.75rem;
   padding-bottom: 0.25rem;
@@ -1161,7 +1161,7 @@ onUnmounted(() => {
 }
 
 .dt-item {
-  color: var(--text-muted, var(--text-muted));
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
   line-height: 1.6;
   display: flex;
@@ -1187,12 +1187,12 @@ onUnmounted(() => {
 }
 
 .dt-insight {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   display: block;
 }
 
 .dt-insight-time {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
   margin-right: 0.5rem;
   font-size: 9px;
 }
@@ -1202,10 +1202,10 @@ onUnmounted(() => {
   padding: 0.0625rem 0.375rem;
   border-radius: 3px;
   font-size: 11px;
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   background: var(--surface-2, var(--bg-surface-alt));
   border: 1px solid var(--border, var(--border-default));
-  color: var(--text-muted, var(--text-muted));
+  color: var(--text-muted);
 }
 
 /* ── Chat input (pinned to bottom of notes pane) ──────── */
@@ -1223,7 +1223,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   padding: 0.375rem 0.5rem;
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 11px;
   color: var(--text, var(--text-primary));
   background: var(--bg, var(--bg-page));
@@ -1234,7 +1234,7 @@ onUnmounted(() => {
 }
 
 .dt-chat-field::placeholder {
-  color: var(--text-dim, var(--text-dim));
+  color: var(--text-dim);
 }
 
 .dt-chat-field:focus {
@@ -1242,7 +1242,7 @@ onUnmounted(() => {
 }
 
 .dt-chat-send {
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1273,7 +1273,7 @@ onUnmounted(() => {
 
 .secretary-root {
   background:
-    radial-gradient(80% 55% at 50% 110%, color-mix(in srgb, var(--nx-accent) 769.2308%, transparent), transparent 62%),
+    radial-gradient(80% 55% at 50% 110%, color-mix(in srgb, var(--nx-accent) 100%, transparent), transparent 62%),
     var(--nx-paper) !important;
   color: var(--nx-read-2);
 }
@@ -1309,21 +1309,21 @@ onUnmounted(() => {
   margin-top: 30px;
   border: 0;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 142.8571%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 214.2857%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 100%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 100%, transparent);
   transition: transform .58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), box-shadow .25s;
 }
 
 .welcome-card:hover {
   transform: translateY(-4px);
   border-color: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 285.7143%, transparent), 0 0 42px color-mix(in srgb, var(--nx-accent) 769.2308%, transparent), 0 28px 72px color-mix(in srgb, var(--shadow) 187.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 100%, transparent), 0 0 42px color-mix(in srgb, var(--nx-accent) 100%, transparent), 0 28px 72px color-mix(in srgb, var(--shadow) 100%, transparent);
 }
 
 .dt-header {
   min-height: 52px;
   padding: 0 18px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 161.2903%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 100%, transparent);
   border-color: var(--nx-hair);
   backdrop-filter: blur(22px);
 }
@@ -1350,25 +1350,25 @@ onUnmounted(() => {
   padding: 5px 9px;
   border-radius: 999px;
   color: var(--nx-read-1);
-  background: color-mix(in srgb, var(--nx-danger) 1250%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-danger) 555.5556%, transparent);
+  background: color-mix(in srgb, var(--nx-danger) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-danger) 100%, transparent);
 }
 
 .dt-rec-dot {
   background: var(--nx-danger);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-danger) 125%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-danger) 100%, transparent);
 }
 
 .dt-level-bars { gap: 3px; height: 20px; align-items: center; }
 .dt-level-bar {
   width: 2px;
   height: 14px !important;
-  background: color-mix(in srgb, var(--nx-accent-2) 400%, transparent);
+  background: color-mix(in srgb, var(--nx-accent-2) 100%, transparent);
   transform-origin: center;
 }
 .dt-level-bar.active {
   background: var(--nx-accent-2);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--nx-accent-2) 153.8462%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--nx-accent-2) 100%, transparent);
   animation: noir-secretary-wave .75s ease-in-out infinite;
 }
 .dt-level-bar:nth-child(2).active { animation-delay: -.25s; }
@@ -1380,7 +1380,7 @@ onUnmounted(() => {
 .dt-pane-left,
 .dt-pane-right {
   border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent);
+  background: color-mix(in srgb, var(--nx-hair-strong) 100%, transparent);
   box-shadow: inset 0 0 0 1px var(--nx-hair);
 }
 .dt-pane-hdr {
@@ -1405,8 +1405,8 @@ onUnmounted(() => {
   padding: 0 9px;
   border-radius: 11px;
   color: var(--nx-read-2);
-  background: color-mix(in srgb, var(--nx-accent) 833.3333%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 454.5455%, transparent);
+  background: color-mix(in srgb, var(--nx-accent) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 100%, transparent);
 }
 .dt-bubble-speaker::before {
   content: 'who · ';
@@ -1422,10 +1422,10 @@ onUnmounted(() => {
   padding: 10px 12px;
   border-radius: 12px;
   color: var(--nx-read-3);
-  background: color-mix(in srgb, var(--bg-surface-alt) 208.3333%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 266.6667%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 100%, transparent);
 }
-.dt-decision { border: 0; box-shadow: inset 2px 0 var(--nx-success), inset 0 0 0 1px color-mix(in srgb, var(--nx-success) 769.2308%, transparent); }
+.dt-decision { border: 0; box-shadow: inset 2px 0 var(--nx-success), inset 0 0 0 1px color-mix(in srgb, var(--nx-success) 100%, transparent); }
 .dt-insight { color: var(--nx-read-4); }
 .dt-chat-input { padding: 12px; background: transparent; border-color: var(--nx-hair); }
 .dt-chat-field {
@@ -1433,16 +1433,16 @@ onUnmounted(() => {
   padding: 0 14px;
   border: 0;
   border-radius: 20px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 147.0588%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 133.3333%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 100%, transparent);
 }
-.dt-chat-field:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 181.8182%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 833.3333%, transparent); }
+.dt-chat-field:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 100%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 100%, transparent); }
 .dt-chat-send,
 .dt-btn-new,
 .dt-btn-unmuted {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 312.5%, transparent);
+  border-color: color-mix(in srgb, var(--nx-accent-2) 100%, transparent);
   border-radius: 999px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent-2) 416.6667%, transparent), color-mix(in srgb, var(--nx-accent) 833.3333%, transparent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent-2) 100%, transparent), color-mix(in srgb, var(--nx-accent) 100%, transparent));
   color: var(--nx-read-2);
 }
 

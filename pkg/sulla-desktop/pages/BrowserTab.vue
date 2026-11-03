@@ -1385,7 +1385,7 @@ onUnmounted(() => {
 }
 
 .overflow-auto::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--border-strong);
 }
 
 .overflow-auto::-webkit-scrollbar-corner {

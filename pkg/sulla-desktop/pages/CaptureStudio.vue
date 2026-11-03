@@ -1954,7 +1954,7 @@ html, body {
   overflow: hidden;
   background: var(--bg-page);
   color: var(--text-primary);
-  font-family: var(--font-mono), var(--font-mono), monospace;
+  font-family: var(--font-mono), monospace;
 }
 
 #app {
@@ -1985,7 +1985,7 @@ html, body {
   --error:            var(--status-error);
   --border:           var(--border-default);
   --border-subtle:    var(--border-subtle);
-  --mono:             var(--font-mono), var(--font-mono), monospace;
+  --mono:             var(--font-mono), monospace;
   --display:          var(--font-display), serif;
   --record-red:       #e5534b;
   --record-glow:      rgba(229,83,75,0.4);
@@ -2020,7 +2020,7 @@ html, body {
 .area-shade { position: absolute; inset: 0; background: rgba(0, 0, 0, .42); pointer-events: none; }
 .area-selection { position: absolute; border: 2px solid var(--accent-hover); background: rgba(80, 150, 179, .1); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .18); pointer-events: none; }
 .record-setup footer { justify-content: flex-end; margin-top: 20px; }
-.record-setup footer .setup-record { min-width: 110px; color: white; border-color: var(--status-error); background: var(--status-error); }
+.record-setup footer .setup-record { min-width: 110px; color: var(--text-on-accent); border-color: var(--status-error); background: var(--status-error); }
 .record-setup footer .setup-record:disabled { opacity: .5; cursor: default; }
 
 /* ═══════════════════════════════════════════════
@@ -2298,7 +2298,7 @@ html, body {
 .info-badge .dot { width: 5px; height: 5px; border-radius: 50%; }
 .info-badge .dot.green { background: var(--status-success); }
 .info-badge .dot.blue { background: var(--info); }
-.info-badge .dot.off { background: var(--text-dim); }
+.info-badge .dot.off { background: var(--border-strong); }
 
 /* ═══════════════════════════════════════════════
    FLOATING CONTROLS
@@ -2390,7 +2390,7 @@ html, body {
 /* Assignment indicator */
 .src-toggle .role-indicator {
   position: absolute; top: 2px; right: 2px; font-size: 7px; font-weight: 700;
-  color: var(--bg-surface); width: 12px; height: 12px; border-radius: 50%;
+  color: var(--text-on-accent); width: 12px; height: 12px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; line-height: 1;
 }
 .src-toggle .role-indicator.primary-role { background: var(--accent); }
@@ -2812,7 +2812,7 @@ html, body {
   --accent-hover: var(--nx-accent-2);
   --border: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   --border-subtle: color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
-  --mono: ui-monospace, var(--font-mono), var(--font-mono), monospace;
+  --mono: ui-monospace, var(--font-mono), monospace;
   background:
     radial-gradient(90% 60% at 50% 110%, color-mix(in srgb, var(--nx-accent) 14%, transparent), transparent 62%),
     var(--nx-paper);

@@ -524,7 +524,7 @@ export default {
           border-radius: 0;
 
           &::after {
-            color: var(--bg-surface);
+            color: var(--text-on-accent);
           }
         }
       }
