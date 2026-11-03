@@ -24,10 +24,11 @@ import yaml from 'yaml';
 
 import { updateEvents } from './UpdateManager';
 import { readUpdateChannelState, recordPendingUpdate, recordUpdateFailure } from './channelState';
+import { launchMacInstaller, stageMacUpdate, type StagedMacUpdate } from './macSelfInstall';
 
 import { Settings } from '@pkg/config/settings';
 import mainEvent from '@pkg/main/mainEvents';
-import { requestUpdateRestart } from '@pkg/main/restartCoordinator';
+import { isRestartRequested, requestUpdateRestart } from '@pkg/main/restartCoordinator';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
 
@@ -58,9 +59,7 @@ let updateTimer: NodeJS.Timeout;
 /** The update interval reported by the server. */
 let updateInterval = 0;
 
-const SQUIRREL_STAGING_TIMEOUT_MS = 10 * 60 * 1000;
-const SQUIRREL_STAGING_PROGRESS_INTERVAL_MS = 15 * 1000;
-let squirrelStagingPromise: Promise<void> | undefined;
+let macStagingPromise: Promise<StagedMacUpdate> | undefined;
 
 export interface UpdateState {
   configured: boolean;
@@ -92,54 +91,72 @@ export async function installQueuedUpdate(): Promise<void> {
 
     return;
   }
-  if (!updateState.info?.version || !squirrelStagingPromise && !updateState.downloaded) {
+  if (!updateState.info?.version || os.platform() === 'darwin' && !macStagingPromise || os.platform() !== 'darwin' && !updateState.downloaded) {
     console.warn('[update] installQueuedUpdate: no checksum-verified download is pending');
+    return;
+  }
+  if (isRestartRequested()) {
+    console.warn('[update] installQueuedUpdate: another restart is already in progress');
     return;
   }
 
   try {
-    await squirrelStagingPromise;
-  } catch {
-    // stageSquirrelUpdate already persisted and broadcast the actionable error.
+    if (os.platform() === 'darwin') {
+      const staged = await macStagingPromise;
+
+      // Spawn before coordinated shutdown: if this fails, the app remains alive.
+      await launchMacInstaller(staged);
+    }
+  } catch (error) {
+    // Staging failures are already recorded by stageVerifiedMacUpdate. A helper
+    // spawn failure happens later, so persist it here while leaving the app up.
+    if (os.platform() === 'darwin' && updateState.downloaded) {
+      const message = error instanceof Error ? error.message : String(error);
+      const channelState = recordUpdateFailure(updateState.info.version, message);
+
+      console.error(`[update] mac installer spawn failed: ${ message }`);
+      state = State.ERROR;
+      updateState.error = new Error(message);
+      updateState.downloaded = false;
+      window.send('update-state', updateState);
+      updateEvents.emit('raw-state', updateState);
+      updateEvents.emit('install-failed', channelState.lastUpdateResult);
+    }
     return;
   }
   if (!updateState.downloaded) {
-    console.warn('[update] installQueuedUpdate: Squirrel staging has not completed');
+    console.warn('[update] installQueuedUpdate: staging has not completed');
     return;
   }
 
   // electron-updater emits update-downloaded only after its DownloadedUpdateHelper
-  // has validated the artifact against latest-mac.yml's sha512. On macOS, the
-  // second download into Squirrel's cache has also completed at this point.
+  // has validated the artifact against latest-mac.yml's sha512.
   recordPendingUpdate(updateState.info.version);
   requestUpdateRestart(() => {
-    console.info('[update] squirrel handoff');
-    // isSilent=false keeps the normal installer UI; forceRunAfter=true makes
-    // Squirrel.Mac launch the installed version even when updater defaults differ.
-    autoUpdater.quitAndInstall(false, true);
-  });
+    if (os.platform() === 'darwin') {
+      console.info('[update] mac installer handoff');
+      Electron.app.exit(0);
+    } else {
+      autoUpdater.quitAndInstall(false, true);
+    }
+  }, os.platform() !== 'darwin');
 }
 
-function stageSquirrelUpdate(targetVersion: string): Promise<void> {
-  if (os.platform() !== 'darwin') return Promise.resolve();
-  if (squirrelStagingPromise) return squirrelStagingPromise;
+function stageVerifiedMacUpdate(zipPath: string, targetVersion: string): Promise<StagedMacUpdate> {
+  if (macStagingPromise) return macStagingPromise;
 
-  squirrelStagingPromise = new Promise<void>((resolve, reject) => {
-    const nativeUpdater = Electron.autoUpdater;
+  macStagingPromise = new Promise<StagedMacUpdate>((resolve, reject) => {
     const startedAt = Date.now();
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      timers.clearTimeout(timeout);
-      timers.clearInterval(progressTimer);
-      nativeUpdater.removeListener('update-downloaded', onDownloaded);
-      nativeUpdater.removeListener('error', onError);
+    console.info('[update] mac staging started');
+    stageMacUpdate(zipPath, targetVersion).then((staged) => {
+      console.info(`[update] mac staged in ${ Math.round((Date.now() - startedAt) / 1000) }s`);
+      resolve(staged);
+    }).catch((error: Error) => {
       if (error) {
         const message = (error.message || String(error)).split('\n', 1)[0]
           .replace(/https?:\/\/\S+/g, '').trim().slice(0, 240)
-          || 'Squirrel could not stage the update.';
-        console.error(`[update] squirrel staging failed: ${ message }`);
+          || 'Sulla could not stage the update.';
+        console.error(`[update] mac staging failed: ${ message }`);
         const channelState = recordUpdateFailure(targetVersion, message);
         updateState.error = new Error(message);
         updateState.downloaded = false;
@@ -147,32 +164,11 @@ function stageSquirrelUpdate(targetVersion: string): Promise<void> {
         updateEvents.emit('raw-state', updateState);
         updateEvents.emit('install-failed', channelState.lastUpdateResult);
         reject(error);
-      } else {
-        console.info(`[update] squirrel staged in ${ Math.round((Date.now() - startedAt) / 1000) }s`);
-        resolve();
       }
-    };
-    const onDownloaded = () => finish();
-    const onError = (error: Error) => finish(error);
-    const timeout = timers.setTimeout(() => finish(new Error('Timed out after 10 minutes waiting for Squirrel to stage the update.')), SQUIRREL_STAGING_TIMEOUT_MS);
-    const progressTimer = timers.setInterval(() => {
-      console.info(`[update] squirrel staging in progress (${ Math.round((Date.now() - startedAt) / 1000) }s elapsed)`);
-    }, SQUIRREL_STAGING_PROGRESS_INTERVAL_MS);
-
-    nativeUpdater.once('update-downloaded', onDownloaded);
-    nativeUpdater.once('error', onError);
-    console.info('[update] squirrel staging started');
-    try {
-      // electron-updater 6.7.3 has already started its authenticated local
-      // proxy by the time it emits update-downloaded. This fetches that zip
-      // into ShipIt's cache while the proxy and the rest of the app are alive.
-      nativeUpdater.checkForUpdates();
-    } catch (error) {
-      finish(error instanceof Error ? error : new Error(String(error)));
-    }
+    });
   });
 
-  return squirrelStagingPromise;
+  return macStagingPromise;
 }
 
 /**
@@ -296,12 +292,22 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
       return;
     }
 
-    // Keep the authenticated local proxy alive and do not offer restart until
-    // Squirrel has copied the verified zip into its own cache.
+    const downloadedFile = (info as typeof info & { downloadedFile?: string }).downloadedFile;
+
+    if (!downloadedFile) {
+      const error = new Error('The verified macOS update path was not provided.');
+      const channelState = recordUpdateFailure(info.version, error.message);
+      updateState.error = error;
+      updateState.downloaded = false;
+      window.send('update-state', updateState);
+      updateEvents.emit('raw-state', updateState);
+      updateEvents.emit('install-failed', channelState.lastUpdateResult);
+      return;
+    }
     updateState.downloaded = false;
     window.send('update-state', updateState);
     updateEvents.emit('raw-state', updateState);
-    stageSquirrelUpdate(info.version).then(() => {
+    stageVerifiedMacUpdate(downloadedFile, info.version).then(() => {
       state = State.UPDATE_PENDING;
       updateState.downloaded = true;
       updateState.error = undefined;
@@ -309,7 +315,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
       updateEvents.emit('raw-state', updateState);
     }).catch(() => {
       state = State.ERROR;
-      squirrelStagingPromise = undefined;
+      macStagingPromise = undefined;
     });
   });
 
@@ -332,7 +338,7 @@ export function reconfigureUpdater(): void {
   updateTimer = undefined as unknown as NodeJS.Timeout;
   autoUpdater?.removeAllListeners();
   autoUpdater = undefined as unknown as AppUpdater;
-  squirrelStagingPromise = undefined;
+  macStagingPromise = undefined;
   state = State.UNCONFIGURED;
   updateState.configured = false;
   updateState.available = false;
