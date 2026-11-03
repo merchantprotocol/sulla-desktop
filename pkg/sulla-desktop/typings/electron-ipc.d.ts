@@ -649,13 +649,17 @@ export interface IpcMainInvokeEvents {
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
-  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
-  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
+  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
   'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
   'agent-definitions:publish-check': (slug: string) => { secret: string | null; warnings: string[] } | { error: string };
   'agent-definitions:publish':     (slug: string) => import('@pkg/main/marketplace/publish').PublishResult | { error: string };
+  // Model routing (Preferences → AI models); contract in agent/languagemodels/modelRoutingTypes.ts.
+  'model-routing:get':   () => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
+  'model-routing:set':   (patch: Partial<Pick<import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
+  'model-routing:reset': (target: { section: 'agents' | 'subconscious' | 'classes'; class?: import('@pkg/agent/languagemodels/modelRoutingTypes').ModelClass }) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
@@ -1232,6 +1236,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
 

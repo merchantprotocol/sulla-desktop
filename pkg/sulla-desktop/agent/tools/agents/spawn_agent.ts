@@ -524,8 +524,9 @@ export class SpawnAgentWorker extends BaseTool {
 
         const runLocation = effectiveAgentRunLocation(String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION));
         if (runLocation === 'container') {
-          const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
-          const provider = String(subState.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', '')).trim();
+          const { modelRouter } = await import('../../languagemodels/modelRouter');
+          const routed = (await modelRouter.resolve('agents', currentDefinition?.model_choice || { mode: 'list' }))[0];
+          const provider = String(subState.metadata.agent?.provider || routed?.provider || '').trim();
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
           const promptMessage = subState.messages[subState.messages.length - 1];
           if (typeof promptMessage?.content === 'string') {
