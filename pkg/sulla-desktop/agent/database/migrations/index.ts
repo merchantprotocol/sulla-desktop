@@ -135,6 +135,7 @@ import { up as up_0140, down as down_0140 } from './0140_conversation_history_sy
 import { up as up_0141, down as down_0141 } from './0141_first_run_credentials';
 import { up as up_0142, down as down_0142 } from './0142_create_desktop_audit';
 import { up as up_0143, down as down_0143 } from './0143_agent_model_choice';
+import { up as up_0144, down as down_0144 } from './0144_memory_sync_v1';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -266,4 +267,5 @@ export const migrationsRegistry = [
   { name: '0141_first_run_credentials', up: up_0141, down: down_0141 },
   { name: '0142_create_desktop_audit', up: up_0142, down: down_0142 },
   { name: '0143_agent_model_choice', up: up_0143, down: down_0143 },
+  { name: '0144_memory_sync_v1', up: up_0144, down: down_0144 },
 ] as const;

@@ -254,19 +254,10 @@ describe('tool placement metadata', () => {
     expect(Object.keys(JSON.parse(current).tools)).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   });
 
-  test('placement types match @sulla/agent-core when it is present', () => {
-    const unionOf = (source: string, name: string) => {
-      const match = new RegExp(`export type ${ name }\\s*=([^;]+);`).exec(source);
-      return match ? match[1].split('|').map(member => member.replace(/\s+/g, '')).filter(Boolean).sort() : undefined;
-    };
-    const ours = fs.readFileSync(path.join(repoRoot, 'pkg/sulla-desktop/agent/tools/toolPlacement.ts'), 'utf8');
-    const corePath = path.join(repoRoot, 'packages/agent-core/src/types.ts');
-    if (!fs.existsSync(corePath)) return;
-    const core = fs.readFileSync(corePath, 'utf8');
-    for (const name of ['ToolSideEffect', 'ToolPlacement', 'ToolCredential']) {
-      const theirs = unionOf(core, name);
-      if (theirs) expect(unionOf(ours, name)).toEqual(theirs);
-    }
-    expect(unionOf(core, 'ToolSideEffect')).toEqual(unionOf(ours, 'ToolSideEffect'));
+  test('uses agent-core as the placement contract source', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'pkg/sulla-desktop/agent/tools/toolPlacement.ts'), 'utf8');
+    expect(source).toContain("from '../../../../packages/agent-core/src/types'");
+    expect(source).not.toMatch(/export type ToolSideEffect\s*=/);
+    expect(source).not.toMatch(/export interface ToolPlacementMetadata/);
   });
 });

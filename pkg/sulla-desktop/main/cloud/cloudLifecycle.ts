@@ -23,12 +23,13 @@ import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
 import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync';
 import { ApprovedClients } from './approvedClients';
-import { getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
+import { enableRecommendedCloudPreferences, getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
 import { CloudDataSync, type ProjectionKind } from './cloudDataSync';
 import { ByoUsageSync } from './byoUsageSync';
 import { VaultSyncV3 } from './vaultSyncV3';
 import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
+import { MemorySyncV1 } from './memorySyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -136,15 +137,16 @@ async function stopConversationSync(): Promise<void> {
 
 async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (!prefs.enabled) {
-    await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop();
+    await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop(); MemorySyncV1.stop();
     DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); ByoUsageSync.stop(); return;
   }
   if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
   if (prefs.vault) VaultSyncV3.start(); else VaultSyncV3.stop();
   if (prefs.files) FilesSyncV1.start(); else FilesSyncV1.stop();
+  if (prefs.memory) MemorySyncV1.start(); else MemorySyncV1.stop();
   if (prefs.useCases) DeviceInstallSync.start(); else DeviceInstallSync.stop();
   if (prefs.workflows || prefs.liveAgents) CloudRuntimeProjectionSync.start(); else CloudRuntimeProjectionSync.stop();
-  if (prefs.skills || prefs.customAgents || prefs.recipes || prefs.usage || prefs.memory) CloudDataSync.start(); else CloudDataSync.stop();
+  if (prefs.skills || prefs.customAgents || prefs.recipes || prefs.usage) CloudDataSync.start(); else CloudDataSync.stop();
   if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
 
@@ -189,6 +191,7 @@ export async function stopCloudServices(): Promise<void> {
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
   FilesSyncV1.stop();
+  MemorySyncV1.stop();
   DeviceInstallSync.stop();
   CloudRuntimeProjectionSync.stop();
   CloudDataSync.stop();
@@ -210,7 +213,7 @@ export interface CloudConnectionStatus {
   device:          ReturnType<typeof DevicesCloudApi.getState>;
   keyFingerprint:  string | null;
   approvedClients: { clientId: string; label: string; surface: string; approvedAt: string; lastUsedAt?: string }[];
-  objectSync:      Array<ReturnType<typeof VaultSyncV3.getStatus>[number] | ReturnType<typeof CloudDataSync.getStatus>[number]>;
+  objectSync:      Array<ReturnType<typeof VaultSyncV3.getStatus>[number] | ReturnType<typeof CloudDataSync.getStatus>[number] | ReturnType<typeof MemorySyncV1.getStatus>[number]>;
 }
 
 export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus> {
@@ -223,7 +226,7 @@ export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus>
     device:          DevicesCloudApi.getState(),
     keyFingerprint:  fingerprint,
     approvedClients: ApprovedClients.list().map(({ publicKey: _pk, ...rest }) => rest),
-    objectSync:      [...VaultSyncV3.getStatus(), ...CloudDataSync.getStatus()],
+    objectSync:      [...VaultSyncV3.getStatus(), ...CloudDataSync.getStatus(), ...MemorySyncV1.getStatus()],
   };
 }
 
@@ -245,6 +248,10 @@ export function initCloudConnectionEvents(): void {
     await setCloudPreferences(patch ?? {});
     return getCloudConnectionStatus();
   });
+  ipc.handle('sulla-cloud-connection:enable-recommended', async() => {
+    await enableRecommendedCloudPreferences();
+    return getCloudConnectionStatus();
+  });
 
   ipc.handle('sulla-cloud-chat:get-link', async(_e: unknown, conversationId: string) => ConversationSyncService.getLink(conversationId));
   ipc.handle('sulla-cloud-chat:link', async(_e: unknown, conversationId: string, title: string, privacyMode: 'encrypted_bodies'|'metadata_only') => ConversationSyncService.link(conversationId,title,privacyMode));
@@ -257,8 +264,9 @@ export function initCloudConnectionEvents(): void {
 
   ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: CloudDataKind | 'all') => {
     if (kind === 'vault') await VaultSyncV3.syncNow();
-    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
-    else if (['skills','customAgents','recipes','usage','memory'].includes(kind)) { await CloudDataSync.syncNow(kind as ProjectionKind, true); if (kind === 'usage') await ByoUsageSync.flush(); }
+    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await MemorySyncV1.syncNow(); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
+    else if (kind === 'memory') await MemorySyncV1.syncNow();
+    else if (['skills','customAgents','recipes','usage'].includes(kind)) { await CloudDataSync.syncNow(kind as ProjectionKind, true); if (kind === 'usage') await ByoUsageSync.flush(); }
     return getCloudConnectionStatus();
   });
 
@@ -267,8 +275,11 @@ export function initCloudConnectionEvents(): void {
     if (kind === 'vault') await VaultSyncV3.deleteCloudCopy();
     else if (kind === 'files') await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' });
     else if (kind === 'conversations') await ConversationSyncService.deleteAllCloudCopies();
-    else if (kind === 'all') { await CloudDataSync.deleteAll(); await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' }); await ConversationSyncService.deleteAllCloudCopies() }
+    else if (kind === 'memory') await MemorySyncV1.deleteCloudCopy();
+    else if (kind === 'all') { await CloudDataSync.deleteAll(); await MemorySyncV1.deleteCloudCopy(); await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' }); await ConversationSyncService.deleteAllCloudCopies() }
     else await CloudDataSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
   });
+  ipc.handle('sulla-cloud-memory:list-pending',async()=>MemorySyncV1.pending());
+  ipc.handle('sulla-cloud-memory:decide-pending',async(_e:unknown,id:string,decision:'confirm'|'reject')=>MemorySyncV1.decide(id,decision==='confirm'));
 }

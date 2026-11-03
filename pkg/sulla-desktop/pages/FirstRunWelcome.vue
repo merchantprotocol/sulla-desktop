@@ -63,11 +63,12 @@
     <div v-if="step === 'sync'" class="fr-account-step frs-sync">
       <div class="fr-step-body">
         <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Use Sulla on all your devices</h2>
-        <p class="mb-8 secondary-text">Sync to Sulla Cloud and your chats, files and passwords follow you to your phone, the web and your other computers. Everything stays encrypted.</p>
+        <p class="mb-8 secondary-text">Sync is off until you choose it. Turn on recommended to make selected data available in Sulla on your phone, the web and your other computers. Passwords, API keys and remote access stay off.</p>
         <p v-if="syncError" class="text-sm mb-4 error-text">{{ syncError }}</p>
       </div>
       <div class="frs-actions fr-account-actions">
-        <button type="button" class="px-8 py-3 rounded-md transition-colors font-semibold hover:opacity-90 btn-primary frs-sync-all" :disabled="syncSubmitting" @click="handleSyncChoices(true)">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Sync everything') }}</button>
+        <button type="button" class="px-8 py-3 rounded-md transition-colors font-semibold hover:opacity-90 btn-primary frs-sync-all" :disabled="syncSubmitting" @click="handleSyncChoices(false)">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Keep sync off') }}</button>
+        <button type="button" class="link-btn" :disabled="syncSubmitting" @click="handleSyncChoices(true)">Turn on recommended</button>
         <button v-if="syncError" type="button" class="link-btn" :disabled="syncSubmitting" @click="continueAnyway">Continue anyway</button>
         <button type="button" class="link-btn" :disabled="syncSubmitting" @click="useDifferentAccount">Not you? Use a different account</button>
         <p class="text-xs secondary-text frs-note">You can turn individual things off later in Settings.</p>
@@ -355,10 +356,10 @@ async function handleSyncChoices(syncAll: boolean) {
   syncSubmitting.value = true;
   syncError.value = '';
   traceFirstRun('account', 'sync choice made', { syncAll });
-  // One choice: everything syncs, or nothing does. Individual categories stay
-  // adjustable later in Settings.
-  const patch: Record<string, boolean> = { enabled: syncAll };
-  for (const category of syncCategories.value) patch[category.key] = syncAll;
+  // New installs stay off unless the user explicitly chooses recommended sync.
+  // Passwords/API credentials and remote access are deliberately excluded.
+  const patch: Record<string, boolean> = { enabled: syncAll, vault: false, remoteAccess: false };
+  for (const category of syncCategories.value) patch[category.key] = syncAll && category.key !== 'vault';
   try { await saveChoices({ cloudPreferences: patch }); }
   catch (err) {
     console.warn('[FirstRunWelcome] Could not save sync choices:', err);

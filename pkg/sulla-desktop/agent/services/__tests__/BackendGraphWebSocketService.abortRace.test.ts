@@ -174,7 +174,7 @@ describe('BackendGraphWebSocketService interruption ownership', () => {
     const { BackendGraphWebSocketService } = await import('../BackendGraphWebSocketService');
     const svc: any = new BackendGraphWebSocketService();
     executeMock.mockResolvedValue(undefined);
-    resolveDefaultRouteAgentMock.mockResolvedValue({ agentId: 'account-manager', graphAgentId: 'account-manager', name: 'Account Manager' });
+    resolveDefaultRouteAgentMock.mockResolvedValue({ agentId: 'account-manager', graphAgentId: 'account-manager', name: 'Product Owner' });
 
     await svc.dispatchToAgent('sulla-desktop', 'sulla-desktop', 'I want to grow my business', 'default-thread');
     expect(getOrCreateAgentGraphMock).toHaveBeenLastCalledWith('account-manager', 'default-thread');

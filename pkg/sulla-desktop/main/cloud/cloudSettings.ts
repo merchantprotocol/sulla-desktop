@@ -6,6 +6,8 @@
 /** Human-owned Cloud upload preferences. Signing in never implies consent. */
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
+import { planConsentInit, recommendedConsentPatch } from './cloudConsentInit';
+
 export interface CloudPreferences {
   enabled: boolean;
   workflows: boolean; skills: boolean; customAgents: boolean; recipes: boolean;
@@ -18,27 +20,33 @@ export const CLOUD_SETTING_KEYS: Record<keyof CloudPreferences, string> = {
   recipes:'cloudSyncRecipes', useCases:'cloudSyncUseCases', liveAgents:'cloudSyncLiveAgents', usage:'cloudSyncUsage',
   memory:'cloudSyncMemory', conversations:'cloudSyncConversations', files:'cloudSyncFiles', vault:'cloudSyncVault', remoteAccess:'cloudRemoteAccess',
 };
-const INITIALIZED_KEY='cloudSyncPreferencesInitializedV2';
+const INITIALIZED_KEY='cloudSyncPreferencesInitializedV3';
 const LEGACY_CURSOR_KEY='claudeSyncLastSeq';
+/** Explicit user action only: never includes passwords, API credentials, or remote execution. */
+export const RECOMMENDED_CLOUD_DATA_KINDS: readonly CloudDataKind[] = [
+  'workflows','skills','customAgents','recipes','useCases','liveAgents','usage','memory','conversations','files',
+];
 type Listener=(prefs:CloudPreferences,changed:(keyof CloudPreferences)[])=>void;
 const listeners:Listener[]=[];
 function asBool(v:unknown,fallback:boolean){if(typeof v==='boolean')return v;if(v==='true')return true;if(v==='false')return false;return fallback}
 async function ensureInitialized(){
   if(asBool(await SullaSettingsModel.get(INITIALIZED_KEY,false),false))return;
-  const oldConversations=asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.conversations,false),false);
-  const oldVault=asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.vault,false),false);
-  const cursor=parseInt(String(await SullaSettingsModel.get(LEGACY_CURSOR_KEY,'0')??'0'),10);
-  const hadLegacyPreferences=oldConversations||oldVault||(Number.isFinite(cursor)&&cursor>0);
-  const conversations=hadLegacyPreferences ? oldConversations||(Number.isFinite(cursor)&&cursor>0) : true;
-  // A genuinely fresh install syncs by default. Existing installs keep their prior explicit state.
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.enabled,hadLegacyPreferences ? conversations||oldVault : true,'boolean');
-  for(const key of ['workflows','skills','customAgents','recipes','useCases','liveAgents','usage','memory','files'] as const)
-    await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key],true,'boolean');
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.conversations,conversations,'boolean');
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.vault,hadLegacyPreferences ? oldVault : true,'boolean');
-  if(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.remoteAccess,null)===null) await SullaSettingsModel.set(CLOUD_SETTING_KEYS.remoteAccess,true,'boolean');
+  const keys=Object.keys(CLOUD_SETTING_KEYS) as (keyof CloudPreferences)[];
+  const current=Object.fromEntries(await Promise.all(keys.map(async key=>[key,await SullaSettingsModel.get(CLOUD_SETTING_KEYS[key],null)]))) as Partial<Record<keyof CloudPreferences,unknown>>;
+  // New installs start with no uploads. Existing installations keep every explicit
+  // value, including false and mixed settings; only missing keys get the safe off default.
+  const plan=planConsentInit(keys,current,await SullaSettingsModel.get(LEGACY_CURSOR_KEY,'0'));
+  for(const key of keys)if(key in plan)await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key],plan[key],'boolean');
   await SullaSettingsModel.set(INITIALIZED_KEY,true,'boolean');
 }
+
+export function recommendedCloudPreferencesPatch():Partial<Record<keyof CloudPreferences,boolean>>{
+  return recommendedConsentPatch(RECOMMENDED_CLOUD_DATA_KINDS) as Partial<Record<keyof CloudPreferences,boolean>>;
+}
+export async function enableRecommendedCloudPreferences():Promise<CloudPreferences>{
+  return setCloudPreferences(recommendedCloudPreferencesPatch());
+}
+
 export async function getCloudPreferences():Promise<CloudPreferences>{
   await ensureInitialized(); const get=async(k:keyof CloudPreferences,d=true)=>asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS[k],d),d);
   return {enabled:await get('enabled',false),workflows:await get('workflows'),skills:await get('skills'),customAgents:await get('customAgents'),recipes:await get('recipes'),useCases:await get('useCases'),liveAgents:await get('liveAgents'),usage:await get('usage'),memory:await get('memory'),conversations:await get('conversations',false),files:await get('files'),vault:await get('vault',false),remoteAccess:await get('remoteAccess')};

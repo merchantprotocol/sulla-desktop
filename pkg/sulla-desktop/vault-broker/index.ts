@@ -91,10 +91,27 @@ export function usesContainerVaultAuthority(): boolean {
 }
 
 export class VaultBrokerError extends Error {
-  constructor(public readonly code: string, message: string, public readonly status: number) {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status: number,
+    /** Non-secret diagnostic reason from the vault, e.g. `connect_ECONNREFUSED`. */
+    public readonly reason?: string,
+    /** The vault marked this as a transient egress failure worth retrying after a pause. */
+    public readonly retryable = false,
+  ) {
     super(message);
     this.name = 'VaultBrokerError';
   }
+}
+
+/** Accept only short token-like reason codes from the vault; never echo arbitrary text. */
+function safeReason(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : undefined;
+}
+
+function brokerError(body: LocalVaultErrorResponse, status: number): VaultBrokerError {
+  return new VaultBrokerError(body.error, body.message, status, safeReason(body.reason), body.retryable === true);
 }
 
 export class VaultApprovalRequiredError extends VaultBrokerError {
@@ -381,8 +398,7 @@ export class LocalVaultBrokerClient {
   }
 
   private async throwRelayResponse(response: Response): Promise<never> {
-    const body = await errorBody(response);
-    throw new VaultBrokerError(body.error, body.message, response.status);
+    throw brokerError(await errorBody(response), response.status);
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
@@ -390,7 +406,7 @@ export class LocalVaultBrokerClient {
     if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
       throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
     }
-    throw new VaultBrokerError(body.error, body.message, response.status);
+    throw brokerError(body, response.status);
   }
 }
 
@@ -484,8 +500,7 @@ export class LocalVaultApprovalClient {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {
-      const error = await errorBody(response);
-      throw new VaultBrokerError(error.error, error.message, response.status);
+      throw brokerError(await errorBody(response), response.status);
     }
     return response.json() as Promise<T>;
   }
