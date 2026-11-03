@@ -104,6 +104,7 @@ export interface AgentDefinitionResponse {
   provider:           string | null;
   model:              string | null;
   modelSlot:          import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot | null;
+  modelChoice:        import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice;
   prompt:             string;
   sourceKind:         string;
   marketplaceVersion: string | null;
@@ -205,6 +206,7 @@ export function initAgentsIpc(): void {
       provider:           a.provider,
       model:              a.model,
       modelSlot:          a.model_slot,
+      modelChoice:        a.model_choice ?? (a.provider && a.model ? { mode: 'pin', provider: a.provider, model: a.model } : { mode: 'list' }),
       prompt:             a.prompt_content,
       sourceKind:         a.source_kind,
       marketplaceVersion: a.marketplace_version,
@@ -241,7 +243,7 @@ export function initAgentsIpc(): void {
     });
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt?: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.update(id, {
       ...patch,

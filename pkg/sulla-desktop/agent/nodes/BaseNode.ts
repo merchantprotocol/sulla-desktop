@@ -16,6 +16,7 @@ import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCli
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
+import { modelRouter } from '../languagemodels/modelRouter';
 import { ProviderFailure } from '../languagemodels/failures';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
@@ -1234,6 +1235,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // the chosen model failed, so it is reported separately.
       let fallbackErrMsg = '';
       let recovery = initialRecovery;
+      if (recovery.kind === 'quota' || recovery.kind === 'rate_limit' || recovery.kind === 'auth') {
+        await modelRouter.markFailure(primaryName, err);
+      }
       console.warn(
         `[${ this.name }:BaseNode] Primary LLM failed ` +
         `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
@@ -1353,6 +1357,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           }
         } catch (fallbackErr) {
           const fallbackRecovery = classifyLLMFailure(fallbackErr);
+          if (fallbackRecovery.kind === 'quota' || fallbackRecovery.kind === 'rate_limit' || fallbackRecovery.kind === 'auth') {
+            const fallbackProvider = (await getSecondaryProviderId().catch(() => '')) || 'secondary';
+            await modelRouter.markFailure(fallbackProvider, fallbackErr);
+          }
           if (fallbackRecovery.kind === 'interrupted') throw fallbackErr;
           fallbackErrMsg = redactLLMFailureMessage(fallbackErr);
           console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, fallbackErrMsg);

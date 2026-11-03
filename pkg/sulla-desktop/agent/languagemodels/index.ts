@@ -162,6 +162,9 @@ class LLMRegistryImpl {
    * falls back to SullaSettingsModel.
    */
   async getPrimaryService(): Promise<BaseLanguageModel> {
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', { mode: 'list' }))[0];
+    if (routed) return this.getServiceByProvider(routed.provider, routed.model);
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getPrimaryProvider()
@@ -190,6 +193,9 @@ class LLMRegistryImpl {
    * Applies secondaryModelId override (supports tier names or explicit model IDs).
    */
   async getSecondaryService(): Promise<BaseLanguageModel> {
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('agents', { mode: 'list' }))[1];
+    if (routed) return this.getServiceByProvider(routed.provider, routed.model);
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getSecondaryProvider()
@@ -210,6 +216,9 @@ class LLMRegistryImpl {
    * model ID. Tier names are resolved dynamically from the provider's live model list.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('subconscious', { mode: 'list' }))[0];
+    if (routed) return this.getServiceByProvider(routed.provider, routed.model);
     const mps = tryGetModelProviderService();
     const heartbeatProvider = mps
       ? mps.getHeartbeatProvider()
@@ -242,6 +251,9 @@ class LLMRegistryImpl {
    *   2. Primary provider (default)
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
+    const { modelRouter } = await import('./modelRouter');
+    const routed = (await modelRouter.resolve('subconscious', { mode: 'list' }))[0];
+    if (routed) return this.getServiceByProvider(routed.provider, routed.model);
     const mps = tryGetModelProviderService();
     const subconsciousProvider = mps
       ? mps.getSubconsciousProvider()
