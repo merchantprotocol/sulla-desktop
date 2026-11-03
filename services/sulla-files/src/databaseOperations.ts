@@ -485,12 +485,18 @@ export async function restoreTrashReceipt(client:pg.PoolClient,row:any,actor:Fil
   }
   editable(file,actor);
   await access.path(client,before.collectionId??row.collection_id,before.path);
-  const source=(await client.query(`SELECT v.id FROM file_versions v JOIN file_versions tombstone ON tombstone.id=$2 AND tombstone.file_id=v.file_id
+  const source=(await client.query(`SELECT v.* FROM file_versions v JOIN file_versions tombstone ON tombstone.id=$2 AND tombstone.file_id=v.file_id
     WHERE v.id=$1 AND v.file_id=$3 AND v.deleted=FALSE AND tombstone.deleted=TRUE AND tombstone.parent_version_id=v.id FOR SHARE OF v,tombstone`,
   [before.versionId,expected.versionId,file.id])).rows[0];
   if (!source) throw fail(409,'The exact pre-Trash version is no longer available');
-  const updated=(await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,updated_at=NOW() WHERE id=$1 RETURNING *',[file.id,before.versionId])).rows[0];
-  await journal(client,actor,updated,'restore',row.id);
+  const version=(await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,restored_from_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
+    VALUES($1,$2,$3,$4,$5,$6,'user',$7,'Restored from Trash',$8,$3) RETURNING id`,
+  [file.id,source.chunk_collection_id,file.current_version_id,source.id,source.manifest_hash,source.size,actor.userId,actor.deviceId||'server-web'])).rows[0];
+  await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)',[source.chunk_collection_id,source.manifest_hash]);
+  const updated=(await client.query(`UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW()
+    WHERE id=$1 AND current_version_id=$4 AND deleted_at IS NOT NULL RETURNING *`,[file.id,version.id,source.size,file.current_version_id])).rows[0];
+  if (!updated) throw fail(409,'The Trash tombstone changed while restoring');
+  await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')",[file.collection_id,file.id,version.id]);
   if (publish) await access.custody?.publish(client,row,true);
   await client.query("UPDATE files_database_operation_receipts SET state='undone',undone_at=NOW() WHERE id=$1",[row.id]);
   return updated;
@@ -530,8 +536,8 @@ export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesI
       SELECT v.* FROM file_versions v JOIN lineage l ON l.id=v.id WHERE v.deleted=FALSE AND v.manifest_hash IS NOT NULL
       FOR UPDATE OF v`, [tombstone.parent_version_id, file.id])).rows[0];
     if (!source) throw fail(409, 'No restorable ancestor version remains');
-    const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-      VALUES($1,$2,$3,$4,$5,'user',$6,'Restored from Trash',$7,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.manifest_hash, source.size, actor.userId, actor.deviceId || 'server-web'])).rows[0];
+    const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,restored_from_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
+      VALUES($1,$2,$3,$4,$5,$6,'user',$7,'Restored from Trash',$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.id, source.manifest_hash, source.size, actor.userId, actor.deviceId || 'server-web'])).rows[0];
     await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]);
     const updated = (await client.query(`UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW()
       WHERE id=$1 AND current_version_id=$4 AND deleted_at IS NOT NULL RETURNING *`, [file.id, version.id, source.size, file.current_version_id])).rows[0];
