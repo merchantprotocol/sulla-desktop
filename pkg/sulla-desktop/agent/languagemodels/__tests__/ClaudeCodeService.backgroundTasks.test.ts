@@ -44,8 +44,9 @@ const fakeTransport = {
     return proc;
   },
   files:     { write: () => ({ path: '/tmp/claude-system-test.md', dispose: () => {} }) },
-  terminate: async() => {},
+  terminate: async(request: any) => { terminations.push(request.signal) },
 };
+const terminations: string[] = [];
 jest.unstable_mockModule('../ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: () => fakeTransport,
   requireBrokeredContainerAuth:  () => undefined,
@@ -53,6 +54,7 @@ jest.unstable_mockModule('../ProviderExecutionTransport', () => ({
 }));
 
 const { ClaudeCodeService } = await import('../ClaudeCodeService');
+const { classifyLLMFailure } = await import('../providerRecovery');
 
 /**
  * Each turn runs its own `claude -p` process and closes stdin at `result`, so
@@ -186,21 +188,97 @@ describe('ClaudeCodeService — background tasks outlive their turn', () => {
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 
-  it('stops the held process when the conversation starts its next turn', async() => {
+  it('waits until the held process is stopped before resuming its session', async() => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    try {
+      const { service } = makeService();
+      const first = await startTurn(service, 'conv-next');
+      answer(first.proc, first.sent, 'STARTED', [liveOne]);
+      await first.run;
+      terminations.length = 0;
+
+      const run = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-next' });
+      for (let i = 0; i < 10; i++) await flush();
+      expect(first.proc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(terminations).toEqual(['TERM']);
+      // The old copy is not confirmed gone yet: no second process on the session.
+      expect(spawned).toHaveLength(1);
+
+      jest.advanceTimersByTime(2_000);
+      while (spawned.length === 1) await flush();
+      expect(terminations).toEqual(['TERM', 'KILL']);
+      first.proc.emit('close', null);
+
+      const second = spawned[1];
+      const sent = await new Promise<any>(resolve => second.stdin.once('data', (c: Buffer) => resolve(JSON.parse(c.toString().trim()))));
+      second.emit('spawn');
+      answer(second, sent, 'Next answer.');
+      await flush();
+      expect(second.stdin.writableEnded).toBe(true);
+      second.emit('close', 0);
+      await expect(run).resolves.toMatchObject({ text: 'Next answer.' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a Stop during the handoff ends the turn without starting a process', async() => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    try {
+      const { service } = makeService();
+      const first = await startTurn(service, 'conv-stop');
+      answer(first.proc, first.sent, 'STARTED', [liveOne]);
+      await first.run;
+
+      const abort = new AbortController();
+      const run = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-stop', signal: abort.signal });
+      for (let i = 0; i < 5; i++) await flush();
+      abort.abort();
+      await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+      expect(spawned).toHaveLength(1);
+      jest.advanceTimersByTime(2_000);
+      for (let i = 0; i < 5; i++) await flush();
+      first.proc.emit('close', null);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a CLI that dies right after a handoff is a Sulla fault, never a provider failure', async() => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    try {
+      const { service } = makeService();
+      const first = await startTurn(service, 'conv-fault');
+      answer(first.proc, first.sent, 'STARTED', [liveOne]);
+      await first.run;
+
+      const run = service.runClaude([{ role: 'user', content: 'next' }], {}, { conversationId: 'conv-fault' });
+      for (let i = 0; i < 5; i++) await flush();
+      jest.advanceTimersByTime(2_000);
+      while (spawned.length === 1) await flush();
+      first.proc.emit('close', null);
+      const second = spawned[1];
+      second.emit('spawn');
+      second.emit('close', 137);
+
+      const error: any = await run.catch((e: unknown) => e);
+      expect(error).toMatchObject({ cliFault: true, sullaInternal: true, code: 'SULLA_INFRA' });
+      expect(classifyLLMFailure(error).kind).toBe('infrastructure');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('the same fault on a turn with no handoff stays an ordinary CLI fault', async() => {
     const { service } = makeService();
-    const first = await startTurn(service, 'conv-next');
-    answer(first.proc, first.sent, 'STARTED', [liveOne]);
-    await first.run;
+    const run = service.runClaude([{ role: 'user', content: 'hi' }], {}, { conversationId: 'conv-nohandoff' });
+    while (spawned.length === 0) await flush();
+    spawned[0].emit('spawn');
+    spawned[0].emit('close', 137);
 
-    const second = await startTurn(service, 'conv-next');
-    expect(first.proc.kill).toHaveBeenCalledWith('SIGTERM');
-    first.proc.emit('close', null);
-
-    answer(second.proc, second.sent, 'Next answer.');
-    await flush();
-    expect(second.proc.stdin.writableEnded).toBe(true);
-    second.proc.emit('close', 0);
-    await expect(second.run).resolves.toMatchObject({ text: 'Next answer.' });
+    const error: any = await run.catch((e: unknown) => e);
+    expect(error).toMatchObject({ cliFault: true, sullaInternal: false });
+    expect(error.code).toBeUndefined();
   });
 
   it('does not touch a held process that belongs to another conversation', async() => {

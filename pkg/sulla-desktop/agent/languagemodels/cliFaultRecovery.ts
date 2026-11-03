@@ -7,6 +7,7 @@ import {
   AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited,
   legacyProviderFailure,
 } from './failures';
+import { InfrastructureFailure } from './providerRecovery';
 
 export const CLI_RECOVERY_MAX_ATTEMPTS = 2;
 export const CLI_RECOVERY_BACKOFF_MS = 750;
@@ -15,6 +16,13 @@ export type CliFaultKind = 'spawn' | 'transport' | 'process_exit' | 'stall' | 'p
 
 export class CliFaultError extends Error {
   readonly cliFault = true;
+  /**
+   * Set when Sulla's own plumbing caused the fault (e.g. the process handoff
+   * after a background-task hold), not the provider. Read by
+   * classifyLLMFailure through `code`, so it never backs the provider off.
+   */
+  sullaInternal = false;
+  code?: string;
 
   constructor(
     readonly kind: CliFaultKind,
@@ -35,6 +43,31 @@ export class CliRecoveryExhaustedError extends CliExhausted {
   constructor(readonly faultKind: CliFaultKind, cause: unknown, providerId = 'cli') {
     super(providerId, { cause });
     this.name = 'CliRecoveryExhaustedError';
+    this.unsafeToFallback = Boolean((cause as any)?.unsafeToFallback);
+  }
+}
+
+/** Mark a CLI fault as caused by Sulla's process/container plumbing, never the provider. */
+export function markSullaInternalFault<E extends Error>(error: E): E {
+  if (isCliFault(error)) {
+    error.sullaInternal = true;
+    error.code = 'SULLA_INFRA';
+  }
+  return error;
+}
+
+/**
+ * Recovery ran out on faults Sulla caused while handing a conversation over
+ * from a process held for background tasks. Infrastructure, so it never counts
+ * against the provider and never reads as the provider failing.
+ */
+export class CliHandoffFailure extends InfrastructureFailure {
+  readonly cliHandoffFailure = true;
+  readonly unsafeToFallback: boolean;
+
+  constructor(readonly faultKind: CliFaultKind, cause: unknown) {
+    super('Sulla could not hand this chat over from the earlier background task. Send your message again.', cause);
+    this.name = 'CliHandoffFailure';
     this.unsafeToFallback = Boolean((cause as any)?.unsafeToFallback);
   }
 }
@@ -182,6 +215,7 @@ export async function runWithCliFaultRecovery<T>(
   }
 
   const fault = lastFault ?? new CliFaultError('protocol', 'unknown CLI failure');
+  if (fault.sullaInternal) throw new CliHandoffFailure(fault.kind, fault);
   throw new CliRecoveryExhaustedError(fault.kind, fault, providerName);
 }
 

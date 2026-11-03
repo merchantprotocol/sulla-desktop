@@ -14,6 +14,7 @@ import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
+import { buildContainerProviderKillScript } from './containerProviderKill';
 import {
   chownGuestPaths,
   createGuestRuntimeDirectory,
@@ -988,22 +989,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     try { request.process.kill(`SIG${ request.signal }`) } catch { /* already exited */ }
     if (!pidFile) return;
     const signal = request.signal === 'INT' ? 'TERM' : request.signal;
-    const script = [
-      'set -eu',
-      'record=$(cat "$1" 2>/dev/null || true)',
-      // eslint-disable-next-line no-template-curly-in-string
-      'pid=${record%% *}',
-      // eslint-disable-next-line no-template-curly-in-string
-      'born=${record#* }',
-      '[ -n "$pid" ] && [ "$pid" != "$record" ] || exit 0',
-      '[ -r "/proc/$pid/stat" ] || exit 0',
-      'current=$(cut -d " " -f 22 "/proc/$pid/stat")',
-      '[ "$current" = "$born" ] || exit 0',
-      'descend() { for status in /proc/[0-9]*/status; do child=$(sed -n "s/^Pid:[[:space:]]*//p" "$status" 2>/dev/null || true); parent=$(sed -n "s/^PPid:[[:space:]]*//p" "$status" 2>/dev/null || true); if [ "$parent" = "$1" ]; then descend "$child" "$2"; kill -"$2" "$child" 2>/dev/null || true; fi; done; }',
-      'descend "$pid" "$2"',
-      'kill -"$2" "$pid" 2>/dev/null || true',
-      '[ "$2" != KILL ] || rm -f "$1"',
-    ].join('; ');
+    const script = buildContainerProviderKillScript();
     await guestExec(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
   }
 

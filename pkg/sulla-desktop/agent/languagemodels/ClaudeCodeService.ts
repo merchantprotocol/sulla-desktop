@@ -23,7 +23,9 @@ import {
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
-import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import {
+  CliFaultError, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
+} from './cliFaultRecovery';
 import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
@@ -136,7 +138,66 @@ const STEER_FOLLOWUP_GRACE_MS = 30_000;
  * model/agent override) so the next turn ends the hold whichever instance
  * runs it.
  */
-const backgroundHolds = new Map<string, () => void>();
+const backgroundHolds = new Map<string, () => Promise<void>>();
+
+/**
+ * Grace between SIGTERM and SIGKILL when the next turn stops a held process.
+ * Claude exits on SIGTERM almost at once; the KILL pass is the confirmation.
+ */
+const HANDOFF_STOP_GRACE_MS = 2_000;
+
+/**
+ * Upper bound on how long a new turn waits for the held process to be gone
+ * before resuming the same session anyway. Normal handoff takes ~2-3 s.
+ */
+const HANDOFF_STOP_MAX_WAIT_MS = 15_000;
+
+/**
+ * A CLI that dies without answering within this window after a handoff died
+ * of the handoff (Sulla's process/container plumbing), not of the provider.
+ */
+const HANDOFF_FAULT_WINDOW_MS = 60_000;
+
+/** conversationId → when a turn last had to stop a held process. */
+const lastHandoffAt = new Map<string, number>();
+
+/**
+ * Wait for a held process to be fully stopped before its session is resumed:
+ * two live CLIs on one session (and a teardown racing the new spawn in the
+ * same container) is what failed handoff turns. Bounded, and abortable so an
+ * intentional Stop during the handoff ends the turn without a retry.
+ */
+export async function awaitBackgroundHandoff(
+  stop: Promise<void>,
+  signal?: AbortSignal,
+  maxWaitMs = HANDOFF_STOP_MAX_WAIT_MS,
+): Promise<'stopped' | 'timed_out'> {
+  if (signal?.aborted) throw handoffAbortError();
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      stop.then(() => 'stopped' as const, () => 'stopped' as const),
+      new Promise<'timed_out'>((resolve) => {
+        timer = setTimeout(() => resolve('timed_out'), maxWaitMs);
+        timer.unref?.();
+      }),
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(handoffAbortError());
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+function handoffAbortError(): Error {
+  const error = new Error('Claude Code run aborted');
+  error.name = 'AbortError';
+  return error;
+}
 
 export class ClaudeCodeService extends BaseLanguageModel {
   override managesOwnLoop(): boolean {
@@ -719,8 +780,18 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
     // A process still held open for this conversation's background tasks
     // ends here: the new turn's `--resume` must be the only live copy of the
-    // session (the launch command would stop it anyway).
-    backgroundHolds.get(convId)?.();
+    // session. Wait until it is really gone; firing the stop and spawning at
+    // once raced the teardown against the new process on the same session.
+    const heldStop = backgroundHolds.get(convId);
+    if (heldStop) {
+      lastHandoffAt.set(convId, Date.now());
+      try { callbacks.onActivity?.('Wrapping up the previous background task…') } catch { /* renderer unavailable */ }
+      const handoff = await awaitBackgroundHandoff(heldStop(), options.signal);
+      if (handoff === 'timed_out') log.warn(`[ClaudeCodeService] held proc for convId=${ convId } not confirmed stopped after ${ HANDOFF_STOP_MAX_WAIT_MS }ms; resuming anyway`);
+    }
+    // Faults in this run that follow a handoff closely are Sulla's, not Claude's.
+    const afterHandoff = Date.now() - (lastHandoffAt.get(convId) ?? 0) < HANDOFF_FAULT_WINDOW_MS;
+    const handoffFault = <E extends Error>(error: E): E => afterHandoff && isCliFault(error) ? markSullaInternalFault(error) : error;
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
     markPhase('session');
     const transport = getProviderExecutionTransport();
@@ -1106,8 +1177,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         //   3) Escalate to SIGKILL after a grace period — a sulla-runtime wedged in
         //      the SSH mux can ignore SIGTERM entirely, which is exactly the
         //      state that strands a hung run.
-        const killSpawn = () => {
-          terminationPromise ??= terminateCliChild(proc, killRemoteClaude);
+        const killSpawn = (graceMs?: number) => {
+          terminationPromise ??= terminateCliChild(proc, killRemoteClaude, graceMs);
           return terminationPromise;
         };
 
@@ -1608,7 +1679,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             settled = true;
             const retrySafe = toolStarts.size === 0 && !unresolvedTool;
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(new CliFaultError('spawn', `Claude Code process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
+            reject(handoffFault(new CliFaultError('spawn', `Claude Code process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe)));
           }
         };
         proc.on('error', onProcError);
@@ -1629,12 +1700,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const stopHoldSettle = () => {
           if (holdSettleTimer) { clearTimeout(holdSettleTimer); holdSettleTimer = null }
         };
-        const stopHeldProcess = (reason: string) => {
-          if (!holding) return;
+        const stopHeldProcess = (reason: string, graceMs?: number): Promise<void> => {
+          if (!holding) return Promise.resolve();
           log.log(`[ClaudeCodeService] stopping held proc for convId=${ convId } (${ reason }; ${ bgTracker.liveTaskCount } background task(s) live)`);
-          killSpawn().catch(() => {});
+          return killSpawn(graceMs).catch((error) => {
+            log.warn(`[ClaudeCodeService] held proc stop for convId=${ convId } could not be confirmed: ${ (error as Error)?.message ?? error }`);
+          });
         };
-        const onNextTurn = () => stopHeldProcess('next turn started');
+        const onNextTurn = () => stopHeldProcess('next turn started', HANDOFF_STOP_GRACE_MS);
         // Release everything the hold kept: timers, the registry entry, and the
         // MCP session / config / attachments the background work was using.
         const endHold = () => {
@@ -1673,12 +1746,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           stopStallWatchdog();
           options.signal?.removeEventListener('abort', onAbort);
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-          backgroundHolds.get(convId)?.();
+          void backgroundHolds.get(convId)?.();
           backgroundHolds.set(convId, onNextTurn);
           holdTimer = setTimeout(() => {
             holdTimer = null;
             log.warn(`[ClaudeCodeService] background task(s) for convId=${ convId } still live after ${ Math.round(BACKGROUND_TASK_MAX_HOLD_MS / 60_000) }min`);
-            stopHeldProcess('hold limit reached');
+            void stopHeldProcess('hold limit reached');
           }, BACKGROUND_TASK_MAX_HOLD_MS);
           holdTimer.unref?.();
           log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — holding proc until they finish)`);
@@ -1774,13 +1847,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
             reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
               ? typedFailure
-              : new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+              : handoffFault(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool))));
             return;
           }
 
           if (!sawTerminalResult) {
             const retrySafe = toolStarts.size === 0 && !unresolvedTool;
-            reject(new CliFaultError('protocol', 'Claude Code exited before emitting a terminal result event.', undefined, retrySafe, !retrySafe));
+            reject(handoffFault(new CliFaultError('protocol', 'Claude Code exited before emitting a terminal result event.', undefined, retrySafe, !retrySafe)));
             return;
           }
 
