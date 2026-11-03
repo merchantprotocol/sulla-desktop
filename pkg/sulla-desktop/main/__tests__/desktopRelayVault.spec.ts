@@ -68,8 +68,9 @@ const log = { log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn()
 const mockAuth = { getCurrentAccessToken: jest.fn(async() => { throw new Error('token read must not happen in vault mode') }) };
 const restoreSession = jest.fn(async() => { broker.unlocked = true; return true });
 
+mockModules({ electron: undefined });
+
 mockModules({
-  electron: undefined,
   '@pkg/agent/database/models/SullaSettingsModel': {
     SullaSettingsModel: {
       get:                jest.fn(async() => ''),
