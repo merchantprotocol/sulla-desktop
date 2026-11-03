@@ -385,6 +385,10 @@ async function emailSubmit() {
       return;
     }
     emailPassword.value = '';
+    if (res.needsVaultMigration) {
+      await router.push('/Vault');
+      return;
+    }
     await refreshCloudStatus();
   } finally {
     busy.value = false;
