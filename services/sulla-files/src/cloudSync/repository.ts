@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 
 import type { FilesIdentity } from '../auth.js';
+import type { NamespaceOperation } from './namespace.js';
 import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, lockStoredNamespace, StoredNamespaceConflict } from '../storedNamespace.js';
 import type { Envelope } from '../crypto.js';
 import type { StateEntry, SyncHead } from './envelope.js';
@@ -73,6 +74,7 @@ export interface PushCandidate {
   chunkIds:string[];
   size:number;
   mtime:string;
+  namespace?: { name:string; parentFolderId:string|null; operation:NamespaceOperation };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -312,8 +314,11 @@ export class PgCloudSyncRepository implements PullRepository {
 
   /** The earliest journal entry whose version is still its file's current version and is unknown to Cloud. */
   async nextPushCandidate(collectionId:string, cursor:number):Promise<PushCandidate | null> {
-    const row = (await this.db.query(`SELECT j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
-        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms
+    const row = (await this.db.query(`SELECT j.op,j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
+        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,
+        regexp_replace(f.path,'^.*/','') AS item_name,
+        COALESCE((SELECT ff.id::text FROM file_folders ff WHERE ff.collection_id=f.collection_id AND ff.path=regexp_replace(f.path,'/[^/]+$','') AND ff.deleted_at IS NULL LIMIT 1),
+          (SELECT cf.file_id::text FROM files_cloud_folders cf WHERE cf.collection_id=f.collection_id AND cf.path=regexp_replace(f.path,'/[^/]+$','') AND cf.deleted=FALSE LIMIT 1)) AS parent_folder_id
       FROM journal j
       JOIN files f ON f.id=j.file_id AND f.current_version_id=j.version_id
       JOIN file_versions v ON v.id=j.version_id
@@ -338,6 +343,8 @@ export class PgCloudSyncRepository implements PullRepository {
       chunkIds: row.deleted ? [] : (row.chunk_ids ?? []),
       size: row.deleted ? 0 : Number(row.size),
       mtime: mtime.toISOString(),
+      namespace: { name: String(row.item_name), parentFolderId: row.parent_folder_id ?? null,
+        operation: row.deleted ? 'delete' : row.op === 'rename' ? 'metadata' : row.parent_version_id ? 'content' : 'create' },
     };
   }
 

@@ -22,6 +22,7 @@ import {
 } from './envelope.js';
 import type { PgCloudSyncRepository, SyncRow, UploadSession } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
+import { serializeNamespaceEvent } from './namespaceSerializer.js';
 
 const MAX_MANIFEST_ENVELOPE_BYTES = 192 * 1024;
 const MAX_DECLARED_CHUNKS = 4096;
@@ -129,17 +130,17 @@ export class CloudPusher {
     if (total !== item.size) throw new Error('Local version size does not match its chunks');
     if (declared.size > MAX_DECLARED_CHUNKS) throw new Error('File has too many chunks for one upload');
 
-    const manifestPlain:ManifestPlain = {
-      v: 1,
-      path: item.path,
-      mime: item.mime,
-      size: total,
-      mtime: item.mtime,
-      sha256: whole.digest('hex'),
-      chunks,
-      deleted: item.deleted,
-      parentVersionId: item.parentVersionId,
-    };
+    const digest = whole.digest('hex');
+    const manifestPlain:ManifestPlain | ReturnType<typeof serializeNamespaceEvent> = item.namespace
+      ? serializeNamespaceEvent({
+          itemId: item.fileId, kind: 'file', name: item.namespace.name, parentFolderId: item.namespace.parentFolderId,
+          mime: item.mime, size: total, mtime: Math.trunc(new Date(item.mtime).getTime()), sha256: digest,
+          chunks, deleted: item.deleted, parentVersionId: item.parentVersionId, operation: item.namespace.operation,
+        })
+      : {
+          v: 1, path: item.path, mime: item.mime, size: total, mtime: item.mtime, sha256: digest,
+          chunks, deleted: item.deleted, parentVersionId: item.parentVersionId,
+        };
     const manifest = await sealManifest(root, collectionId, sync.keyVersion, item.fileId, item.versionId, manifestPlain);
     if (Buffer.byteLength(JSON.stringify(manifest)) > MAX_MANIFEST_ENVELOPE_BYTES) throw new Error('File manifest exceeds the 192 KiB limit');
 
