@@ -22,7 +22,7 @@ import { isProviderError, providerError, redactSecrets } from './providers/types
 import { buildToolIndex, formatToolResult, resolveToolCall, validateParams, wireToolName } from './toolCalls.js';
 import { addUsage, emptyUsage, needsApproval } from './types.js';
 
-import type { AbortSignalLike, AgentHost, HttpRequest } from './host.js';
+import type { AbortSignalLike, AgentHost, HttpRequest, TurnCheckpoint } from './host.js';
 import type { ProviderAdapter } from './providers/types.js';
 import type { ResolvedCall } from './toolCalls.js';
 import type { ChatMessage, ContentBlock, NormalizedResponse, StreamEvent, ToolCall, ToolSpec, TurnStatus, Usage } from './types.js';
@@ -57,6 +57,8 @@ export interface RunTurnOptions {
    * has `stream`. Default true.
    */
   stream?:      boolean;
+  /** Resume an exact checkpoint previously produced by this core. */
+  resume?:      TurnCheckpoint;
 }
 
 export interface RunTurnResult {
@@ -165,20 +167,40 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     ? (request: HttpRequest, onChunk: (text: string) => void, s?: AbortSignalLike) => broker.stream!(options.providerId, request, onChunk, s)
     : undefined;
 
-  const messages = clone(options.messages);
+  if (options.resume && options.resume.runId !== options.runId) {
+    throw new Error('Resume checkpoint runId does not match this turn');
+  }
+  if (options.resume && options.resume.phase !== 'model' && options.resume.phase !== 'tools') {
+    throw new Error('Resume checkpoint has no valid durable phase');
+  }
+  if (options.resume?.phase === 'tools' && !options.resume.pendingToolCalls?.length) {
+    throw new Error('Tool-phase resume checkpoint has no pending tool calls');
+  }
+  const messages = clone(options.resume?.messages ?? options.messages);
   const startLength = messages.length;
   const seenIds = knownToolIds(messages);
-  let usage = emptyUsage();
-  let iterations = 0;
+  let usage = clone(options.resume?.usage ?? emptyUsage());
+  let iterations = options.resume?.iteration ?? 0;
+  let pendingToolCalls = clone(options.resume?.pendingToolCalls ?? []);
+  let nextToolIndex = options.resume?.nextToolIndex ?? 0;
+  let pendingFinishReason = options.resume?.finishReason;
+  let inFlightToolCallId = options.resume?.inFlightToolCallId;
   let finalText = '';
   let checkpointError: string | undefined;
 
   /** False once a save has failed; the turn then stops at the next safe point. */
-  const checkpoint = async(): Promise<boolean> => {
+  const checkpoint = async(phase: 'model' | 'tools'): Promise<boolean> => {
     if (checkpointError !== undefined) return false;
     if (!host.checkpoint) return true;
     try {
-      await host.checkpoint.save({ runId: options.runId, iteration: iterations, messages: clone(messages), usage });
+      const state: TurnCheckpoint = { runId: options.runId, iteration: iterations, messages: clone(messages), usage: clone(usage), phase };
+      if (phase === 'tools') {
+        state.pendingToolCalls = clone(pendingToolCalls);
+        state.nextToolIndex = nextToolIndex;
+        state.finishReason = pendingFinishReason;
+        if (inFlightToolCallId) state.inFlightToolCallId = inFlightToolCallId;
+      }
+      await host.checkpoint.save(state);
       return true;
     } catch (err) {
       checkpointError = errorText(err);
@@ -203,6 +225,48 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
   for (;;) {
     if (signal?.aborted) return finish('aborted');
+    if (pendingToolCalls.length) {
+      const cutOff = pendingFinishReason === 'length' || pendingFinishReason === 'content_filter';
+      let stopReason: TurnStatus | null = checkpointError !== undefined ? 'checkpoint_failed' : null;
+      for (let i = nextToolIndex; i < pendingToolCalls.length; i++) {
+        const call = pendingToolCalls[i];
+        nextToolIndex = i;
+        emit({ type: 'tool_call', call });
+        if (signal?.aborted) stopReason = 'aborted';
+        if (!stopReason && maxTotalTokens !== undefined && tokensUsed() >= maxTotalTokens) stopReason = 'token_budget';
+        let outcome: { content: string; success: boolean; stopped?: TurnStatus };
+        if (stopReason) {
+          outcome = { content: `Not run: the turn stopped (${ stopReason }).`, success: false };
+        } else if (cutOff) {
+          outcome = { content: pendingFinishReason === 'length'
+            ? 'Not run: output was cut off at the output token limit, so this call may be incomplete. Send it again with shorter arguments.'
+            : 'Not run: output was cut off by the provider (content_filter).', success: false };
+        } else {
+          const resolved = resolveToolCall(call, index);
+          const resumingInFlight = inFlightToolCallId === call.id;
+          outcome = await runOneTool(call, resolved, options, {
+            resumingInFlight,
+            beforeInvoke: async() => {
+              inFlightToolCallId = call.id;
+              return checkpoint('tools');
+            },
+          });
+        }
+        if (outcome.stopped) stopReason = outcome.stopped;
+        messages.push(toolMessage(call, outcome.content, !outcome.success));
+        emit({ type: 'tool_result', id: call.id, name: call.name, success: outcome.success });
+        nextToolIndex = i + 1;
+        inFlightToolCallId = undefined;
+        if (!(await checkpoint('tools')) && !stopReason) stopReason = 'checkpoint_failed';
+      }
+      pendingToolCalls = [];
+      nextToolIndex = 0;
+      pendingFinishReason = undefined;
+      inFlightToolCallId = undefined;
+      if (!(await checkpoint('model')) && !stopReason) stopReason = 'checkpoint_failed';
+      if (stopReason) return finish(stopReason);
+      continue;
+    }
     if (iterations >= maxIterations) return finish('max_iterations');
     if (maxTotalTokens !== undefined && tokensUsed() >= maxTotalTokens) return finish('token_budget');
 
@@ -245,42 +309,27 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     });
     messages.push({ role: 'assistant', content: blocks.length ? blocks : response.content });
     if (response.content) finalText = response.content;
-    let stopReason: TurnStatus | null = (await checkpoint()) ? null : 'checkpoint_failed';
-
-    if (!response.toolCalls.length) return finish(stopReason ?? 'completed');
-
-    // A reply cut off at the output limit may hold a half-written call.
-    const cutOff = response.finishReason === 'length' || response.finishReason === 'content_filter';
-    for (let i = 0; i < response.toolCalls.length; i++) {
-      const call = response.toolCalls[i];
-      emit({ type: 'tool_call', call });
-      if (!stopReason && signal?.aborted) stopReason = 'aborted';
-      if (!stopReason && maxTotalTokens !== undefined && tokensUsed() >= maxTotalTokens) stopReason = 'token_budget';
-      let outcome: { content: string; success: boolean; stopped?: TurnStatus };
-      if (stopReason) {
-        outcome = { content: `Not run: the turn stopped (${ stopReason }).`, success: false };
-      } else if (cutOff) {
-        outcome = {
-          content: response.finishReason === 'length'
-            ? 'Not run: output was cut off at the output token limit, so this call may be incomplete. Send it again with shorter arguments.'
-            : 'Not run: output was cut off by the provider (content_filter).',
-          success: false,
-        };
-      } else {
-        outcome = await runOneTool(call, resolved[i], options);
-      }
-      if (outcome.stopped) stopReason = outcome.stopped;
-      messages.push(toolMessage(call, outcome.content, !outcome.success));
-      emit({ type: 'tool_result', id: call.id, name: call.name, success: outcome.success });
-      if (!(await checkpoint()) && !stopReason) stopReason = 'checkpoint_failed';
+    if (!response.toolCalls.length) {
+      if (!(await checkpoint('model'))) return finish('checkpoint_failed');
+      return finish('completed');
     }
-    if (stopReason) return finish(stopReason);
+    pendingToolCalls = clone(response.toolCalls);
+    nextToolIndex = 0;
+    pendingFinishReason = response.finishReason;
+    inFlightToolCallId = undefined;
+    await checkpoint('tools');
+
   }
 }
 
 const NOT_RUN_ABORTED = { content: 'Not run: the turn stopped (aborted).', success: false, stopped: 'aborted' as TurnStatus };
 
-async function runOneTool(call: ToolCall, resolved: ResolvedCall, options: RunTurnOptions): Promise<{ content: string; success: boolean; stopped?: TurnStatus }> {
+async function runOneTool(
+  call: ToolCall,
+  resolved: ResolvedCall,
+  options: RunTurnOptions,
+  resume: { resumingInFlight: boolean; beforeInvoke: () => Promise<boolean> },
+): Promise<{ content: string; success: boolean; stopped?: TurnStatus }> {
   if (resolved.kind === 'error') return { content: `Error: ${ resolved.message }`, success: false };
 
   const validation = validateParams(resolved.spec.inputSchema, resolved.args);
@@ -290,7 +339,7 @@ async function runOneTool(call: ToolCall, resolved: ResolvedCall, options: RunTu
   const ctx = { runId: options.runId, signal: options.signal };
   const toolHost = options.host.toolHost;
   // Fails closed: a missing or unknown sideEffect needs a tap too.
-  if (needsApproval(resolved.spec)) {
+  if (!resume.resumingInFlight && needsApproval(resolved.spec)) {
     if (!toolHost.approve) {
       return { content: `Error: "${ resolved.spec.name }" needs the user's approval and this device can't ask for it.`, success: false };
     }
@@ -307,7 +356,16 @@ async function runOneTool(call: ToolCall, resolved: ResolvedCall, options: RunTu
   }
 
   try {
-    const result = await toolHost.invoke(request, ctx);
+    let result;
+    if (resume.resumingInFlight) {
+      if (!toolHost.resumeInvocation) {
+        return { content: 'Error: cannot safely resume a tool that may already have run.', success: false, stopped: 'checkpoint_failed' };
+      }
+      result = await toolHost.resumeInvocation(request, ctx);
+    } else {
+      if (!(await resume.beforeInvoke())) return { content: 'Not run: progress could not be saved before the tool call.', success: false, stopped: 'checkpoint_failed' };
+      result = await toolHost.invoke(request, ctx);
+    }
     if (result.success) return { content: formatToolResult(result.result ?? null), success: true };
     const err = result.error ?? { code: 'tool_error', message: 'Tool failed' };
     return { content: formatToolResult(redactSecrets(`Error (${ String(err.code) }): ${ String(err.message) }`)), success: false };

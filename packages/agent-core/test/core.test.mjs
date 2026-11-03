@@ -229,7 +229,7 @@ test('a throwing event listener does not break the turn', async() => {
 test('a failing checkpoint stops the turn cleanly after the tool that ran', async() => {
   const { host, invoked } = scriptedHost([twoCalls, done]);
   let saves = 0;
-  host.checkpoint = { async save() { if (++saves === 2) throw new Error('disk full, token sk-live-abcdef123456') } };
+  host.checkpoint = { async save() { if (++saves === 3) throw new Error('disk full, token sk-live-abcdef123456') } };
   const r = await runTurn({ ...base, host });
   assert.equal(r.status, 'checkpoint_failed');
   assert.deepEqual(invoked, ['web/web_search']);
@@ -246,6 +246,65 @@ test('a checkpoint failure before any tool runs none of them', async() => {
   assert.equal(r.status, 'checkpoint_failed');
   assert.deepEqual(invoked, []);
   assert.equal(r.messages.filter(m => m.role === 'tool').length, 2);
+});
+
+
+test('resume completes an in-flight tool exactly once through the host recovery hook', async() => {
+  const { host, invoked } = scriptedHost([twoCalls, done]);
+  let durable;
+  let saves = 0;
+  host.checkpoint = {
+    async save(state) {
+      saves++;
+      if (saves === 3) throw new Error('crash after side effect');
+      durable = structuredClone(state);
+    },
+  };
+  const first = await runTurn({ ...base, host });
+  assert.equal(first.status, 'checkpoint_failed');
+  assert.deepEqual(invoked, ['web/web_search']);
+  assert.equal(durable.phase, 'tools');
+  assert.equal(durable.inFlightToolCallId, 'a');
+
+  let recovered = 0;
+  let fetched = 0;
+  const resumedHost = {
+    ...host,
+    keyBroker: { async fetch() { fetched++; return { ok: true, status: 200, text: async() => JSON.stringify(done) }; } },
+    checkpoint: { async save(state) { durable = structuredClone(state); } },
+    toolHost: {
+      ...host.toolHost,
+      async resumeInvocation(call) {
+        recovered++;
+        assert.equal(call.id, 'a');
+        return { success: true, result: 'ok' };
+      },
+    },
+  };
+  const resumed = await runTurn({ ...base, host: resumedHost, resume: durable });
+  assert.equal(resumed.status, 'completed');
+  assert.equal(recovered, 1);
+  assert.deepEqual(invoked, ['web/web_search', 'web/web_search']); // b only; a was recovered
+  assert.equal(fetched, 1);
+  assert.equal(durable.phase, 'model');
+});
+
+test('resume fails closed when an in-flight tool cannot be recovered', async() => {
+  const checkpoint = {
+    runId: 'r', iteration: 1, usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0 },
+    phase: 'tools', pendingToolCalls: [{ id: 'a', name: 'web__web_search', args: { query: 'a' } }],
+    nextToolIndex: 0, finishReason: 'tool_calls', inFlightToolCallId: 'a',
+    messages: [{ role: 'user', content: 'go' }, { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'web__web_search', input: { query: 'a' } }] }],
+  };
+  const { host, invoked } = scriptedHost([done]);
+  let fetched = 0;
+  host.keyBroker.fetch = async() => { fetched++; throw new Error('must not call model'); };
+  host.checkpoint = { async save() {} };
+  const result = await runTurn({ ...base, host, resume: checkpoint });
+  assert.equal(result.status, 'checkpoint_failed');
+  assert.deepEqual(invoked, []);
+  assert.equal(fetched, 0);
+  assert.match(result.messages.at(-1).content, /cannot safely resume/);
 });
 
 test('abort stops waiting on a pending approval', async() => {
