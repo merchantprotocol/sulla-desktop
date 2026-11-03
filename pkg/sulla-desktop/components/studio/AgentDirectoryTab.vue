@@ -6,117 +6,33 @@
 -->
 <template>
   <div class="ad-root">
-    <div class="ad-bar">
-      <button v-for="f in chips" :key="f.key" class="ad-chip" :class="{ on: filter === f.key }" :aria-pressed="filter === f.key" @click="filter = f.key">{{ f.label }} <em>{{ f.count }}</em></button>
-      <span class="ad-sum">
-        {{ frontDoorCount }} front door ·
-        <button v-if="missingCount" class="ad-missing" :aria-pressed="missingOnly" @click="missingOnly = !missingOnly">{{ missingOnly ? 'Showing' : '' }} {{ missingCount }} without a routing card</button>
-        <template v-else>every agent has a routing card</template>
-      </span>
-    </div>
-
-    <div class="ad-grid" aria-live="polite">
-      <template v-if="loading">
-        <div v-for="n in 6" :key="n" class="ad-skel"><i /><i /><i /><i /></div>
-      </template>
-      <div v-else-if="filteredList.length === 0" class="ad-empty">
-        <b>No agents match “{{ search || currentFilterLabel }}”.</b>
-        <span>Try a slug like <code>codex-luna-worker</code> or a job like “mockup”.</span>
-        <button class="btn sm" @click="clearAll">Clear search and filters</button>
+    <template v-if="!selectedAgent">
+      <div class="ad-bar">
+        <button v-for="f in chips" :key="f.key" class="ad-chip" :class="{ on: filter === f.key }" :aria-pressed="filter === f.key" @click="filter = f.key">{{ f.label }} <em>{{ f.count }}</em></button>
+        <span class="ad-sum">{{ frontDoorCount }} front door · <button v-if="missingCount" class="ad-missing" :aria-pressed="missingOnly" @click="missingOnly = !missingOnly">{{ missingOnly ? 'Showing' : '' }} {{ missingCount }} without a routing card</button><template v-else>every agent has a routing card</template></span>
       </div>
-      <template v-else>
-        <template v-for="group in groups" :key="group.title ?? 'flat'">
+      <div class="ad-grid" aria-live="polite">
+        <template v-if="loading"><div v-for="n in 6" :key="n" class="ad-skel"><i /><i /><i /><i /></div></template>
+        <div v-else-if="filteredList.length === 0" class="ad-empty"><b>No agents match “{{ search || currentFilterLabel }}”.</b><span>Try a slug like <code>codex-luna-worker</code> or a job like “mockup”.</span><button class="btn sm" @click="clearAll">Clear search and filters</button></div>
+        <template v-else><template v-for="group in groups" :key="group.title ?? 'flat'">
           <div v-if="group.title" class="ad-group">{{ group.title }} <span>{{ group.agents.length }} · {{ group.hint }}</span></div>
-          <button
-            v-for="agent in group.agents"
-            :key="agent.slug"
-            class="ad-card"
-            :class="{ 'ad-off': !agent.enabled, 'ad-sel': selected === agent.slug }"
-            :aria-label="`Open ${ agent.name }`"
-            @click="openPanel(agent.slug)"
-          >
-            <div class="ad-ch">
-              <span class="ad-ico" :class="{ 'ad-mgr': isManager(agent) }"><UseCaseIcon :name="isManager(agent) ? 'manager' : 'agent'" /></span>
-              <span class="ad-tt"><span class="ad-name">{{ agent.name }}</span><span class="ad-slug">{{ agent.slug }}</span></span>
-              <span class="ad-badges">
-                <span v-if="agent.frontDoor" class="ad-tag ad-door" title="Can be the first agent the human talks to">Front door</span>
-                <span v-if="agent.isBuiltin" class="ad-tag">Built-in</span>
-                <span v-else class="ad-tag ad-custom">Custom</span>
-                <span v-if="!agent.enabled" class="ad-tag ad-dis">Disabled</span>
-              </span>
-            </div>
-            <p class="ad-desc">{{ agent.description }}</p>
-            <div v-if="hasRoutingCard(agent)" class="ad-when"><small>When to call</small><p>{{ agent.whenToCall }}</p></div>
-            <div v-else class="ad-warn"><UseCaseIcon name="warn" /><span>No routing card yet: managers only see the description.</span></div>
-            <div class="ad-foot">
-              <span :title="`Cost tier: ${ costLabel(agent.costTier) }`"><span class="ad-cost" :data-t="agent.costTier || ''"><i /><i /><i /></span>{{ costLabel(agent.costTier) }}</span>
-              <span class="ad-model" :title="modelLabel(agent)">{{ modelLabel(agent) }}</span>
-              <span class="ad-calls"><i class="ad-dot" :class="{ 'ad-dot-off': !agent.enabled }" />{{ agent.enabled ? 'Enabled' : 'Disabled' }}</span>
-            </div>
+          <button v-for="agent in group.agents" :key="agent.slug" class="ad-card" :class="{ 'ad-off': !agent.enabled }" :aria-label="`Open ${ agent.name }`" @click="openDetail(agent.slug)">
+            <div class="ad-ch"><span class="ad-ico" :class="{ 'ad-mgr': isManager(agent) }"><UseCaseIcon :name="isManager(agent) ? 'manager' : 'agent'" /></span><span class="ad-tt"><span class="ad-name">{{ agent.name }}</span><span class="ad-slug">{{ agent.slug }}</span></span><span class="ad-badges"><span v-if="agent.frontDoor" class="ad-tag ad-door" title="Can be the first agent the human talks to">Front door</span><span v-if="agent.isBuiltin" class="ad-tag">Built-in</span><span v-else class="ad-tag ad-custom">Custom</span><span v-if="!agent.enabled" class="ad-tag ad-dis">Disabled</span></span></div>
+            <p class="ad-desc">{{ agent.description }}</p><div v-if="hasRoutingCard(agent)" class="ad-when"><small>When to call</small><p>{{ agent.whenToCall }}</p></div><div v-else class="ad-warn"><UseCaseIcon name="warn" /><span>No routing card yet: managers only see the description.</span></div>
+            <div class="ad-foot"><span :title="`Cost tier: ${ costLabel(agent.costTier) }`"><span class="ad-cost" :data-t="agent.costTier || ''"><i /><i /><i /></span>{{ costLabel(agent.costTier) }}</span><span class="ad-model" :title="modelLabel(agent)">{{ modelLabel(agent) }}</span><span class="ad-calls"><i class="ad-dot" :class="{ 'ad-dot-off': !agent.enabled }" />{{ agent.enabled ? 'Enabled' : 'Disabled' }}</span></div>
           </button>
-        </template>
-      </template>
-    </div>
-
-    <div class="ad-scrim" :class="{ 'ad-open': selectedAgent }" @click="closePanel" />
-    <aside class="ad-panel" :class="{ 'ad-open': selectedAgent }" role="dialog" aria-modal="true" :aria-hidden="!selectedAgent" tabindex="-1">
-      <template v-if="selectedAgent">
-        <div class="ad-ph">
-          <span class="ad-ico ad-lg" :class="{ 'ad-mgr': isManager(selectedAgent) }"><UseCaseIcon :name="isManager(selectedAgent) ? 'manager' : 'agent'" /></span>
-          <div class="ad-tt">
-            <h2>{{ selectedAgent.name }}</h2><span class="ad-slug">{{ selectedAgent.slug }}</span>
-            <div class="ad-pbadges">
-              <span v-if="selectedAgent.frontDoor" class="ad-tag ad-door">Front door</span>
-              <span v-if="selectedAgent.isBuiltin" class="ad-tag">Built-in</span>
-              <span v-else class="ad-tag ad-custom">Custom</span>
-              <span v-if="!selectedAgent.enabled" class="ad-tag ad-dis">Disabled</span>
-              <span class="ad-tag">{{ isManager(selectedAgent) ? 'Manager' : 'Worker' }}</span>
-            </div>
-            <p>{{ selectedAgent.description }}</p>
-          </div>
-          <button class="ad-x" aria-label="Close" @click="closePanel"><UseCaseIcon name="close" /></button>
-        </div>
-        <div class="ad-pb">
-          <div v-if="!hasRoutingCard(selectedAgent)" class="ad-warn" style="margin-top: 14px">
-            <UseCaseIcon name="warn" />
-            <span>No routing card yet: managers only see the description. Fill in <b>When to call</b>, <b>When NOT to call</b>, <b>What to send</b> and <b>What it returns</b> so they route work here correctly.</span>
-          </div>
-          <div class="ad-sec"><h3>When to call</h3><p v-if="selectedAgent.whenToCall">{{ selectedAgent.whenToCall }}</p><p v-else class="ad-none">Not written yet.</p></div>
-          <div class="ad-sec"><h3>When NOT to call</h3><p v-if="selectedAgent.whenNotToCall">{{ selectedAgent.whenNotToCall }}</p><p v-else class="ad-none">Not written yet.</p></div>
-          <div class="ad-sec"><h3>What to send it</h3><p v-if="selectedAgent.send">{{ selectedAgent.send }}</p><p v-else class="ad-none">Not written yet.</p></div>
-          <div class="ad-sec"><h3>What it returns</h3><p v-if="selectedAgent.returns">{{ selectedAgent.returns }}</p><p v-else class="ad-none">Not written yet.</p></div>
-          <div class="ad-sec">
-            <h3>Details</h3>
-            <dl class="ad-kv">
-              <dt>Cost tier</dt>
-              <dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd>
-              <dt>Model</dt>
-              <dd class="ad-mono">{{ modelLabel(selectedAgent) }}<span v-if="!selectedAgent.model" class="ad-slotnote"> · set in Preferences</span></dd>
-              <dt>Can call</dt>
-              <dd>
-                <span v-if="selectedAgent.canCall.includes('*')">Everyone</span>
-                <span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">No one</span>
-                <span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openPanel(s)">{{ s }}</button></span>
-              </dd>
-              <dt>Called by</dt>
-              <dd>
-                <span v-if="!calledBySelected.length" class="ad-dimtext">No one</span>
-                <span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openPanel(a.slug)">{{ a.slug }}</button></span>
-              </dd>
-              <dt>Status</dt>
-              <dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" style="margin-right: 6px" />{{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd>
-              <dt>Source</dt>
-              <dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd>
-            </dl>
-          </div>
-        </div>
-        <div class="ad-pf">
-          <small>{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : (updatedLabel ? `Updated ${ updatedLabel }` : '') }}</small>
-          <button class="btn" @click="closePanel">Close</button>
-          <button class="btn pri" @click="editSelected">Edit</button>
-        </div>
-      </template>
-    </aside>
+        </template></template>
+      </div>
+    </template>
+    <article v-else class="ad-detail">
+      <button class="ad-back" @click="closeDetail"><UseCaseIcon name="back" /> Back to Agents</button>
+      <header class="ad-dhead"><span class="ad-ico ad-lg" :class="{ 'ad-mgr': isManager(selectedAgent) }"><UseCaseIcon :name="isManager(selectedAgent) ? 'manager' : 'agent'" /></span><div class="ad-tt"><h1>{{ selectedAgent.name }}</h1><span class="ad-slug">{{ selectedAgent.slug }}</span><div class="ad-pbadges"><span v-if="selectedAgent.isBuiltin" class="ad-tag">Built-in</span><span v-else class="ad-tag ad-custom">Custom</span><span class="ad-tag">{{ isManager(selectedAgent) ? 'Manager' : 'Worker' }}</span><span v-if="selectedAgent.frontDoor" class="ad-tag ad-door">Front door</span><span v-if="!selectedAgent.enabled" class="ad-tag ad-dis">Disabled</span><span class="ad-tag ad-state"><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" />{{ selectedAgent.enabled ? 'Enabled' : 'Disabled' }}</span></div><p>{{ selectedAgent.description }}</p></div><button class="btn pri" @click="editSelected">Edit</button></header>
+      <div v-if="!hasRoutingCard(selectedAgent)" class="ad-warn ad-detail-warn"><UseCaseIcon name="warn" /><span>No routing card yet: managers only see the description. Fill in <b>When to call</b>, <b>When NOT to call</b>, <b>What to send</b> and <b>What it returns</b> so they route work here correctly.</span></div>
+      <div class="ad-detail-grid">
+        <section class="ad-main-sections"><div class="ad-sec"><h2>When to call</h2><p v-if="selectedAgent.whenToCall">{{ selectedAgent.whenToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>When NOT to call</h2><p v-if="selectedAgent.whenNotToCall">{{ selectedAgent.whenNotToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What to send it</h2><p v-if="selectedAgent.send">{{ selectedAgent.send }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What it returns</h2><p v-if="selectedAgent.returns">{{ selectedAgent.returns }}</p><p v-else class="ad-none">Not written yet.</p></div></section>
+        <aside class="ad-details-card"><h2>Details</h2><dl class="ad-kv"><dt>Cost tier</dt><dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd><dt>Model</dt><dd class="ad-mono">{{ modelLabel(selectedAgent) }}<span v-if="!selectedAgent.model" class="ad-slotnote"> · set in Preferences</span></dd><dt>Status</dt><dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" /> {{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd><dt>Source</dt><dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd><dt>Updated</dt><dd>{{ updatedLabel || 'Not available' }}</dd></dl><div class="ad-rel"><h3>Can call</h3><span v-if="selectedAgent.canCall.includes('*')">Everyone</span><span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openDetail(s)">{{ s }}</button></span></div><div class="ad-rel"><h3>Called by</h3><span v-if="!calledBySelected.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openDetail(a.slug)">{{ a.slug }}</button></span></div><small class="ad-note">{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : '' }}</small></aside>
+      </div>
+    </article>
   </div>
 </template>
 
@@ -131,11 +47,12 @@ import {
 } from './agentDirectory';
 
 const props = defineProps<{ agents: AgentDefinitionResponse[]; loading: boolean; search: string }>();
-const emit = defineEmits<{ (e: 'edit', agent: AgentDefinitionResponse): void; (e: 'update:search', value: string): void }>();
+const emit = defineEmits<{ (e: 'edit', agent: AgentDefinitionResponse): void; (e: 'detail-change', agent: AgentDefinitionResponse | null): void; (e: 'update:search', value: string): void }>();
 
 const filter = ref<DirectoryFilterKey>('all');
 const missingOnly = ref(false);
 const selected = ref<string | null>(null);
+let directoryScrollTop = 0;
 
 const agentBySlug = computed(() => new Map(props.agents.map(a => [a.slug, a])));
 const chips = computed(() => DIRECTORY_FILTERS.map(f => ({ key: f.key, label: f.label, count: props.agents.filter(f.test).length })));
@@ -148,12 +65,23 @@ const selectedAgent = computed(() => (selected.value ? agentBySlug.value.get(sel
 const calledBySelected = computed(() => (selectedAgent.value ? calledBy(props.agents, selectedAgent.value.slug) : []));
 const updatedLabel = computed(() => formatUpdated(selectedAgent.value?.updatedAt));
 
-function openPanel(slug: string) { selected.value = slug; }
-function closePanel() { selected.value = null; }
+function scrollHost() { return document.querySelector<HTMLElement>('.studio-content'); }
+function openDetail(slug: string) {
+  if (!selected.value) directoryScrollTop = scrollHost()?.scrollTop ?? 0;
+  selected.value = slug;
+  emit('detail-change', selectedAgent.value);
+  scrollHost()?.scrollTo({ top: 0 });
+}
+function closeDetail() {
+  selected.value = null;
+  emit('detail-change', null);
+  requestAnimationFrame(() => scrollHost()?.scrollTo({ top: directoryScrollTop }));
+}
+defineExpose({ closeDetail });
 function clearAll() { filter.value = 'all'; missingOnly.value = false; emit('update:search', ''); }
 function editSelected() { if (selectedAgent.value) emit('edit', selectedAgent.value); }
 
-function onKeydown(e: KeyboardEvent) { if (e.key === 'Escape' && selected.value) closePanel(); }
+function onKeydown(e: KeyboardEvent) { if (e.key === 'Escape' && selected.value) closeDetail(); }
 onMounted(() => document.addEventListener('keydown', onKeydown));
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 </script>
@@ -225,47 +153,53 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-empty b { display: block; margin-bottom: 4px; color: var(--uc-text); font-size: 15px; font-weight: 600; }
 .ad-empty .btn { margin-top: 12px; }
 
-.ad-scrim { position: fixed; inset: 0; z-index: 40; background: rgb(26 35 50 / 18%); opacity: 0; pointer-events: none; transition: opacity 240ms ease; }
-.ad-scrim.ad-open { opacity: 1; pointer-events: auto; }
-.ad-panel { position: fixed; z-index: 50; top: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; width: min(520px, calc(100vw - 20px)); border: 1px solid var(--uc-line); border-radius: 16px; background: var(--uc-card); box-shadow: 0 20px 48px rgb(26 35 50 / 12%), 0 3px 10px rgb(26 35 50 / 5%); transform: translateX(calc(100% + 24px)); transition: transform 360ms cubic-bezier(.7, 0, .84, 0); }
-.ad-panel.ad-open { transform: none; transition: transform 480ms cubic-bezier(.16, 1, .3, 1); }
-.ad-ph { display: flex; align-items: flex-start; gap: 12px; padding: 18px 18px 14px; border-bottom: 1px solid var(--uc-line); }
-.ad-ph h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
-.ad-ph .ad-tt p { margin: 6px 0 0; color: var(--uc-muted); font-size: 12.5px; }
-.ad-x { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--uc-dim); font-size: 16px; cursor: pointer; }
-.ad-x:hover { background: var(--uc-paper); color: var(--uc-text); }
-.ad-pb { flex: 1; overflow: auto; padding: 4px 18px 18px; }
+.ad-detail { max-width: 1180px; margin: 0 auto; }
+.ad-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 14px; padding: 0; border: 0; background: transparent; color: var(--uc-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ad-back:hover { color: var(--uc-accent); }
+.ad-dhead { display: flex; align-items: flex-start; gap: 16px; padding: 22px; border: 1px solid var(--uc-line); border-radius: 14px; background: var(--uc-card); box-shadow: var(--uc-shadow); }
+.ad-dhead h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
+.ad-dhead .ad-tt > p { max-width: 780px; margin: 12px 0 0; color: var(--uc-muted); font-size: 13.5px; line-height: 1.55; }
+.ad-dhead > .btn { margin-left: auto; }
 .ad-pbadges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
-.ad-sec { padding: 14px 0; border-bottom: 1px solid var(--uc-line); }
+.ad-state { gap: 6px; }
+.ad-state .ad-dot { width: 6px; height: 6px; }
+.ad-detail-warn { margin-top: 14px; padding: 12px 14px; }
+.ad-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: start; gap: 16px; margin-top: 16px; }
+.ad-main-sections, .ad-details-card { border: 1px solid var(--uc-line); border-radius: 14px; background: var(--uc-card); box-shadow: var(--uc-shadow); }
+.ad-main-sections { padding: 4px 22px; }
+.ad-sec { padding: 18px 0; border-bottom: 1px solid var(--uc-line); }
 .ad-sec:last-child { border-bottom: 0; }
-.ad-sec h3 { margin: 0 0 5px; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.ad-sec p { margin: 0; color: var(--uc-text); font-size: 13px; line-height: 1.55; }
+.ad-sec h2, .ad-details-card > h2 { margin: 0 0 7px; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.ad-sec p { margin: 0; color: var(--uc-text); font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
 .ad-sec p.ad-none { color: var(--uc-dim); font-style: italic; }
-.ad-kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; margin: 0; font-size: 12.5px; }
+.ad-details-card { padding: 20px; }
+.ad-kv { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 12.5px; }
 .ad-kv dt { color: var(--uc-dim); }
-.ad-kv dd { margin: 0; color: var(--uc-text); min-width: 0; overflow-wrap: anywhere; }
+.ad-kv dd { min-width: 0; margin: 0; color: var(--uc-text); overflow-wrap: anywhere; }
 .ad-kv .ad-mono { font: 11.5px var(--font-mono, ui-monospace, Menlo, monospace); }
 .ad-cost-row { display: flex; align-items: center; gap: 6px; }
 .ad-slotnote { font-family: var(--font-body, system-ui, sans-serif); color: var(--uc-dim); }
 .ad-dimtext { color: var(--uc-dim); }
+.ad-rel { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--uc-line); font-size: 12.5px; }
+.ad-rel h3 { margin: 0 0 8px; color: var(--uc-dim); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .ad-links { display: flex; flex-wrap: wrap; gap: 5px; }
-.ad-link { padding: 2px 8px; border: 1px solid var(--uc-line); border-radius: 9px; background: var(--uc-paper); color: var(--uc-text); font: 11px var(--font-mono, ui-monospace, Menlo, monospace); cursor: pointer; transition: border-color 160ms ease, background 160ms ease; }
+.ad-link { padding: 3px 8px; border: 1px solid var(--uc-line); border-radius: 9px; background: var(--uc-paper); color: var(--uc-text); font: 11px var(--font-mono, ui-monospace, Menlo, monospace); cursor: pointer; transition: border-color 160ms ease, background 160ms ease; }
 .ad-link:hover { border-color: var(--uc-accent-line); background: var(--uc-accent-soft); color: var(--uc-accent); }
 .ad-link[disabled] { cursor: default; color: var(--uc-dim); }
-.ad-link[disabled]:hover { border-color: var(--uc-line); background: var(--uc-paper); color: var(--uc-dim); }
-.ad-pf { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--uc-line); }
-.ad-pf small { color: var(--uc-dim); font-size: 11.5px; margin-right: auto; }
+.ad-note { display: block; margin-top: 18px; color: var(--uc-dim); font-size: 11.5px; }
+
 
 @media (max-width: 760px) {
   .ad-grid { grid-template-columns: minmax(0, 1fr); }
   .ad-bar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
   .ad-bar .ad-sum { display: none; }
-  .ad-panel { top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-height: 88vh; border-radius: 16px 16px 0 0; transform: translateY(100%); }
-  .ad-panel.ad-open { transform: none; }
+  .ad-detail-grid { grid-template-columns: 1fr; }
+  .ad-dhead { padding: 18px; }
+  .ad-dhead .ad-lg { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ad-card, .ad-panel, .ad-scrim, .ad-skel i { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+  .ad-card, .ad-skel i { transition-duration: 1ms !important; animation-duration: 1ms !important; }
   .ad-card:hover { transform: none; }
 }
 </style>
