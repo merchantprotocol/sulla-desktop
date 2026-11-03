@@ -865,7 +865,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
   box-shadow: 0 0 8px color-mix(in srgb, var(--status-success) 72%, transparent);
 }
 
-.vault-noir-state.text-[var(--text-muted)] .vault-noir-dot {
+.vault-noir-state.text-\[var\(--text-muted\)\] .vault-noir-dot {
   background: var(--bg-surface-hover);
   box-shadow: none;
 }
