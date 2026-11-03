@@ -95,6 +95,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator));
   overflow: hidden;
 }
 .sd-panel-tab {
+  font: inherit;
   height: 32px;
   max-width: 125px;
   padding: 0 10px;

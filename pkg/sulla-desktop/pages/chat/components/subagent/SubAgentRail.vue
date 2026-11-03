@@ -214,6 +214,7 @@ onBeforeUnmount(() => {
 </script>
 <style scoped>
 .sd-agent-rail {
+  line-height: 1.4;
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 8;
@@ -273,6 +274,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb,var(--text-primary) 5%,transparent);
 }
 .sd-agent-filters button {
+  font: inherit;
   position: relative;
   z-index: 1;
   height: 28px;
@@ -313,6 +315,7 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 .sd-agent-row {
+  font: inherit;
   display: grid;
   grid-template-columns: 14px minmax(0,1fr) auto;
   gap: 2px 8px;

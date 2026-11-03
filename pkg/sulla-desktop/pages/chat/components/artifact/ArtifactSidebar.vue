@@ -145,6 +145,7 @@ onBeforeUnmount(() => {
 </script>
 <style scoped>
 .sd-artifact-panel {
+  line-height: 1.4;
   overflow: hidden;
   width: 420px;
   height: calc(100% - 16px);
@@ -263,6 +264,7 @@ onBeforeUnmount(() => {
   margin-top: 20px;
 }
 .sd-actions button {
+  font: inherit;
   height: 36px;
   padding: 0 14px;
   border: 1px solid var(--border-default);
