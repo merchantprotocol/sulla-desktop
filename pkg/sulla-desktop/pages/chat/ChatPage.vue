@@ -363,8 +363,9 @@ const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selected
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 
 function selectSubAgent(card: ThreadAgentCard): void {
+  const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;
   selectedSubAgent.value = card;
-  artifactCollapsed.value = false;
+  if (isNewSelection) artifactCollapsed.value = false;
 }
 
 function openSubAgentCard(card: ThreadAgentCard): void {

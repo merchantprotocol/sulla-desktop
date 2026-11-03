@@ -82,18 +82,6 @@ async function retryFiles(): Promise<void> {
 }
 .title-block{min-width:0}.title-block small{display:flex;align-items:center;gap:6px;color:var(--text-muted);font:11px var(--mono);letter-spacing:.06em;text-transform:uppercase}.title-block h2{margin:6px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);font:italic 500 22px/1.15 var(--serif);letter-spacing:-.01em}.status-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-primary);animation:chat-pulse 1.5s infinite}.status-dot.done{background:var(--text-success);animation:none}
 .spacer { flex: 1; }
-.status {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--steel-400);
-  display: inline-flex; align-items: center; gap: 8px;
-}
-.status::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--steel-400); box-shadow: 0 0 10px var(--steel-400);
-  animation: chat-pulse 1.5s infinite;
-}
-.status.done { color: var(--ok); }
-.status.done::before { background: var(--ok); box-shadow: none; animation: none; }
 .act {
   width:32px;height:32px;background:transparent;border:0;color:var(--text-secondary);padding:0;border-radius:8px;font-size:16px;cursor:pointer;
   transition: all 0.15s ease;
