@@ -65,6 +65,12 @@ jobs:
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      # Linux CLI binaries (resources/linux/bin, docker-cli-plugins) are
+      # downloaded by the skipped postinstall and are gitignored. The mock
+      # backend never runs them, but integration setup lists those folders.
+      - name: Create empty Linux integration folders
+        if: runner.os == 'Linux'
+        run: mkdir -p resources/linux/bin resources/linux/docker-cli-plugins
       - name: Build unpackaged app
         shell: bash
         run: |
