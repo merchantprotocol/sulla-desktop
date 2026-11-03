@@ -13,12 +13,12 @@ const artifactTarget: Record<string, any> = {
 export const chatToolManifests: ToolManifest[] = [
   {
     name:        'launch_agent_tab',
-    description: 'Alias of meta/spawn_agent with visibility "tab": launch an enabled agent in its own visible chat tab with a return contract. Prefer spawn_agent with visibility "tab". The tab shows in your sub-agent rail and closes only when the child returns its contract or you stop it.',
+    description: 'Legacy alias of meta/spawn_agent. Launches an enabled agent as a hidden background child with a return contract (agents never open visible tabs). Prefer meta/spawn_agent.',
     category:    'chat',
     schemaDef:   {
       agentId: { type: 'string', description: 'Enabled agent persona slug.' },
       brief:   { type: 'string', description: 'Complete task brief for the child agent.' },
-      title:   { type: 'string', optional: true, description: 'Visible child tab title.' },
+      title:   { type: 'string', optional: true, description: 'Label for the child job.' },
       contract: {
         type: 'object', optional: true, description: 'Return contract. Use {name:"ui-test-issues"} for the built-in UI test issue schema.',
         properties: {
@@ -27,7 +27,6 @@ export const chatToolManifests: ToolManifest[] = [
           schema:      { type: 'object', optional: true, description: 'JSON Schema for the expected result.' },
         },
       },
-      focus: { type: 'boolean', optional: true, default: false, description: 'Focus the new tab. Defaults to false so the parent composer keeps focus.' },
       projectTaskId: { type: 'string', optional: true, description: 'Projects task the child works; its job owns the task until it returns.' },
     },
     operationTypes: ['create', 'execute'],

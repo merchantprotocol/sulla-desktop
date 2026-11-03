@@ -120,6 +120,7 @@ const { fetchThreadAgentCards } = await import('../../../../main/agentsIpc');
 
 function parent(threadId: string, extra: Record<string, unknown> = {}) {
   const worker = new SpawnAgentWorker();
+  worker.allowVisibleTabs = true; // exercises the tab plumbing; agents can't set this
   worker.setState({ messages: [], metadata: { wsChannel: 'sulla-desktop', threadId, routedAgentId: 'account-manager', ...extra } } as any);
   return worker;
 }
@@ -185,7 +186,7 @@ describe('one launch: hidden and tab children are both jobs', () => {
     }));
   });
 
-  it('launch_agent_tab is an alias for a tab spawn and keeps its response shape', async() => {
+  it('launch_agent_tab launches a hidden child, never a visible tab', async() => {
     const worker = new LaunchAgentTabWorker();
     worker.setState({ messages: [], metadata: { wsChannel: 'sulla-desktop', threadId: 'alias-parent' } } as any);
     const result = await (worker as any)._validatedCall({ agentId: 'project-manager', brief: 'Plan the launch' });
@@ -193,12 +194,24 @@ describe('one launch: hidden and tab children are both jobs', () => {
     expect(result.successBoolean).toBe(true);
     const body = JSON.parse(result.responseString);
     expect(body.contractId).toBe(body.jobId);
+    expect(body.visibility).toBe('hidden');
     const job = await getJob(body.jobId);
-    expect(job).toMatchObject({ visibility: 'tab', status: 'running', parentThreadId: 'alias-parent' });
-    expect(job?.tasks[0]).toMatchObject({ visibility: 'tab', depth: 1, contract: { name: 'result' } });
-    // The brief carries the contract footer.
-    const brief = sentOfType('user_message').find(([, message]) => message.data.threadId === body.childThreadId);
-    expect(brief?.[1].data.content).toContain('agents/return_result');
+    expect(job).toMatchObject({ visibility: 'hidden', parentThreadId: 'alias-parent' });
+    expect(rendererSend).not.toHaveBeenCalledWith('agent-command', expect.objectContaining({ command: 'open-agent-chat-tab' }));
+  });
+
+  it('downgrades a requested tab to hidden for agent-launched spawns', async() => {
+    const worker = new SpawnAgentWorker();
+    worker.setState({ messages: [], metadata: { wsChannel: 'sulla-desktop', threadId: 'no-tab-parent' } } as any);
+    const result = await (worker as any)._validatedCall({
+      tasks: [{ agentId: 'project-manager', prompt: 'Plan it', visibility: 'tab' }],
+      async: true,
+    });
+
+    expect(result.successBoolean).toBe(true);
+    const job = await getJob(JSON.parse(result.responseString).jobId);
+    expect(job?.visibility).toBe('hidden');
+    expect(rendererSend).not.toHaveBeenCalledWith('agent-command', expect.objectContaining({ command: 'open-agent-chat-tab' }));
   });
 
   it('does not cap open tabs per chat (launch control lives in prompts)', async() => {

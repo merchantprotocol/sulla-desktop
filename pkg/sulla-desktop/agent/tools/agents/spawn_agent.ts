@@ -103,13 +103,21 @@ function taskAgentSelector(task: SpawnTask): string | undefined {
   return typeof sel === 'string' && sel.trim() ? sel.trim() : undefined;
 }
 
-function taskVisibility(task: SpawnTask): AgentJobVisibility {
-  return task.visibility === 'tab' ? 'tab' : 'hidden';
+// Every agent-launched sub-agent runs hidden (Jonathon, 2026-11-02: "STOP
+// LAUNCHING SUBAGENTS IN VISIBLE TABS"). A requested "tab" is downgraded; the
+// human can still open any child from the sub-agent rail. Only code that sets
+// `allowVisibleTabs` on the worker instance (never the model's tool input) can
+// open a real tab.
+function taskVisibility(task: SpawnTask, allowVisibleTabs = false): AgentJobVisibility {
+  return allowVisibleTabs && task.visibility === 'tab' ? 'tab' : 'hidden';
 }
 
 export class SpawnAgentWorker extends BaseTool {
   name = '';
   description = '';
+
+  /** Code-only switch for visible tabs. Agents can't set it: tool input never reaches it. */
+  allowVisibleTabs = false;
 
   /** Reuse the canonical spawn path from compatibility wrappers. */
   public runValidated(input: any, state?: any): Promise<ToolResponse> {
@@ -123,7 +131,7 @@ export class SpawnAgentWorker extends BaseTool {
     const metadata = this.state?.metadata;
     const parentChannel = metadata?.wsChannel || 'sulla-desktop';
     return {
-      via:            taskVisibility(task) === 'tab' ? 'agent_tab' : 'spawn_agent',
+      via:            taskVisibility(task, this.allowVisibleTabs) === 'tab' ? 'agent_tab' : 'spawn_agent',
       parentAgentId:  resolveAgentIdentity(metadata) || parentChannel,
       parentThreadId: metadata?.threadId ?? null,
       childAgentId:   taskAgentSelector(task) || parentChannel,
@@ -248,8 +256,8 @@ export class SpawnAgentWorker extends BaseTool {
       };
     }
 
-    const tabTasks = tasks.map((task, index) => ({ task, index })).filter(({ task }) => taskVisibility(task) === 'tab');
-    const hiddenTasks = tasks.filter(task => taskVisibility(task) === 'hidden');
+    const tabTasks = tasks.map((task, index) => ({ task, index })).filter(({ task }) => taskVisibility(task, this.allowVisibleTabs) === 'tab');
+    const hiddenTasks = tasks.filter(task => taskVisibility(task, this.allowVisibleTabs) === 'hidden');
 
     // ── Tabs first: each is its own job, launched one at a time ──
     const tabs: LaunchedTab[] = [];
