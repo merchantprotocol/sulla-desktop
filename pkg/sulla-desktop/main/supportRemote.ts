@@ -11,14 +11,11 @@ import { app, ipcMain } from 'electron';
 import WebSocket from 'ws';
 
 import type { VMBackend } from '@pkg/backend/backend';
-import { getSettings } from '@pkg/config/settingsImpl';
 import { supportCloudRequest } from '@pkg/main/support/supportCloud';
 import { getOrCreateSupportDeviceId } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore, type RemoteSupportActivity, type SupportState } from '@pkg/main/supportState';
-import { supportUpdateApi } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
-import * as window from '@pkg/window';
 
 const console = Logging.background;
 const RECONNECT_MIN_MS = 1_000;
@@ -29,6 +26,8 @@ const MAX_EXEC_OUTPUT_BYTES = 1024 * 1024;
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const AI_PROVIDERS = new Set(['anthropic', 'claude', 'openai', 'codex', 'google', 'gemini', 'xai', 'grok', 'ollama', 'local']);
+const windowApi = (): any => require('@pkg/window');
+const updateApi = (): any => require('@pkg/main/update/UpdateManager').supportUpdateApi;
 
 type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor' | 'start' | 'stop'>;
 type JsonObject = Record<string, unknown>;
@@ -45,6 +44,7 @@ const TOOLS = [
   { name: 'support.logs.tail', description: 'Read redacted Sulla app, runtime, container, or AI logs.', inputSchema: { type: 'object', properties: { source: { enum: ['app', 'runtime', 'containers', 'ai'] }, lines: { type: 'integer', minimum: 1, maximum: 2000 } }, required: ['source'], additionalProperties: false }, mutates: false },
   { name: 'support.runtime.status', description: 'Show Electron-side Sulla runtime status even when the VM is down.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.runtime.restart', description: 'Restart the Sulla runtime VM from Electron.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: true },
+  { name: 'support.container.restart', description: 'Restart one named Sulla runtime container.', inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['name'], additionalProperties: false }, mutates: true },
   { name: 'support.diagnostics.snapshot', description: 'Read a bounded Sulla runtime diagnostic snapshot.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.list', description: 'List Sulla runtime containers.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, mutates: false },
   { name: 'support.containers.restart', description: 'Restart one Sulla runtime container.', inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['name'], additionalProperties: false }, mutates: true },
@@ -71,6 +71,7 @@ function plainSummary(tool: string): string {
     'support.diagnostics.snapshot': 'Support checked Sulla diagnostics',
     'support.containers.list': 'Support checked Sulla containers',
     'support.containers.restart': 'Support restarted a Sulla container',
+    'support.container.restart': 'Support restarted a Sulla container',
     'support.containers.logs': 'Support read redacted container logs',
     'support.containers.set_memory_limit': 'Support changed a Sulla container memory limit',
     'support.ai.retry_connection': 'Support retried an AI connection',
@@ -108,8 +109,8 @@ function finishActivity(eventId: string, status: RemoteSupportActivity['status']
 }
 function broadcast() {
   const state = stateStore().read();
-  window.send('support:remote-state' as any, state.remote);
-  window.getWindow('support-center')?.webContents.send('support:remote-state', state.remote);
+  windowApi().send('support:remote-state' as any, state.remote);
+  windowApi().getWindow('support-center')?.webContents.send('support:remote-state', state.remote);
 }
 async function jsonCloud(method: string, pathname: string, body?: unknown, headers?: Record<string, string>): Promise<any> {
   const response = await supportCloudRequest(method, pathname, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -166,7 +167,7 @@ export class RemoteSupportService {
     const deviceId = getOrCreateSupportDeviceId(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
-      deviceName: metadata.name, updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(),
+      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(),
     });
     stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), activity: [] } });
     broadcast();
@@ -329,6 +330,7 @@ export class RemoteSupportService {
     if (name === 'support.runtime.status') { exactKeys(raw, []); return textResult({status:this.runtimeHealth(),state:String(this.runtime?.state??'unavailable')}) }
     if (name === 'support.runtime.restart') {
       exactKeys(raw, []); if(!this.runtime) return textResult({restarted:false,status:'offline',error:'The runtime controller is unavailable.'},true);
+      const { getSettings } = require('@pkg/config/settingsImpl');
       await this.runtime.stop(); await this.runtime.start(getSettings()); return textResult({restarted:true,status:this.runtimeHealth(),state:String(this.runtime.state)});
     }
     if (name === 'support.runtime.exec') {
@@ -360,7 +362,7 @@ export class RemoteSupportService {
       exactKeys(raw, []); const containers = await this.sullaContainers();
       return textResult({ containers: [...containers].map(([containerName, item]) => ({ name: containerName, image: item.image, state: /up|running/.test(item.state) ? 'running' : /restart/.test(item.state) ? 'restarting' : /exit|stop/.test(item.state) ? 'stopped' : 'error', health: item.health, memoryLimitBytes: null })) });
     }
-    if (name === 'support.containers.restart') {
+    if (name === 'support.containers.restart' || name === 'support.container.restart') {
       const args = exactKeys(raw, ['name']); const { name: container } = await this.requireContainer(args.name); await this.vm('docker', 'restart', container); const current = await this.sullaContainers();
       return textResult({ name: container, restarted: true, state: current.get(container)?.state || 'unknown' });
     }
@@ -378,20 +380,21 @@ export class RemoteSupportService {
     }
     if (name === 'support.ai.retry_connection') {
       const args = exactKeys(raw, ['provider']); if (typeof args.provider !== 'string' || !PROVIDER.test(args.provider) || !AI_PROVIDERS.has(args.provider.toLowerCase())) throw new Error('Unknown AI provider.');
-      let retried=false; try { const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager'); retried = await getServiceLifecycleManager().retryService('model-provider') } catch { retried=false }
+      const containers=await this.sullaContainers(), agent=[...containers.keys()].find(container=>/(^|[_-])agent($|[_-])/.test(container));
+      const retried=!!agent; if(agent)await this.vm('docker','restart',agent);
       return textResult({ provider: args.provider, status: retried ? 'connected' : 'error', error: retried ? null : 'No retryable Sulla service has that name.' });
     }
     if (name === 'support.update.set_channel') {
       const args = exactKeys(raw, ['channel', 'pinnedVersion']); if (!['lts', 'nightly'].includes(String(args.channel))) throw new Error('Invalid update channel.');
       if (args.pinnedVersion !== undefined && args.pinnedVersion !== null && (typeof args.pinnedVersion !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(args.pinnedVersion))) throw new Error('Invalid pinned semantic version.');
-      const previousChannel = supportUpdateApi.status().channel; const state = await supportUpdateApi.setChannel(args.channel as 'lts' | 'nightly', { pinnedVersion: args.pinnedVersion as string | undefined, setBy: 'support' });
+      const previousChannel = updateApi().status().channel; const state = await updateApi().setChannel(args.channel as 'lts' | 'nightly', { pinnedVersion: args.pinnedVersion as string | undefined, setBy: 'support' });
       return textResult({ channel: state.channel, pinnedVersion: state.pinnedVersion || null, previousChannel });
     }
     if (name === 'support.update.check_and_install') {
-      exactKeys(raw, []); try { const state = await supportUpdateApi.checkAndInstall(); return textResult({ status: state.phase === 'not-available' ? 'up_to_date' : state.phase === 'downloading' ? 'downloading' : state.phase === 'downloaded' ? 'restart_pending' : state.phase === 'error' ? 'error' : 'installing', version: state.availableVersion || null, error: state.error || null }) } catch (error) { return textResult({ status: 'error', version: null, error: redacted(error instanceof Error ? error.message : String(error)) }) }
+      exactKeys(raw, []); try { const state = await updateApi().checkAndInstall(); return textResult({ status: state.phase === 'not-available' ? 'up_to_date' : state.phase === 'downloading' ? 'downloading' : state.phase === 'downloaded' ? 'restart_pending' : state.phase === 'error' ? 'error' : 'installing', version: state.availableVersion || null, error: state.error || null }) } catch (error) { return textResult({ status: 'error', version: null, error: redacted(error instanceof Error ? error.message : String(error)) }) }
     }
     if (name === 'support.update.status') {
-      exactKeys(raw, []); const status = supportUpdateApi.status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
+      exactKeys(raw, []); const status = updateApi().status(); return textResult({ channel: status.channel, pinnedVersion: status.pinnedVersion || null, currentVersion: status.currentVersion, availableVersion: status.available || null, status: status.downloading === undefined ? 'idle' : 'downloading', lastCheckedAt: null, error: null });
     }
     throw new Error('Tool is not in the support allowlist.');
   }
@@ -427,7 +430,7 @@ export class RemoteSupportService {
   private async reportDeviceStatus() {
     const remote = this.state().remote; if (!remote.sessionId || !remote.grant) return;
     const deviceId=getOrCreateSupportDeviceId(); const deviceName=require('node:os').hostname() || 'Sulla Desktop';
-    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: supportUpdateApi.status().channel, runtimeHealth: this.runtimeHealth(), deviceName });
+    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), deviceName });
   }
 }
 
@@ -436,12 +439,12 @@ export const remoteSupportService = new RemoteSupportService();
 export function configureRemoteSupportRuntime(runtime: Runtime) { remoteSupportService.configureRuntime(runtime) }
 export function startRemoteSupport() {
   ipcMain.handle('support:remote-banner-state', event => {
-    const main = window.getWindow('main-agent') ?? window.getWindow('main');
+    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
     if (event.sender !== main?.webContents) throw new Error('Support status is only available from the main Sulla window.');
     return remoteSupportService.state().remote;
   });
   ipcMain.handle('support:remote-banner-end', event => {
-    const main = window.getWindow('main-agent') ?? window.getWindow('main');
+    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
     if (event.sender !== main?.webContents) throw new Error('Support access can only be ended from the main Sulla window.');
     return remoteSupportService.end();
   });

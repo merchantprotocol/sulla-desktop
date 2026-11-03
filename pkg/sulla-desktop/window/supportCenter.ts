@@ -13,11 +13,11 @@ import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { SupportStateStore, type SupportAttachment, type SupportState } from '@pkg/main/supportState';
 import { remoteSupportService } from '@pkg/main/supportRemote';
 import { registerGuestSupport, supportCloudRequest, supportWhoAmI } from '@pkg/main/support/supportCloud';
-import { updateManager } from '@pkg/main/update/UpdateManager';
 import paths from '@pkg/utils/paths';
-import { createWindow, getWindow, webRoot } from '@pkg/window';
 
 let registered = false;
+const windowApi = (): any => require('@pkg/window');
+const updateManager = require('@pkg/main/update/UpdateManager').updateManager as any;
 const allowedSources = new Set(['desktop', 'runtime', 'containers', 'ai']);
 const logTopics: Record<string, string[]> = {
   desktop: ['background.log', 'main.log', 'mainmenu.log'],
@@ -28,7 +28,7 @@ const logTopics: Record<string, string[]> = {
 
 function store() { return new SupportStateStore(app.getPath('userData')) }
 function authorize(event: IpcMainInvokeEvent) {
-  const window = getWindow('support-center');
+  const { getWindow, webRoot }=windowApi(); const window = getWindow('support-center');
   if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame ||
       event.senderFrame.url.split(/[?#]/)[0] !== `${ webRoot }/support.html`) {
     throw new Error('Support requests must come from the Support window.');
@@ -108,11 +108,11 @@ async function uploadLogAttachment(): Promise<any> {
 function registerHandlers() {
   if (registered) { return } registered = true;
   ipcMain.on('support:open-remote', (event) => {
-    const main = getWindow('main-agent') ?? getWindow('main');
+    const { getWindow }=windowApi(); const main = getWindow('main-agent') ?? getWindow('main');
     if (event.sender === main?.webContents) openSupportCenter('remote');
   });
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
-  ipcMain.handle('support:cloud-status', async(event) => { authorize(event); try { return await supportWhoAmI() } catch { return { enrolled:false,guest:false } } });
+  ipcMain.handle('support:cloud-status', async(event) => { authorize(event); try { return { ...await supportWhoAmI(), reachable:true } } catch(error:any) { if(error?.status===401)return { enrolled:false,guest:false,reachable:true }; return { enrolled:false,guest:false,reachable:false,error:"Can't reach Sulla support right now" } } });
   ipcMain.handle('support:register-guest', async(event,email:unknown) => { authorize(event); return registerGuestSupport(cleanText(email,254), require('node:os').hostname(), app.getVersion()) });
   ipcMain.handle('support:update-status', (event) => { authorize(event); return updateManager.getState() });
   ipcMain.handle('support:update-install', async(event) => { authorize(event); await updateManager.installUpdate() });
@@ -184,13 +184,14 @@ function registerHandlers() {
 export function initSupportCenterIpc() {
   if (ipcMain.listenerCount('support:open') > 0) return;
   ipcMain.on('support:open', (event, section: unknown) => {
-    const trusted = ['first-run', 'main-agent'].some(name => event.sender === getWindow(name as any)?.webContents);
+    const trusted = ['first-run', 'main-agent'].some(name => event.sender === windowApi().getWindow(name as any)?.webContents);
     if (trusted) openSupportCenter(typeof section === 'string' ? section : 'home');
   });
 }
 
 export function openSupportCenter(section = 'home') {
   registerHandlers();
+  const { createWindow, getWindow, webRoot }=windowApi();
   const existing = getWindow('support-center');
   const window = createWindow('support-center', `${ webRoot }/support.html#${ encodeURIComponent(section) }`, {
     title: 'Sulla Support', width: 1120, height: 780, minWidth: 860, minHeight: 620,

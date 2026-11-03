@@ -22,6 +22,7 @@ const remoteMessage = ref('');
 const busy = ref(false);
 const notice = ref('');
 const signedIn = ref(true);
+const supportReachable = ref(true);
 const supportEmail = ref('');
 const unread = ref(0);
 const feedbackBody = ref('');
@@ -63,7 +64,8 @@ async function refresh() {
   state.value = await ipcRenderer.invoke('support:state');
   updateState.value = await ipcRenderer.invoke('support:update-status');
   const supportStatus = await ipcRenderer.invoke('support:cloud-status');
-  signedIn.value = !!(supportStatus.enrolled || supportStatus.guest);
+  supportReachable.value = supportStatus.reachable !== false;
+  signedIn.value = !supportReachable.value || !!(supportStatus.enrolled || supportStatus.guest);
   supportEmail.value = supportStatus.email || supportEmail.value;
   if (signedIn.value) {
     try { [state.value.tickets, unread.value] = await Promise.all([ipcRenderer.invoke('support:tickets'), ipcRenderer.invoke('support:unread')]); } catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
@@ -154,7 +156,8 @@ onBeforeUnmount(() => { clearInterval(timer); window.removeEventListener('hashch
     </aside>
 
     <main v-if="state">
-      <div v-if="!signedIn" class="alert warn"><div><b>Register this Mac for support</b><span>Enter an email so support can answer you. This works even when Sulla setup, the vault, or the runtime is unavailable.</span></div><input v-model="supportEmail" type="email" placeholder="you@example.com"><button :disabled="busy || !supportEmail.includes('@')" @click="registerSupport">Register</button></div>
+      <div v-if="!supportReachable" class="alert warn"><div><b>Can't reach Sulla support right now</b><span>You can keep filling out the forms. Sending will show a clear error until the connection returns.</span></div><button @click="refresh">Retry</button></div>
+      <div v-else-if="!signedIn" class="alert warn"><div><b>Register this Mac for support</b><span>Enter an email so support can answer you. This works even when Sulla setup, the vault, or the runtime is unavailable.</span></div><input v-model="supportEmail" type="email" placeholder="you@example.com"><button :disabled="busy || !supportEmail.includes('@')" @click="registerSupport">Register</button></div>
       <div v-if="state.remote.status === 'connected'" class="connection"><i class="live-dot" /><b>{{ state.remote.offeredBy || 'Sulla support' }} is connected</b><span>Inside your Sulla runtime only · reconnects after restarts</span><button @click="remote('end')">End support</button></div>
       <div class="page">
         <div v-if="notice" class="notice">{{ notice }}<button @click="notice = ''">×</button></div>
