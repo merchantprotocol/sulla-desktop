@@ -23,7 +23,7 @@ import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
 import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync';
 import { ApprovedClients } from './approvedClients';
-import { getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
+import { enableRecommendedCloudPreferences, getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
 import { CloudDataSync, type ProjectionKind } from './cloudDataSync';
 import { ByoUsageSync } from './byoUsageSync';
 import { VaultSyncV3 } from './vaultSyncV3';
@@ -243,6 +243,10 @@ export function initCloudConnectionEvents(): void {
 
   ipc.handle('sulla-cloud-connection:set-preferences', async(_e: unknown, patch: Partial<Record<keyof CloudPreferences, unknown>>) => {
     await setCloudPreferences(patch ?? {});
+    return getCloudConnectionStatus();
+  });
+  ipc.handle('sulla-cloud-connection:enable-recommended', async() => {
+    await enableRecommendedCloudPreferences();
     return getCloudConnectionStatus();
   });
 

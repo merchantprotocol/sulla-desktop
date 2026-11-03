@@ -6,7 +6,7 @@
 -->
 <template><div class="sync-card">
   <div v-if="status?.device?.revoked || status?.device?.error" class="alert">{{ status.device.error || 'This Desktop was removed from your Cloud account.' }}</div>
-  <div class="master"><div><h2>Sync this Desktop to Sulla Cloud</h2><span v-if="status?.device?.teamName" class="destination">Syncing to {{ status.device.teamName }}</span><p>Signing in doesn't send anything to the cloud. Turn this on to copy your Sulla data to your Cloud account. Turn anything below off to keep it on this Desktop only.</p></div><label class="switch"><input type="checkbox" :checked="enabled" :disabled="busy" @change="setPref('enabled', checked($event))"><span /></label></div>
+  <div class="master"><div><h2>Sync this Desktop to Sulla Cloud</h2><span v-if="status?.device?.teamName" class="destination">Syncing to {{ status.device.teamName }}</span><p>Signing in doesn't send anything to the cloud. When enabled, selected data is available in Sulla on your phone, the web and other computers. Turn anything below off to keep it on this Desktop only.</p><button v-if="!enabled" type="button" class="recommend" :disabled="busy" @click="enableRecommended">Turn on recommended</button></div><label class="switch"><input type="checkbox" :checked="enabled" :disabled="busy" @change="setPref('enabled', checked($event))"><span /></label></div>
   <div class="status"><b>{{ syncLine }}</b><span v-if="lastChange">Last change uploaded: {{ lastChange }}</span></div>
   <template v-for="group in groups" :key="group.title"><div class="section">{{ group.title }}</div><div v-for="item in group.items" :key="item.key" class="row">
     <span class="icon">{{ item.icon }}</span><div class="copy"><button v-if="item.link" type="button" class="link" @click="item.link()">{{ item.title }}</button><b v-else>{{ item.title }}</b><small>{{ item.detail }}</small></div><span :class="['privacy',item.private?'private':'account']">{{ item.privacy }}</span>
@@ -25,7 +25,7 @@
   </div>
   <div class="footer"><button class="btn" :disabled="busy||!enabled" @click="syncNow">Sync now</button><span/><button class="btn danger" :disabled="busy" @click="deleteAll">Delete my data from Sulla Cloud…</button></div>
   <p v-if="error" class="error">{{ error }}</p>
-  <p class="note">Turning a switch off stops new uploads and asks whether to keep or delete what's already in Cloud. End-to-end encrypted data can't be read by Sulla's servers.</p>
+  <p class="note">Turning a switch off stops new uploads and asks whether to keep or delete what's already in Cloud. End-to-end encrypted data can't be read by Sulla's servers. Recommended never includes passwords, API keys or remote access.</p>
 </div></template>
 <script setup lang="ts">
 import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
@@ -54,6 +54,7 @@ function privateRow(key:Pref,icon:string,title:string,detail:string,privacy:stri
 function checked(e:Event){return(e.target as HTMLInputElement).checked}function fmt(iso:string){return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}function titleFor(k:string){return groups.flatMap(g=>g.items).find(i=>i.key===k)?.title??k}
 async function run(fn:()=>Promise<any>){busy.value=true;error.value='';try{status.value=await fn()}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false}}
 function setPref(key:Pref,value:boolean){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:set-preferences',{[key]:value}))}
+function enableRecommended(){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:enable-recommended'))}
 async function toggleKind(key:Pref,value:boolean,title:string){if(value)return setPref(key,true);await setPref(key,false);if(key==='remoteAccess')return;if(window.confirm(`Delete the ${title} copy already stored in Sulla Cloud?\n\nChoose Cancel to keep the Cloud copy.`))await run(()=>ipcRenderer.invoke('sulla-cloud-connection:delete-cloud-copy',key))}
 function syncNow(){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:sync-now','all'))}function deleteAll(){if(!window.confirm('Delete everything this Desktop synced to Sulla Cloud? Nothing on this Desktop changes.'))return;return run(()=>ipcRenderer.invoke('sulla-cloud-connection:delete-cloud-copy','all'))}
 function onStatus(_e:unknown,s:Record<string,any>){status.value=s}onMounted(async()=>{ipcRenderer.on('sulla-cloud-connection:status-changed',onStatus);await run(()=>ipcRenderer.invoke('sulla-cloud-connection:get-status'))});onBeforeUnmount(()=>ipcRenderer.removeListener('sulla-cloud-connection:status-changed',onStatus));
@@ -80,6 +81,8 @@ color:var(--text-muted);
 font-size:12px;
 line-height:1.5}
 .master .switch{margin-left:auto}
+.recommend{margin-top:10px;padding:6px 10px;border:1px solid var(--accent);border-radius:7px;background:var(--bg-surface);color:var(--accent);cursor:pointer;font-size:12px}
+.recommend:disabled{opacity:.5;cursor:default}
 .status{display:flex;
 gap:18px;
 padding:11px 20px;
