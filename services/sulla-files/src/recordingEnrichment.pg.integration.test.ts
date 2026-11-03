@@ -33,7 +33,7 @@ integration('recording persistence abandons protected, deleted, and excluded rac
         VALUES($1,$2,1,'user','recording-owner','recording-device') RETURNING id`, [fileId, collectionId])).rows[0].id;
       await db.query("UPDATE files SET current_version_id=$2,size=1,extraction_status='indexing' WHERE id=$1", [fileId, versionId]);
       await db.query("INSERT INTO recording_enrichment_jobs(file_id,version_id,status) VALUES($1,$2,'processing')", [fileId, versionId]);
-      await db.query("INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,'prior synthetic transcript')", [fileId, `${ scenario }.wav`]);
+      await db.query("INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,'prior synthetic transcript') ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text", [fileId, `${ scenario }.wav`]);
       await db.query(`INSERT INTO recording_metadata(file_id,version_id,transcript,chapters,generator)
         VALUES($1,$2,'[{"start":0,"end":1,"text":"prior synthetic transcript"}]','[]','synthetic')`, [fileId, versionId]);
 
@@ -91,7 +91,7 @@ integration('stale recording output preserves current-version transcript derivat
       VALUES($1,$2,$3,2,'user','recording-owner','recording-device') RETURNING id`, [fileId, collectionId, staleVersionId])).rows[0].id;
     await db.query("UPDATE files SET current_version_id=$2,size=2,extraction_status='indexed' WHERE id=$1", [fileId, currentVersionId]);
     await db.query("INSERT INTO recording_enrichment_jobs(file_id,version_id,status) VALUES($1,$2,'processing')", [fileId, staleVersionId]);
-    await db.query("INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,'version.wav','current synthetic transcript')", [fileId]);
+    await db.query("INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,'version.wav','current synthetic transcript') ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text", [fileId]);
     await db.query(`INSERT INTO recording_metadata(file_id,version_id,transcript,chapters,generator)
       VALUES($1,$2,'[{"start":0,"end":1,"text":"current synthetic transcript"}]','[]','synthetic')`, [fileId, currentVersionId]);
 
