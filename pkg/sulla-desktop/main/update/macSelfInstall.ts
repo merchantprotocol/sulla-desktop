@@ -148,7 +148,7 @@ rmdir "$helper_dir" 2>/dev/null || true
 note "installer helper started for pid $pid"
 count=0
 while kill -0 "$pid" 2>/dev/null; do
-  if [ "$count" -ge 120 ]; then note "timed out waiting for app to exit"; exit 1; fi
+  if [ "$count" -ge 900 ]; then note "app still running after 15 minutes; leaving it as is"; exit 1; fi
   sleep 1
   count=$((count + 1))
 done
