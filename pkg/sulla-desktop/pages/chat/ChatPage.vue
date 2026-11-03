@@ -850,19 +850,18 @@ onBeforeUnmount(() => {
   width: 260px;
   z-index: 6;
 }
-.chat-root.history-open .shell :deep(.subagent-rail),
-.chat-root.history-open .shell :deep(.subagent-rail-tab) { left: 260px; }
-.shell :deep(.artifact) {
+.chat-root.history-open .shell :deep(.sd-agent-rail) { left: 260px; }
+/* The drawer sizes itself (420px + 8px margins = the 436px .main leaves free);
+   this only docks it to the right edge. */
+.shell :deep(.sd-artifact-panel) {
   position: absolute;
-  top: 0; bottom: 0; right: 0;
-  width: 436px;
+  top: 0; right: 0;
   z-index: 6;
 }
-.chat-root.chat-files-open .shell :deep(.artifact) { right: 300px; }
+.chat-root.chat-files-open .shell :deep(.sd-artifact-panel) { right: 300px; }
 
 @media (max-width: 1200px) {
-  .shell :deep(.subagent-rail),
-  .shell :deep(.subagent-rail-tab) { display: none; }
+  .shell :deep(.sd-agent-rail) { display: none; }
   .chat-root.subagents-open .main { left: 0; }
   .chat-root.subagents-open.history-open .main { left: 260px; }
 }
