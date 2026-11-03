@@ -347,29 +347,68 @@
   --border-radius-lg: 8px;
   --outline: var(--accent-primary);
   --outline-width: 1px;
-}
 
-/* ═════════════════════════════════════════════════════════════════
-   Component Overrides for Light Theme — FORCE LIGHT MODE
-   These override any dark theme remnants with !important
-   ═════════════════════════════════════════════════════════════════ */
+  /* Shared theme contract */
+  --bg-elevated: var(--modal-bg, var(--bg-surface));
+  --bg-selected: var(--nav-active, var(--bg-active));
+  --bg-glass: var(--bg-header, var(--bg-surface));
+  --text-dim: var(--disabled-text, var(--text-muted));
+  --accent-hover: var(--accent-primary-hover, var(--accent));
+  --accent-dim: var(--bg-accent);
+  --accent-border: var(--border-accent);
+  --accent-glow: var(--brand-glow, color-mix(in srgb, var(--accent) 40%, transparent));
+  --status-info: var(--text-info);
+  --status-success-soft: var(--bg-success);
+  --status-warning-soft: var(--bg-warning);
+  --status-error-soft: var(--bg-error);
+  --status-info-soft: var(--bg-info);
+  --focus-ring: 0 0 0 3px var(--ring-color);
+  --radius-sm: var(--border-radius);
+  --radius-ctl: var(--border-radius-md);
+  --radius-panel: var(--border-radius-lg);
+  --radius-sheet: var(--border-radius-lg);
+  --elev-rest: var(--shadow-sm);
+  --elev-raised: var(--shadow-md);
+  --elev-float: var(--shadow-lg, var(--shadow-md));
+  --font-body: var(--font-sans);
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Roboto Mono', monospace;
+  --fs-display: 30px;
+  --fs-heading: 18px;
+  --fs-body: 14px;
+  --fs-body-sm: 12px;
+  --fs-caption: 10px;
+  --fs-code: 13px;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-instant: 120ms;
+  --dur-fast: 160ms;
+  --dur-std: 240ms;
+  --dur-move: 480ms;
+  --spring: cubic-bezier(0.16, 1, 0.3, 1);
 
-/* Chat Canvas — force light background, hide dark elements */
-.theme-default-light .chat-canvas {
-  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%) !important;
-}
-
-.theme-default-light .chat-stars,
-.theme-default-light .stars {
-  display: none !important;
-}
-
-/* Page root backgrounds */
-.theme-default-light .chat-root,
-.theme-default-light .page-root,
-.theme-default-light [class*="page-root"] {
-  background: var(--bg-page, #ffffff) !important;
-  color: var(--text-primary, #0d0d0d) !important;
+  /* Legacy Noir aliases — keep shared components theme-neutral */
+  --nx-paper: var(--bg-page);
+  --nx-surface: var(--bg-surface);
+  --nx-glass: var(--bg-glass);
+  --nx-ink: var(--text-primary);
+  --nx-read-1: var(--text-primary);
+  --nx-read-2: var(--text-secondary);
+  --nx-read-3: var(--text-muted);
+  --nx-read-4: var(--text-dim);
+  --nx-read-5: var(--border-strong);
+  --nx-hair: var(--border-subtle);
+  --nx-hair-strong: var(--border-default);
+  --nx-accent: var(--accent);
+  --nx-accent-2: var(--accent-hover);
+  --nx-glow: var(--accent-glow);
+  --nx-indicator-bg: var(--bg-elevated);
+  --nx-indicator-edge: var(--accent-border);
+  --nx-shadow-lg: var(--elev-float);
+  --nx-success: var(--status-success);
+  --nx-warning: var(--status-warning);
+  --nx-danger: var(--status-error);
 }
 
 /* Empty State — High Contrast */
@@ -414,14 +453,7 @@
 }
 
 /* Routines Home */
-.theme-default-light .routines-home {
-  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%) !important;
-  color: var(--text-primary, #0d0d0d) !important;
-}
 
-.theme-default-light .routines-home .canvas {
-  background: transparent !important;
-}
 
 .theme-default-light .bracket {
   border-color: rgba(100, 116, 139, 0.3) !important;
@@ -717,16 +749,6 @@
   color: #475569 !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   ModeRail Sidebar — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Sidebar rail background - light translucent */
-.theme-default-light .mode-rail {
-  background: rgba(241, 245, 249, 0.85) !important;
-  border-right-color: rgba(148, 163, 184, 0.2) !important;
-}
-
 /* Mode buttons - default state */
 .theme-default-light .mode-btn {
   color: #64748b !important;
@@ -928,34 +950,6 @@
   background: var(--bg-page, #ffffff) !important;
 }
 
-/* Welcome title */
-.theme-default-light .welcome-title {
-  color: #0d0d0d !important;
-}
-
-/* Welcome subtitle */
-.theme-default-light .welcome-subtitle {
-  color: #64748b !important;
-}
-
-/* Welcome card */
-.theme-default-light .welcome-card {
-  background: var(--bg-surface, #f8fafc) !important;
-  border-color: rgba(148, 163, 184, 0.3) !important;
-}
-
-.theme-default-light .welcome-card:hover {
-  border-color: rgba(14, 165, 233, 0.5) !important;
-  box-shadow: 0 0 15px rgba(14, 165, 233, 0.15), 0 0 30px rgba(14, 165, 233, 0.1) !important;
-}
-
-/* Welcome card CTA */
-.theme-default-light .welcome-card-cta {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.1) !important;
-  border-top-color: rgba(148, 163, 184, 0.2) !important;
-}
-
 /* Terminal header */
 .theme-default-light .dt-header {
   background: rgba(241, 245, 249, 0.9) !important;
@@ -1019,22 +1013,6 @@
   color: #64748b !important;
 }
 
-/* Chat input area */
-.theme-default-light .dt-chat-input {
-  background: rgba(241, 245, 249, 0.9) !important;
-  border-top-color: rgba(148, 163, 184, 0.2) !important;
-}
-
-.theme-default-light .dt-chat-field {
-  color: #0d0d0d !important;
-  background: #ffffff !important;
-  border-color: rgba(148, 163, 184, 0.3) !important;
-}
-
-.theme-default-light .dt-chat-field::placeholder {
-  color: #94a3b8 !important;
-}
-
 /* Keyboard shortcut styling */
 .theme-default-light .dt-kbd {
   background: rgba(148, 163, 184, 0.2) !important;
@@ -1057,31 +1035,12 @@
   color: #94a3b8 !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Chat Page Gradients — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Chat root background */
-.theme-default-light .chat-root {
-  background: var(--bg-page, #ffffff) !important;
-}
-
 /* Header backdrop gradient - light version */
 .theme-default-light .header-backdrop {
   background: linear-gradient(
     to bottom,
     rgba(241, 245, 249, 0.95) 0%,
     rgba(241, 245, 249, 0.85) 55%,
-    rgba(241, 245, 249, 0) 100%
-  ) !important;
-}
-
-/* Composer backdrop gradient - light version */
-.theme-default-light .composer-backdrop {
-  background: linear-gradient(
-    to top,
-    rgba(241, 245, 249, 0.95) 0%,
-    rgba(241, 245, 249, 0.85) 45%,
     rgba(241, 245, 249, 0) 100%
   ) !important;
 }
@@ -1248,20 +1207,6 @@
   color: #0d0d0d !important;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Composer — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Composer input area */
-.theme-default-light .composer {
-  border-bottom-color: rgba(14, 165, 233, 0.4) !important;
-}
-
-.theme-default-light .composer:focus-within {
-  border-bottom-color: #0ea5e9 !important;
-  box-shadow: 0 14px 20px -14px rgba(14, 165, 233, 0.25) !important;
-}
-
 /* Input text - target both class and textarea element */
 .theme-default-light .input,
 .theme-default-light textarea.input {
@@ -1290,16 +1235,6 @@
   background: rgba(148, 163, 184, 0.15) !important;
   border-color: rgba(148, 163, 184, 0.25) !important;
   color: #64748b !important;
-}
-
-/* Composer inner wrapper background */
-.theme-default-light .composer-inner {
-  background: transparent !important;
-}
-
-/* Ensure composer-wrap doesn't have dark bg */
-.theme-default-light .composer-wrap {
-  background: transparent !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1352,66 +1287,6 @@
 .theme-default-light .time-marker::before,
 .theme-default-light .time-marker::after {
   background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.4), transparent) !important;
-}
-
-/* Role labels "You · 11:52" and "SULLA · 11:53" */
-.theme-default-light .chat-role {
-  color: #64748b !important;
-}
-
-.theme-default-light .chat-turn.you .chat-role {
-  color: #64748b !important;
-}
-
-.theme-default-light .chat-turn.sulla .chat-role {
-  color: #0ea5e9 !important;
-}
-
-/* User message body */
-.theme-default-light .chat-turn.you .chat-body {
-  color: #0d0d0d !important;
-}
-
-/* Sulla message body */
-.theme-default-light .chat-turn.sulla .chat-body {
-  color: #0d0d0d !important;
-}
-
-.theme-default-light .chat-turn.sulla .chat-body em {
-  color: #475569 !important;
-}
-
-.theme-default-light .chat-turn.sulla .chat-body strong {
-  color: #0d0d0d !important;
-}
-
-/* Code/inline terms in messages */
-.theme-default-light .chat-turn.sulla .chat-body code,
-.theme-default-light .chat-turn.sulla .chat-body .term {
-  color: #64748b !important;
-  background: rgba(148, 163, 184, 0.15) !important;
-  border-color: rgba(148, 163, 184, 0.25) !important;
-}
-
-/* Headings in messages */
-.theme-default-light .chat-turn.sulla .chat-body h3 {
-  color: #0d0d0d !important;
-}
-
-.theme-default-light .chat-turn.sulla .chat-body h3::before {
-  color: #94a3b8 !important;
-}
-
-/* Blockquotes */
-.theme-default-light .chat-turn.sulla .chat-body blockquote {
-  color: #64748b !important;
-  border-left-color: rgba(14, 165, 233, 0.4) !important;
-}
-
-/* Chat cursor (blinking) */
-.theme-default-light .chat-cursor {
-  background: #94a3b8 !important;
-  box-shadow: 0 0 14px #94a3b8 !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1477,28 +1352,6 @@
 
 .theme-default-light .expanded li::before {
   color: #94a3b8 !important;
-}
-
-/* ═════════════════════════════════════════════════════════════════
-   Interim (Listening) — Light Mode
-   ═════════════════════════════════════════════════════════════════ */
-
-.theme-default-light .chat-turn.interim .chat-role {
-  color: #64748b !important;
-}
-
-.theme-default-light .chat-turn.interim .chat-role::before {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 10px #0ea5e9 !important;
-}
-
-.theme-default-light .chat-turn.interim .chat-body {
-  color: #64748b !important;
-}
-
-.theme-default-light .chat-turn.interim .chat-body::after {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 12px #0ea5e9 !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1767,16 +1620,6 @@
 
 .theme-default-light .search-box .count {
   color: #64748b !important;
-}
-
-/* ═════════════════════════════════════════════════════════════════
-   ModeRail (Left sidebar) — Light Mode Fixes
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Remove horizontal scrollbar */
-.theme-default-light .mode-rail {
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
 }
 
 /* Top bar must override left side - ensure header is above sidebar */

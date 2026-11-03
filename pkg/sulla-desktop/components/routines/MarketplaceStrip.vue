@@ -169,8 +169,8 @@ const installButtonLabel = computed(() => {
   gap: 24px;
   align-items: center;
   padding: 22px 24px 22px 27px;
-  background: linear-gradient(135deg, rgba(30, 44, 72, 0.92), rgba(20, 32, 54, 0.88));
-  border: 1px solid rgba(168, 192, 220, 0.22);
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   margin-bottom: 14px;
   position: relative;
@@ -178,20 +178,20 @@ const installButtonLabel = computed(() => {
   overflow: hidden;
   transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 6px 18px var(--accent),
+    inset 0 1px 0 var(--accent);
 }
 .strip.featured {
-  border-color: rgba(245, 158, 11, 0.5);
+  border-color: var(--border-default);
 }
 .strip:hover {
-  border-color: rgba(196, 212, 230, 0.45);
-  background: linear-gradient(135deg, rgba(40, 58, 92, 0.95), rgba(28, 44, 72, 0.92));
+  border-color: var(--border-default);
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface));
   transform: translateY(-2px);
   box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.55),
-    0 0 24px rgba(74, 111, 165, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    0 12px 32px var(--accent),
+    0 0 24px var(--accent),
+    inset 0 1px 0 var(--accent);
 }
 
 // Left accent bar — kind-coloured, visible at rest. Fills to 4px on hover.
@@ -211,7 +211,7 @@ const installButtonLabel = computed(() => {
   content: '';
   position: absolute;
   top: 0; left: 24px; right: 24px; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(196, 212, 230, 0.25), transparent);
+  background: linear-gradient(90deg, transparent, var(--bg-surface), transparent);
   pointer-events: none;
 }
 
@@ -220,13 +220,13 @@ const installButtonLabel = computed(() => {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: white;
-  font-family: var(--mono);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
   font-weight: 700;
   font-size: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border-default);
 }
-.icon { background: color-mix(in srgb, var(--kind-color) 65%, #10182a); }
+.icon { background: color-mix(in srgb, var(--kind-color) 65%, var(--accent)); }
 
 .body { min-width: 0; }
 .top {
@@ -237,27 +237,27 @@ const installButtonLabel = computed(() => {
   flex-wrap: wrap;
 }
 .kind-badge {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   padding: 3px 8px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: white;
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
 }
 .kind-badge { background: color-mix(in srgb, var(--kind-color) 25%, transparent); border-color: var(--kind-color); }
 
 .title {
-  font-family: var(--serif);
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 21px;
-  color: white;
+  color: var(--text-primary);
   line-height: 1.15;
   margin-bottom: 4px;
 }
 .tagline {
-  font-family: var(--serif);
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 13px;
   color: var(--steel-200);
@@ -265,7 +265,7 @@ const installButtonLabel = computed(() => {
   margin-bottom: 6px;
 }
 .desc {
-  font-family: var(--sans);
+  font-family: var(--font-body);
   font-size: 12.5px;
   color: var(--steel-200);
   line-height: 1.5;
@@ -283,23 +283,23 @@ const installButtonLabel = computed(() => {
 }
 
 .chip {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 3px 8px;
   border-radius: 3px;
-  border: 1px solid rgba(168, 192, 220, 0.22);
+  border: 1px solid var(--border-default);
   color: var(--steel-200);
-  background: rgba(20, 30, 54, 0.4);
+  background: var(--bg-surface);
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
 .chip.featured-chip {
-  border-color: rgba(245, 158, 11, 0.5);
-  color: #f59e0b;
+  border-color: var(--border-default);
+  color: var(--text-primary);
 }
 
 .metrics {
@@ -307,17 +307,17 @@ const installButtonLabel = computed(() => {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--steel-400);
   text-transform: uppercase;
   letter-spacing: 0.15em;
 }
 .metric b {
-  font-family: var(--serif);
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 24px;
-  color: white;
+  color: var(--text-primary);
   margin-right: 4px;
 }
 .metric small {
@@ -345,7 +345,7 @@ const installButtonLabel = computed(() => {
   min-width: 140px;
 }
 .cta .btn {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
   padding: 8px 14px;
@@ -357,152 +357,152 @@ const installButtonLabel = computed(() => {
 }
 .cta .btn.primary {
   background: linear-gradient(135deg, var(--steel-300), var(--steel-500));
-  color: white;
+  color: var(--text-primary);
   border-color: var(--steel-400);
 }
 .cta .btn.primary:hover { filter: brightness(1.15); }
 .cta .btn.ghost {
   background: transparent;
   color: var(--steel-200);
-  border-color: rgba(168, 192, 220, 0.3);
+  border-color: var(--border-default);
 }
 .cta .btn.ghost:hover:not(:disabled) {
   border-color: var(--steel-300);
-  color: white;
+  color: var(--text-primary);
 }
 .cta .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.theme-noir .strip {
+.strip {
   display: flex;
   min-height: 310px;
   margin: 0;
   padding: 20px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-subtle);
   border-radius: 20px;
   background:
-    linear-gradient(155deg, color-mix(in srgb, var(--nx-accent) 7.5%, transparent), transparent 42%),
-    color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 12px 34px rgba(0, 0, 0, 0.18);
+    linear-gradient(155deg, color-mix(in srgb, var(--accent) 7.5%, transparent), transparent 42%),
+    color-mix(in srgb, var(--text-primary) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent), 0 12px 34px var(--border-subtle);
   flex-direction: column;
   align-items: stretch;
   gap: 14px;
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, box-shadow 0.2s;
 }
 
-.theme-noir .strip::before {
+.strip::before {
   display: none;
 }
 
-.theme-noir .strip::after {
+.strip::after {
   left: 20px;
   right: 20px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--nx-accent-2) 26%, transparent), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent-hover) 26%, transparent), transparent);
 }
 
-.theme-noir .strip:hover {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+.strip:hover {
+  border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background:
-    linear-gradient(155deg, color-mix(in srgb, var(--nx-accent) 14%, transparent), transparent 48%),
-    color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4.5%, transparent);
+    linear-gradient(155deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 48%),
+    color-mix(in srgb, var(--text-primary) 4.5%, transparent);
   transform: translateY(-5px);
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px rgba(0, 0, 0, 0.34), 0 0 28px color-mix(in srgb, var(--nx-accent) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 3.5%, transparent), 0 22px 48px var(--border-subtle), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .icon {
+.icon {
   width: 58px;
   height: 58px;
-  border-color: color-mix(in srgb, var(--nx-accent-2) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   border-radius: 16px;
-  color: var(--nx-read-1);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent-2) 34%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 5%, transparent), 0 0 24px color-mix(in srgb, var(--nx-accent) 12%, transparent);
+  color: var(--text-primary);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-hover) 34%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 5%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.theme-noir .icon[class*="kind-"] {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent-2) 34%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
+.icon[class*="kind-"] {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-hover) 34%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
 }
 
-.theme-noir .body {
+.body {
   flex: 1;
 }
 
-.theme-noir .title {
+.title {
   margin: 9px 0 7px;
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: var(--font-display), Georgia, serif;
   font-size: 24px;
   font-style: normal;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
 }
 
-.theme-noir .tagline,
-.theme-noir .desc {
-  color: var(--nx-read-3);
+.tagline,
+.desc {
+  color: var(--text-muted);
 }
 
-.theme-noir .kind-badge,
-.theme-noir .chip {
-  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
+.kind-badge,
+.chip {
+  border-color: color-mix(in srgb, var(--border-default) 10%, transparent);
   border-radius: 9px;
-  color: rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16));
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.52);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-surface) 52%, transparent);
 }
 
-.theme-noir .kind-badge[class*="kind-"] {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
-  color: var(--nx-accent-2);
-  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.kind-badge[class*="kind-"] {
+  border-color: color-mix(in srgb, var(--accent-hover) 22%, transparent);
+  color: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.theme-noir .metrics {
+.metrics {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: end;
   gap: 10px;
   padding-top: 13px;
-  border-top: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 7%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 7%, transparent);
 }
 
-.theme-noir .metric b {
-  font-family: 'Playfair Display', Georgia, serif;
+.metric b {
+  font-family: var(--font-display), Georgia, serif;
   font-style: normal;
-  color: var(--nx-read-1);
+  color: var(--text-primary);
 }
 
-.theme-noir .author {
+.author {
   justify-self: start;
-  color: var(--nx-read-4);
+  color: var(--text-dim);
 }
 
-.theme-noir .cta {
+.cta {
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-width: 0;
 }
 
-.theme-noir .cta .btn {
+.cta .btn {
   min-height: 34px;
   border-radius: 17px;
   transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), filter 0.2s;
 }
 
-.theme-noir .cta .btn:active {
+.cta .btn:active {
   transform: scale(0.95);
 }
 
-.theme-noir .cta .btn.primary {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 45%, transparent);
-  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 24%, transparent);
+.cta .btn.primary {
+  border-color: color-mix(in srgb, var(--accent-hover) 45%, transparent);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 /* Noir Light softens dark-only elevation shadows for paper surfaces. */
-.theme-noir-light .strip {
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.025), 0 12px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+.strip {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 2.5%, transparent), 0 12px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
-.theme-noir-light .strip:hover {
-  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.035), 0 22px 48px color-mix(in srgb, var(--nx-ink) 14%, transparent), 0 0 28px color-mix(in srgb, var(--nx-accent) 10%, transparent);
+.strip:hover {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border-subtle) 3.5%, transparent), 0 22px 48px color-mix(in srgb, var(--text-primary) 14%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 </style>

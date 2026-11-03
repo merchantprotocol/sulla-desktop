@@ -45,32 +45,32 @@ const staged = computed(() => controller.staged.value);
 .att-chip {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 6px 6px 6px 12px; border-radius: 100px;
-  background: rgba(168, 192, 220, 0.08);
-  border: 1px solid rgba(168, 192, 220, 0.22);
-  font-family: var(--mono); font-size: 11px; color: var(--read-2);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-primary);
 }
 .att-chip :deep(.file-glyph) { width:24px;height:24px;border-radius:7px }
 .att-chip :deep(.file-glyph svg) { width:12px;height:12px }
 .att-chip .name { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.att-chip .size { color: var(--read-4); font-size: 10.5px; }
+.att-chip .size { color: var(--text-muted); font-size: 10.5px; }
 .att-chip .rm {
   width: 22px; height: 22px; border-radius: 50%;
-  background: transparent; border: none; color: var(--read-4); cursor: pointer;
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; padding: 0; transition: all 0.15s ease;
 }
-.att-chip .rm:hover { background: rgba(252,165,165,0.12); color: var(--err); }
-.theme-noir .attach-tray { gap: 6px; padding-top: 10px; margin: 0; }
-.theme-noir .att-chip {
+.att-chip .rm:hover { background: var(--status-warning-soft); color: var(--status-error); }
+.attach-tray { gap: 6px; padding-top: 10px; margin: 0; }
+.att-chip {
   height: 36px; gap: 8px; padding: 0 8px 0 6px; border: 0; border-radius: 12px;
-  color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-hair-strong) 37.5%, transparent);
-  box-shadow: inset 0 0 0 1px var(--nx-hair);
+  color: var(--text-primary); background: color-mix(in srgb, var(--border-default) 37.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
   font-family: var(--font-body); font-size: 12px;
   animation: noir-file-in 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1) both;
 }
-.theme-noir .att-chip:nth-child(2) { animation-delay: 0.07s; }
-.theme-noir .att-chip .name { font-weight: 500; }
-.theme-noir .att-chip .size { color: var(--nx-read-4); font-family: var(--mono); }
+.att-chip:nth-child(2) { animation-delay: 0.07s; }
+.att-chip .name { font-weight: 500; }
+.att-chip .size { color: var(--text-dim); font-family: var(--font-mono); }
 @keyframes noir-file-in { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .theme-noir .att-chip { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .att-chip { animation: none; } }
 </style>

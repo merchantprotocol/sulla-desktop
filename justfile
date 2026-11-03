@@ -390,3 +390,8 @@ app:
 # Watch pod events in real time (shows scheduling, image pulls, crashes)
 show-compose-yaml:
     resources/darwin/sulla-runtime/sulla-runtime exec -- sudo cat /tmp/sulla-docker-compose.yml
+
+# Serve real renderer pages for browser-only theme review (Docker, port 4174).
+theme-preview:
+    docker build -f docker/theme-preview/Dockerfile -t sulla-theme-preview .
+    docker run --rm -p 4174:4174 sulla-theme-preview

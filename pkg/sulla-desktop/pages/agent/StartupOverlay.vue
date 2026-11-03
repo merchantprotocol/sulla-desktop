@@ -136,7 +136,7 @@ onUnmounted(() => {
   z-index: 50;
   display: flex;
   overflow: hidden;
-  background: rgba(13, 17, 23, 0.85);
+  background: var(--bg-overlay);
   backdrop-filter: blur(12px);
 }
 
@@ -164,20 +164,17 @@ onUnmounted(() => {
   margin: 0 auto 16px;
   overflow: hidden;
   border-radius: 12px;
-  border: 1px solid rgba(26, 35, 50, 0.14);
-  background: #ffffff;
-  --text-primary: #1a2332;
-  --text-secondary: #5b6778;
-  --text-muted: #8a94a3;
+  border: 1px solid color-mix(in srgb, var(--border-default) 14%, transparent);
+  background: var(--bg-surface);
   padding: 14px 20px 16px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px rgba(80, 150, 179, 0.05);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .sulla-startup-accent {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent-primary, #5096b3), rgba(80, 150, 179, 0.3));
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 30%, transparent));
 }
 
 .sulla-startup-header {
@@ -194,92 +191,92 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
-  background: rgba(80, 150, 179, 0.1);
-  color: var(--accent-primary, #5096b3);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
 }
 
 .sulla-startup-title {
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   margin: 0;
 }
 
 .sulla-startup-subtitle {
   font-size: 0.8rem;
-  color: var(--text-secondary, #b1bac4);
+  color: var(--text-secondary);
   margin: 0;
 }
 
 .sulla-startup-download {
   margin-top: 0.5rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(80, 150, 179, 0.15);
-  background: rgba(80, 150, 179, 0.08);
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   padding: 0.6rem 0.8rem;
 }
 
 .sulla-startup-download-label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-secondary, #b1bac4);
+  color: var(--text-secondary);
   margin: 0;
 }
 
 .sulla-startup-download-name {
-  color: var(--accent-primary, #5096b3);
+  color: var(--accent);
 }
 
 .sulla-startup-download-status {
   font-size: 0.75rem;
-  color: var(--text-muted, #8b949e);
+  color: var(--text-muted);
   margin: 0.375rem 0 0;
 }
 /* The card is white: give the progress panel dark ink and a light track. */
 .sulla-startup-card :deep(.sulla-sp) {
-  --sp-ink: #1a2332;
-  --sp-read: #5b6778;
-  --sp-hair: rgba(26, 35, 50, 0.14);
-  --sp-track: #e3eaf1;
+  --sp-ink: var(--text-primary);
+  --sp-read: var(--text-secondary);
+  --sp-hair: color-mix(in srgb, var(--border-default) 14%, transparent);
+  --sp-track: var(--border-subtle);
 }
 </style>
 
 <style scoped>
-.theme-noir .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--nx-paper) 108.6957%, transparent);
+.sulla-startup-overlay {
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 32%), color-mix(in srgb, var(--bg-surface) 92%, transparent);
   backdrop-filter: blur(22px);
 }
-.theme-noir .sulla-startup-card {
+.sulla-startup-card {
   padding: 14px 22px 16px;
   border: 0;
   border-radius: 16px;
-  background: #ffffff;
-  box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.14), 0 20px 50px rgba(0, 0, 0, 0.35);
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 14%, transparent), 0 20px 50px rgba(0, 0, 0, 0.35);
   animation: startup-noir-enter .5s cubic-bezier(.22, 1, .36, 1) both;
 }
-.theme-noir .sulla-startup-accent { display: none; }
-.theme-noir .sulla-startup-header { gap: 12px; margin-bottom: 8px; }
-.theme-noir .sulla-startup-icon {
+.sulla-startup-accent { display: none; }
+.sulla-startup-header { gap: 12px; margin-bottom: 8px; }
+.sulla-startup-icon {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  color: #a8c0dc;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 454.5455%, transparent), color-mix(in srgb, var(--nx-accent) 1666.6667%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 294.1176%, transparent), 0 0 34px color-mix(in srgb, var(--nx-accent) 285.7143%, transparent);
+  color: var(--text-secondary);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 22%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 34%, transparent), 0 0 34px color-mix(in srgb, var(--accent) 35%, transparent);
 }
-.theme-noir .sulla-startup-icon svg { width: 18px; height: 18px; }
-.theme-noir-light .sulla-startup-icon { color: var(--nx-accent-2); }
-.theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 18px; color: #1a2332; }
-.theme-noir .sulla-startup-subtitle,
-.theme-noir .sulla-startup-download-status { color: #5b6778; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
-.theme-noir .sulla-startup-download { border: 0; border-radius: 14px; background: rgba(80, 150, 179, 0.08); box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.1); }
+.sulla-startup-icon svg { width: 18px; height: 18px; }
+.sulla-startup-icon { color: var(--accent-hover); }
+.sulla-startup-title { font-family: var(--font-display); font-size: 18px; color: var(--text-primary); }
+.sulla-startup-subtitle,
+.sulla-startup-download-status { color: var(--text-secondary); font-family: var(--font-mono); }
+.sulla-startup-download { border: 0; border-radius: 14px; background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 10%, transparent); }
 @keyframes startup-noir-enter { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (max-width: 520px) {
   .sulla-startup-card,
-  .theme-noir .sulla-startup-card { padding: 12px 14px; }
+  .sulla-startup-card { padding: 12px 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .sulla-startup-card { animation: none; }
+  .sulla-startup-card { animation: none; }
 }
 </style>

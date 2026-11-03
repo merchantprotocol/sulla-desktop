@@ -36,52 +36,31 @@ function getDefaultStyles(): string {
   const hostHeight = props.fullPage ? 'height: 100%; min-height: 100%;' : 'max-height: 80vh;';
 
   return `
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500;700&display=swap');
-
     :host {
       display: block;
       ${ hostHeight }
       overflow-y: auto;
       overflow-x: hidden;
-      color-scheme: dark;
-
-      /* Backgrounds */
-      --bg: #0d1117;
-      --surface-1: #161b22;
-      --surface-2: #1c2128;
-      --surface-3: #21262d;
-
-      /* Borders */
-      --border: #30363d;
-      --border-muted: #21262d;
-
-      /* Text */
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --text-dim: #6e7681;
-
-      /* Green accent system */
-      --green: #2ea043;
-      --green-bright: #3fb950;
-      --green-glow: rgba(46, 160, 67, 0.4);
-      --green-glow-soft: rgba(63, 185, 80, 0.15);
-      --green-glow-strong: rgba(63, 185, 80, 0.6);
-
-      /* Status */
-      --info: #58a6ff;
-      --success: #3fb950;
-      --warning: #e3b341;
-      --danger: #f85149;
-
-      /* Traffic-light dots */
-      --red-dot: #ff5f57;
-      --yellow-dot: #febc2e;
-      --green-dot: #28c840;
-
-      /* Fonts */
-      --font-display: 'Playfair Display', Georgia, serif;
-      --font-mono: 'JetBrains Mono', 'Courier New', monospace;
-      --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color-scheme: light dark;
+      --bg: var(--bg-page);
+      --surface-1: var(--bg-surface);
+      --surface-2: var(--bg-surface-alt);
+      --surface-3: var(--bg-surface-hover);
+      --border: var(--border-default);
+      --border-muted: var(--border-subtle);
+      --text: var(--text-primary);
+      --green: var(--status-success);
+      --green-bright: var(--status-success);
+      --green-glow: var(--status-success);
+      --green-glow-soft: var(--status-success-soft);
+      --green-glow-strong: var(--status-success);
+      --info: var(--status-info);
+      --success: var(--status-success);
+      --warning: var(--status-warning);
+      --danger: var(--status-error);
+      --red-dot: var(--status-error);
+      --yellow-dot: var(--status-warning);
+      --green-dot: var(--status-success);
     }
 
     .html-message-wrapper {
@@ -119,7 +98,7 @@ function getDefaultStyles(): string {
     a:hover { color: var(--text); text-shadow: 0 0 10px var(--green-glow); }
 
     /* Selection */
-    ::selection { background: var(--green); color: #fff; }
+    ::selection { background: var(--green); color: var(--text-on-accent); }
 
     /* Code */
     code {
@@ -132,7 +111,7 @@ function getDefaultStyles(): string {
       border: 1px solid var(--border);
     }
     pre {
-      background: #1a1e24;
+      background: var(--bg-surface-alt);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 1.5rem 1.75rem;
@@ -141,7 +120,7 @@ function getDefaultStyles(): string {
       line-height: 1.8;
       color: var(--text-muted);
       overflow-x: auto;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03);
+      box-shadow: 0 4px 24px var(--bg-overlay), inset 0 1px 0 var(--bg-hover);
     }
     pre code {
       background: none;
@@ -157,7 +136,7 @@ function getDefaultStyles(): string {
       border: 1px solid var(--border);
       border-radius: 10px;
       overflow: hidden;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+      box-shadow: 0 8px 32px var(--bg-overlay), 0 2px 8px var(--bg-overlay);
     }
     .terminal-bar {
       display: flex;
@@ -182,7 +161,7 @@ function getDefaultStyles(): string {
     }
     .card:hover {
       border-color: var(--green-bright);
-      box-shadow: 0 0 20px rgba(46, 160, 67, 0.1);
+      box-shadow: 0 0 20px var(--status-success-soft);
     }
 
     /* Tables */
@@ -215,7 +194,7 @@ function getDefaultStyles(): string {
     }
     .btn-primary, button:not(.btn-outline):not(.btn-ghost) {
       background: var(--green);
-      color: #fff;
+      color: var(--text-on-accent);
     }
     .btn-primary:hover, button:not(.btn-outline):not(.btn-ghost):hover {
       background: var(--green-bright);
@@ -358,7 +337,7 @@ function render(): void {
     console.warn('[HtmlMessageRenderer] Shadow DOM failed, falling back:', e);
     el.style.cssText = 'all: initial; display: block; max-height: 80vh; overflow-y: auto;';
     el.innerHTML = `
-      <div style="font-family: sans-serif; font-size: 14px; line-height: 1.6;">
+      <div style="font-family: var(--font-body); font-size: var(--fs-body); line-height: 1.6;">
         ${ sanitize(props.content) }
       </div>
     `;

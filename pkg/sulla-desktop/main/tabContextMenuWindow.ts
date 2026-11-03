@@ -26,18 +26,18 @@ import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
 const console = Logging.background;
 
 let win: BrowserWindow | null = null;
 
-/** Check if current theme is light mode */
-async function isLightTheme(): Promise<boolean> {
+/** Read the exact theme so the popup can apply scheme-specific classes. */
+async function getTheme(): Promise<string> {
   try {
-    const theme = await SullaSettingsModel.get('theme', 'noir-dark') as string;
-    return theme.includes('-light');
+    return await SullaSettingsModel.get('theme', DEFAULT_THEME_ID) as string;
   } catch {
-    return false;
+    return DEFAULT_THEME_ID;
   }
 }
 
@@ -69,7 +69,8 @@ async function onShow(
   pendingTabData = tabData;
 
   // Detect theme for proper styling
-  const theme = await isLightTheme() ? 'light' : 'dark';
+  const themeId = await getTheme();
+  const theme = themeId.includes('-light') ? 'light' : 'dark';
 
   // Estimate height from item count
   const itemCount = items.filter(i => i !== '---').length;
@@ -80,7 +81,7 @@ async function onShow(
     win.setBounds({
       x: screenX, y: screenY, width: MENU_WIDTH, height: estimatedHeight,
     });
-    win.webContents.send('tab-context-menu:data', { items, theme });
+    win.webContents.send('tab-context-menu:data', { items, theme, themeId });
     win.showInactive();
     // Focus after a tick so the window can receive keyboard events
     setTimeout(() => {
@@ -121,7 +122,7 @@ async function onShow(
 
   win.once('ready-to-show', () => {
     if (!win || win.isDestroyed()) return;
-    win.webContents.send('tab-context-menu:data', { items, theme });
+    win.webContents.send('tab-context-menu:data', { items, theme, themeId });
     win.showInactive();
     setTimeout(() => {
       if (win && !win.isDestroyed()) {

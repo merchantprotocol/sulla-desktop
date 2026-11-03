@@ -73,7 +73,7 @@ async function onCheckboxChange(event: Event): Promise<void> {
   overflow-wrap: anywhere;
 }
 
-.theme-noir .markdown-artifact { color: var(--nx-read-2); }
+.markdown-artifact { color: var(--text-secondary); }
 
 .markdown-artifact :deep(h1),
 .markdown-artifact :deep(h2),
@@ -82,11 +82,11 @@ async function onCheckboxChange(event: Event): Promise<void> {
   font-family: var(--font-display);
   line-height: 1.2;
 }
-.theme-noir .markdown-artifact :deep(h1),
-.theme-noir .markdown-artifact :deep(h2),
-.theme-noir .markdown-artifact :deep(h3) { color: var(--nx-read-1); }
-.markdown-artifact :deep(a) { color: var(--accent, var(--accent-primary)); }
-.theme-noir .markdown-artifact :deep(a) { color: var(--nx-accent-2); }
+.markdown-artifact :deep(h1),
+.markdown-artifact :deep(h2),
+.markdown-artifact :deep(h3) { color: var(--text-primary); }
+.markdown-artifact :deep(a) { color: var(--accent, var(--accent)); }
+.markdown-artifact :deep(a) { color: var(--accent-hover); }
 .markdown-artifact :deep(pre),
 .markdown-artifact :deep(code) { font-family: var(--font-mono); }
 .markdown-artifact :deep(pre) {
@@ -96,14 +96,14 @@ async function onCheckboxChange(event: Event): Promise<void> {
   border-radius: 8px;
   background: var(--surface-2, var(--bg-surface-alt));
 }
-.theme-noir .markdown-artifact :deep(pre) {
-  border-color: var(--nx-hair-strong);
-  background: var(--nx-surface);
+.markdown-artifact :deep(pre) {
+  border-color: var(--border-default);
+  background: var(--bg-surface);
 }
 .markdown-artifact :deep(input[type="checkbox"]) {
-  accent-color: var(--accent, var(--accent-primary));
+  accent-color: var(--accent, var(--accent));
   cursor: pointer;
   margin-right: 8px;
 }
-.theme-noir .markdown-artifact :deep(input[type="checkbox"]) { accent-color: var(--nx-accent-2); }
+.markdown-artifact :deep(input[type="checkbox"]) { accent-color: var(--accent-hover); }
 </style>

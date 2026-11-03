@@ -10,7 +10,7 @@
 .chat-canvas {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, var(--ink-2) 0%, var(--ink-1) 60%, var(--ink-0) 100%);
+  background: linear-gradient(135deg, var(--bg-surface-alt) 0%, var(--bg-surface) 60%, var(--bg-page) 100%);
   overflow: hidden;
   pointer-events: none;
 }
@@ -19,14 +19,14 @@
   position: absolute; inset: 0; pointer-events: none; opacity: 0.30; z-index: 1;
   background-image:
     radial-gradient(1px 1px at 15% 25%, white, transparent),
-    radial-gradient(1px 1px at 35% 70%, var(--steel-200), transparent),
+    radial-gradient(1px 1px at 35% 70%, var(--text-muted), transparent),
     radial-gradient(1px 1px at 55% 15%, white, transparent),
     radial-gradient(1px 1px at 72% 55%, white, transparent),
-    radial-gradient(1px 1px at 88% 80%, var(--steel-200), transparent),
+    radial-gradient(1px 1px at 88% 80%, var(--text-muted), transparent),
     radial-gradient(1.5px 1.5px at 5% 65%, white, transparent),
     radial-gradient(1px 1px at 62% 88%, white, transparent),
-    radial-gradient(1px 1px at 42% 42%, var(--steel-100), transparent),
+    radial-gradient(1px 1px at 42% 42%, var(--text-secondary), transparent),
     radial-gradient(1px 1px at 28% 88%, white, transparent),
     radial-gradient(1px 1px at 80% 20%, white, transparent),
-    radial-gradient(1px 1px at 8% 42%, var(--steel-200), transparent);
+    radial-gradient(1px 1px at 8% 42%, var(--text-muted), transparent);
 }

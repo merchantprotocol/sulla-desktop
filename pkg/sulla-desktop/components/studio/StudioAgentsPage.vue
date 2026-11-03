@@ -123,13 +123,13 @@ onMounted(load);
 .mc-l b { display: block; color: var(--uc-text); font-weight: 600; }
 .mc-l small { display: block; margin-top: 2px; color: var(--uc-dim); font-size: 12px; }
 .mc-resolve { margin-top: 3px; color: var(--uc-dim); font-size: 12px; }
-.mc-resolve code { color: var(--uc-text); font: 11.5px var(--font-mono, ui-monospace, Menlo, monospace); }
-.mc-resolve.warn { color: #c47a00; }
+.mc-resolve code { color: var(--uc-text); font: 11.5px var(--font-mono); }
+.mc-resolve.warn { color: var(--status-warning); }
 .mc-c { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .mc .mc-sel { width: auto; min-width: 180px; max-width: 100%; height: 30px; padding: 0 10px; }
 .mc .mc-sel:disabled { opacity: .5; }
 .mc-tog { position: relative; flex: none; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: var(--uc-line-strong); cursor: pointer; transition: background 160ms cubic-bezier(.22, 1, .36, 1); }
-.mc-tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform 240ms cubic-bezier(.22, 1, .36, 1); }
+.mc-tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg-surface); box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform 240ms cubic-bezier(.22, 1, .36, 1); }
 .mc-tog.on { background: var(--uc-accent); }
 .mc-tog.on::after { transform: translateX(14px); }
 .mc-tog:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--uc-accent-soft); }
@@ -138,7 +138,7 @@ onMounted(load);
 .mc-pin > div { overflow: hidden; min-height: 0; }
 .mc-pin .mc-set { opacity: 0; transition: opacity 240ms cubic-bezier(.22, 1, .36, 1); }
 .mc-pin.open .mc-set { opacity: 1; }
-.mc-warn { display: flex; align-items: flex-start; gap: 8px; padding: 0 16px 13px; color: #c47a00; font-size: 12px; }
+.mc-warn { display: flex; align-items: flex-start; gap: 8px; padding: 0 16px 13px; color: var(--status-warning); font-size: 12px; }
 .mc-note { display: flex; align-items: flex-start; gap: 8px; padding: 11px 16px 13px; border-top: 1px solid var(--uc-line); color: var(--uc-muted); font-size: 12px; }
 .mc-note b { color: var(--uc-text); font-weight: 600; }
 @media (max-width: 720px) { .mc-set { flex-direction: column; align-items: stretch; gap: 10px; } .mc-c { justify-content: flex-start; } }

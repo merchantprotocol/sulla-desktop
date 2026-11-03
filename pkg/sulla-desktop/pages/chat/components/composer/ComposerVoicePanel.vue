@@ -100,20 +100,20 @@ const speaking = computed(() => props.speaking === true);
 <style scoped>
 .voice-ui {
   flex: 1; display: flex; align-items: center; gap: 16px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
 }
 .label {
   font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--steel-400); font-weight: 700;
+  color: var(--accent-hover); font-weight: 700;
   display: inline-flex; align-items: center; gap: 9px; flex-shrink: 0;
 }
 .label::before {
   content: ""; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--steel-400); box-shadow: 0 0 10px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 10px var(--accent-hover);
   animation: chat-pulse 1.2s infinite;
 }
 .timer {
-  font-variant-numeric: tabular-nums; color: var(--read-1);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
   font-size: 13px; font-weight: 500; flex-shrink: 0;
 }
 .waveform {
@@ -124,43 +124,43 @@ const speaking = computed(() => props.speaking === true);
 .waveform.active { opacity: 1; }
 .waveform span {
   display: block; width: 2.5px; border-radius: 1.5px;
-  background: var(--steel-400);
-  box-shadow: 0 0 4px rgba(106, 176, 204, 0.2);
+  background: var(--accent-hover);
+  box-shadow: 0 0 4px var(--accent-dim);
   transition: height 80ms linear, box-shadow 180ms ease;
 }
 .waveform.active span {
-  box-shadow: 0 0 6px rgba(106, 176, 204, 0.45);
+  box-shadow: 0 0 6px var(--accent-glow);
 }
 
 .stop-rec {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--steel-100);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--text-secondary);
   padding: 6px 12px; border-radius: 100px;
-  background: transparent; border: 1px solid var(--steel-400);
+  background: transparent; border: 1px solid var(--accent-hover);
   cursor: pointer; flex-shrink: 0; transition: all 0.15s ease;
 }
 .ptt-hint {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--steel-300, var(--steel-100));
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--accent-hover, var(--text-secondary));
   flex-shrink: 0; white-space: nowrap;
 }
 .stop-rec:hover {
-  background: var(--steel-500); color: white;
-  box-shadow: 0 0 14px rgba(106, 176, 204, 0.35);
+  background: var(--accent); color: var(--text-on-accent);
+  box-shadow: 0 0 14px var(--accent-glow);
 }
-.theme-noir .voice-ui {
+.voice-ui {
   flex: 0 0 100%; height: 54px; gap: 14px; padding: 0 18px;
   animation: noir-voice-in 0.4s cubic-bezier(.22, 1, .36, 1) both;
 }
-.theme-noir .label {
-  color: var(--nx-read-1); font-family: var(--font-body); font-size: 14px;
+.label {
+  color: var(--text-primary); font-family: var(--font-body); font-size: 14px;
   letter-spacing: 0; text-transform: none; font-weight: 500;
 }
-.theme-noir .label::before { display: none; }
-.theme-noir .timer { color: var(--nx-read-4); font: 10.5px var(--mono); }
-.theme-noir .waveform { order: -1; flex: 0 0 96px; height: 28px; gap: 3px; opacity: 0.55; }
-.theme-noir .waveform span { width: 3px; border-radius: 2px; background: var(--nx-accent-2); box-shadow: 0 0 6px color-mix(in srgb, var(--nx-accent-2) 60%, transparent); }
-.theme-noir .stop-rec { color: var(--nx-read-3); border-color: var(--nx-hair-strong); }
+.label::before { display: none; }
+.timer { color: var(--text-dim); font: 10.5px var(--font-mono); }
+.waveform { order: -1; flex: 0 0 96px; height: 28px; gap: 3px; opacity: 0.55; }
+.waveform span { width: 3px; border-radius: 2px; background: var(--accent-hover); box-shadow: 0 0 6px color-mix(in srgb, var(--accent-hover) 60%, transparent); }
+.stop-rec { color: var(--text-muted); border-color: var(--border-default); }
 @keyframes noir-voice-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .theme-noir .voice-ui { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .voice-ui { animation: none; } }
 </style>

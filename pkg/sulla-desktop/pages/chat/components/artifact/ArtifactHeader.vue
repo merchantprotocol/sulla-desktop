@@ -148,7 +148,7 @@ async function retryFiles(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 14px;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.1);
+  border-bottom: 1px solid var(--border-subtle);
   background: transparent;
 }
 .title-block {
@@ -159,7 +159,7 @@ async function retryFiles(): Promise<void> {
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
-  font: 11px var(--mono);
+  font: 11px var(--font-mono);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
@@ -169,7 +169,7 @@ async function retryFiles(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font: italic 500 22px/1.15 var(--serif);
+  font: italic 500 22px/1.15 var(--font-display);
   letter-spacing: -.01em;
 }
 .status-dot {
@@ -180,7 +180,7 @@ async function retryFiles(): Promise<void> {
   animation: chat-pulse 1.5s infinite;
 }
 .status-dot.done {
-  background: var(--text-success);
+  background: var(--status-success);
   animation: none;
 }
 .spacer {
@@ -217,8 +217,8 @@ async function retryFiles(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--danger, #e36b65);
-  font: 600 9.5px var(--mono);
+  color: var(--status-error);
+  font: 600 9.5px var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }

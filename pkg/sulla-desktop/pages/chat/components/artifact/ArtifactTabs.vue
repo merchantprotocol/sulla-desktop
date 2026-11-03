@@ -129,7 +129,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator));
   animation: chat-pulse 1.5s infinite;
 }
 .sd-tab-dot.is-done {
-  background: var(--text-success);
+  background: var(--status-success);
 }
 .sd-tab-indicator {
   position: absolute;

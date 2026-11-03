@@ -24,10 +24,10 @@
         {{ conversationId ? '← Close' : '← All agents' }}
       </button>
       <div class="min-w-0">
-        <p class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+        <p class="text-sm font-medium text-[var(--text-primary)]  truncate">
           {{ agentName }}
         </p>
-        <p class="text-xs text-slate-500 font-mono truncate">
+        <p class="text-xs text-[var(--text-muted)] font-mono truncate">
           {{ channel }}
         </p>
       </div>
@@ -38,13 +38,13 @@
       <aside v-if="!conversationId" class="conv-list flex-shrink-0 overflow-auto">
         <p
           v-if="listLoading && !conversations.length"
-          class="px-4 py-6 text-xs text-slate-500"
+          class="px-4 py-6 text-xs text-[var(--text-muted)]"
         >
           Loading conversations…
         </p>
         <p
           v-else-if="!conversations.length"
-          class="px-4 py-6 text-xs text-slate-500"
+          class="px-4 py-6 text-xs text-[var(--text-muted)]"
         >
           No stored conversations for this agent.
         </p>
@@ -59,12 +59,12 @@
           <div class="flex items-center gap-2">
             <span
               class="flex-shrink-0 inline-block w-2 h-2 rounded-full"
-              :class="conv.status === 'active' ? 'bg-emerald-400' : 'bg-slate-400'"
+              :class="conv.status === 'active' ? 'bg-[var(--status-success)]' : 'bg-[var(--bg-surface-alt)]'"
             />
-            <span class="text-xs text-slate-500 truncate">{{ formatWhen(conv.lastActiveAt) }}</span>
-            <span class="ml-auto text-xs text-slate-400 flex-shrink-0">{{ conv.messageCount }}</span>
+            <span class="text-xs text-[var(--text-muted)] truncate">{{ formatWhen(conv.lastActiveAt) }}</span>
+            <span class="ml-auto text-xs text-[var(--text-dim)] flex-shrink-0">{{ conv.messageCount }}</span>
           </div>
-          <p class="mt-1 text-xs text-slate-700 dark:text-slate-300 conv-preview">
+          <p class="mt-1 text-xs text-[var(--text-primary)]  conv-preview">
             {{ conv.preview || conv.id }}
           </p>
         </button>
@@ -87,40 +87,40 @@
       >
         <p
           v-if="!selectedId"
-          class="text-sm text-slate-500 py-10 text-center"
+          class="text-sm text-[var(--text-muted)] py-10 text-center"
         >
           Select a conversation.
         </p>
         <p
           v-else-if="detailLoading && !detail"
-          class="text-sm text-slate-500 py-10 text-center"
+          class="text-sm text-[var(--text-muted)] py-10 text-center"
         >
           Loading…
         </p>
         <template v-else-if="detail">
           <div class="mb-4">
-            <p class="text-xs text-slate-500 font-mono break-all">
+            <p class="text-xs text-[var(--text-muted)] font-mono break-all">
               {{ detail.id }}
             </p>
-            <p class="text-xs text-slate-500 mt-0.5">
+            <p class="text-xs text-[var(--text-muted)] mt-0.5">
               {{ detail.status }} · started {{ formatWhen(detail.createdAt) }} · last active {{ formatWhen(detail.lastActiveAt) }}
             </p>
           </div>
           <p
             v-if="detail.missingLog"
-            class="text-sm text-slate-500"
+            class="text-sm text-[var(--text-muted)]"
           >
             This conversation is indexed in the database, but its message log file is missing.
           </p>
           <p
             v-else-if="!detail.entries.length"
-            class="text-sm text-slate-500"
+            class="text-sm text-[var(--text-muted)]"
           >
             No messages logged yet.
           </p>
           <p
             v-if="detail.truncated"
-            class="text-xs text-slate-500 mb-3"
+            class="text-xs text-[var(--text-muted)] mb-3"
           >
             Showing the most recent part of a long conversation.
           </p>
@@ -132,7 +132,7 @@
             >
               <div
                 v-if="entry.kind === 'event'"
-                class="conv-event text-xs text-slate-500"
+                class="conv-event text-xs text-[var(--text-muted)]"
               >
                 {{ entry.text }} · {{ formatClock(entry.ts) }}
               </div>
@@ -141,9 +141,9 @@
                 v-else-if="entry.kind === 'tool'"
                 class="conv-tool text-xs"
               >
-                <summary class="cursor-pointer text-slate-600 dark:text-slate-400">
+                <summary class="cursor-pointer text-[var(--text-secondary)] ">
                   <span class="font-mono">{{ entry.toolName }}</span>
-                  <span class="text-slate-400"> · {{ formatClock(entry.ts) }}</span>
+                  <span class="text-[var(--text-dim)]"> · {{ formatClock(entry.ts) }}</span>
                 </summary>
                 <pre class="conv-pre mt-2">{{ entry.text }}</pre>
               </details>
@@ -153,7 +153,7 @@
                 class="conv-msg rounded-lg px-4 py-3"
                 :class="entry.kind === 'user' ? 'conv-msg-user' : 'conv-msg-assistant'"
               >
-                <p class="text-xs text-slate-500 mb-1">
+                <p class="text-xs text-[var(--text-muted)] mb-1">
                   {{ entry.kind === 'user' ? 'Prompt' : agentName }} · {{ formatClock(entry.ts) }}
                 </p>
                 <div
@@ -355,7 +355,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 <style scoped>
 .conv-toolbar,
 .conv-list {
-  border-color: rgba(100, 116, 139, 0.2);
+  border-color: color-mix(in srgb, var(--border-default) 20%, transparent);
 }
 
 .conv-toolbar {
@@ -369,25 +369,25 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-back {
   font-size: 0.75rem;
-  color: #5096b3;
+  color: var(--accent);
   padding: 0.25rem 0.5rem;
   border-radius: 6px;
 }
 
 .conv-back:hover {
-  background: rgba(80, 150, 179, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .conv-item {
-  border-bottom: 1px solid rgba(100, 116, 139, 0.12);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 12%, transparent);
 }
 
 .conv-item:hover {
-  background: rgba(100, 116, 139, 0.06);
+  background: var(--bg-surface-hover);
 }
 
 .conv-item-active {
-  background: rgba(80, 150, 179, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .conv-preview {
@@ -398,7 +398,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 }
 
 .conv-more {
-  color: #5096b3;
+  color: var(--accent);
 }
 
 .conv-event {
@@ -407,15 +407,15 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-tool {
   padding: 0.25rem 0.75rem;
-  border-left: 2px solid rgba(100, 116, 139, 0.3);
+  border-left: 2px solid color-mix(in srgb, var(--border-default) 30%, transparent);
 }
 
 .conv-msg-user {
-  background: rgba(100, 116, 139, 0.08);
+  background: var(--bg-surface-alt);
 }
 
 .conv-msg-assistant {
-  background: rgba(80, 150, 179, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .conv-pre {
@@ -432,7 +432,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 }
 
 .conv-toggle {
-  color: #5096b3;
+  color: var(--accent);
 }
 
 .conv-markdown :deep(p) {
@@ -442,7 +442,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 .conv-markdown :deep(pre) {
   white-space: pre-wrap;
   font-size: 0.75rem;
-  background: rgba(100, 116, 139, 0.1);
+  background: var(--bg-surface-alt);
   padding: 0.5rem;
   border-radius: 6px;
 }
@@ -453,113 +453,113 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
   list-style: revert;
 }
 
-.theme-noir .conv-root {
+.conv-root {
   background:
-    radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--nx-accent) 7%, transparent), transparent 32%),
-    var(--nx-paper);
-  color: var(--nx-read-2);
+    radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 32%),
+    var(--bg-surface);
+  color: var(--text-primary);
 }
 
-.theme-noir .conv-toolbar {
+.conv-toolbar {
   min-height: 72px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   backdrop-filter: blur(18px);
 }
 
-.theme-noir .conv-toolbar p:first-of-type {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
+.conv-toolbar p:first-of-type {
+  color: var(--text-primary);
+  font-family: var(--font-display);
   font-size: 1.15rem;
 }
 
-.theme-noir .conv-toolbar p:last-of-type {
-  color: var(--nx-read-4);
+.conv-toolbar p:last-of-type {
+  color: var(--text-muted);
   font-size: 0.65rem;
   letter-spacing: 0.08em;
 }
 
-.theme-noir .conv-back {
-  border: 1px solid var(--nx-hair);
+.conv-back {
+  border: 1px solid var(--border-default);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
-  color: var(--text-info);
+  background: var(--bg-surface-hover);
+  color: var(--status-info);
 }
 
-.theme-noir .conv-list {
+.conv-list {
   width: 350px;
   padding: 14px;
-  border-color: var(--nx-hair);
+  border-color: var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
 }
 
-.theme-noir .conv-item {
+.conv-item {
   margin-bottom: 8px;
-  border: 1px solid var(--nx-hair);
+  border: 1px solid var(--border-default);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
+  background: var(--bg-surface-hover);
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
-.theme-noir .conv-item:hover,
-.theme-noir .conv-item-active {
+.conv-item:hover,
+.conv-item-active {
   transform: translateX(3px);
-  border-color: color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 8.5%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 8.5%, transparent);
 }
 
-.theme-noir .conv-preview {
-  color: var(--nx-read-3);
+.conv-preview {
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
-.theme-noir .conv-event {
-  color: var(--nx-read-5);
+.conv-event {
+  color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-.theme-noir .conv-tool {
+.conv-tool {
   padding: 11px 14px;
-  border: 1px solid var(--nx-hair);
-  border-left: 3px solid var(--nx-accent);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--accent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
 }
 
-.theme-noir .conv-msg {
-  border: 1px solid var(--nx-hair);
+.conv-msg {
+  border: 1px solid var(--border-default);
   border-radius: 16px;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
-.theme-noir .conv-msg-user {
+.conv-msg-user {
   margin-left: clamp(2rem, 14vw, 12rem);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 6%, transparent));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
 }
 
-.theme-noir .conv-msg-assistant {
+.conv-msg-assistant {
   margin-right: clamp(1rem, 8vw, 7rem);
-  background: color-mix(in srgb, var(--nx-hair-strong) 20%, transparent);
+  background: var(--bg-surface-alt);
 }
 
-.theme-noir .conv-msg > p:first-child {
-  color: var(--nx-read-4);
+.conv-msg > p:first-child {
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.theme-noir .conv-markdown :deep(pre) {
-  border: 1px solid var(--nx-hair);
-  background: color-mix(in srgb, var(--nx-paper) 72%, transparent);
+.conv-markdown :deep(pre) {
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .conv-item {
+  .conv-item {
     transition: none;
   }
 }

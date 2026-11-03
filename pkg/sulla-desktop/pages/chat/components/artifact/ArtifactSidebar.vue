@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb,var(--bg-surface) 82%,transparent);
   backdrop-filter: blur(12px);
   border-radius: 14px;
-  box-shadow: 0 1px 2px color-mix(in srgb,var(--text-primary) 8%,transparent),inset 0 0 0 1px var(--border-default);
+  box-shadow: var(--elev-rest), inset 0 0 0 1px var(--border-default);
   display: flex;
   flex-direction: column;
   transition: width .3s ease;
@@ -179,13 +179,13 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg,var(--accent-primary),var(--text-primary));
-  color: var(--bg-surface);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--text-on-accent);
   font-weight: 700;
 }
 .sd-agent-detail h3 {
   margin: 0;
-  font: italic 500 18px/1.2 var(--serif);
+  font: italic 500 18px/1.2 var(--font-display);
   letter-spacing: -.01em;
 }
 .sd-agent-detail header small {
@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
 }
 .sd-facts b {
   display: block;
-  font: 500 15px/1.2 var(--serif);
+  font: 500 15px/1.2 var(--font-display);
 }
 .sd-facts small {
   color: var(--text-muted);
@@ -222,25 +222,25 @@ onBeforeUnmount(() => {
   height: 6px;
   margin-right: 6px;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--border-muted);
   vertical-align: 2px;
 }
 .sd-dot.is-running {
   background: var(--accent-primary);
 }
 .sd-dot.is-done {
-  background: var(--text-success);
+  background: var(--status-success);
 }
 .sd-dot.is-failed {
-  background: var(--text-error);
+  background: var(--status-error);
 }
 .sd-dot.is-stopped {
-  background: var(--text-warning);
+  background: var(--status-warning);
 }
 .sd-agent-detail h4 {
   margin: 18px 0 8px;
   color: var(--text-muted);
-  font: 11px var(--mono);
+  font: 11px var(--font-mono);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
@@ -254,7 +254,7 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   background: var(--bg-surface-alt);
   color: var(--text-secondary);
-  font: 12px/1.55 var(--mono);
+  font: 12px/1.55 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -277,10 +277,10 @@ onBeforeUnmount(() => {
 .sd-actions .primary {
   border: 0;
   background: var(--accent-primary);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 .sd-actions .danger {
-  color: var(--text-error);
+  color: var(--status-error);
 }
 .sd-artifact-tab {
   position: absolute;
@@ -308,7 +308,7 @@ onBeforeUnmount(() => {
 }
 .sd-artifact-tab b {
   writing-mode: vertical-rl;
-  font: 600 10px var(--mono);
+  font: 600 10px var(--font-mono);
   letter-spacing: .12em;
   text-transform: uppercase;
 }

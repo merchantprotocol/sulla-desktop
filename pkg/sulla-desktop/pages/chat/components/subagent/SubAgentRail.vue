@@ -235,11 +235,11 @@ onBeforeUnmount(() => {
 }
 .sd-agent-heading h2 {
   margin: 0;
-  font: 500 13px/1 var(--mono);
+  font: 500 13px/1 var(--font-mono);
 }
 .sd-agent-heading>span {
   color: var(--text-muted);
-  font: 11px var(--mono);
+  font: 11px var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .sd-icon-button {
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   margin: 0 8px 8px;
   padding: 3px;
   border-radius: 10px;
-  background: color-mix(in srgb,var(--text-primary) 5%,transparent);
+  background: var(--bg-surface-alt);
 }
 .sd-agent-filters button {
   font: inherit;
@@ -296,7 +296,7 @@ onBeforeUnmount(() => {
   height: 28px;
   border-radius: 8px;
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px color-mix(in srgb,var(--text-primary) 8%,transparent);
+  box-shadow: var(--elev-rest);
   transition: transform 580ms linear(0,.006,.025 2.8%,.101 6.1%,.539 18.9%,.849 31.5%,.968 41.8%,1.006 50.1%,1.017 63.9%,1);
 }
 .sd-agent-list {
@@ -310,7 +310,7 @@ onBeforeUnmount(() => {
   margin: 10px 0 4px;
   padding: 0 8px;
   color: var(--text-muted);
-  font: 11px var(--mono);
+  font: 11px var(--font-mono);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
@@ -331,11 +331,11 @@ onBeforeUnmount(() => {
   transition: background 120ms,opacity 240ms,transform 240ms;
 }
 .sd-agent-row:hover {
-  background: color-mix(in srgb,var(--text-primary) 4%,transparent);
+  background: var(--bg-surface-alt);
 }
 .sd-agent-row[aria-current=true] {
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px color-mix(in srgb,var(--text-primary) 8%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--accent-primary) 34%,transparent);
+  box-shadow: var(--elev-rest), inset 0 0 0 1px var(--accent-border);
 }
 .sd-agent-row.is-dismissing {
   opacity: 0;
@@ -351,7 +351,7 @@ onBeforeUnmount(() => {
 .sd-agent-row time {
   padding-top: 2px;
   color: var(--text-muted);
-  font: 11.5px var(--mono);
+  font: 11.5px var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .sd-agent-row>span {
@@ -364,27 +364,27 @@ onBeforeUnmount(() => {
 }
 .sd-agent-row>span b {
   color: var(--accent-primary);
-  font: 500 11.5px var(--mono);
+  font: 500 11.5px var(--font-mono);
 }
 .sd-status-dot {
   width: 8px;
   height: 8px;
   margin-top: 6px;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--border-muted);
 }
 .is-running .sd-status-dot {
   background: var(--accent-primary);
   animation: chat-pulse 1.8s ease infinite;
 }
 .is-done .sd-status-dot {
-  background: var(--text-success);
+  background: var(--status-success);
 }
 .is-failed .sd-status-dot {
-  background: var(--text-error);
+  background: var(--status-error);
 }
 .is-stopped .sd-status-dot {
-  background: var(--text-warning);
+  background: var(--status-warning);
 }
 .sd-agent-empty {
   padding: 24px 12px;
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
 }
 .sd-agent-rail-tab b {
   writing-mode: vertical-rl;
-  font: 600 10px var(--mono);
+  font: 600 10px var(--font-mono);
   letter-spacing: .12em;
   text-transform: uppercase;
 }

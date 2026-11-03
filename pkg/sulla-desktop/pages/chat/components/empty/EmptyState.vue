@@ -48,26 +48,26 @@ defineEmits<{
 }
 
 .e-kicker {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.4em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.4em;
+  text-transform: uppercase; color: var(--accent-hover);
   margin-bottom: 20px;
   display: inline-flex; align-items: center; gap: 14px;
 }
 .e-kicker::before,
 .e-kicker::after {
   content: ""; width: 28px; height: 1px;
-  background: var(--steel-500); opacity: 0.5;
+  background: var(--accent); opacity: 0.5;
 }
 
 h1 {
-  font-family: var(--serif); font-style: italic; font-size: 44px;
-  font-weight: 600; color: white; margin: 0 0 14px;
+  font-family: var(--font-display); font-style: italic; font-size: 44px;
+  font-weight: 600; color: var(--text-on-accent); margin: 0 0 14px;
   letter-spacing: -0.01em; line-height: 1.1;
 }
 
 .lede {
-  font-family: var(--serif); font-size: 17px; line-height: 1.65;
-  color: var(--read-3); max-width: 580px;
+  font-family: var(--font-display); font-size: 17px; line-height: 1.65;
+  color: var(--text-secondary); max-width: 580px;
   margin-bottom: 36px;
 }
 
@@ -76,14 +76,14 @@ h1 {
 }
 .sug {
   padding: 9px 16px; border-radius: 100px;
-  font-family: var(--serif); font-style: italic; font-size: 13px;
-  background: rgba(20, 30, 42, 0.55);
-  border: 1px solid rgba(168, 192, 220, 0.2);
-  color: var(--read-2); cursor: pointer;
+  font-family: var(--font-display); font-style: italic; font-size: 13px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-primary); cursor: pointer;
   transition: all 0.15s ease;
 }
 .sug:hover {
-  background: rgba(80, 150, 179, 0.12);
-  border-color: var(--steel-400); color: white;
+  background: var(--accent-dim);
+  border-color: var(--accent-hover); color: var(--text-on-accent);
 }
 </style>

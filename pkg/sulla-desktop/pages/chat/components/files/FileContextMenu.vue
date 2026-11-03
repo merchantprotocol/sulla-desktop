@@ -166,7 +166,7 @@ export default defineComponent({
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 0;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.24), 0 1px 3px rgba(0,0,0,0.12);
+  box-shadow: 0 4px 16px var(--bg-overlay), 0 1px 3px var(--bg-hover);
   font-size: var(--fs-code);
 }
 .ctx-item {
@@ -176,8 +176,8 @@ export default defineComponent({
   color: var(--text); cursor: pointer; text-align: left; line-height: 1;
 }
 .ctx-item:hover { background: var(--surface-3); }
-.ctx-item.danger { color: var(--danger); }
-.ctx-item.danger:hover { background: rgba(var(--danger), 0.1); }
+.ctx-item.danger { color: var(--status-error); }
+.ctx-item.danger:hover { background: var(--status-error-soft); }
 .ctx-shortcut { margin-left: auto; font-size: var(--fs-body-sm); color: var(--text-muted); padding-left: 16px; }
 .ctx-sep { height: 1px; background: var(--border-muted); margin: 4px 0; }
 </style>

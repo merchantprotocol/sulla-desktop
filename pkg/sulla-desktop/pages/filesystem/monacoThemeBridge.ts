@@ -27,23 +27,26 @@ function cssVar(name: string, fallback: string): string {
  * based on the live CSS variables the current workbench theme exposes.
  */
 export function applyMonacoTheme(isDark: boolean): void {
-  const base = isDark ? 'vs-dark' : 'vs';
+  // Studio is light-only; prefer the live theme class over a stale caller hint.
+  const studioLight = document.documentElement.classList.contains('theme-studio-light');
+  const effectiveDark = isDark && !studioLight;
+  const base = effectiveDark ? 'vs-dark' : 'vs';
 
   // -- Read live CSS variables --------------------------------------------------
-  const editorBg = cssVar('--editor-bg', isDark ? '#1e1e2e' : '#f0f0f0');
-  const textPrimary = cssVar('--text-primary', isDark ? '#ffffff' : '#0d0d0d');
-  const textSecondary = cssVar('--text-secondary', isDark ? '#94a3b8' : '#64748b');
-  const textMuted = cssVar('--text-muted', isDark ? '#cbd5e1' : '#94a3b8');
-  const bgSurface = cssVar('--bg-surface', isDark ? '#1e293b' : '#f8fafc');
-  const bgSurfaceAlt = cssVar('--bg-surface-alt', isDark ? '#334155' : '#f1f5f9');
-  const borderDefault = cssVar('--border-default', isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0');
-  const accentPrimary = cssVar('--accent-primary', isDark ? '#38bdf8' : '#0ea5e9');
-  const textError = cssVar('--text-error', isDark ? '#f87171' : '#dc2626');
-  const textWarning = cssVar('--text-warning', isDark ? '#fbbf24' : '#d97706');
-  const textSuccess = cssVar('--text-success', isDark ? '#4ade80' : '#16a34a');
-  const textInfo = cssVar('--text-info', isDark ? '#38bdf8' : '#0284c7');
-  const editorBorder = cssVar('--editor-border', isDark ? '#334155' : '#cbd5e1');
-  const selectionBg = cssVar('--terminal-selection-bg', isDark ? 'rgba(59,130,246,0.5)' : 'rgba(59,130,246,0.25)');
+  const editorBg = cssVar('--editor-bg', cssVar('--bg-page', effectiveDark ? '#1e1e2e' : '#f0f0f0'));
+  const textPrimary = cssVar('--text-primary', effectiveDark ? '#ffffff' : '#0d0d0d');
+  const textSecondary = cssVar('--text-secondary', effectiveDark ? '#94a3b8' : '#64748b');
+  const textMuted = cssVar('--text-muted', effectiveDark ? '#cbd5e1' : '#94a3b8');
+  const bgSurface = cssVar('--bg-surface', effectiveDark ? '#1e293b' : '#f8fafc');
+  const bgSurfaceAlt = cssVar('--bg-surface-alt', effectiveDark ? '#334155' : '#f1f5f9');
+  const borderDefault = cssVar('--border-default', effectiveDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0');
+  const accentPrimary = cssVar('--accent-primary', cssVar('--accent', effectiveDark ? '#38bdf8' : '#0ea5e9'));
+  const textError = cssVar('--text-error', cssVar('--status-error', effectiveDark ? '#f87171' : '#dc2626'));
+  const textWarning = cssVar('--text-warning', cssVar('--status-warning', effectiveDark ? '#fbbf24' : '#d97706'));
+  const textSuccess = cssVar('--text-success', cssVar('--status-success', effectiveDark ? '#4ade80' : '#16a34a'));
+  const textInfo = cssVar('--text-info', cssVar('--status-info', effectiveDark ? '#38bdf8' : '#0284c7'));
+  const editorBorder = cssVar('--editor-border', cssVar('--border-default', effectiveDark ? '#334155' : '#cbd5e1'));
+  const selectionBg = cssVar('--terminal-selection-bg', cssVar('--bg-selected', effectiveDark ? 'rgba(59,130,246,0.5)' : 'rgba(59,130,246,0.25)'));
 
   // -- Define the theme ---------------------------------------------------------
   monaco.editor.defineTheme(THEME_NAME, {
@@ -93,13 +96,13 @@ export function applyMonacoTheme(isDark: boolean): void {
       'minimap.background': editorBg,
 
       // Scrollbar
-      'scrollbarSlider.background':        isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
-      'scrollbarSlider.hoverBackground':   isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)',
-      'scrollbarSlider.activeBackground':  isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
+      'scrollbarSlider.background':        effectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+      'scrollbarSlider.hoverBackground':   effectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)',
+      'scrollbarSlider.activeBackground':  effectiveDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
 
       // Diff editor
-      'diffEditor.insertedTextBackground': isDark ? 'rgba(74,222,128,0.12)' : 'rgba(34,197,94,0.12)',
-      'diffEditor.removedTextBackground':  isDark ? 'rgba(248,113,113,0.12)' : 'rgba(220,38,38,0.12)',
+      'diffEditor.insertedTextBackground': effectiveDark ? 'rgba(74,222,128,0.12)' : 'rgba(34,197,94,0.12)',
+      'diffEditor.removedTextBackground':  effectiveDark ? 'rgba(248,113,113,0.12)' : 'rgba(220,38,38,0.12)',
     },
   });
 

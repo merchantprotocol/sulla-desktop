@@ -746,9 +746,9 @@ onBeforeUnmount(() => {
   width: 100%; height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #050810;
-  color: var(--read-2);
-  font-family: var(--sans);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
 }
 .shell {
   position: absolute; inset: 0; z-index: 5;
@@ -778,23 +778,23 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    rgba(5, 8, 16, 0.92) 0%,
-    rgba(5, 8, 16, 0.78) 55%,
-    rgba(5, 8, 16, 0) 100%
+    var(--bg-page) 0%,
+    color-mix(in srgb, var(--bg-page) 78%, transparent) 55%,
+    transparent 100%
   );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 1) 65%,
-    rgba(0, 0, 0, 0) 100%
+    var(--bg-page) 0%,
+    var(--bg-page) 65%,
+    var(--bg-hover) 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 1) 65%,
-    rgba(0, 0, 0, 0) 100%
+    var(--bg-page) 0%,
+    var(--bg-page) 65%,
+    var(--bg-hover) 100%
   );
 }
 
@@ -813,9 +813,9 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to top,
-    rgba(5, 8, 16, 0.92) 0%,
-    rgba(5, 8, 16, 0.78) 45%,
-    rgba(5, 8, 16, 0) 100%
+    var(--bg-page) 0%,
+    color-mix(in srgb, var(--bg-page) 78%, transparent) 45%,
+    transparent 100%
   );
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -825,12 +825,12 @@ onBeforeUnmount(() => {
      - fade out toward the RIGHT (originally so the Canvas glow showed
        through; the glow is gone, the fade is kept as it was). */
   mask-image:
-    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
-    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+    linear-gradient(to top,   var(--text-primary) 0%, var(--text-primary) 55%, transparent 100%),
+    linear-gradient(to right, var(--text-primary) 0%, var(--text-primary) 55%, transparent 92%);
   mask-composite: intersect;
   -webkit-mask-image:
-    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
-    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+    linear-gradient(to top,   var(--text-primary) 0%, var(--text-primary) 55%, transparent 100%),
+    linear-gradient(to right, var(--text-primary) 0%, var(--text-primary) 55%, transparent 92%);
   -webkit-mask-composite: source-in;
 }
 

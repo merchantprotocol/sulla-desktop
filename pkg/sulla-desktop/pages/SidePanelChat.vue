@@ -134,7 +134,7 @@
                 </div>
                 <div class="min-w-0">
                   <div
-                    class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+                    class="prose prose-sm max-w-none"
                     v-html="renderMarkdown(m.content)"
                   /><span
                     v-if="!(m as any)._completed"
@@ -175,7 +175,7 @@
                 <img
                   :src="m.image.dataUrl"
                   :alt="m.image.alt || ''"
-                  class="block h-auto max-w-full rounded-lg border border-black/10 dark:border-white/10"
+                  class="block h-auto max-w-full rounded-lg border"
                 >
               </div>
               <div
@@ -190,7 +190,7 @@
                 </div>
                 <div class="min-w-0">
                   <div
-                    class="prose prose-sm max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+                    class="prose prose-sm max-w-none"
                     v-html="renderMarkdown(m.content)"
                   />
                 </div>
@@ -395,27 +395,27 @@ onUnmounted(() => {
 
 <style scoped>
 .bg-page {
-  background: var(--bg-page, #0d1117);
+  background: var(--bg-page);
 }
 
 .text-content {
-  color: var(--text-content, #c9d1d9);
+  color: var(--text-primary);
 }
 
 .text-content-muted {
-  color: var(--text-content-muted, #484f58);
+  color: var(--text-muted);
 }
 
 .border-edge {
-  border-color: var(--border-edge, #30363d);
+  border-color: var(--border-default);
 }
 
 .bg-surface-alt {
-  background: var(--bg-surface-alt, #161b22);
+  background: var(--bg-surface-alt);
 }
 
 .ring-edge-subtle {
-  --tw-ring-color: var(--border-edge-subtle, #21262d);
+  --tw-ring-color: var(--border-subtle);
 }
 
 .sulla-avatar {
@@ -425,8 +425,8 @@ onUnmounted(() => {
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #3a6d8c, #6b9dc2);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent));
+  color: var(--text-on-accent);
   font-weight: 700;
   font-size: 11px;
 }
@@ -441,7 +441,7 @@ onUnmounted(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text-content-muted, #484f58);
+  background: var(--border-strong);
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 
@@ -457,7 +457,7 @@ onUnmounted(() => {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--text-content, #c9d1d9);
+  background: currentColor;
   margin-left: 2px;
   animation: cursor-blink 1s step-end infinite;
   vertical-align: text-bottom;
@@ -469,7 +469,7 @@ onUnmounted(() => {
 
 .thinking-bubble {
   padding: 8px 12px;
-  border-left: 2px solid var(--border-edge, #30363d);
+  border-left: 2px solid var(--border-default);
   margin-left: 4px;
 }
 </style>

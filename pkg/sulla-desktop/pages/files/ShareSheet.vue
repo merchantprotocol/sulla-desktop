@@ -189,7 +189,7 @@ onMounted(load);
 .policy-grid .policy-row:nth-child(-n+2) { border-top: 0; }
 .policy-grid .field { min-width: 0; max-width: 100%; }
 .copy-notice { margin-bottom: 8px; }
-.url-row input { user-select: text; font-family: var(--mono, ui-monospace, monospace); }
+.url-row input { user-select: text; font-family: var(--mono); }
 @container (max-width: 700px) { .policy-grid { grid-template-columns: 1fr; } .policy-grid .policy-row:nth-child(even) { border-left: 0; } .policy-grid .policy-row:nth-child(2) { border-top: 1px solid rgba(26,35,50,.09); } }
 .switch input:focus + i { outline: 2px solid #3a7fa0; outline-offset: 2px; }
 </style>

@@ -77,31 +77,31 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
    mono font + bright white on every textarea in the app. */
 .input {
   flex: 1;
-  font-family: var(--serif) !important; font-style: italic !important;
-  font-size: 18px !important; color: var(--read-1) !important;
+  font-family: var(--font-display) !important; font-style: italic !important;
+  font-size: 18px !important; color: var(--text-primary) !important;
   background: transparent; border: none; outline: none;
   resize: none; min-height: 28px; max-height: 160px;
   padding: 0; width: 100%; line-height: 1.4;
-  caret-color: var(--steel-400);
+  caret-color: var(--accent-hover);
 }
 .input::placeholder {
-  color: var(--read-4) !important;
-  font-family: var(--serif) !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-display) !important;
   font-style: italic !important;
   font-size: 18px !important;
 }
-.theme-noir .input {
+.input {
   flex: 0 0 100%;
   width: 100%; min-height: 54px; max-height: 160px;
   margin: 0 !important; padding: 15px 18px 10px !important;
   border: 0 !important; border-radius: 0 !important; outline: 0 !important;
-  color: var(--nx-read-1) !important; background: transparent !important; box-shadow: none !important;
+  color: var(--text-primary) !important; background: transparent !important; box-shadow: none !important;
   font-family: var(--font-body) !important; font-size: 15.5px !important;
   font-style: normal !important; line-height: 1.45; letter-spacing: -0.005em;
-  caret-color: var(--nx-accent-2);
+  caret-color: var(--accent-hover);
 }
-.theme-noir .input::placeholder {
-  color: var(--nx-read-4) !important; opacity: 1;
+.input::placeholder {
+  color: var(--text-dim) !important; opacity: 1;
   font-family: var(--font-body) !important; font-size: 15.5px !important; font-style: normal !important;
 }
 </style>

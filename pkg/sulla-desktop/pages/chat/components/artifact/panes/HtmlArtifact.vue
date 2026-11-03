@@ -77,41 +77,30 @@ onBeforeUnmount(() => {
 });
 
 const THEME_VARIABLES = [
-  '--bg', '--surface-1', '--surface-2', '--surface-3',
-  '--text', '--text-muted', '--text-dim',
+  '--bg-page', '--bg-surface', '--bg-surface-alt', '--bg-surface-hover', '--bg-elevated',
+  '--bg-input', '--bg-overlay', '--bg-hover', '--bg-selected', '--bg-glass',
+  '--text-primary', '--text-secondary', '--text-muted', '--text-dim', '--text-on-accent', '--text-link',
+  '--border-default', '--border-subtle', '--border-strong', '--border-focus',
   '--accent', '--accent-hover', '--accent-dim', '--accent-border', '--accent-glow',
-  '--border', '--border-muted', '--success', '--warning', '--danger', '--info',
-  '--font-display', '--font-mono', '--font-body',
-  '--bg-page', '--bg-surface', '--bg-surface-alt', '--bg-surface-hover',
-  '--text-primary', '--text-secondary', '--accent-primary', '--accent-primary-hover',
-  '--border-default', '--border-subtle',
   '--status-success', '--status-warning', '--status-error', '--status-info',
-  '--nx-paper', '--nx-surface', '--nx-glass', '--nx-ink',
-  '--nx-read-1', '--nx-read-2', '--nx-read-3', '--nx-read-4', '--nx-read-5',
-  '--nx-hair', '--nx-hair-strong', '--nx-accent', '--nx-accent-2', '--nx-glow',
-  '--nx-indicator-bg', '--nx-indicator-edge', '--nx-shadow-lg',
-  '--nx-success', '--nx-warning', '--nx-danger',
+  '--status-success-soft', '--status-warning-soft', '--status-error-soft', '--status-info-soft',
+  '--focus-ring', '--radius-sm', '--radius-ctl', '--radius-panel', '--radius-sheet',
+  '--elev-rest', '--elev-raised', '--elev-float',
+  '--font-body', '--font-display', '--font-mono',
+  '--fs-display', '--fs-heading', '--fs-body', '--fs-body-sm', '--fs-caption', '--fs-code',
+  '--ease-enter', '--ease-std', '--ease-exit', '--dur-instant', '--dur-fast', '--dur-std', '--dur-move', '--spring',
+  '--bg', '--surface-1', '--surface-2', '--surface-3', '--text', '--border', '--border-muted',
+  '--info', '--success', '--warning', '--danger', '--green', '--green-bright',
 ] as const;
 
 const THEME_ALIASES: Record<string, string[]> = {
-  '--bg':            ['--bg-page'],
-  '--surface-1':     ['--bg-surface'],
-  '--surface-2':     ['--bg-surface-alt'],
-  '--surface-3':     ['--bg-surface-hover'],
-  '--text':          ['--text-primary'],
-  '--text-muted':    ['--text-secondary'],
-  '--text-dim':      ['--text-muted'],
-  '--accent':        ['--accent-primary', '--nx-accent'],
-  '--accent-hover':  ['--accent-primary-hover', '--nx-accent-2'],
-  '--accent-dim':    ['--bg-accent'],
-  '--accent-border': ['--border-accent'],
-  '--accent-glow':   ['--brand-glow', '--nx-glow'],
-  '--border':        ['--border-default'],
-  '--border-muted':  ['--border-subtle', '--nx-hair'],
-  '--success':       ['--status-success', '--nx-success'],
-  '--warning':       ['--status-warning', '--nx-warning'],
-  '--danger':        ['--status-error', '--nx-danger'],
-  '--info':          ['--status-info'],
+  '--bg': ['--bg-page'], '--surface-1': ['--bg-surface'], '--surface-2': ['--bg-surface-alt'],
+  '--surface-3': ['--bg-surface-hover'], '--text': ['--text-primary'],
+  // Agent-authored reports use a lighter two-step muted scale than the host app.
+  '--text-muted': ['--text-secondary'], '--text-dim': ['--text-muted'],
+  '--border': ['--border-default'], '--border-muted': ['--border-subtle'],
+  '--info': ['--status-info'], '--success': ['--status-success'], '--warning': ['--status-warning'],
+  '--danger': ['--status-error'], '--green': ['--status-success'], '--green-bright': ['--status-success'],
 };
 
 function themeValue(styles: CSSStyleDeclaration[], names: string[]): string {
@@ -132,7 +121,7 @@ function refreshTheme(): void {
     ? [getComputedStyle(root)]
     : [getComputedStyle(source), getComputedStyle(root)];
   const declarations = THEME_VARIABLES.flatMap((name) => {
-    const value = themeValue(styles, [name, ...(THEME_ALIASES[name] ?? [])]);
+    const value = themeValue(styles, [...(THEME_ALIASES[name] ?? []), name]);
 
     return value ? [`${ name }: ${ value };`] : [];
   });
@@ -160,43 +149,21 @@ onMounted(() => {
 
 const THEME_FALLBACK_CSS = `
   :root {
-    color-scheme: dark;
-    --bg: #0d1117;
-    --surface-1: #161b22;
-    --surface-2: #1c2128;
-    --surface-3: #21262d;
-    --border: #30363d;
-    --border-muted: #21262d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
-    --text-dim: #6e7681;
-    --accent: #5096b3;
-    --accent-hover: #6ab0cc;
-    --accent-dim: rgba(80, 150, 179, 0.15);
-    --accent-border: rgba(80, 150, 179, 0.5);
-    --accent-glow: rgba(80, 150, 179, 0.4);
-    --green: #2ea043;
-    --green-bright: #3fb950;
-    --green-glow: rgba(46, 160, 67, 0.4);
-    --green-glow-soft: rgba(63, 185, 80, 0.15);
-    --green-glow-strong: rgba(63, 185, 80, 0.6);
-    --info: #58a6ff;
-    --success: #3fb950;
-    --warning: #e3b341;
-    --danger: #f85149;
-    --font-display: 'Playfair Display', Georgia, serif;
-    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
-    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color-scheme: light;
+    --bg: #f7f8fa; --surface-1: #ffffff; --surface-2: #f1f3f5; --surface-3: #e9ecef;
+    --text: #1a2332; --text-muted: #5f6b7a; --text-dim: #8a94a3;
+    --accent: #5096b3; --accent-hover: #3f819e; --accent-dim: rgba(80, 150, 179, 0.12);
+    --accent-border: rgba(80, 150, 179, 0.35); --accent-glow: rgba(80, 150, 179, 0.22);
+    --border: #d5dae0; --border-muted: #e5e8ec;
+    --success: #238636; --warning: #9a6700; --danger: #cf222e; --info: #0969da;
+    --green: #238636; --green-bright: #2da44e;
+    --font-display: Georgia, 'Times New Roman', serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   html, body {
-    margin: 0;
-    /* Transparent so the artifact sidebar background shows through —
-       content reads as part of the panel, not a separate document. */
-    background: transparent;
-    color: var(--text);
-    font-family: var(--font-body);
-    overflow-wrap: break-word;
-    word-wrap: break-word;
+    margin: 0; background: transparent; color: var(--text);
+    font-family: var(--font-body); overflow-wrap: break-word; word-wrap: break-word;
   }
   img, table, pre { max-width: 100%; }
 `;

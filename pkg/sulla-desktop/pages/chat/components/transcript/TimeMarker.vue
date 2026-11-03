@@ -20,10 +20,10 @@ defineProps<{ label: string }>();
 .time-marker::before,
 .time-marker::after {
   content: ""; flex: 1; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(168, 192, 220, 0.22), transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
 }
 .time-marker span {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.35em;
-  text-transform: uppercase; color: var(--read-4);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.35em;
+  text-transform: uppercase; color: var(--text-muted);
 }
 </style>

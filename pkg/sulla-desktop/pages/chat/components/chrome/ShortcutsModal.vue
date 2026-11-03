@@ -48,35 +48,35 @@ const open = computed(() => controller.modals.value.which === 'shortcuts');
   position: absolute; inset: 0; z-index: 80;
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 12vh;
-  background: rgba(7, 13, 26, 0.7); backdrop-filter: blur(8px);
+  background: var(--bg-overlay); backdrop-filter: blur(8px);
 }
 .shortcuts {
   width: 600px; max-width: calc(100vw - 48px);
-  background: rgba(20, 30, 42, 0.96);
-  border: 1px solid rgba(80, 150, 179, 0.3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-glow);
   border-radius: 12px; overflow: hidden;
-  box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+  box-shadow: 0 30px 60px var(--bg-page);
   padding: 24px 28px;
 }
-.hd { font-family: var(--serif); font-style: italic; font-size: 22px; color: white; margin-bottom: 20px; }
+.hd { font-family: var(--font-display); font-style: italic; font-size: 22px; color: var(--text-on-accent); margin-bottom: 20px; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px 40px; }
 .sec {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.25em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.25em;
+  text-transform: uppercase; color: var(--accent-hover);
   margin-bottom: 10px; padding-bottom: 8px;
-  border-bottom: 1px solid rgba(80, 150, 179, 0.15);
+  border-bottom: 1px solid var(--accent-dim);
 }
 .row {
   display: flex; justify-content: space-between; padding: 6px 0;
-  font-family: var(--serif); font-style: italic; font-size: 14px;
-  color: var(--read-2);
+  font-family: var(--font-display); font-style: italic; font-size: 14px;
+  color: var(--text-primary);
 }
 .row kbd {
-  font-family: var(--mono); font-style: normal; font-size: 10.5px;
+  font-family: var(--font-mono); font-style: normal; font-size: 10.5px;
   padding: 2px 7px; border-radius: 4px;
-  background: rgba(168, 192, 220, 0.12);
-  border: 1px solid rgba(168, 192, 220, 0.22);
-  color: var(--steel-100); letter-spacing: 0.08em;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-secondary); letter-spacing: 0.08em;
 }
 .veil-enter-active, .veil-leave-active { transition: opacity 0.18s ease; }
 .veil-enter-from,   .veil-leave-to    { opacity: 0; }

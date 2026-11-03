@@ -426,9 +426,9 @@ async function onImport() {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  color: var(--text);
-  background: var(--nx-paper, var(--bg-page, #f3f6fa));
-  font-family: var(--sans);
+  color: var(--text-primary);
+  background: var(--bg-page);
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
 .routines-home > :deep(.use-cases) { flex: 1; min-height: 0; border-radius: 0; }
@@ -450,14 +450,14 @@ async function onImport() {
   max-width: 560px;
   padding: 12px 16px;
   border-radius: 6px;
-  border: 1px solid rgba(168, 192, 220, 0.25);
-  background: rgba(12, 18, 32, 0.92);
-  color: white;
-  font-family: var(--sans);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-body);
   font-size: 13.5px;
   line-height: 1.4;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
-              0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+  box-shadow: 0 12px 32px var(--border-subtle),
+              0 0 0 1px var(--accent) inset;
   backdrop-filter: blur(8px);
 }
 .feedback-dot {
@@ -474,39 +474,39 @@ async function onImport() {
 .feedback-close {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-primary);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
   margin-left: 4px;
 }
-.feedback-close:hover { color: white; }
+.feedback-close:hover { color: var(--accent); }
 .feedback-success {
-  border-color: rgba(63, 185, 80, 0.55);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5),
-              0 0 18px rgba(63, 185, 80, 0.2);
+  border-color: var(--border-default);
+  box-shadow: 0 12px 32px var(--border-subtle),
+              0 0 18px var(--accent);
 }
 .feedback-success .feedback-dot {
-  background: #3fb950;
-  box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
+  background: var(--bg-surface);
+  box-shadow: 0 0 8px var(--border-subtle);
 }
 .feedback-error {
-  border-color: rgba(248, 113, 113, 0.6);
-  background: rgba(40, 14, 14, 0.92);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
-              0 0 18px rgba(248, 113, 113, 0.22);
+  border-color: var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: 0 12px 32px var(--border-subtle),
+              0 0 18px var(--accent);
 }
 .feedback-error .feedback-dot {
-  background: #f87171;
-  box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
+  background: var(--bg-surface);
+  box-shadow: 0 0 8px var(--border-subtle);
 }
 .feedback-info {
-  border-color: rgba(140, 172, 201, 0.5);
+  border-color: var(--border-default);
 }
 .feedback-info .feedback-dot {
-  background: #8cacc9;
-  box-shadow: 0 0 8px rgba(140, 172, 201, 0.55);
+  background: var(--bg-surface);
+  box-shadow: 0 0 8px var(--border-subtle);
 }
 // Slide up + fade on enter; fade out on leave. Paired with the Vue
 // Transition wrapper around the toast in the template.
