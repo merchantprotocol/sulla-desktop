@@ -139,7 +139,7 @@ export async function installQueuedUpdate(): Promise<void> {
     } else {
       autoUpdater.quitAndInstall(false, true);
     }
-  });
+  }, os.platform() !== 'darwin');
 }
 
 function stageVerifiedMacUpdate(zipPath: string, targetVersion: string): Promise<StagedMacUpdate> {

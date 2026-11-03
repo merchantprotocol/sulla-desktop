@@ -152,12 +152,19 @@ while kill -0 "$pid" 2>/dev/null; do
   sleep 1
   count=$((count + 1))
 done
+note "application process exited"
+note "removing stale rollback bundle"
 rm -rf "$previous"
+note "preserving current application bundle"
 if ! mv "$app" "$previous"; then note "failed to preserve current application bundle"; exit 1; fi
+note "installing staged application bundle"
 if ! mv "$staged" "$app"; then note "failed to install staged bundle"; mv "$previous" "$app" || true; open "$app" || true; exit 1; fi
+note "clearing quarantine attribute"
 if ! /usr/bin/xattr -dr com.apple.quarantine "$app"; then note "failed to clear quarantine attribute"; restore; exit 1; fi
+note "opening new application"
 if ! open "$app"; then note "new application failed to open"; restore; exit 1; fi
 note "new application opened successfully"
+note "removing rollback bundle and staging directory"
 rm -rf "$previous"
 rmdir "$stage_dir" 2>/dev/null || true
 note "installation complete"
