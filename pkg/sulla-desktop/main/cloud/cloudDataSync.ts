@@ -44,7 +44,7 @@ class CloudDataSyncImpl{
 // The Cloud API rejects a whole upload on a bad date or a missing skills list,
 // so normalise both instead of trusting each row.
 function iso(v:unknown,fallback:string){const d=new Date(v as any);return v!=null&&!Number.isNaN(d.getTime())?d.toISOString():fallback}
-function countProjection(kind:ProjectionKind,b:any){if(kind==='customAgents')return b.agents.length;if(kind==='modelCatalog')return b.providers.reduce((n:number,p:any)=>n+p.models.length,0);if(kind==='memory')return b.count;if(kind==='usage')return b.providers.length;return b[kind].length}
+function countProjection(kind:ProjectionKind,b:any){if(kind==='customAgents')return b.agents.length;if(kind==='modelCatalog')return b.providers.reduce((n:number,p:any)=>n+p.models.length,0);if(kind==='usage')return b.providers.length;return b[kind].length}
 function capUtf8(value:string){if(Buffer.byteLength(value,'utf8')<=MAX_CONTENT)return value;let end=Math.min(value.length,MAX_CONTENT);while(end>0&&Buffer.byteLength(value.slice(0,end),'utf8')>MAX_CONTENT)end-=1024;return value.slice(0,Math.max(0,end))}
 async function buildProjection(kind:ProjectionKind,deviceId:string):Promise<any|null>{const generatedAt=new Date().toISOString();
  if(kind==='skills'){const {SkillDefinitionModel}=await import('@pkg/agent/database/models/SkillDefinitionModel');const skills=(await SkillDefinitionModel.list({includeDisabled:true})).map(s=>({slug:s.slug,name:s.title,description:s.description,category:typeof s.frontmatter.category==='string'?s.frontmatter.category:'',content:capUtf8(s.body),promptLength:s.body.length,source:s.source_kind,draft:!s.enabled,updatedAt:iso(s.updated_at,generatedAt)}));return{deviceId,generatedAt,skills}}
