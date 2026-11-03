@@ -39,10 +39,12 @@
       />
 
       <SubAgentRail
+        ref="subAgentRail"
         :parent-thread-id="subAgentParentThreadId"
         :collapsed="subAgentsCollapsed"
+        :selected-key="selectedSubAgentKey"
         @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
-        @open="openSubAgentConversation"
+        @select="selectSubAgent"
         @visibility="subAgentRailVisible = $event"
       />
 
@@ -77,7 +79,10 @@
 
       <ArtifactSidebar
         :collapsed="artifactCollapsed"
+        :agent="selectedSubAgent"
         @toggle-collapse="artifactCollapsed = !artifactCollapsed"
+        @open-agent="openSubAgentCard"
+        @dismiss-agent="dismissSubAgent"
       />
       <ChatFilesDrawer
         :open="chatFilesOpen"
@@ -116,6 +121,7 @@ import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
+import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -351,7 +357,34 @@ watch([subAgentsCollapsed, artifactCollapsed], ([subagents, artifact]) => {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ subagents, artifact })) } catch { /* storage full/unavailable */ }
 });
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
+const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
+const selectedSubAgent = ref<ThreadAgentCard | null>(null);
+const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+
+function selectSubAgent(card: ThreadAgentCard): void {
+  selectedSubAgent.value = card;
+  artifactCollapsed.value = false;
+}
+
+function openSubAgentCard(card: ThreadAgentCard): void {
+  if (card.kind === 'tab' && card.agentTab) {
+    const info = card.agentTab;
+    let tab = tabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
+    if (!tab) {
+      tab = createTab('about:blank', { mode: 'chat', title: card.label, agentChat: { threadId: info.threadId, agentId: card.agentId, agentName: info.agentName, parentThreadId: subAgentParentThreadId.value || '', parentAgentId: info.parentAgentId, parentAgentName: info.parentAgentId, contractId: info.contractId, depth: info.depth } });
+      localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
+    }
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  } else if (card.conversationId) {
+    openSubAgentConversation({ agentId: card.agentId, label: card.label, conversationId: card.conversationId });
+  }
+}
+
+function dismissSubAgent(card: ThreadAgentCard): void {
+  void subAgentRail.value?.dismiss(card);
+  selectedSubAgent.value = null;
+}
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -365,7 +398,7 @@ onBeforeUnmount(() => {
 });
 
 // ─── Derived state ────────────────────────────────────────────────
-const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
+const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0 || !!selectedSubAgent.value);
 // The persona's hasSentMessage lives in a per-tab localStorage scope that is
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
@@ -803,10 +836,10 @@ onBeforeUnmount(() => {
 .chat-root.history-open   .main { left: 260px; }
 .chat-root.subagents-open .main { left: 272px; }
 .chat-root.subagents-open.history-open .main { left: 532px; }
-.chat-root.artifact-open  .main { right: 560px; }
+.chat-root.artifact-open  .main { right: 436px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 .chat-root.chat-files-open .main { right: 300px; }
-.chat-root.chat-files-open.artifact-open .main { right: 860px; }
+.chat-root.chat-files-open.artifact-open .main { right: 736px; }
 .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: calc(70vw + 300px); }
 
 /* Rails float over the left/right edges at fixed widths. */
@@ -821,7 +854,7 @@ onBeforeUnmount(() => {
 .shell :deep(.artifact) {
   position: absolute;
   top: 0; bottom: 0; right: 0;
-  width: 560px;
+  width: 436px;
   z-index: 6;
 }
 .chat-root.chat-files-open .shell :deep(.artifact) { right: 300px; }
@@ -835,7 +868,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1000px) {
   .shell :deep(.chat-files-drawer) { display: none; }
   .chat-root.chat-files-open .main { right: 0; }
-  .chat-root.chat-files-open.artifact-open .main { right: 560px; }
+  .chat-root.chat-files-open.artifact-open .main { right: 436px; }
   .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: 70vw; }
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
 }

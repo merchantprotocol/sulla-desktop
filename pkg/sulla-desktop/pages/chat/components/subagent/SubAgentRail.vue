@@ -5,296 +5,43 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <aside
-    v-if="cards.length && !collapsed"
-    class="subagent-rail"
-    aria-label="Sub-agents launched by this chat"
-  >
-    <div class="rail-heading">
-      <span>Sub-agents</span>
-      <span class="count">{{ runningCount }} running</span>
-      <button
-        type="button"
-        class="collapse"
-        title="Collapse sub-agents"
-        aria-label="Collapse sub-agents panel"
-        @click="emit('toggle-collapse')"
-      >
-        ‹
-      </button>
-    </div>
-    <div class="cards">
-      <article
-        v-for="card in cards"
-        :key="`${card.kind}:${card.jobId}:${card.taskIndex}`"
-        class="agent-card"
-        :class="[`is-${card.status}`, { clickable: card.conversationId }]"
-        @click="openCard(card)"
-      >
-        <div class="card-top">
-          <span
-            class="status-dot"
-            aria-hidden="true"
-          />
-          <span class="agent-id">{{ card.agentId }}</span>
-          <span
-            v-if="card.kind === 'tab'"
-            class="kind-pill"
-            title="Runs in its own chat tab"
-          >tab</span>
-          <button
-            v-if="card.kind !== 'tab' && card.status === 'running' && card.conversationId"
-            type="button"
-            class="open-tab"
-            title="Open in tab"
-            aria-label="Open this sub-agent in a chat tab"
-            @click.stop="openInTab(card)"
-          >
-            ↗
-          </button>
-          <button
-            v-if="card.status !== 'running'"
-            type="button"
-            class="dismiss"
-            title="Dismiss"
-            aria-label="Dismiss sub-agent card"
-            @click.stop="dismiss(card)"
-          >
-            ×
-          </button>
-        </div>
-        <div class="label">
-          {{ card.label }}
-        </div>
-        <div class="meta">
-          <span>{{ card.status }}</span>
-          <span>{{ elapsed(card) }}</span>
-          <span
-            v-if="card.contract && card.contract !== 'result'"
-            class="contract"
-            :title="`Return contract: ${ card.contract }`"
-          >{{ card.contract }}</span>
-        </div>
-        <p class="activity">
-          {{ card.lastActivity }}
-        </p>
-      </article>
+  <aside v-if="cards.length && !collapsed" class="sd-agent-rail" aria-label="Sub-agents launched by this chat">
+    <header class="sd-agent-heading"><h2>Sub-agents</h2><span>{{ runningCount ? `${ runningCount } running` : `${ cards.length } total` }}</span><button class="sd-icon-button" type="button" title="Hide sub-agents" aria-label="Hide sub-agents" @click="emit('toggle-collapse')"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></svg></button></header>
+    <div class="sd-agent-filters" role="tablist" aria-label="Filter sub-agents"><span class="sd-filter-indicator" :style="{ transform: `translateX(${ filterIndex * 100 }%)` }"/><button v-for="item in filters" :key="item.value" role="tab" :aria-selected="filter === item.value" @click="filter = item.value">{{ item.label }}</button></div>
+    <div class="sd-agent-list">
+      <template v-if="visibleRunning.length"><div class="sd-agent-group"><span>Running</span><span>{{ visibleRunning.length }}</span></div><button v-for="card in visibleRunning" :key="cardKey(card)" type="button" class="sd-agent-row is-running" :aria-current="selectedKey === cardKey(card) || undefined" @click="emit('select', card)"><i class="sd-status-dot"/><strong>{{ card.label }}</strong><time>{{ elapsed(card) }}</time><span><b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}</span></button></template>
+      <p v-else-if="filter === 'running'" class="sd-agent-empty">Nothing running right now.</p>
+      <template v-if="visibleFinished.length"><div class="sd-agent-group"><span>Finished</span><span>{{ visibleFinished.length }}</span></div><button v-for="card in visibleFinished" :key="cardKey(card)" type="button" class="sd-agent-row" :class="[`is-${ card.status }`, { 'is-dismissing': dismissingKey === cardKey(card) }]" :aria-current="selectedKey === cardKey(card) || undefined" @click="emit('select', card)"><i class="sd-status-dot"/><strong>{{ card.label }}</strong><time>{{ elapsed(card) }}</time><span><b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}</span></button></template>
+      <p v-else-if="filter === 'finished'" class="sd-agent-empty">No finished agents yet.</p>
     </div>
   </aside>
-  <button
-    v-else-if="cards.length"
-    type="button"
-    class="subagent-rail-tab"
-    :class="{ running: runningCount > 0 }"
-    title="Show sub-agents"
-    aria-label="Show sub-agents panel"
-    @click="emit('toggle-collapse')"
-  >
-    <span class="tab-chevron">›</span>
-    <span class="tab-label">Sub-agents · {{ runningCount ? `${ runningCount } running` : cards.length }}</span>
-  </button>
+  <button v-else-if="cards.length" type="button" class="sd-agent-rail-tab" :class="{ running: runningCount }" title="Show sub-agents" aria-label="Show sub-agents panel" @click="emit('toggle-collapse')"><span>›</span><b>Sub-agents · {{ runningCount ? `${ runningCount } running` : cards.length }}</b></button>
 </template>
-
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
-import type { SubAgentConversationTarget } from './subAgentConversation';
-
-const props = defineProps<{ parentThreadId?: string; collapsed?: boolean }>();
-const emit = defineEmits<{
-  open:       [target: SubAgentConversationTarget];
-  visibility: [visible: boolean];
-  'toggle-collapse': [];
-}>();
-
-const cards = ref<ThreadAgentCard[]>([]);
-const now = ref(Date.now());
-const runningCount = computed(() => cards.value.filter(card => card.status === 'running').length);
-let timer: ReturnType<typeof setInterval> | null = null;
-let request = 0;
-const { tabs: browserTabs, createTab } = useBrowserTabs();
-
-async function refresh(): Promise<void> {
-  const parentThreadId = props.parentThreadId;
-  const current = ++request;
-  now.value = Date.now();
-  if (!parentThreadId) {
-    cards.value = [];
-    return;
-  }
-  try {
-    const next = await ipcRenderer.invoke('agents:thread-jobs' as any, parentThreadId) as ThreadAgentCard[];
-    if (current === request) cards.value = Array.isArray(next) ? next : [];
-  } catch {
-    if (current === request) cards.value = [];
-  }
-}
-
-function openCard(card: ThreadAgentCard): void {
-  if (card.kind === 'tab' && card.agentTab) {
-    focusAgentTab(card);
-    return;
-  }
-  if (!card.conversationId) return;
-  emit('open', { agentId: card.agentId, label: card.label, conversationId: card.conversationId });
-}
-
-/** Jump to the child's chat tab, reopening it if the human closed it. */
-function focusAgentTab(card: ThreadAgentCard): void {
-  const info = card.agentTab!;
-  let tab = browserTabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
-  if (!tab) {
-    tab = createTab('about:blank', {
-      mode:      'chat',
-      title:     card.label,
-      agentChat: {
-        threadId:        info.threadId,
-        agentId:         card.agentId,
-        agentName:       info.agentName,
-        parentThreadId:  props.parentThreadId || '',
-        parentAgentId:   info.parentAgentId,
-        parentAgentName: info.parentAgentId,
-        contractId:      info.contractId,
-        depth:           info.depth,
-      },
-    });
-    localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
-  }
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-}
-
-/** Promote a running hidden child to a chat tab; main opens and focuses it. */
-async function openInTab(card: ThreadAgentCard): Promise<void> {
-  if (!props.parentThreadId) return;
-  const ok = await ipcRenderer.invoke('agents:open-job-in-tab' as any, card.jobId, props.parentThreadId, card.taskIndex);
-  if (ok) void refresh();
-}
-
-async function dismiss(card: ThreadAgentCard): Promise<void> {
-  if (!props.parentThreadId) return;
-  const ok = await ipcRenderer.invoke(
-    'agents:dismiss-thread-job' as any,
-    card.jobId,
-    props.parentThreadId,
-    card.taskIndex,
-  );
-  if (ok) cards.value = cards.value.filter(item => item !== card);
-}
-
-function elapsed(card: ThreadAgentCard): string {
-  const end = card.finishedAt ?? now.value;
-  const seconds = Math.max(0, Math.floor((end - card.createdAt) / 1000));
-  if (seconds < 60) return `${ seconds }s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${ minutes }m ${ seconds % 60 }s`;
-  const hours = Math.floor(minutes / 60);
-  return `${ hours }h ${ minutes % 60 }m`;
-}
-
-watch(() => props.parentThreadId, refresh, { immediate: true });
-watch(() => cards.value.length > 0, visible => emit('visibility', visible), { immediate: true });
-onMounted(() => { timer = setInterval(refresh, 2_500) });
-onBeforeUnmount(() => { if (timer) clearInterval(timer); });
+const props = defineProps<{ parentThreadId?: string; collapsed?: boolean; selectedKey?: string }>();
+const emit = defineEmits<{ select: [card: ThreadAgentCard]; visibility: [visible: boolean]; 'toggle-collapse': [] }>();
+const cards=ref<ThreadAgentCard[]>([]),now=ref(Date.now()),filter=ref<'all'|'running'|'finished'>('all'),dismissingKey=ref('');
+const filters=[{value:'all',label:'All'},{value:'running',label:'Running'},{value:'finished',label:'Finished'}] as const;
+const filterIndex=computed(()=>filters.findIndex(x=>x.value===filter.value));
+const runningCount=computed(()=>cards.value.filter(c=>c.status==='running').length);
+const visibleRunning=computed(()=>filter.value==='finished'?[]:cards.value.filter(c=>c.status==='running'));
+const visibleFinished=computed(()=>filter.value==='running'?[]:cards.value.filter(c=>c.status!=='running'));
+let timer:ReturnType<typeof setInterval>|null=null,request=0;
+const cardKey=(c:ThreadAgentCard)=>`${c.kind}:${c.jobId}:${c.taskIndex}`;
+function elapsed(c:ThreadAgentCard){const s=Math.max(0,Math.floor(((c.finishedAt??now.value)-c.createdAt)/1000)),m=Math.floor(s/60);return m?`${m}m ${String(s%60).padStart(2,'0')}s`:`${s}s`}
+function agentName(id:string){return id.split('-').map(x=>({codex:'Codex',sol:'Sol',luna:'Luna'}[x]||x.charAt(0).toUpperCase()+x.slice(1))).join(' ')}
+async function refresh(){const id=props.parentThreadId,current=++request;now.value=Date.now();if(!id){cards.value=[];return}try{const next=await ipcRenderer.invoke('agents:thread-jobs' as any,id) as ThreadAgentCard[];if(current===request)cards.value=Array.isArray(next)?next:[]}catch{if(current===request)cards.value=[]}}
+async function dismiss(card:ThreadAgentCard){if(!props.parentThreadId)return;dismissingKey.value=cardKey(card);const ok=await ipcRenderer.invoke('agents:dismiss-thread-job' as any,card.jobId,props.parentThreadId,card.taskIndex);setTimeout(()=>{if(ok)cards.value=cards.value.filter(c=>cardKey(c)!==cardKey(card));dismissingKey.value=''},240)}
+defineExpose({dismiss});watch(()=>props.parentThreadId,refresh,{immediate:true});watch(()=>cards.value.length>0,v=>emit('visibility',v),{immediate:true});onMounted(()=>{timer=setInterval(()=>{now.value=Date.now();if(now.value%3000<1000)void refresh()},1000)});onBeforeUnmount(()=>{if(timer)clearInterval(timer)});
 </script>
-
 <style scoped>
-.subagent-rail {
-  position: absolute;
-  inset: 0 auto 0 0;
-  z-index: 8;
-  width: 272px;
-  overflow: hidden;
-  border-right: 1px solid var(--border-default);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-}
-.rail-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border-default);
-  font: 600 12px var(--font-body, var(--sans));
-}
-.count { margin-left: auto; color: var(--text-muted); font: 10px var(--mono); }
-.collapse {
-  margin-left: 10px; padding: 0 6px;
-  border-radius: 6px;
-  color: var(--text-muted); font-size: 16px; line-height: 20px;
-}
-.collapse:hover { color: var(--text-primary); background: var(--bg-surface-alt); }
-
-/* Collapsed: a slim tab sticks out of the left edge where the rail was. */
-.subagent-rail-tab {
-  position: absolute;
-  top: 50%; left: 0;
-  z-index: 8;
-  transform: translateY(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 12px 5px;
-  border: 1px solid var(--border-default);
-  border-left: none;
-  border-radius: 0 9px 9px 0;
-  background: var(--bg-surface);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, padding 0.15s ease;
-}
-.subagent-rail-tab:hover { color: var(--text-primary); border-color: var(--accent-primary); padding-right: 8px; }
-.subagent-rail-tab.running { border-color: var(--accent-primary); }
-.tab-chevron { font-size: 14px; line-height: 1; }
-.tab-label {
-  writing-mode: vertical-rl;
-  font: 600 10px var(--mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.cards { height: calc(100% - 48px); overflow-y: auto; padding: 10px; }
-.agent-card {
-  margin-bottom: 8px;
-  padding: 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 9px;
-  background: var(--bg-surface-alt);
-  transition: border-color 0.15s ease, opacity 0.15s ease;
-}
-.agent-card.clickable { cursor: pointer; }
-.agent-card.clickable:hover { border-color: var(--accent-primary); }
-.card-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
-.is-running .status-dot { background: var(--accent-primary); animation: chat-pulse 1.4s ease-in-out infinite; }
-.is-done .status-dot { background: var(--text-success); }
-.is-failed .status-dot { background: var(--text-error); }
-.is-stopped .status-dot { background: var(--text-warning); }
-.agent-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--mono); }
-.kind-pill {
-  flex: 0 0 auto; padding: 0 5px;
-  border: 1px solid var(--border-default); border-radius: 5px;
-  color: var(--text-muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
-}
-.open-tab { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 12px; line-height: 1; }
-.open-tab:hover { color: var(--accent-primary); }
-.open-tab + .dismiss { margin-left: 0; }
-.contract { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
-.dismiss { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 16px; line-height: 1; }
-.dismiss:hover { color: var(--text-primary); }
-.label { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.meta { display: flex; gap: 8px; margin-top: 5px; color: var(--text-muted); font: 10px var(--mono); text-transform: uppercase; }
-.activity {
-  display: -webkit-box;
-  margin: 7px 0 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.is-done, .is-failed, .is-stopped { opacity: 0.68; }
+.sd-agent-rail{position:absolute;inset:0 auto 0 0;z-index:8;width:272px;overflow:hidden;display:flex;flex-direction:column;padding-top:4px;background:color-mix(in srgb,var(--bg-surface) 82%,transparent);backdrop-filter:blur(12px);color:var(--text-primary)}
+.sd-agent-heading{display:flex;align-items:center;gap:8px;padding:6px 8px 10px 12px}.sd-agent-heading h2{margin:0;font:500 13px/1 var(--mono)}.sd-agent-heading>span{color:var(--text-muted);font:11px var(--mono);font-variant-numeric:tabular-nums}.sd-icon-button{margin-left:auto;width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--text-secondary);cursor:pointer}.sd-icon-button:hover{background:var(--bg-surface-alt);color:var(--text-primary)}.sd-icon-button svg{width:16px;fill:none;stroke:currentColor;stroke-width:1.5}
+.sd-agent-filters{position:relative;display:grid;grid-template-columns:repeat(3,1fr);margin:0 8px 8px;padding:3px;border-radius:10px;background:color-mix(in srgb,var(--text-primary) 5%,transparent)}.sd-agent-filters button{position:relative;z-index:1;height:28px;border:0;background:transparent;color:var(--text-secondary);font-size:12.5px;cursor:pointer}.sd-agent-filters button[aria-selected=true]{color:var(--text-primary);font-weight:500}.sd-filter-indicator{position:absolute;top:3px;left:3px;width:calc((100% - 6px)/3);height:28px;border-radius:8px;background:var(--bg-surface);box-shadow:0 1px 2px color-mix(in srgb,var(--text-primary) 8%,transparent);transition:transform 580ms linear(0,.006,.025 2.8%,.101 6.1%,.539 18.9%,.849 31.5%,.968 41.8%,1.006 50.1%,1.017 63.9%,1)}
+.sd-agent-list{flex:1;overflow-y:auto;padding:0 4px 12px 8px}.sd-agent-group{display:flex;justify-content:space-between;margin:10px 0 4px;padding:0 8px;color:var(--text-muted);font:11px var(--mono);letter-spacing:.06em;text-transform:uppercase}.sd-agent-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 8px;align-items:start;width:100%;padding:9px 10px;border:0;border-radius:10px;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer;transition:background 120ms,opacity 240ms,transform 240ms}.sd-agent-row:hover{background:color-mix(in srgb,var(--text-primary) 4%,transparent)}.sd-agent-row[aria-current=true]{background:var(--bg-surface);box-shadow:0 1px 2px color-mix(in srgb,var(--text-primary) 8%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--accent-primary) 34%,transparent)}.sd-agent-row.is-dismissing{opacity:0;transform:translateX(-8px)}.sd-agent-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:500}.sd-agent-row time{padding-top:2px;color:var(--text-muted);font:11.5px var(--mono);font-variant-numeric:tabular-nums}.sd-agent-row>span{grid-column:2/4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:12.5px}.sd-agent-row>span b{color:var(--accent-primary);font:500 11.5px var(--mono)}.sd-status-dot{width:8px;height:8px;margin-top:6px;border-radius:50%;background:var(--text-muted)}.is-running .sd-status-dot{background:var(--accent-primary);animation:chat-pulse 1.8s ease infinite}.is-done .sd-status-dot{background:var(--text-success)}.is-failed .sd-status-dot{background:var(--text-error)}.is-stopped .sd-status-dot{background:var(--text-warning)}.sd-agent-empty{padding:24px 12px;color:var(--text-muted);font-size:13px}
+.sd-agent-rail-tab{position:absolute;top:50%;left:0;z-index:8;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 5px;border:1px solid var(--border-default);border-left:0;border-radius:0 9px 9px 0;background:var(--bg-surface);color:var(--text-muted);cursor:pointer}.sd-agent-rail-tab b{writing-mode:vertical-rl;font:600 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}
+@media(prefers-reduced-motion:reduce){.sd-filter-indicator,.sd-agent-row{transition-duration:1ms!important}}
 </style>
