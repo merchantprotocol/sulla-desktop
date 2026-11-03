@@ -26,7 +26,8 @@ export async function reconcileIndexingAccounting(db:pg.Pool):Promise<void> {
   const excluded = [...UNINDEXED_SYSTEM_AREAS];
   await db.query(`DELETE FROM file_index_jobs j USING files f,collections c
     WHERE j.file_id=f.id AND c.id=f.collection_id
-      AND (c.system_area=ANY($1::text[]) OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
+      AND (f.deleted_at IS NOT NULL OR f.current_version_id IS DISTINCT FROM j.version_id
+        OR c.system_area=ANY($1::text[]) OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
   await db.query(`UPDATE file_index_jobs j SET status='pending',reason_code='interrupted',reason='Indexing was interrupted and will retry.',available_at=NOW()
     FROM files f,collections c WHERE j.file_id=f.id AND c.id=f.collection_id AND j.status='indexing'
       AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [excluded]);
@@ -49,7 +50,11 @@ export async function reconcileIndexingAccounting(db:pg.Pool):Promise<void> {
     WHERE f.deleted_at IS NULL AND f.current_version_id IS NOT NULL
       AND f.extraction_status IN('pending','indexed','failed','unsupported')
       AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-    ON CONFLICT(version_id) DO NOTHING`, [excluded]);
+    ON CONFLICT(version_id) DO UPDATE SET
+      file_id=EXCLUDED.file_id,status=EXCLUDED.status,reason_code=EXCLUDED.reason_code,reason=EXCLUDED.reason,
+      attempts=CASE WHEN EXCLUDED.status='pending' THEN 0 ELSE file_index_jobs.attempts END,
+      last_error=NULL,available_at=CASE WHEN EXCLUDED.status='pending' THEN NOW() ELSE file_index_jobs.available_at END,
+      started_at=NULL,finished_at=EXCLUDED.finished_at`, [excluded]);
 }
 
 export class IndexingQueue {
