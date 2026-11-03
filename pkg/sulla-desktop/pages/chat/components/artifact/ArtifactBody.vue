@@ -52,7 +52,7 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
     };
   }
   if (kind === 'html') {
-    return { html: '<!doctype html><html><body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:24px"><h1>Blank HTML artifact</h1><p>Nothing to show yet.</p></body></html>' };
+    return { html: '<!doctype html><html><body style="background:var(--bg-page);color:var(--text-primary);font-family:var(--font-body);padding:24px"><h1>Blank HTML artifact</h1><p>Nothing to show yet.</p></body></html>' };
   }
   if (kind === 'markdown') return { markdown: '' };
   return { path: 'placeholder.ts', language: 'typescript', lines: [{ n: 1, text: '// empty', op: 'context' }] };
@@ -78,13 +78,13 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
   background: transparent;
 }
 .artifact-body::-webkit-scrollbar-thumb {
-  background: rgba(168, 192, 220, 0.18);
+  background: var(--accent-dim);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 .artifact-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(168, 192, 220, 0.32);
+  background: var(--accent-glow);
   background-clip: padding-box;
   border: 2px solid transparent;
 }
@@ -97,5 +97,5 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
   height: 100%;
   box-sizing: border-box;
 }
-.empty { color: var(--read-4); font-family: var(--mono); font-size: 12px; }
+.empty { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
 </style>

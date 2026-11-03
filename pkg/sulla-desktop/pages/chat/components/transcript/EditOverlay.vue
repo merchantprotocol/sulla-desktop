@@ -106,7 +106,7 @@ function onKeydown(ev: KeyboardEvent): void {
   display: flex;
   align-items: stretch;
   justify-content: stretch;
-  background: rgba(10, 16, 24, 0.55);
+  background: var(--accent-glow);
   border-radius: 10px;
   backdrop-filter: blur(6px);
   animation: edit-fade-in 0.12s ease-out;
@@ -118,10 +118,10 @@ function onKeydown(ev: KeyboardEvent): void {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  background: rgba(20, 30, 42, 0.88);
-  border: 1px solid rgba(80, 150, 179, 0.35);
+  background: var(--accent);
+  border: 1px solid var(--accent-glow);
   border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 8px 32px var(--bg-page);
 }
 
 .edit-textarea {
@@ -130,9 +130,9 @@ function onKeydown(ev: KeyboardEvent): void {
   min-height: 72px;
   padding: 10px 12px;
   border-radius: 6px;
-  background: rgba(10, 16, 24, 0.75);
-  border: 1px solid rgba(168, 192, 220, 0.18);
-  color: var(--read-1, #d9e3ef);
+  background: var(--accent);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-primary, var(--accent));
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
@@ -140,8 +140,8 @@ function onKeydown(ev: KeyboardEvent): void {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .edit-textarea:focus {
-  border-color: rgba(80, 150, 179, 0.65);
-  box-shadow: 0 0 0 2px rgba(80, 150, 179, 0.18);
+  border-color: var(--accent-glow);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
 .edit-actions {
@@ -153,7 +153,7 @@ function onKeydown(ev: KeyboardEvent): void {
 .btn {
   padding: 6px 14px;
   border-radius: 6px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -163,21 +163,21 @@ function onKeydown(ev: KeyboardEvent): void {
 }
 .btn.ghost {
   background: transparent;
-  color: var(--read-3);
-  border-color: rgba(168, 192, 220, 0.2);
+  color: var(--text-secondary);
+  border-color: var(--accent-dim);
 }
 .btn.ghost:hover {
-  color: var(--read-1);
-  border-color: rgba(168, 192, 220, 0.4);
+  color: var(--text-primary);
+  border-color: var(--accent-glow);
 }
 .btn.primary {
-  background: rgba(80, 150, 179, 0.22);
-  color: var(--steel-100, #cfe6f0);
-  border-color: rgba(80, 150, 179, 0.55);
+  background: var(--accent-dim);
+  color: var(--text-secondary, var(--accent));
+  border-color: var(--accent-glow);
 }
 .btn.primary:hover:not(:disabled) {
-  background: rgba(80, 150, 179, 0.38);
-  border-color: rgba(106, 176, 204, 0.8);
+  background: var(--accent-glow);
+  border-color: var(--accent);
 }
 .btn.primary:disabled {
   opacity: 0.45;

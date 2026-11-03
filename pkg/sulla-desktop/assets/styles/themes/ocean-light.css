@@ -348,28 +348,6 @@
   --outline-width: 1px;
 }
 
-/* ═════════════════════════════════════════════════════════════════
-   Component Overrides for Ocean Light Theme — FORCE LIGHT MODE
-   ═════════════════════════════════════════════════════════════════ */
-
-/* Chat Canvas — ocean light colors */
-.theme-ocean-light .chat-canvas {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%) !important;
-}
-
-.theme-ocean-light .chat-stars,
-.theme-ocean-light .stars {
-  display: none !important;
-}
-
-/* Page root */
-.theme-ocean-light .chat-root,
-.theme-ocean-light .page-root,
-.theme-ocean-light [class*="page-root"] {
-  background: var(--bg-page, #f0f9ff) !important;
-  color: var(--text-primary, #0c4a6e) !important;
-}
-
 /* Empty State */
 .theme-ocean-light .empty h1,
 .theme-ocean-light h1:has(+ .lede) {
@@ -622,12 +600,6 @@
   color: #075985 !important;
 }
 
-/* ModeRail Sidebar — Light Mode */
-.theme-ocean-light .mode-rail {
-  background: rgba(224, 242, 254, 0.85) !important;
-  border-right-color: rgba(14, 165, 233, 0.2) !important;
-}
-
 .theme-ocean-light .mode-btn {
   color: #0ea5e9 !important;
 }
@@ -759,24 +731,6 @@
   background: var(--bg-page, #f0f9ff) !important;
 }
 
-.theme-ocean-light .welcome-title { color: #0c4a6e !important; }
-.theme-ocean-light .welcome-subtitle { color: #0ea5e9 !important; }
-
-.theme-ocean-light .welcome-card {
-  background: var(--bg-surface, #e0f2fe) !important;
-  border-color: rgba(14, 165, 233, 0.3) !important;
-}
-.theme-ocean-light .welcome-card:hover {
-  border-color: rgba(14, 165, 233, 0.5) !important;
-  box-shadow: 0 0 15px rgba(14, 165, 233, 0.2), 0 0 30px rgba(14, 165, 233, 0.1) !important;
-}
-
-.theme-ocean-light .welcome-card-cta {
-  color: #0284c7 !important;
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-top-color: rgba(14, 165, 233, 0.2) !important;
-}
-
 .theme-ocean-light .dt-header {
   background: rgba(224, 242, 254, 0.9) !important;
   border-bottom-color: rgba(14, 165, 233, 0.2) !important;
@@ -805,17 +759,6 @@
 .theme-ocean-light .dt-item { color: #075985 !important; }
 .theme-ocean-light .dt-insight { color: #0ea5e9 !important; }
 
-.theme-ocean-light .dt-chat-input {
-  background: rgba(224, 242, 254, 0.9) !important;
-  border-top-color: rgba(14, 165, 233, 0.2) !important;
-}
-.theme-ocean-light .dt-chat-field {
-  color: #0c4a6e !important;
-  background: #ffffff !important;
-  border-color: rgba(14, 165, 233, 0.3) !important;
-}
-.theme-ocean-light .dt-chat-field::placeholder { color: #38bdf8 !important; }
-
 .theme-ocean-light .dt-kbd {
   background: rgba(14, 165, 233, 0.2) !important;
   border-color: rgba(14, 165, 233, 0.3) !important;
@@ -825,23 +768,11 @@
 .theme-ocean-light .dt-divider { background: rgba(14, 165, 233, 0.2) !important; }
 .theme-ocean-light .dt-empty { color: #38bdf8 !important; }
 
-/* Chat Page Gradients — Light Mode */
-.theme-ocean-light .chat-root { background: var(--bg-page, #f0f9ff) !important; }
-
 .theme-ocean-light .header-backdrop {
   background: linear-gradient(
     to bottom,
     rgba(224, 242, 254, 0.95) 0%,
     rgba(224, 242, 254, 0.85) 55%,
-    rgba(224, 242, 254, 0) 100%
-  ) !important;
-}
-
-.theme-ocean-light .composer-backdrop {
-  background: linear-gradient(
-    to top,
-    rgba(224, 242, 254, 0.95) 0%,
-    rgba(224, 242, 254, 0.85) 45%,
     rgba(224, 242, 254, 0) 100%
   ) !important;
 }
@@ -895,13 +826,6 @@
   border-color: #0284c7 !important;
   color: #0c4a6e !important;
 }
-
-/* Composer — Light Mode */
-.theme-ocean-light .composer { border-bottom-color: rgba(14, 165, 233, 0.4) !important; }
-.theme-ocean-light .composer:focus-within {
-  border-bottom-color: #0284c7 !important;
-  box-shadow: 0 14px 20px -14px rgba(14, 165, 233, 0.3) !important;
-}
 .theme-ocean-light .input,
 .theme-ocean-light textarea.input {
   color: #0c4a6e !important;
@@ -919,8 +843,6 @@
   border-color: rgba(14, 165, 233, 0.3) !important;
   color: #0ea5e9 !important;
 }
-.theme-ocean-light .composer-inner { background: transparent !important; }
-.theme-ocean-light .composer-wrap { background: transparent !important; }
 
 /* RoutinesHome Tabs — Light Mode */
 .theme-ocean-light .tab { color: #0ea5e9 !important; background: transparent !important; border-color: transparent !important; }
@@ -933,18 +855,6 @@
 .theme-ocean-light .time-marker span { color: #0ea5e9 !important; }
 .theme-ocean-light .time-marker::before,
 .theme-ocean-light .time-marker::after { background: linear-gradient(90deg, transparent, rgba(14, 165, 233, 0.4), transparent) !important; }
-.theme-ocean-light .chat-role { color: #0ea5e9 !important; }
-.theme-ocean-light .chat-turn.sulla .chat-role { color: #0284c7 !important; }
-.theme-ocean-light .chat-turn.you .chat-body { color: #0c4a6e !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body { color: #0c4a6e !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body em { color: #075985 !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body strong { color: #0c4a6e !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body code,
-.theme-ocean-light .chat-turn.sulla .chat-body .term { color: #0ea5e9 !important; background: rgba(14, 165, 233, 0.15) !important; border-color: rgba(14, 165, 233, 0.3) !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body h3 { color: #0c4a6e !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body h3::before { color: #38bdf8 !important; }
-.theme-ocean-light .chat-turn.sulla .chat-body blockquote { color: #0ea5e9 !important; border-left-color: rgba(14, 165, 233, 0.5) !important; }
-.theme-ocean-light .chat-cursor { background: #38bdf8 !important; box-shadow: 0 0 14px #38bdf8 !important; }
 
 /* Thinking — Light Mode */
 .theme-ocean-light .thinking { border-left-color: rgba(14, 165, 233, 0.3) !important; }
@@ -961,12 +871,6 @@
 .theme-ocean-light .thought:nth-child(3) { color: #0c4a6e !important; }
 .theme-ocean-light .expanded li { color: #075985 !important; }
 .theme-ocean-light .expanded li::before { color: #38bdf8 !important; }
-
-/* Interim — Light Mode */
-.theme-ocean-light .chat-turn.interim .chat-role { color: #0ea5e9 !important; }
-.theme-ocean-light .chat-turn.interim .chat-role::before { background: #0284c7 !important; box-shadow: 0 0 10px #0284c7 !important; }
-.theme-ocean-light .chat-turn.interim .chat-body { color: #0ea5e9 !important; }
-.theme-ocean-light .chat-turn.interim .chat-body::after { background: #0284c7 !important; box-shadow: 0 0 12px #0284c7 !important; }
 
 /* Attachment chips */
 .theme-ocean-light .att-chip { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #075985 !important; }
@@ -1033,9 +937,6 @@
 .theme-ocean-light .search-box input { color: #0c4a6e !important; }
 .theme-ocean-light .search-box input::placeholder { color: #38bdf8 !important; }
 .theme-ocean-light .search-box .count { color: #0ea5e9 !important; }
-
-/* ModeRail scrollbar fix */
-.theme-ocean-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }
 .theme-ocean-light header, .theme-ocean-light .top-bar, .theme-ocean-light .app-header { z-index: 9999 !important; }
 
 /* SessionMark — Light Mode */

@@ -77,41 +77,28 @@ onBeforeUnmount(() => {
 });
 
 const THEME_VARIABLES = [
-  '--bg', '--surface-1', '--surface-2', '--surface-3',
-  '--text', '--text-muted', '--text-dim',
+  '--bg-page', '--bg-surface', '--bg-surface-alt', '--bg-surface-hover', '--bg-elevated',
+  '--bg-input', '--bg-overlay', '--bg-hover', '--bg-selected', '--bg-glass',
+  '--text-primary', '--text-secondary', '--text-muted', '--text-dim', '--text-on-accent', '--text-link',
+  '--border-default', '--border-subtle', '--border-strong', '--border-focus',
   '--accent', '--accent-hover', '--accent-dim', '--accent-border', '--accent-glow',
-  '--border', '--border-muted', '--success', '--warning', '--danger', '--info',
-  '--font-display', '--font-mono', '--font-body',
-  '--bg-page', '--bg-surface', '--bg-surface-alt', '--bg-surface-hover',
-  '--text-primary', '--text-secondary', '--accent-primary', '--accent-primary-hover',
-  '--border-default', '--border-subtle',
   '--status-success', '--status-warning', '--status-error', '--status-info',
-  '--nx-paper', '--nx-surface', '--nx-glass', '--nx-ink',
-  '--nx-read-1', '--nx-read-2', '--nx-read-3', '--nx-read-4', '--nx-read-5',
-  '--nx-hair', '--nx-hair-strong', '--nx-accent', '--nx-accent-2', '--nx-glow',
-  '--nx-indicator-bg', '--nx-indicator-edge', '--nx-shadow-lg',
-  '--nx-success', '--nx-warning', '--nx-danger',
+  '--status-success-soft', '--status-warning-soft', '--status-error-soft', '--status-info-soft',
+  '--focus-ring', '--radius-sm', '--radius-ctl', '--radius-panel', '--radius-sheet',
+  '--elev-rest', '--elev-raised', '--elev-float',
+  '--font-body', '--font-display', '--font-mono',
+  '--fs-display', '--fs-heading', '--fs-body', '--fs-body-sm', '--fs-caption', '--fs-code',
+  '--ease-enter', '--ease-std', '--ease-exit', '--dur-instant', '--dur-fast', '--dur-std', '--dur-move', '--spring',
+  '--bg', '--surface-1', '--surface-2', '--surface-3', '--text', '--border', '--border-muted',
+  '--info', '--success', '--warning', '--danger', '--green', '--green-bright',
 ] as const;
 
 const THEME_ALIASES: Record<string, string[]> = {
-  '--bg':            ['--bg-page'],
-  '--surface-1':     ['--bg-surface'],
-  '--surface-2':     ['--bg-surface-alt'],
-  '--surface-3':     ['--bg-surface-hover'],
-  '--text':          ['--text-primary'],
-  '--text-muted':    ['--text-secondary'],
-  '--text-dim':      ['--text-muted'],
-  '--accent':        ['--accent-primary', '--nx-accent'],
-  '--accent-hover':  ['--accent-primary-hover', '--nx-accent-2'],
-  '--accent-dim':    ['--bg-accent'],
-  '--accent-border': ['--border-accent'],
-  '--accent-glow':   ['--brand-glow', '--nx-glow'],
-  '--border':        ['--border-default'],
-  '--border-muted':  ['--border-subtle', '--nx-hair'],
-  '--success':       ['--status-success', '--nx-success'],
-  '--warning':       ['--status-warning', '--nx-warning'],
-  '--danger':        ['--status-error', '--nx-danger'],
-  '--info':          ['--status-info'],
+  '--bg': ['--bg-page'], '--surface-1': ['--bg-surface'], '--surface-2': ['--bg-surface-alt'],
+  '--surface-3': ['--bg-surface-hover'], '--text': ['--text-primary'],
+  '--border': ['--border-default'], '--border-muted': ['--border-subtle'],
+  '--info': ['--status-info'], '--success': ['--status-success'], '--warning': ['--status-warning'],
+  '--danger': ['--status-error'], '--green': ['--status-success'], '--green-bright': ['--status-success'],
 };
 
 function themeValue(styles: CSSStyleDeclaration[], names: string[]): string {
@@ -160,43 +147,15 @@ onMounted(() => {
 
 const THEME_FALLBACK_CSS = `
   :root {
-    color-scheme: dark;
-    --bg: #0d1117;
-    --surface-1: #161b22;
-    --surface-2: #1c2128;
-    --surface-3: #21262d;
-    --border: #30363d;
-    --border-muted: #21262d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
-    --text-dim: #6e7681;
-    --accent: #5096b3;
-    --accent-hover: #6ab0cc;
-    --accent-dim: rgba(80, 150, 179, 0.15);
-    --accent-border: rgba(80, 150, 179, 0.5);
-    --accent-glow: rgba(80, 150, 179, 0.4);
-    --green: #2ea043;
-    --green-bright: #3fb950;
-    --green-glow: rgba(46, 160, 67, 0.4);
-    --green-glow-soft: rgba(63, 185, 80, 0.15);
-    --green-glow-strong: rgba(63, 185, 80, 0.6);
-    --info: #58a6ff;
-    --success: #3fb950;
-    --warning: #e3b341;
-    --danger: #f85149;
-    --font-display: 'Playfair Display', Georgia, serif;
-    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
-    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --bg: var(--bg-page); --surface-1: var(--bg-surface); --surface-2: var(--bg-surface-alt);
+    --surface-3: var(--bg-surface-hover); --text: var(--text-primary);
+    --border: var(--border-default); --border-muted: var(--border-subtle);
+    --info: var(--status-info); --success: var(--status-success); --warning: var(--status-warning);
+    --danger: var(--status-error); --green: var(--status-success); --green-bright: var(--status-success);
   }
   html, body {
-    margin: 0;
-    /* Transparent so the artifact sidebar background shows through —
-       content reads as part of the panel, not a separate document. */
-    background: transparent;
-    color: var(--text);
-    font-family: var(--font-body);
-    overflow-wrap: break-word;
-    word-wrap: break-word;
+    margin: 0; background: transparent; color: var(--text-primary);
+    font-family: var(--font-body); overflow-wrap: break-word; word-wrap: break-word;
   }
   img, table, pre { max-width: 100%; }
 `;

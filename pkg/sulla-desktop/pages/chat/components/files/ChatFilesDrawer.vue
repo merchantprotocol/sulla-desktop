@@ -291,29 +291,29 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.chat-files-drawer { position:absolute;inset:0 0 0 auto;z-index:8;width:300px;display:flex;flex-direction:column;border-left:1px solid var(--nx-hair);background:color-mix(in srgb,var(--nx-surface) 86%,transparent);backdrop-filter:blur(18px);color:var(--nx-read-1) }
-header { height:48px;display:flex;align-items:center;gap:8px;padding:0 10px 0 14px;border-bottom:1px solid var(--nx-hair);flex:none }
-header>svg { width:14px;height:14px;color:var(--nx-read-3) }
-header b { font:600 12.5px var(--font-body,var(--sans)) }
+.chat-files-drawer { position:absolute;inset:0 0 0 auto;z-index:8;width:300px;display:flex;flex-direction:column;border-left:1px solid var(--border-subtle);background:color-mix(in srgb,var(--bg-surface) 86%,transparent);backdrop-filter:blur(18px);color:var(--text-primary) }
+header { height:48px;display:flex;align-items:center;gap:8px;padding:0 10px 0 14px;border-bottom:1px solid var(--border-subtle);flex:none }
+header>svg { width:14px;height:14px;color:var(--text-muted) }
+header b { font:600 12.5px var(--font-body) }
 header button { border:0;background:transparent }
-.open-files { margin-left:auto;color:var(--nx-accent-2);font:500 11.5px var(--font-body,var(--sans)) }
-.close { width:25px;height:25px;border-radius:6px;color:var(--nx-read-4);font-size:18px;line-height:1 }
-.close:hover { background:color-mix(in srgb,var(--nx-accent) 10%,transparent);color:var(--nx-read-1) }
+.open-files { margin-left:auto;color:var(--accent-hover);font:500 11.5px var(--font-body) }
+.close { width:25px;height:25px;border-radius:6px;color:var(--text-dim);font-size:18px;line-height:1 }
+.close:hover { background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text-primary) }
 .drawer-scroll { min-height:0;overflow:auto;padding:8px }
 section { margin-bottom:4px }
-h3 { margin:8px 6px 4px;color:var(--nx-read-4);font:600 10.5px var(--font-body,var(--sans));letter-spacing:.08em;text-transform:uppercase }
-.file-row { width:100%;display:flex;align-items:center;gap:9px;padding:7px 8px;border:0;border-radius:8px;background:transparent;color:var(--nx-read-1);text-align:left }
-.file-row:hover { background:color-mix(in srgb,var(--nx-accent) 8%,transparent) }
+h3 { margin:8px 6px 4px;color:var(--text-dim);font:600 10.5px var(--font-body);letter-spacing:.08em;text-transform:uppercase }
+.file-row { width:100%;display:flex;align-items:center;gap:9px;padding:7px 8px;border:0;border-radius:8px;background:transparent;color:var(--text-primary);text-align:left }
+.file-row:hover { background:color-mix(in srgb,var(--accent) 8%,transparent) }
 .row-main { min-width:0;flex:1 }
 .file-row :deep(.file-glyph) { width:24px;height:24px;border-radius:6px }
 .file-row :deep(.file-glyph svg) { width:13px;height:13px }
 .file-meta { min-width:0;flex:1 }
 .file-meta b,.file-meta small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
-.file-meta b { font:500 12px var(--font-body,var(--sans)) }
-.file-meta small { margin-top:1px;color:var(--nx-read-4);font:10.5px var(--font-body,var(--sans)) }
-.keep { flex:none;border:1px solid var(--nx-hair-strong);border-radius:6px;padding:3px 8px;background:transparent;color:var(--nx-read-2);font:500 11px var(--font-body,var(--sans)) }
-.keep:hover { border-color:var(--nx-accent);color:var(--nx-accent-2) }
-.empty,.error { margin:12px 8px;padding:14px;border:1px dashed var(--nx-hair-strong);border-radius:9px;color:var(--nx-read-4);font:11px/1.5 var(--font-body,var(--sans));text-align:center }
-.inventory-status { margin:10px 8px;color:var(--nx-read-4);font:11px/1.5 var(--font-body,var(--sans));text-align:center }
-.error { color:var(--err) }
+.file-meta b { font:500 12px var(--font-body) }
+.file-meta small { margin-top:1px;color:var(--text-dim);font:10.5px var(--font-body) }
+.keep { flex:none;border:1px solid var(--border-default);border-radius:6px;padding:3px 8px;background:transparent;color:var(--text-secondary);font:500 11px var(--font-body) }
+.keep:hover { border-color:var(--accent);color:var(--accent-hover) }
+.empty,.error { margin:12px 8px;padding:14px;border:1px dashed var(--border-default);border-radius:9px;color:var(--text-dim);font:11px/1.5 var(--font-body);text-align:center }
+.inventory-status { margin:10px 8px;color:var(--text-dim);font:11px/1.5 var(--font-body);text-align:center }
+.error { color:var(--status-error) }
 </style>

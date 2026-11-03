@@ -50,13 +50,13 @@ async function open():Promise<void> {
 </script>
 
 <style scoped>
-.chat-attachment { display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 10px 6px 6px;border:1px solid var(--nx-hair);border-radius:9px;background:var(--nx-surface);color:var(--nx-read-1);text-align:left }
-.chat-attachment:not(:disabled):hover { border-color:var(--nx-accent);background:color-mix(in srgb,var(--nx-accent) 7%,var(--nx-surface)) }
+.chat-attachment { display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 10px 6px 6px;border:1px solid var(--border-subtle);border-radius:9px;background:var(--bg-surface);color:var(--text-primary);text-align:left }
+.chat-attachment:not(:disabled):hover { border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--bg-surface)) }
 .chat-attachment:disabled { cursor:default }
 .chat-attachment :deep(.file-glyph) { width:24px;height:24px;border-radius:6px }
 .chat-attachment :deep(.file-glyph svg) { width:13px;height:13px }
 .details { min-width:0;flex:1 }
 .details b,.details small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
-.details b { max-width:260px;font:500 12px var(--font-body,var(--sans)) }
-.details small { margin-top:1px;color:var(--nx-read-4);font:10.5px var(--font-body,var(--sans)) }
+.details b { max-width:260px;font:500 12px var(--font-body) }
+.details small { margin-top:1px;color:var(--text-dim);font:10.5px var(--font-body) }
 </style>

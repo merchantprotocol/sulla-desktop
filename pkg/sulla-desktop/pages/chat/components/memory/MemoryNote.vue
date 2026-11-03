@@ -28,23 +28,23 @@ const timeLabel = computed(() => {
 <style scoped>
 .memory-note {
   padding: 6px 0 6px 22px;
-  border-left: 1px dashed rgba(80, 150, 179, 0.3);
+  border-left: 1px dashed var(--accent-glow);
   position: relative;
-  font-family: var(--mono); font-size: 11px;
-  color: var(--steel-300); font-style: italic;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--accent-hover); font-style: italic;
   display: flex; align-items: center; gap: 10px;
 }
 .memory-note::before {
   content: "◈"; position: absolute; left: -4px; top: 4px;
-  color: var(--steel-400); font-style: normal;
+  color: var(--accent-hover); font-style: normal;
   font-size: 11px;
 }
 .memory-note .id {
-  font-style: normal; color: var(--steel-400);
+  font-style: normal; color: var(--accent-hover);
   padding: 1px 6px; border-radius: 3px;
-  background: rgba(80, 150, 179, 0.1);
-  border: 1px solid rgba(80, 150, 179, 0.2);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
   font-size: 10px; letter-spacing: 0.08em;
 }
-.memory-note .ts { margin-left: auto; color: var(--read-5); font-size: 10px; font-style: normal; }
+.memory-note .ts { margin-left: auto; color: var(--text-dim); font-size: 10px; font-style: normal; }
 </style>

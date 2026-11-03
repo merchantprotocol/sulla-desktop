@@ -136,7 +136,7 @@ function scrollToBottom(el: any) {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent-primary, #5096b3);
+  background: var(--accent, var(--accent));
 }
 
 .helix-dot.t1 { animation: helixTop 1.6s ease-in-out infinite 0s; left: 2px; }
@@ -164,7 +164,7 @@ function scrollToBottom(el: any) {
 .helix-rung {
   position: absolute;
   width: 1px;
-  background: rgba(80, 150, 179, 0.15);
+  background: var(--accent-dim);
   top: 6px;
   height: 16px;
   animation: rungPulse 1.6s ease-in-out infinite;
@@ -202,7 +202,7 @@ function scrollToBottom(el: any) {
   width: 1px;
   flex: 1;
   min-height: 20px;
-  background: rgba(80, 150, 179, 0.1);
+  background: var(--accent-dim);
   animation: stemPulse 2s ease-in-out infinite;
 }
 
@@ -213,7 +213,7 @@ function scrollToBottom(el: any) {
 
 .ti-elapsed {
   font-size: 9px;
-  color: rgba(80, 150, 179, 0.35);
+  color: var(--accent-glow);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -225,7 +225,7 @@ function scrollToBottom(el: any) {
 
 .ti-label {
   font-size: 12px;
-  color: var(--accent-primary, #5096b3);
+  color: var(--accent, var(--accent));
   font-weight: 500;
   margin-bottom: 8px;
 }
@@ -244,7 +244,7 @@ function scrollToBottom(el: any) {
   left: 0;
   right: 0;
   height: 20px;
-  background: linear-gradient(to bottom, var(--bg-page, #0d1117), transparent);
+  background: linear-gradient(to bottom, var(--bg-page, var(--accent)), transparent);
   pointer-events: none;
   z-index: 2;
 }
@@ -256,7 +256,7 @@ function scrollToBottom(el: any) {
   left: 0;
   right: 0;
   height: 24px;
-  background: linear-gradient(to top, var(--bg-page, #0d1117), transparent);
+  background: linear-gradient(to top, var(--bg-page, var(--accent)), transparent);
   pointer-events: none;
   z-index: 2;
 }
@@ -279,15 +279,15 @@ function scrollToBottom(el: any) {
   margin-bottom: 6px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-muted, rgba(230, 237, 243, 0.35));
+  color: var(--text-muted, var(--bg-overlay));
   font-style: italic;
-  border-left: 2px solid rgba(80, 150, 179, 0.12);
+  border-left: 2px solid var(--accent-dim);
   border-radius: 0 4px 4px 0;
-  background: rgba(80, 150, 179, 0.03);
+  background: var(--accent-dim);
 }
 
 .ti-thought-num {
-  color: rgba(80, 150, 179, 0.3);
+  color: var(--accent-glow);
   font-size: 10px;
   font-style: normal;
   font-weight: 600;
@@ -309,10 +309,10 @@ function scrollToBottom(el: any) {
 .thinking-inline.completed .ti-stem { display: none; }
 .thinking-inline.completed .ti-elapsed { display: none; }
 .thinking-inline.completed .ti-label {
-  color: rgba(80, 150, 179, 0.4);
+  color: var(--accent-glow);
   margin-bottom: 0;
 }
-.thinking-inline.completed:hover .ti-label { color: rgba(80, 150, 179, 0.55); }
+.thinking-inline.completed:hover .ti-label { color: var(--accent-glow); }
 
 /* ── Expanded (completed + clicked open) ── */
 .thinking-inline.expanded {
@@ -324,7 +324,7 @@ function scrollToBottom(el: any) {
 }
 .thinking-inline.expanded .ti-stream::before,
 .thinking-inline.expanded .ti-stream::after { display: none; }
-.thinking-inline.expanded .ti-thought { color: var(--text-muted, rgba(230, 237, 243, 0.45)); }
+.thinking-inline.expanded .ti-thought { color: var(--text-muted, var(--bg-overlay)); }
 .thinking-inline.expanded .ti-stem { animation: none; opacity: 0.2; }
-.thinking-inline.expanded .ti-label { color: rgba(80, 150, 179, 0.4); }
+.thinking-inline.expanded .ti-label { color: var(--accent-glow); }
 </style>

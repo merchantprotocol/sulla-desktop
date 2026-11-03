@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
   color: var(--text-dim); opacity: 0.6; cursor: pointer;
 }
 .heartbeat-heart:hover { opacity: 1; }
-.heartbeat-heart.enabled { color: var(--danger); opacity: 1; animation: heartbeat-blink 2.4s ease-in-out infinite; }
+.heartbeat-heart.enabled { color: var(--status-error); opacity: 1; animation: heartbeat-blink 2.4s ease-in-out infinite; }
 @keyframes heartbeat-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -301,13 +301,13 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .heartbeat-heart.enabled { animation: none; }
 }
-.theme-noir .heartbeat-heart {
+.heartbeat-heart {
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
-  border-radius: 50%; color: var(--nx-read-4); opacity: 1; font-size: 15px;
+  border-radius: 50%; color: var(--text-dim); opacity: 1; font-size: 15px;
 }
-.theme-noir .heartbeat-heart:hover { color: var(--nx-read-1); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
-.theme-noir .heartbeat-heart.enabled {
-  color: var(--nx-accent-2); text-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent-2) 70%, transparent);
+.heartbeat-heart:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.heartbeat-heart.enabled {
+  color: var(--accent-hover); text-shadow: 0 0 10px color-mix(in srgb, var(--accent-hover) 70%, transparent);
   animation: noir-heartbeat 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
 }
 @keyframes noir-heartbeat {
@@ -315,17 +315,17 @@ onBeforeUnmount(() => {
   15% { transform: scale(1.22); }
   28% { transform: scale(1.08); }
 }
-.theme-noir .heartbeat-popover {
-  left: 0; right: auto; bottom: calc(100% + 12px); border-color: var(--nx-hair-strong);
-  border-radius: 18px; color: var(--nx-read-2); background: rgba(12, 18, 28, 0.98);
+.heartbeat-popover {
+  left: 0; right: auto; bottom: calc(100% + 12px); border-color: var(--border-default);
+  border-radius: 18px; color: var(--text-secondary); background: var(--accent);
 }
-.theme-noir-light .heartbeat-popover { background: color-mix(in srgb, var(--nx-surface) 98%, transparent); }
+.heartbeat-popover { background: color-mix(in srgb, var(--bg-surface) 98%, transparent); }
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .heartbeat-heart.enabled { animation: none; }
+  .heartbeat-heart.enabled { animation: none; }
 }
 /* On, but the graph is running — the heart rests until it stops. */
 .heartbeat-heart.enabled.paused,
-.theme-noir .heartbeat-heart.enabled.paused { animation: none; opacity: 0.55; text-shadow: none; }
+.heartbeat-heart.enabled.paused { animation: none; opacity: 0.55; text-shadow: none; }
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
@@ -347,7 +347,7 @@ onBeforeUnmount(() => {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 30;
   width: min(360px, 80vw); padding: 14px; border-radius: 12px;
   background: var(--surface-1); color: var(--text); border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg); font-family: var(--font-body); font-size: 12px;
+  box-shadow: var(--elev-float); font-family: var(--font-body); font-size: 12px;
 }
 .heartbeat-title { font-weight: 700; }
 label { display: grid; gap: 6px; margin-top: 10px; color: var(--text-muted); }

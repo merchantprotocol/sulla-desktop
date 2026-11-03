@@ -220,10 +220,10 @@ defineExpose({ show, hide });
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+  box-shadow: 0 16px 48px var(--bg-page), 0 0 1px var(--status-success-soft);
   padding: 6px 0;
   animation: chatCtxFadeIn 0.15s ease-out;
-  font-family: var(--ifm-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--ifm-font-family-monospace, var(--font-mono));
 }
 
 @keyframes chatCtxFadeIn {
@@ -249,11 +249,11 @@ defineExpose({ show, hide });
 
 .chat-ctx-item:hover:not(.disabled) {
   background: var(--bg-surface-hover);
-  color: var(--accent-primary);
+  color: var(--accent);
 }
 
 .chat-ctx-item:hover:not(.disabled) svg {
-  stroke: var(--accent-primary);
+  stroke: var(--accent);
 }
 
 .chat-ctx-item.disabled {

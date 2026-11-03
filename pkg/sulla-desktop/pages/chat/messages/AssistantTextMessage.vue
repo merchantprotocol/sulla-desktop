@@ -13,7 +13,7 @@
       <img
         :src="message.image.dataUrl"
         :alt="message.image.alt || ''"
-        class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10"
+        class="block h-auto max-w-full rounded-xl border"
       >
       <div
         v-if="message.image.alt"
@@ -33,11 +33,11 @@
         aria-hidden="true"
       >
       <div>
-        <div class="sulla-name dark:text-slate-400">
+        <div class="sulla-name">
           {{ botName }}
         </div>
         <div
-          class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+          class="prose max-w-none"
           v-html="renderMarkdown(message.content)"
         />
       </div>

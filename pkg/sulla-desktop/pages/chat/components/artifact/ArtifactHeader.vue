@@ -83,42 +83,42 @@ async function retryFiles(): Promise<void> {
 .artifact-head {
   padding: 14px 22px;
   display: flex; align-items: center; gap: 14px;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.1);
-  background: rgba(7, 13, 26, 0.4);
+  border-bottom: 1px solid var(--accent-dim);
+  background: var(--accent-glow);
 }
-.name { font-family: var(--serif); font-style: italic; font-size: 17px; color: white; }
+.name { font-family: var(--font-display); font-style: italic; font-size: 17px; color: var(--text-on-accent); }
 .name small {
-  font-family: var(--mono); font-size: 10px; font-style: normal;
+  font-family: var(--font-mono); font-size: 10px; font-style: normal;
   letter-spacing: 0.15em; text-transform: uppercase;
-  color: var(--read-4); margin-left: 10px;
+  color: var(--text-muted); margin-left: 10px;
 }
 .spacer { flex: 1; }
 .status {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--steel-400);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--accent-hover);
   display: inline-flex; align-items: center; gap: 8px;
 }
 .status::before {
   content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--steel-400); box-shadow: 0 0 10px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 10px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
-.status.done { color: var(--ok); }
-.status.done::before { background: var(--ok); box-shadow: none; animation: none; }
+.status.done { color: var(--status-success); }
+.status.done::before { background: var(--status-success); box-shadow: none; animation: none; }
 .act {
-  background: transparent; border: 1px solid rgba(168, 192, 220, 0.2);
-  color: var(--read-3); padding: 5px 10px; border-radius: 6px;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+  background: transparent; border: 1px solid var(--accent-dim);
+  color: var(--text-secondary); padding: 5px 10px; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em;
   text-transform: uppercase; cursor: pointer;
   transition: all 0.15s ease;
 }
 .act:hover {
-  border-color: var(--steel-400); color: var(--steel-100);
-  background: rgba(80, 150, 179, 0.08);
+  border-color: var(--accent-hover); color: var(--text-secondary);
+  background: var(--accent-dim);
 }
 .act:disabled { cursor: wait; opacity: 0.55; }
 .files-error {
   max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--danger, #e36b65); font: 600 9.5px var(--mono); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--status-error); font: 600 9.5px var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase;
 }
 </style>

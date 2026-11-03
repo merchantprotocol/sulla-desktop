@@ -65,7 +65,7 @@ defineExpose({ show });
 <style scoped>
 .inline-prompt-overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.5);
+  background: var(--bg-page);
   display: flex; align-items: center; justify-content: center;
   z-index: 10000;
 }
@@ -73,7 +73,7 @@ defineExpose({ show });
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 8px; padding: 16px; width: 320px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 32px var(--bg-overlay);
   display: flex; flex-direction: column; gap: 12px;
 }
 .inline-prompt-title { font-size: var(--fs-code); font-weight: 600; color: var(--text); }
@@ -93,6 +93,6 @@ defineExpose({ show });
 }
 .inline-prompt-btn.cancel { background: var(--surface-3); color: var(--text-muted); }
 .inline-prompt-btn.cancel:hover { background: var(--border); }
-.inline-prompt-btn.confirm { background: var(--accent); color: #fff; }
+.inline-prompt-btn.confirm { background: var(--accent); color: var(--text-on-accent); }
 .inline-prompt-btn.confirm:hover { background: var(--accent-hover); }
 </style>

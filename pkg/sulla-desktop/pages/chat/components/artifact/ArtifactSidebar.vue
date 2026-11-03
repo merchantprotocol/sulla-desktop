@@ -62,13 +62,13 @@ function onExpand(): void {
 
 <style scoped>
 /*
-  Sidebar sits a notch lighter than the chat background (#050810) so
+  Sidebar sits a notch lighter than the chat background (var(--accent)) so
   the eye reads it as its own surface without needing an inner card.
 */
 .artifact {
   overflow: hidden;
-  border-left: 1px solid var(--border-default, rgba(168, 192, 220, 0.1));
-  background: var(--bg-surface, #0d131f);
+  border-left: 1px solid var(--border-default, var(--accent-dim));
+  background: var(--bg-surface, var(--accent));
   backdrop-filter: blur(10px);
   display: flex; flex-direction: column;
   height: 100%;
@@ -86,20 +86,20 @@ function onExpand(): void {
   transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 12px 5px;
-  border: 1px solid var(--border-default, rgba(168, 192, 220, 0.1));
+  border: 1px solid var(--border-default, var(--accent-dim));
   border-right: none;
   border-radius: 9px 0 0 9px;
-  background: var(--bg-surface, #0d131f);
-  color: var(--read-3);
+  background: var(--bg-surface, var(--accent));
+  color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, padding 0.15s ease;
 }
-.artifact-tab:hover { color: var(--steel-100); border-color: rgba(80, 150, 179, 0.4); padding-left: 8px; }
-.artifact-tab.working { border-color: rgba(80, 150, 179, 0.4); }
+.artifact-tab:hover { color: var(--text-secondary); border-color: var(--accent-glow); padding-left: 8px; }
+.artifact-tab.working { border-color: var(--accent-glow); }
 .tab-chevron { font-size: 14px; line-height: 1; }
 .tab-label {
   writing-mode: vertical-rl;
-  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
   letter-spacing: 0.16em; text-transform: uppercase;
   white-space: nowrap;
 }

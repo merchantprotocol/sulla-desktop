@@ -47,7 +47,7 @@ const show = computed(() => {
   position: absolute; bottom: -28px;
   display: flex; gap: 3px;
   opacity: 0; transition: opacity 0.2s ease;
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: 10px;
   letter-spacing: 0.14em; text-transform: uppercase;
 }
 :deep(.chat-turn.you)   .turn-actions { right: 0; }
@@ -55,16 +55,16 @@ const show = computed(() => {
 :deep(.chat-turn:hover) .turn-actions { opacity: 1; }
 .turn-actions button {
   padding: 4px 9px; border-radius: 6px;
-  background: rgba(20, 30, 42, 0.55);
-  border: 1px solid rgba(168, 192, 220, 0.15);
-  color: var(--read-3); cursor: pointer;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  color: var(--text-secondary); cursor: pointer;
   backdrop-filter: blur(8px);
   font: inherit;
   transition: all 0.15s ease;
 }
 .turn-actions button:hover {
-  background: rgba(80, 150, 179, 0.14);
-  color: var(--steel-100);
-  border-color: rgba(80, 150, 179, 0.35);
+  background: var(--accent-dim);
+  color: var(--text-secondary);
+  border-color: var(--accent-glow);
 }
 </style>

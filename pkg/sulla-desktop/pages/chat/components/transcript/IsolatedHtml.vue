@@ -58,41 +58,26 @@ let lastMarkup = '';
 const BASE_STYLES = `
   :host {
     display: block;
-    font-family: var(--font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
-    font-size: 14px;
+    font-family: var(--font-body);
+    font-size: var(--fs-body, 14px);
     line-height: 1.55;
-
-    --bg: var(--bg-page, #0d1117);
-    --surface-1: var(--bg-surface, #161b22);
-    --surface-2: var(--bg-surface-alt, #1c2128);
-    --surface-3: var(--bg-surface-hover, #21262d);
-    --text: var(--text-primary, #e6edf3);
-    --text-muted: #8b949e;
-    --text-dim: #6e7681;
-    --accent: var(--accent-primary, #5096b3);
-    --accent-hover: var(--accent-primary-hover, #6ab0cc);
-    --accent-dim: rgba(80, 150, 179, 0.15);
-    --accent-border: rgba(80, 150, 179, 0.5);
-    --accent-glow: rgba(80, 150, 179, 0.4);
-    --green: #2ea043;
-    --green-bright: #3fb950;
-    --green-glow: rgba(46, 160, 67, 0.4);
-    --green-glow-soft: rgba(63, 185, 80, 0.15);
-    --green-glow-strong: rgba(63, 185, 80, 0.6);
-    --border: var(--border-default, #30363d);
-    --border-muted: var(--border-subtle, #21262d);
-    --info: var(--status-info, #58a6ff);
-    --success: var(--status-success, #3fb950);
-    --warning: var(--status-warning, #e3b341);
-    --danger: var(--status-error, #f85149);
-    --font-display: 'Playfair Display', Georgia, serif;
-    --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Courier New', monospace;
-    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-
-    color: var(--text);
+    --bg: var(--bg-page);
+    --surface-1: var(--bg-surface);
+    --surface-2: var(--bg-surface-alt);
+    --surface-3: var(--bg-surface-hover);
+    --text: var(--text-primary);
+    --border: var(--border-default);
+    --border-muted: var(--border-subtle);
+    --info: var(--status-info);
+    --success: var(--status-success);
+    --warning: var(--status-warning);
+    --danger: var(--status-error);
+    --green: var(--status-success);
+    --green-bright: var(--status-success);
+    color: var(--text-primary);
   }
   * { box-sizing: border-box; }
-  a { color: var(--accent-primary, #6ab0cc); }
+  a { color: var(--text-link); }
   pre, code { font-family: var(--font-mono); }
   img, svg, video { max-width: 100%; height: auto; }
   table { border-collapse: collapse; }

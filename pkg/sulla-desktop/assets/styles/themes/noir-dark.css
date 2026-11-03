@@ -792,13 +792,6 @@
   padding-bottom: 0 !important;
 }
 
-/* The composer form: full width, no margin */
-.theme-noir-dark .border-t.border-edge.bg-page\/80 .group\/composer {
-  margin: 0 !important;
-  width: 100% !important;
-  max-width: none !important;
-}
-
 /* The composer panel: flat, no rounded corners, no ring, edge-to-edge */
 .theme-noir-dark .border-t.border-edge.bg-page\/80 .bg-surface.ring-1.ring-edge {
   border-radius: 0 !important;

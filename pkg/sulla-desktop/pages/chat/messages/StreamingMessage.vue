@@ -14,11 +14,11 @@
         aria-hidden="true"
       >
       <div>
-        <div class="sulla-name dark:text-slate-400">
+        <div class="sulla-name">
           {{ botName }}
         </div>
         <div
-          class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
+          class="prose max-w-none"
           v-html="renderMarkdown(message.content)"
         /><span
           v-if="!(message as any)._completed"
@@ -45,7 +45,7 @@ const { botName, botLogoUrl } = useChatDisplay();
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--accent-primary, #3b82f6);
+  background: var(--accent, var(--accent));
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: blinkCursor 0.8s step-end infinite;

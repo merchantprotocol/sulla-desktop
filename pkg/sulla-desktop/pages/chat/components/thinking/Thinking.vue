@@ -119,57 +119,57 @@ const elapsedLabel = computed(() => {
 <style scoped>
 .thinking {
   position: relative; padding: 12px 0 12px 22px;
-  border-left: 1px solid rgba(80, 150, 179, 0.22);
+  border-left: 1px solid var(--accent-dim);
   cursor: pointer; transition: border-color 0.25s ease;
 }
-.thinking:hover { border-left-color: rgba(106, 176, 204, 0.5); }
+.thinking:hover { border-left-color: var(--accent-glow); }
 .thinking::before {
   content: ""; position: absolute; left: -4px; top: 18px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: rgba(80, 150, 179, 0.45); transition: all 0.25s ease;
+  background: var(--accent-glow); transition: all 0.25s ease;
 }
-.thinking.live { border-left-color: rgba(106, 176, 204, 0.55); }
+.thinking.live { border-left-color: var(--accent-glow); }
 .thinking.live::before {
-  background: var(--steel-400); box-shadow: 0 0 14px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 14px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
 .head {
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: 10px;
   letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--steel-400);
+  color: var(--accent-hover);
   margin-bottom: 10px;
   display: flex; align-items: center; gap: 14px;
 }
 .head .summary {
-  font-family: var(--serif); font-style: italic;
+  font-family: var(--font-display); font-style: italic;
   text-transform: none; letter-spacing: 0.003em;
-  font-size: 15px; color: var(--read-3);
+  font-size: 15px; color: var(--text-secondary);
   font-weight: 400;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   flex: 1;
 }
-.thinking.settled:hover .head .summary { color: var(--read-2); }
+.thinking.settled:hover .head .summary { color: var(--text-primary); }
 .head .elapsed {
   font-variant-numeric: tabular-nums;
-  color: var(--read-4); font-size: 10px; margin-left: auto;
+  color: var(--text-muted); font-size: 10px; margin-left: auto;
 }
-.head .chev { color: var(--read-4); transition: transform 0.25s ease; }
+.head .chev { color: var(--text-muted); transition: transform 0.25s ease; }
 .thinking.open .head .chev { transform: rotate(90deg); }
 .noir-summary { display: none; }
 
 .stream {
   max-height: 80px; overflow: hidden;
-  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.3) 0%, black 40%);
-          mask-image: linear-gradient(180deg, rgba(0,0,0,0.3) 0%, black 40%);
+  -webkit-mask-image: linear-gradient(180deg, var(--bg-overlay) 0%, black 40%);
+          mask-image: linear-gradient(180deg, var(--bg-overlay) 0%, black 40%);
 }
 .thought {
-  font-family: var(--serif); font-style: italic;
-  font-size: 15px; line-height: 1.55; color: var(--read-3);
+  font-family: var(--font-display); font-style: italic;
+  font-size: 15px; line-height: 1.55; color: var(--text-secondary);
   padding: 2px 0;
 }
 .thought:nth-child(1) { opacity: 0.4; }
 .thought:nth-child(2) { opacity: 0.7; }
-.thought:nth-child(3) { opacity: 1; color: var(--read-2); }
+.thought:nth-child(3) { opacity: 1; color: var(--text-primary); }
 
 .expanded {
   max-height: 0; overflow: hidden; transition: max-height 0.4s ease;
@@ -178,14 +178,14 @@ const elapsedLabel = computed(() => {
 .expanded ol { list-style: none; counter-reset: t; padding: 0; margin: 0; }
 .expanded li {
   counter-increment: t;
-  font-family: var(--serif); font-style: italic;
-  font-size: 15px; line-height: 1.6; color: var(--read-3);
+  font-family: var(--font-display); font-style: italic;
+  font-size: 15px; line-height: 1.6; color: var(--text-secondary);
   padding: 4px 0 4px 30px; position: relative;
 }
 .expanded li::before {
   content: counter(t, decimal-leading-zero);
   position: absolute; left: 0; top: 6px;
-  font-family: var(--mono); font-style: normal;
-  font-size: 9.5px; color: var(--read-5);
+  font-family: var(--font-mono); font-style: normal;
+  font-size: 9.5px; color: var(--text-dim);
 }
 </style>

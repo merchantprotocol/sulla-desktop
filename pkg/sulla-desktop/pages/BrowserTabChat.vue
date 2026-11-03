@@ -128,7 +128,7 @@
                       </button>
                       <button
                         type="button"
-                        class="p-1 rounded text-content-muted hover:text-green-500 hover:bg-green-500/10 transition-colors"
+                        class="p-1 rounded text-content-muted browser-action-success transition-colors"
                         title="Send now (inject into running conversation)"
                         @click="injectQueuedMessage(msg.id)"
                       >
@@ -149,7 +149,7 @@
                       </button>
                       <button
                         type="button"
-                        class="p-1 rounded text-content-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                        class="p-1 rounded text-content-muted browser-action-error transition-colors"
                         title="Remove from queue"
                         @click="removeQueuedMessage(msg.id)"
                       >
@@ -298,7 +298,7 @@
     <Transition name="toast-fade">
       <div
         v-if="voiceToast"
-        class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg"
+        class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg browser-error-toast px-4 py-2.5 text-sm font-medium text-on-accent shadow-lg"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -753,6 +753,9 @@ onUnmounted(() => {
 
 <style scoped>
 /* ── Toast fade transition ── */
+.browser-action-success:hover { color: var(--status-success); background: var(--status-success-soft); }
+.browser-action-error:hover { color: var(--status-error); background: var(--status-error-soft); }
+.browser-error-toast { background: var(--status-error); color: var(--text-on-accent); }
 .toast-fade-enter-active,
 .toast-fade-leave-active {
   transition: opacity 0.3s, transform 0.3s;
@@ -775,7 +778,7 @@ onUnmounted(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent-primary);
+  background: var(--accent);
   opacity: 0.3;
   animation: typingBounce 1.4s ease-in-out infinite;
 }

@@ -116,25 +116,25 @@ function fmtNumber(n: number): string {
   position: absolute; inset: 0; z-index: 80;
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 12vh;
-  background: rgba(7, 13, 26, 0.7); backdrop-filter: blur(8px);
+  background: var(--bg-overlay); backdrop-filter: blur(8px);
 }
 .modal {
   width: 560px; max-width: calc(100vw - 48px);
-  background: rgba(20, 30, 42, 0.96);
-  border: 1px solid rgba(80, 150, 179, 0.3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-glow);
   border-radius: 12px; overflow: hidden;
-  box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+  box-shadow: 0 30px 60px var(--bg-page);
 }
 .mhead {
   padding: 12px 18px;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400);
-  border-bottom: 1px solid rgba(80, 150, 179, 0.15);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--accent-hover);
+  border-bottom: 1px solid var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
 .mhead .x {
   margin-left: auto; background: transparent; border: none;
-  color: var(--read-4); cursor: pointer; font-size: 14px;
+  color: var(--text-muted); cursor: pointer; font-size: 14px;
 }
 .mbody { padding: 22px 24px; }
 
@@ -144,37 +144,37 @@ function fmtNumber(n: number): string {
 }
 .stat {
   padding: 14px 16px; border-radius: 10px;
-  background: rgba(80, 150, 179, 0.05);
-  border: 1px solid rgba(80, 150, 179, 0.15);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
 }
 .stat.big {
-  background: rgba(80, 150, 179, 0.08);
-  border-color: rgba(80, 150, 179, 0.25);
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
 }
 .stat .num {
-  font-family: var(--serif); font-style: italic;
+  font-family: var(--font-display); font-style: italic;
   font-size: 26px; font-weight: 600;
-  color: white; line-height: 1.1;
+  color: var(--text-on-accent); line-height: 1.1;
   letter-spacing: -0.01em;
 }
 .stat.big .num {
   font-size: 34px;
 }
 .stat .lbl {
-  font-family: var(--mono); font-size: 9.5px;
+  font-family: var(--font-mono); font-size: 9.5px;
   letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--steel-400);
+  color: var(--accent-hover);
   margin-top: 6px;
 }
 .stat .sub {
-  font-family: var(--mono); font-size: 10px;
-  color: var(--read-4); margin-top: 4px;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-muted); margin-top: 4px;
 }
 
 .sec-label {
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: 10px;
   letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--read-4);
+  color: var(--text-muted);
   margin: 0 0 10px;
 }
 
@@ -187,29 +187,29 @@ function fmtNumber(n: number): string {
 .session-row {
   display: flex; flex-direction: column; gap: 8px;
   padding: 14px 16px; border-radius: 10px;
-  background: rgba(20, 30, 42, 0.6);
-  border: 1px solid rgba(168, 192, 220, 0.12);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
   margin-bottom: 18px;
 }
 .sr-item {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: 14px;
-  font-family: var(--mono); font-size: 12px;
+  font-family: var(--font-mono); font-size: 12px;
 }
 .sr-lbl {
-  color: var(--read-4); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-muted); letter-spacing: 0.12em; text-transform: uppercase;
   font-size: 10px;
 }
 .sr-val {
-  color: var(--read-1); font-family: var(--serif); font-style: italic;
+  color: var(--text-primary); font-family: var(--font-display); font-style: italic;
   font-size: 14px; font-weight: 500;
 }
-.sr-val.degraded { color: var(--warn); }
-.sr-val.offline  { color: var(--err); }
+.sr-val.degraded { color: var(--status-warning); }
+.sr-val.offline  { color: var(--status-error); }
 
 .foot-note {
-  font-family: var(--serif); font-style: italic;
-  font-size: 13px; line-height: 1.55; color: var(--read-3);
+  font-family: var(--font-display); font-style: italic;
+  font-size: 13px; line-height: 1.55; color: var(--text-secondary);
   margin: 0;
 }
 

@@ -31,29 +31,29 @@ const timeLabel = computed(() => {
 .channel-msg {
   padding: 14px 16px; margin: 4px 0;
   border-radius: 10px;
-  background: rgba(20, 30, 42, 0.45);
-  border: 1px solid rgba(168, 192, 220, 0.15);
-  border-left: 3px solid var(--steel-400);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  border-left: 3px solid var(--accent-hover);
   position: relative;
 }
 .chead {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--read-4);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--text-muted);
   margin-bottom: 6px;
   display: flex; align-items: center; gap: 10px;
 }
-.chead .agent { color: var(--steel-300); font-weight: 700; }
+.chead .agent { color: var(--accent-hover); font-weight: 700; }
 .chead .ch {
   padding: 1px 7px; border-radius: 3px;
-  background: rgba(80, 150, 179, 0.12);
-  border: 1px solid rgba(80, 150, 179, 0.22);
-  color: var(--steel-400); font-size: 9px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent-hover); font-size: 9px;
 }
-.chead .ts { margin-left: auto; color: var(--read-5); font-size: 9.5px; }
+.chead .ts { margin-left: auto; color: var(--text-dim); font-size: 9.5px; }
 .body {
-  font-family: var(--serif); font-size: 15.5px; line-height: 1.6;
-  color: var(--read-2);
+  font-family: var(--font-display); font-size: 15.5px; line-height: 1.6;
+  color: var(--text-primary);
 }
-.channel-msg[data-agent="heartbeat"] { border-left-color: var(--steel-300); }
-.channel-msg[data-agent="mobile"]    { border-left-color: var(--steel-400); }
+.channel-msg[data-agent="heartbeat"] { border-left-color: var(--accent-hover); }
+.channel-msg[data-agent="mobile"]    { border-left-color: var(--accent-hover); }
 </style>

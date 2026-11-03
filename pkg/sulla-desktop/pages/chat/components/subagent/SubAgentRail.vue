@@ -219,9 +219,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   height: 48px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border-default);
-  font: 600 12px var(--font-body, var(--sans));
+  font: 600 12px var(--font-body);
 }
-.count { margin-left: auto; color: var(--text-muted); font: 10px var(--mono); }
+.count { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono); }
 .collapse {
   margin-left: 10px; padding: 0 6px;
   border-radius: 6px;
@@ -245,12 +245,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, padding 0.15s ease;
 }
-.subagent-rail-tab:hover { color: var(--text-primary); border-color: var(--accent-primary); padding-right: 8px; }
-.subagent-rail-tab.running { border-color: var(--accent-primary); }
+.subagent-rail-tab:hover { color: var(--text-primary); border-color: var(--accent); padding-right: 8px; }
+.subagent-rail-tab.running { border-color: var(--accent); }
 .tab-chevron { font-size: 14px; line-height: 1; }
 .tab-label {
   writing-mode: vertical-rl;
-  font: 600 10px var(--mono);
+  font: 600 10px var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -265,27 +265,27 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   transition: border-color 0.15s ease, opacity 0.15s ease;
 }
 .agent-card.clickable { cursor: pointer; }
-.agent-card.clickable:hover { border-color: var(--accent-primary); }
+.agent-card.clickable:hover { border-color: var(--accent); }
 .card-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
-.is-running .status-dot { background: var(--accent-primary); animation: chat-pulse 1.4s ease-in-out infinite; }
-.is-done .status-dot { background: var(--text-success); }
-.is-failed .status-dot { background: var(--text-error); }
-.is-stopped .status-dot { background: var(--text-warning); }
-.agent-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--mono); }
+.is-running .status-dot { background: var(--accent); animation: chat-pulse 1.4s ease-in-out infinite; }
+.is-done .status-dot { background: var(--status-success); }
+.is-failed .status-dot { background: var(--status-error); }
+.is-stopped .status-dot { background: var(--status-warning); }
+.agent-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--font-mono); }
 .kind-pill {
   flex: 0 0 auto; padding: 0 5px;
   border: 1px solid var(--border-default); border-radius: 5px;
-  color: var(--text-muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted); font: 9px var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
 }
 .open-tab { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 12px; line-height: 1; }
-.open-tab:hover { color: var(--accent-primary); }
+.open-tab:hover { color: var(--accent); }
 .open-tab + .dismiss { margin-left: 0; }
 .contract { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
 .dismiss { margin-left: auto; padding: 0 3px; color: var(--text-muted); font-size: 16px; line-height: 1; }
 .dismiss:hover { color: var(--text-primary); }
 .label { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.meta { display: flex; gap: 8px; margin-top: 5px; color: var(--text-muted); font: 10px var(--mono); text-transform: uppercase; }
+.meta { display: flex; gap: 8px; margin-top: 5px; color: var(--text-muted); font: 10px var(--font-mono); text-transform: uppercase; }
 .activity {
   display: -webkit-box;
   margin: 7px 0 0;

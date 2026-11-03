@@ -132,37 +132,37 @@ const elapsedLabel = computed(() => {
 <style scoped>
 .thinking {
   position: relative; padding: 12px 0 12px 22px;
-  border-left: 1px solid rgba(80, 150, 179, 0.22);
+  border-left: 1px solid var(--accent-dim);
 }
 .thinking::before {
   content: ""; position: absolute; left: -4px; top: 18px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: rgba(80, 150, 179, 0.45);
+  background: var(--accent-glow);
 }
-.thinking.live { border-left-color: rgba(106, 176, 204, 0.55); }
+.thinking.live { border-left-color: var(--accent-glow); }
 .thinking.live::before {
-  background: var(--steel-400); box-shadow: 0 0 14px var(--steel-400);
+  background: var(--accent-hover); box-shadow: 0 0 14px var(--accent-hover);
   animation: chat-pulse 1.5s infinite;
 }
 .head {
   width: 100%; padding: 0; border: 0; background: transparent;
   display: flex; align-items: center; gap: 14px; text-align: left;
-  font: 10px var(--mono); letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--steel-400); cursor: pointer;
+  font: 10px var(--font-mono); letter-spacing: 0.25em; text-transform: uppercase;
+  color: var(--accent-hover); cursor: pointer;
 }
 .live .head { cursor: default; }
 .summary {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--read-3); font: italic 15px var(--serif); letter-spacing: 0.003em; text-transform: none;
+  color: var(--text-secondary); font: italic 15px var(--font-display); letter-spacing: 0.003em; text-transform: none;
 }
-.elapsed { margin-left: auto; color: var(--read-4); letter-spacing: 0.1em; }
-.chev { color: var(--read-4); transition: transform 0.2s ease; }
+.elapsed { margin-left: auto; color: var(--text-muted); letter-spacing: 0.1em; }
+.chev { color: var(--text-muted); transition: transform 0.2s ease; }
 .open .chev { transform: rotate(90deg); }
 .noir-summary { display: none; }
 .stream { margin-top: 10px; }
 .thought {
-  padding: 3px 0; color: var(--read-3);
-  font: italic 15px/1.55 var(--serif);
+  padding: 3px 0; color: var(--text-secondary);
+  font: italic 15px/1.55 var(--font-display);
 }
 .expanded {
   margin-top: 10px; max-height: min(65vh, 900px) !important; overflow-y: auto !important; padding-right: 8px;
@@ -170,7 +170,7 @@ const elapsedLabel = computed(() => {
 .expanded-thought { position: relative; padding-left: 30px; }
 .index {
   position: absolute; left: 0; top: 5px;
-  color: var(--read-5); font: 9.5px var(--mono); font-style: normal;
+  color: var(--text-dim); font: 9.5px var(--font-mono); font-style: normal;
 }
 :deep(.tool) { flex-wrap: wrap; border-left: 0; padding-left: 0; }
 :deep(.tool::before) { left: 1px; }
