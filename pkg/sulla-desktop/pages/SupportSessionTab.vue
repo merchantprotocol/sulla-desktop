@@ -7,10 +7,12 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
     <div v-else-if="error" class="state error"><b>{{ errorTitle }}</b><span>{{ error }}</span></div>
     <template v-else-if="session">
       <header class="session-head">
-        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="active ? 'active' : 'ended'">{{ active ? 'Connected' : session.status }}</span></div><button v-if="active" class="danger" @click="endSession">End session</button></div>
+        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="active ? 'active' : 'ended'">{{ active ? 'Connected' : session.status }}</span></div><div class="actions"><button class="ghost" @click="manualRefresh">Refresh</button><button v-if="active" class="danger" @click="endSession">End session</button></div></div>
         <div class="request"><span class="avatar">{{ initials }}</span><div><small>User's request</small><p>{{ session.message || 'No message supplied.' }}</p></div></div>
+        <div v-if="toolWaiting" class="waiting">Waiting for the computer… {{ toolWaitingSeconds }}s</div>
         <div class="strip">
           <span><small>Device</small><b>{{ session.device?.name || 'Unknown device' }}</b><em>{{ session.device?.platform }}</em></span>
+          <span><small>Status</small><b class="pill" :class="presence?.online ? 'active' : 'ended'">{{ presenceLabel }}</b></span>
           <span><small>Sulla Desktop</small><b>{{ session.appVersion || '—' }}</b></span>
           <span><small>Channel</small><b>{{ session.updateChannel || '—' }}</b></span>
           <span><small>Runtime</small><b :class="healthClass">{{ session.runtimeHealth || 'unknown' }}</b></span>
@@ -61,8 +63,47 @@ async function refresh(){try{const r:any=await ipcRenderer.invoke('support-sessi
 async function endSession(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); await refresh();}
 async function markResolved(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); await refresh();}
 function seedPrompt(text:string){window.dispatchEvent(new CustomEvent('sulla:support-chat-prompt',{detail:{tabId:props.tabId,text}}));}
-onMounted(()=>{void refresh(); timer=setInterval(refresh,10000);}); onBeforeUnmount(()=>clearInterval(timer));
+
+// ─── Device presence pill ──────────────────────────────────────────
+const presence=ref<{online:boolean;lastSeenAt:string|null}|null>(null);
+function minutesAgo(value:string|null){
+  if(!value)return 'unknown';
+  const minutes=Math.max(0,Math.round((Date.now()-Date.parse(value))/60000));
+  if(minutes<1)return 'just now';
+  if(minutes<60)return `${minutes}m ago`;
+  const hours=Math.round(minutes/60);
+  return hours<24?`${hours}h ago`:`${Math.round(hours/24)}d ago`;
+}
+const presenceLabel=computed(()=>{
+  if(!presence.value)return 'Checking…';
+  return presence.value.online?'Online':`Offline · last seen ${minutesAgo(presence.value.lastSeenAt)}`;
+});
+async function refreshPresence(){try{presence.value=await ipcRenderer.invoke('support-session:presence' as any,props.sessionId);}catch{/* keep last-known presence on a transient fetch failure */}}
+async function manualRefresh(){error.value=''; await Promise.all([refresh(),refreshPresence()]);}
+
+// ─── "Waiting for the computer…" while a support tool call is in flight ───
+// ChatPage/PersonaAdapter already dispatch sulla:chat-running for this tab
+// whenever the agent graph (and, in a support session, its support.* tool
+// call relay) is running — reuse it instead of a second signal.
+const toolWaiting=ref(false), toolWaitingSeconds=ref(0); let toolWaitingStartedAt=0, waitingTickTimer:any, presenceTimer:any;
+function onChatRunning(event:Event){
+  const detail=(event as CustomEvent<{tabId?:string;running?:boolean}>).detail;
+  if(detail?.tabId!==props.tabId)return;
+  toolWaiting.value=!!detail.running;
+  if(toolWaiting.value){toolWaitingStartedAt=Date.now(); toolWaitingSeconds.value=0;}
+}
+window.addEventListener('sulla:chat-running',onChatRunning);
+onBeforeUnmount(()=>window.removeEventListener('sulla:chat-running',onChatRunning));
+
+onMounted(()=>{
+  void refresh();
+  void refreshPresence();
+  timer=setInterval(refresh,30000);
+  presenceTimer=setInterval(()=>{if(props.isVisible)void refreshPresence();},10000);
+  waitingTickTimer=setInterval(()=>{if(toolWaiting.value)toolWaitingSeconds.value=Math.floor((Date.now()-toolWaitingStartedAt)/1000);},1000);
+});
+onBeforeUnmount(()=>{clearInterval(timer); clearInterval(presenceTimer); clearInterval(waitingTickTimer);});
 </script>
 <style scoped>
-.support-session{height:100%;display:flex;flex-direction:column;background:var(--background,#f6f7f9);color:var(--body-text,#172033)}.state{margin:auto;display:flex;flex-direction:column;gap:8px}.error{color:#a33}.session-head{padding:16px 20px 12px;background:var(--body-bg,#fff);border-bottom:1px solid var(--border,#d9dde5)}.title-row{display:flex;justify-content:space-between;align-items:center}.title-row>div{display:flex;gap:10px;align-items:center}.pill{font-size:11px;padding:3px 8px;border-radius:99px;background:#eef0f4}.pill.active{background:#e5f6ed;color:#16784a}.pill.ended{color:#687080}.danger{border:1px solid #d99;color:#a22;background:transparent;border-radius:6px;padding:6px 10px}.request{display:flex;gap:10px;margin:12px 0}.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#6b7ca5;color:white;font-size:11px}.request small,.strip small{display:block;color:#747b87;font-size:10px;text-transform:uppercase}.request p{margin:2px 0}.strip{display:flex;gap:0;border:1px solid var(--border,#d9dde5);border-radius:8px;overflow:hidden}.strip span{padding:8px 12px;border-right:1px solid var(--border,#d9dde5);display:flex;gap:4px;align-items:baseline}.strip span:last-child{border:0}.strip b{font-size:12px}.strip em{font-size:10px;color:#747b87}.good{color:#16784a}.warn{color:#a45b13}.body{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0;flex:1}.chat-wrap{min-width:0;overflow:hidden}.fix{border-left:1px solid var(--border,#d9dde5);padding:16px;background:var(--body-bg,#fff);overflow:auto}.fix h3{margin:0}.fix p,.fix small,.scope{font-size:11px;color:#687080;line-height:1.5}.paths{display:flex;margin:14px 0}.paths button{flex:1;padding:7px;border:1px solid #ccd1da;background:transparent}.paths .on{background:#dfeaf0;color:#27657d}.fix ol{padding-left:24px}.fix li{padding:9px 0;border-bottom:1px solid #e5e7eb}.fix li span,.fix li small{display:block}.fix button{margin-top:5px;border:1px solid #9aadb8;background:#fff;border-radius:5px;padding:5px 8px}.fix input{width:100%;box-sizing:border-box;margin-top:5px;padding:6px}.scope{margin-top:16px;padding-top:12px;border-top:1px solid #ddd}.ended-state{padding:10px 20px;background:#fff3d9;color:#735410;display:flex;gap:10px}
+.support-session{height:100%;display:flex;flex-direction:column;background:var(--background,#f6f7f9);color:var(--body-text,#172033)}.state{margin:auto;display:flex;flex-direction:column;gap:8px}.error{color:#a33}.session-head{padding:16px 20px 12px;background:var(--body-bg,#fff);border-bottom:1px solid var(--border,#d9dde5)}.title-row{display:flex;justify-content:space-between;align-items:center}.title-row>div{display:flex;gap:10px;align-items:center}.pill{font-size:11px;padding:3px 8px;border-radius:99px;background:#eef0f4}.pill.active{background:#e5f6ed;color:#16784a}.pill.ended{color:#687080}.actions{display:flex;gap:8px}.danger{border:1px solid #d99;color:#a22;background:transparent;border-radius:6px;padding:6px 10px}.ghost{border:1px solid #ccd1da;color:#687080;background:transparent;border-radius:6px;padding:6px 10px}.waiting{margin:0 0 10px;font-size:11px;color:#a45b13}.request{display:flex;gap:10px;margin:12px 0}.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#6b7ca5;color:white;font-size:11px}.request small,.strip small{display:block;color:#747b87;font-size:10px;text-transform:uppercase}.request p{margin:2px 0}.strip{display:flex;gap:0;border:1px solid var(--border,#d9dde5);border-radius:8px;overflow:hidden}.strip span{padding:8px 12px;border-right:1px solid var(--border,#d9dde5);display:flex;gap:4px;align-items:baseline}.strip span:last-child{border:0}.strip b{font-size:12px}.strip em{font-size:10px;color:#747b87}.good{color:#16784a}.warn{color:#a45b13}.body{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0;flex:1}.chat-wrap{min-width:0;overflow:hidden}.fix{border-left:1px solid var(--border,#d9dde5);padding:16px;background:var(--body-bg,#fff);overflow:auto}.fix h3{margin:0}.fix p,.fix small,.scope{font-size:11px;color:#687080;line-height:1.5}.paths{display:flex;margin:14px 0}.paths button{flex:1;padding:7px;border:1px solid #ccd1da;background:transparent}.paths .on{background:#dfeaf0;color:#27657d}.fix ol{padding-left:24px}.fix li{padding:9px 0;border-bottom:1px solid #e5e7eb}.fix li span,.fix li small{display:block}.fix button{margin-top:5px;border:1px solid #9aadb8;background:#fff;border-radius:5px;padding:5px 8px}.fix input{width:100%;box-sizing:border-box;margin-top:5px;padding:6px}.scope{margin-top:16px;padding-top:12px;border-top:1px solid #ddd}.ended-state{padding:10px 20px;background:#fff3d9;color:#735410;display:flex;gap:10px}
 </style>

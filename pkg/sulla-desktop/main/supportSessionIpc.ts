@@ -23,4 +23,5 @@ export function initSupportSessionIpc():void {
   ipcMain.handle('support-session:events', (_e:unknown,id:string) => request('GET', pathFor(id,'/events?limit=100')));
   ipcMain.handle('support-session:end', (_e:unknown,id:string,reason='resolved') => request('POST', pathFor(id,'/end'), { reason }));
   ipcMain.handle('support-session:extend', (_e:unknown,id:string,hours:number) => request('POST', pathFor(id,'/extend'), { hours }));
+  ipcMain.handle('support-session:presence', (_e:unknown,id:string) => request('GET', pathFor(id,'/presence')));
 }
