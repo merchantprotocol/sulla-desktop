@@ -228,8 +228,8 @@ interface AuthResult {
   needsVaultMigration?: boolean;
 }
 
-async function needsOldVaultPasswordMigration(): Promise<boolean> {
-  if (!usesContainerVaultAuthority() || shouldKeepSessionInMemory()) return false;
+async function needsOldVaultPasswordMigration(sessionInMemory: boolean): Promise<boolean> {
+  if (!usesContainerVaultAuthority() || sessionInMemory) return false;
   try {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const status = await getDesktopVaultClient().status();
@@ -1226,7 +1226,7 @@ export function initSullaCloudAuthEvents(): void {
     if (signedIn.ok && !inMemory) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
       console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
     });
-    return signedIn.ok ? { ...signedIn, needsVaultMigration: await needsOldVaultPasswordMigration() } : signedIn;
+    return signedIn.ok ? { ...signedIn, needsVaultMigration: await needsOldVaultPasswordMigration(inMemory) } : signedIn;
   });
 
   ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, ...args: unknown[]) => {
@@ -1391,7 +1391,7 @@ export function initSullaCloudAuthEvents(): void {
     if (signedIn.ok && !inMemory) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
       console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
     });
-    return signedIn.ok ? { ...signedIn, needsVaultMigration: await needsOldVaultPasswordMigration() } : signedIn;
+    return signedIn.ok ? { ...signedIn, needsVaultMigration: await needsOldVaultPasswordMigration(inMemory) } : signedIn;
   });
 
   ipcMainProxy.handle('sulla-cloud:apple-sign-in', async(_event: unknown, identityToken: string, fullName?: string, email?: string): Promise<AuthResult> => {
