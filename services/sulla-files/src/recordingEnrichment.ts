@@ -92,9 +92,14 @@ export async function persistRecordingEnrichment(db:pg.Pool, output:RecordingEnr
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // Lock first, then re-read eligibility in a new statement. A single locking
+    // SELECT keeps its pre-wait snapshot for subqueries and can miss protection
+    // committed while it waits on the file row.
+    const locked = (await client.query('SELECT collection_id FROM files WHERE id=$1 FOR UPDATE', [output.fileId])).rows[0];
+    if (locked) await client.query('SELECT id FROM collections WHERE id=$1 FOR UPDATE', [locked.collection_id]);
     const file = (await client.query(`SELECT f.path,f.current_version_id,f.deleted_at,c.system_area,
       EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
-      FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f,c`, [output.fileId])).rows[0];
+      FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1`, [output.fileId])).rows[0];
     if (!file || file.deleted_at || file.protected || UNINDEXED_SYSTEM_AREAS.has(file.system_area)) {
       await client.query('DELETE FROM recording_metadata WHERE file_id=$1', [output.fileId]);
       await client.query('DELETE FROM file_search_text WHERE file_id=$1', [output.fileId]);
