@@ -18,14 +18,15 @@ import {
   abortJob,
   completeJob,
   createJob,
-  delegationDepthForThread,
   deleteJob,
   failJob,
   getJob,
   getJobAbortSignal,
   markCompletionDelivered,
+  MAX_SUBAGENT_DEPTH,
   registerJobWatcher,
   releaseJobWatcher,
+  resolveAgentDepth,
   updateJobTask,
 } from './jobRegistry';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
@@ -53,8 +54,9 @@ export function childAbortForJob(asyncJob: boolean, parentAbort: any, jobAbortSi
   return asyncJob ? combineAborts(undefined, jobAbortSignal) : combineAborts(parentAbort, jobAbortSignal);
 }
 
-// No depth or open-tab caps: who may launch whom, and how many, is steered by
-// agent prompts, never blocked in code (Jonathon, 2026-10-11).
+// No open-tab cap: how many children run at once is steered by agent prompts,
+// never blocked in code (Jonathon, 2026-10-11). Nesting depth IS capped — see
+// MAX_SUBAGENT_DEPTH in jobRegistry (Jonathon, 2026-11-02).
 const MAX_TASKS = 10;
 
 const CONTRACT_REMINDER = '[Return contract reminder]\nYou ended your turn without returning your contract. ' +
@@ -234,13 +236,17 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     // ── Depth ───────────────────────────────────────────────────
-    // Recorded on each child (rail, directory), not enforced. Hidden children
-    // carry it in metadata; a tab child runs as a normal chat, so its depth is
-    // read from the job that owns its thread.
-    const parentDepth = Math.max(
-      Number((this.state)?.metadata?.subAgentDepth) || 0,
-      await delegationDepthForThread(parentThreadId),
-    );
+    // Hidden children carry it in metadata; a tab child runs as a normal
+    // chat, so its depth is read from the job that owns its thread — that
+    // registry read is also why a tab can't dodge the cap by omitting it.
+    const parentDepth = await resolveAgentDepth((this.state)?.metadata?.subAgentDepth, parentThreadId);
+    if (parentDepth >= MAX_SUBAGENT_DEPTH) {
+      await this.rejectTasks(tasks, `max sub-agent depth ${ MAX_SUBAGENT_DEPTH } reached`);
+      return {
+        successBoolean: false,
+        responseString: `max sub-agent depth ${ MAX_SUBAGENT_DEPTH } reached; do this yourself or return to your parent.`,
+      };
+    }
 
     const tabTasks = tasks.map((task, index) => ({ task, index })).filter(({ task }) => taskVisibility(task) === 'tab');
     const hiddenTasks = tasks.filter(task => taskVisibility(task) === 'hidden');

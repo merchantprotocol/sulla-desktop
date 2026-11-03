@@ -450,6 +450,23 @@ export async function delegationDepthForThread(threadId: string | undefined): Pr
   return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
 }
 
+/**
+ * Deepest a sub-agent chain may go: the top-level chat is depth 0; its
+ * children may be depth 1, 2 and 3. A spawn whose child would land past this
+ * is refused (Jonathon, 2026-11-02 — supersedes the earlier no-depth-cap rule).
+ */
+export const MAX_SUBAGENT_DEPTH = 3;
+
+/**
+ * Current depth of a thread's own agent: metadata set on the running thread
+ * wins when present, else the depth recorded on the job task that owns this
+ * thread (0 for a top-level chat). Reading the registry as the fallback means
+ * a tab child cannot reset its depth just by never writing the metadata.
+ */
+export async function resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undefined): Promise<number> {
+  return Math.max(Number(metadataSubAgentDepth) || 0, await delegationDepthForThread(threadId));
+}
+
 /** Tab jobs still open under one parent chat (each holds a renderer tab). */
 export async function countOpenTabJobs(parentThreadId: string): Promise<number> {
   const all = await getJobsForParentThread(parentThreadId);
