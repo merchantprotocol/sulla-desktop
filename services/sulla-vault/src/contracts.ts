@@ -44,6 +44,10 @@ export interface LocalVaultErrorResponse {
   message: string;
   /** Present only for approval_required; contains no secret or credential ref. */
   operationId?: string;
+  /** Non-secret diagnostic reason for egress failures, e.g. `connect_ECONNREFUSED` or `dns_EAI_AGAIN`. */
+  reason?: string;
+  /** True when the failure is a transient egress problem the caller may retry after a pause. */
+  retryable?: boolean;
 }
 
 export interface LocalVaultStatusResponse {

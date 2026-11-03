@@ -25,6 +25,18 @@ describe('providerRecovery', () => {
     expect(classifyLLMFailure(new Error('vault broker credential lookup failed'))).toMatchObject({ kind: 'unknown' });
   });
 
+  it('classifies provider bridge outages as Sulla infrastructure, never provider health', () => {
+    const bridgeFailure = new Error('Codex: unexpected status 503: Sulla provider bridge is temporarily unavailable');
+    expect(classifyLLMFailure(bridgeFailure)).toMatchObject({
+      kind:            'infrastructure',
+      retryPrimary:    false,
+      fallbackAllowed: false,
+    });
+
+    const wrapped = new Error('CLI request failed', { cause: Object.assign(new Error('request rejected'), { code: 'provider_bridge_unavailable' }) });
+    expect(classifyLLMFailure(wrapped)).toMatchObject({ kind: 'infrastructure' });
+  });
+
   it('classifies quota and weekly-limit failures as fallbackable provider failures', () => {
     expect(classifyLLMFailure(new Error('HTTP 402 Grok Build usage balance exhausted'))).toMatchObject({
       kind:            'quota',

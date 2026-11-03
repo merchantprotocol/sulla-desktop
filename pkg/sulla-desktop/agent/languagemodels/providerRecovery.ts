@@ -49,6 +49,22 @@ export function redactLLMFailureMessage(value: unknown): string {
   return text;
 }
 
+/**
+ * The Sulla provider bridge (vault broker in front of Codex/Claude CLIs)
+ * failed, not the provider. Its error bodies always say "provider bridge" and
+ * carry a `provider_bridge_*` type; the CLI echoes that text, and Sulla's CLI
+ * recovery wraps it in a cause chain, so walk the chain.
+ */
+export function isProviderBridgeFailure(error: unknown): boolean {
+  let current: any = error;
+  for (let depth = 0; current && depth < 8; depth++) {
+    const text = `${ current?.code ?? '' } ${ current?.message ?? (typeof current === 'string' ? current : '') }`.toLowerCase();
+    if (text.includes('provider bridge') || text.includes('provider_bridge_')) return true;
+    current = current?.cause;
+  }
+  return false;
+}
+
 export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const name = (error as any)?.name;
   const message = redactLLMFailureMessage(error);
@@ -64,6 +80,15 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     lower.includes('getservicebyprovider');
   if (infrastructure) {
     return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: 'Sulla could not start the model runtime.' };
+  }
+  // Every CLI provider shares the bridge, so a bridge outage is Sulla's, never the provider's (Jonathon's routing rule).
+  if (isProviderBridgeFailure(error)) {
+    return {
+      kind:            'infrastructure',
+      retryPrimary:    false,
+      fallbackAllowed: false,
+      userMessage:     'Sulla\'s secure connection to the model provider is temporarily unavailable. Try again in a moment.',
+    };
   }
 
   // Abort messages can lose their AbortError name while crossing a process boundary.

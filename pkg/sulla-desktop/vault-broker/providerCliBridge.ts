@@ -260,14 +260,82 @@ function assertAdvertisedHost(raw: string): string {
   return host;
 }
 
-function sendError(response: http.ServerResponse, status: number, code: string): void {
-  console.warn(`[ProviderCliBridge] denied ${ status } ${ code }`);
+function sendError(
+  response: http.ServerResponse,
+  status: number,
+  code: string,
+  extra: { message?: string; reason?: string; headers?: Record<string, string> } = {},
+): void {
+  console.warn(`[ProviderCliBridge] denied ${ status } ${ code }${ extra.reason ? ` reason=${ extra.reason }` : '' }`);
   if (response.headersSent) {
     response.destroy();
     return;
   }
-  response.writeHead(status, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ error: { type: code, message: 'Provider bridge request denied' } }));
+  response.writeHead(status, { 'content-type': 'application/json', ...extra.headers });
+  response.end(JSON.stringify({
+    error: { type: code, message: extra.message ?? 'Provider bridge request denied', ...(extra.reason ? { reason: extra.reason } : {}) },
+  }));
+}
+
+/** Seconds a provider CLI should wait before retrying a transient Sulla-side bridge failure. */
+export const PROVIDER_BRIDGE_RETRY_AFTER_SECONDS = 5;
+
+const TRANSIENT_BROKER_CODES = new Set(['upstream_failed', 'upstream_timeout', 'vault_unavailable', 'database_unavailable']);
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'EAI_AGAIN', 'ENOTFOUND',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
+]);
+
+export interface ProviderBridgeFailure {
+  /** HTTP status returned to the provider CLI. */
+  status:     number;
+  /** Bridge error type returned to the CLI and written to the perf log. */
+  type:       'provider_bridge_unavailable' | 'provider_bridge_failed';
+  /** Error name and code (no message text, which could echo caller data). */
+  errorName:  string;
+  errorCode?: string;
+  /** Non-secret reason code, e.g. `connect_ECONNREFUSED` from the vault or `vault_unreachable_ECONNREFUSED`. */
+  reason?:    string;
+  transient:  boolean;
+}
+
+function safeToken(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : undefined;
+}
+
+/**
+ * Classify a failure that happened before upstream headers arrived. Vault
+ * egress outages (network change, DNS, VPN) and a briefly unreachable vault
+ * are Sulla-side and transient: the CLI gets 503 + Retry-After so it backs
+ * off instead of hammering a terminal-looking 502.
+ */
+export function classifyProviderBridgeFailure(error: unknown): ProviderBridgeFailure {
+  const value = error as { name?: unknown; code?: unknown; status?: unknown; reason?: unknown; retryable?: unknown; message?: unknown; cause?: unknown } | undefined;
+  const errorName = safeToken(value?.name) ?? (error instanceof Error ? 'Error' : typeof error);
+  const errorCode = safeToken(value?.code);
+  const failure = (transient: boolean, reason?: string): ProviderBridgeFailure => ({
+    status: transient ? 503 : 502,
+    type:   transient ? 'provider_bridge_unavailable' : 'provider_bridge_failed',
+    errorName,
+    errorCode,
+    reason,
+    transient,
+  });
+
+  if (value?.name === 'VaultBrokerError') {
+    const status = typeof value.status === 'number' ? value.status : 0;
+    const transient = value.retryable === true || TRANSIENT_BROKER_CODES.has(String(value.code)) || status === 503 || status === 504;
+    return failure(transient, safeToken(value.reason) ?? errorCode);
+  }
+  // Desktop could not reach the vault container at all (Node fetch or Electron net).
+  const cause = value?.cause as { code?: unknown } | undefined;
+  const networkCode = safeToken(cause?.code) ?? errorCode;
+  if (networkCode && TRANSIENT_NETWORK_CODES.has(networkCode)) return failure(true, `vault_unreachable_${ networkCode }`);
+  const message = typeof value?.message === 'string' ? value.message : '';
+  const chromium = /\bnet::(ERR_[A-Z_]+)\b/.exec(message)?.[1];
+  if (chromium) return failure(true, `vault_unreachable_${ chromium }`);
+  if (/still starting its password vault/i.test(message)) return failure(true, 'vault_starting');
+  return failure(false);
 }
 
 /**
@@ -325,6 +393,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
     let firstChunkMs = 0;
     let status = 500;
     let timingPath = 'unknown';
+    let failureNote = '';
     response.socket?.setNoDelay(true);
     const requestAbort = new AbortController();
     const abort = () => {
@@ -463,18 +532,29 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       }
       response.end();
     } catch (error) {
-      const errorClass = error instanceof Error ? error.constructor.name : typeof error;
-      const errorCode = (error as NodeJS.ErrnoException | undefined)?.code;
-      console.error(`[ProviderCliBridge] request failed: ${ errorClass }${ errorCode ? ` (${ errorCode })` : '' }`);
+      const failure = classifyProviderBridgeFailure(error);
+      failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' }`;
+      console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
+        `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);
       if (!response.headersSent) {
-        status = 502;
-        sendError(response, status, 'provider_bridge_failed');
+        status = failure.status;
+        sendError(response, status, failure.type, failure.transient
+          ? {
+            message: 'Sulla provider bridge is temporarily unavailable',
+            reason:  failure.reason,
+            headers: {
+              'retry-after':    String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS),
+              'retry-after-ms': String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS * 1000),
+              'x-should-retry': 'true',
+            },
+          }
+          : { reason: failure.reason });
       }
       abort();
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
       const ms = (value: number) => value.toFixed(1);
-      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }`);
+      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ failureNote }`);
     }
   });
   try {
