@@ -863,7 +863,7 @@ async function replaceContainerSecret(
   if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error(`Invalid container secret name ${ name }`);
   const target = `${ secretDir }/${ name }`;
   await guestExec(
-    ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(identity.uid), String(identity.gid)],
+    ['sh', '-c', 'set -eu; umask 077; sudo install -d -m 0700 -o "$2" -g "$3" "$(dirname "$1")"; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(identity.uid), String(identity.gid)],
     Buffer.from(value).toString('base64'),
   );
 }

@@ -14,6 +14,7 @@ const routingResolveMock: any = jest.fn(async() => [
   { provider: 'openai', model: 'gpt-5' },
 ]);
 const routingMarkFailureMock: any = jest.fn(async() => undefined);
+const routingMarkSuccessMock: any = jest.fn(async() => undefined);
 
 const primaryService = {
   getContextWindow: jest.fn(() => 100_000),
@@ -66,7 +67,7 @@ jest.unstable_mockModule('../../languagemodels', () => ({
 
 
 jest.unstable_mockModule('../../languagemodels/modelRouter', () => ({
-  modelRouter: { resolve: routingResolveMock, markFailure: routingMarkFailureMock },
+  modelRouter: { resolve: routingResolveMock, markFailure: routingMarkFailureMock, markSuccess: routingMarkSuccessMock },
 }));
 
 jest.unstable_mockModule('../../controllers/ChatController', () => ({
@@ -145,6 +146,7 @@ describe('BaseNode provider recovery', () => {
       { provider: 'openai', model: 'gpt-5' },
     ]);
     routingMarkFailureMock.mockReset();
+    routingMarkSuccessMock.mockReset();
 
     primaryChatStreamMock.mockRejectedValue(new Error('Codex app-server event stream lag dropped events'));
     primaryChatMock.mockRejectedValue(new Error('Non-streaming recovery must not be called'));
@@ -180,10 +182,13 @@ describe('BaseNode provider recovery', () => {
     const node = new TestNode('test-node', 'TestNode');
     const result = await node.execute(state);
 
-    expect(primaryChatStreamMock).toHaveBeenCalledTimes(2);
+    expect(primaryChatStreamMock).toHaveBeenCalledTimes(3);
     expect(primaryChatMock).not.toHaveBeenCalled();
     expect(secondaryChatStreamMock).toHaveBeenCalledTimes(1);
     expect(secondaryChatMock).not.toHaveBeenCalled();
+    expect(routingMarkFailureMock).toHaveBeenCalledTimes(1);
+    expect(routingMarkFailureMock).toHaveBeenCalledWith('claude-code', expect.any(Error));
+    expect(routingMarkSuccessMock).toHaveBeenCalledWith('openai');
     expect(result.response).toBe('fallback response ok');
 
     const assistantMessage = state.messages[state.messages.length - 1];

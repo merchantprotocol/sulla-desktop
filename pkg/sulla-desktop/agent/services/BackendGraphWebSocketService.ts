@@ -756,8 +756,10 @@ export class BackendGraphWebSocketService {
         const { modelRouter } = await import('../languagemodels/modelRouter');
         const routedAgentId = resolveAgentIdentity(state.metadata);
         const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
-        const routed = (await modelRouter.resolve('agents', definition?.model_choice || { mode: 'list' }))[0];
-        const provider = String(state.metadata.agent?.provider || routed?.provider || '').trim();
+        const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
+        const choice = effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, metadata: state.metadata, agentChoice: definition?.model_choice });
+        const routed = (await modelRouter.resolve('agents', choice))[0];
+        const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
         // Closures lose the narrowing above; pin the checked state for the retry path.
         const runState = state;
         await executeWithContainerLifecycleRecovery(

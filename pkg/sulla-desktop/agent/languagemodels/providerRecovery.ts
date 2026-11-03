@@ -16,6 +16,7 @@ export type LLMFailureKind =
   | 'unavailable'
   | 'empty'
   | 'interrupted'
+  | 'infrastructure'
   | 'unknown';
 
 export interface LLMFailureRecovery {
@@ -43,6 +44,18 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const name = (error as any)?.name;
   const message = redactLLMFailureMessage(error);
   const lower = `${ name || '' } ${ message }`.toLowerCase();
+
+  // Failures in Sulla's runtime/container plumbing are not provider failures and must never affect routing health.
+  const infrastructure =
+    lower.includes('sulla-runtime exec') ||
+    lower.includes('/dev/shm/sulla-agent-secrets/') ||
+    lower.includes('agent container') || lower.includes('container lifecycle') ||
+    lower.includes('spawn error') || lower.includes('spawn failed') ||
+    (lower.includes('enoent') && (lower.includes('/dev/shm/') || lower.includes('/mnt/') || lower.includes('sulla'))) ||
+    lower.includes('getservicebyprovider');
+  if (infrastructure) {
+    return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: 'Sulla could not start the model runtime.' };
+  }
 
   // Abort messages can lose their AbortError name while crossing a process boundary.
   if (name === 'AbortError' || lower.includes('aborted') || lower.includes('aborterror')) {
@@ -121,7 +134,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
 
   return {
     kind:            'unknown',
-    retryPrimary:    false,
+    retryPrimary:    true,
     fallbackAllowed: true,
     userMessage:     typed instanceof Unknown ? typed.userMessage : 'The selected model provider failed.',
   };

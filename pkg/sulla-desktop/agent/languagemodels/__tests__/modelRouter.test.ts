@@ -31,7 +31,7 @@ jest.unstable_mockModule('../../services/ModelProviderService', () => ({
 describe('ModelRouter', () => {
   beforeEach(() => { settings.clear(); connected.clear(); Object.keys(models).forEach(key => delete models[key]) });
 
-  it('walks configured order and skips disabled, disconnected, and cooling providers', async() => {
+  it('walks configured order and skips disabled providers while keeping backed-off providers last', async() => {
     const { ModelRouter } = await import('../modelRouter');
     connected.add('claude-code'); connected.add('codex');
     settings.set('modelRouting', {
@@ -45,8 +45,14 @@ describe('ModelRouter', () => {
       classes: { frontier: [{ provider: 'openai', model: 'gpt-x' }], standard: [{ provider: 'claude-code', model: 'sonnet' }], fast: [], coding: [{ provider: 'codex', model: 'codex-x' }], local: [] },
       followProviderOrder: {},
     });
-    settings.set('modelRoutingProviderHealth', { codex: { status: 'cooling', until: Date.now() + 60_000, lastError: 'quota' } });
-    await expect(new ModelRouter().resolve('agents')).resolves.toEqual([{ provider: 'claude-code', model: 'sonnet' }]);
+    const router = new ModelRouter();
+    await router.markFailure('Codex', new Error('temporary'));
+    await router.markFailure('codex', new Error('temporary'));
+    await router.markFailure('CODEX', new Error('temporary'));
+    await expect(router.resolve('agents')).resolves.toEqual([
+      { provider: 'claude-code', model: 'sonnet' },
+      { provider: 'codex', model: 'codex-x' },
+    ]);
   });
 
   it('skips a list row whose class has no model for its provider instead of changing class', async() => {
@@ -93,18 +99,61 @@ describe('ModelRouter', () => {
       .resolves.toEqual([{ provider: 'claude-code', model: 'opus' }]);
   });
 
-  it('persists a retry-after cooldown and expires it after restart', async() => {
-    jest.useFakeTimers();
+  it('uses free failures, backs off after three, normalizes ids, and success restores order', async() => {
     const { ModelRouter } = await import('../modelRouter');
-    const first = new ModelRouter();
-    await first.markFailure('codex', new Error('rate limit'), { 'retry-after': '2' });
-    expect(settings.get('modelRoutingProviderHealth').codex.status).toBe('cooling');
-    const restarted = new ModelRouter();
-    await expect(restarted.isUnavailable('codex')).resolves.toBe(true);
-    await jest.advanceTimersByTimeAsync(2_001);
-    await expect(restarted.isUnavailable('codex')).resolves.toBe(false);
-    expect(settings.get('modelRoutingProviderHealth').codex).toBeUndefined();
-    jest.useRealTimers();
+    connected.add('claude-code'); connected.add('codex');
+    settings.set('modelRouting', {
+      agentsList: [{ provider: 'claude-code', class: 'standard', enabled: true }, { provider: 'codex', class: 'coding', enabled: true }],
+      subconsciousList: [],
+      classes: { frontier: [], standard: [{ provider: 'claude-code', model: 'sonnet' }], fast: [], coding: [{ provider: 'codex', model: 'codex-x' }], local: [] },
+      followProviderOrder: {},
+    });
+    const router = new ModelRouter();
+    await router.markFailure('Claude Code', new Error('temporary'));
+    expect(await router.isUnavailable('claude-code')).toBe(false);
+    await router.markFailure('CLAUDE_CODE', new Error('temporary'));
+    expect(await router.isUnavailable('claude-code')).toBe(false);
+    await router.markFailure('claude-code', new Error('temporary'));
+    expect(await router.isUnavailable('Claude Code')).toBe(true);
+    await expect(router.resolve('agents')).resolves.toEqual([{ provider: 'codex', model: 'codex-x' }, { provider: 'claude-code', model: 'sonnet' }]);
+    await router.markSuccess('Claude Code');
+    await expect(router.resolve('agents')).resolves.toEqual([{ provider: 'claude-code', model: 'sonnet' }, { provider: 'codex', model: 'codex-x' }]);
+  });
+
+  it('resets health when every connected candidate is backed off and never returns empty', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    connected.add('claude-code'); connected.add('codex');
+    settings.set('modelRouting', {
+      agentsList: [{ provider: 'claude-code', class: 'standard', enabled: true }, { provider: 'codex', class: 'coding', enabled: true }],
+      subconsciousList: [],
+      classes: { frontier: [], standard: [{ provider: 'claude-code', model: 'sonnet' }], fast: [], coding: [{ provider: 'codex', model: 'codex-x' }], local: [] }, followProviderOrder: {},
+    });
+    const router = new ModelRouter();
+    for (const provider of ['claude-code', 'codex']) for (let i = 0; i < 3; i++) await router.markFailure(provider, new Error('temporary'));
+    await expect(router.resolve('agents')).resolves.toHaveLength(2);
+    expect(await router.isUnavailable('claude-code')).toBe(false);
+    expect(await router.isUnavailable('codex')).toBe(false);
+  });
+
+  it('returns only an exact pin even when disconnected and unhealthy', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    const router = new ModelRouter();
+    for (let i = 0; i < 3; i++) await router.markFailure('Claude Code', new Error('temporary'));
+    await expect(router.resolve('agents', { mode: 'pin', provider: 'Claude Code', model: 'opus' }))
+      .resolves.toEqual([{ provider: 'claude-code', model: 'opus' }]);
+  });
+
+  it('does not count interrupted or Sulla infrastructure failures', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    const router = new ModelRouter();
+    for (let i = 0; i < 4; i++) await router.markFailure('codex', new Error(i % 2 ? 'CLI run aborted' : 'sulla-runtime exec failed: ENOENT /dev/shm/sulla-agent-secrets/job/mcp.json'));
+    expect(await router.isUnavailable('codex')).toBe(false);
+  });
+
+  it('wipes malformed legacy health without loading it', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    settings.set('modelRoutingProviderHealth', '{}');
+    await expect(new ModelRouter().isUnavailable('codex')).resolves.toBe(false);
   });
 
   it('migrates legacy primary, secondary, and subconscious slots once', async() => {
