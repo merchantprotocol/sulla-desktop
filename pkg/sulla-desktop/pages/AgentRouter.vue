@@ -564,7 +564,7 @@ function onAgentCommand(_event: any, args: any) {
     const sessionId = args.sessionId;
     if (!sessionId) break;
     const existing = browserTabs.find(t => t.mode === 'support-session' && t.supportSession?.sessionId === sessionId);
-    const targetTab = existing ?? createTab('about:blank', { mode: 'support-session', title: 'Support session', supportSession: { sessionId } } as any);
+    const targetTab = existing ?? createTab('about:blank', { mode: 'support-session', title: 'Support session', supportSession: { sessionId } });
     router.push(`/Browser/${ targetTab.id }`);
     break;
   }

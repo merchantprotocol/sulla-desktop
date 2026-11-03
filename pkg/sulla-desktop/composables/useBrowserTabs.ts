@@ -477,7 +477,7 @@ export function useBrowserTabs() {
     docker:       'Docker',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -493,6 +493,7 @@ export function useBrowserTabs() {
       ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
       ...(opts?.studioSection ? { studioSection: opts.studioSection } : {}),
       ...(opts?.section ? { section: opts.section } : {}),
+      ...(opts?.supportSession ? { supportSession: opts.supportSession } : {}),
     };
 
     tabs.push(tab);
