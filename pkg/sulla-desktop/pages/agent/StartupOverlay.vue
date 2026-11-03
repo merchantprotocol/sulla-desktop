@@ -166,9 +166,6 @@ onUnmounted(() => {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--border-default) 14%, transparent);
   background: var(--bg-surface);
-  --text-primary: var(--text-primary);
-  --text-secondary: var(--text-secondary);
-  --text-muted: var(--text-muted);
   padding: 14px 20px 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px color-mix(in srgb, var(--accent) 5%, transparent);
 }
@@ -177,7 +174,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent), rgba(80, 150, 179, 0.3));
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 30%, transparent));
 }
 
 .sulla-startup-header {
@@ -194,7 +191,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
-  background: rgba(80, 150, 179, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
 }
 
@@ -215,7 +212,7 @@ onUnmounted(() => {
 .sulla-startup-download {
   margin-top: 0.5rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(80, 150, 179, 0.15);
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   padding: 0.6rem 0.8rem;
 }
@@ -247,7 +244,7 @@ onUnmounted(() => {
 
 <style scoped>
 .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--bg-surface) 108.6957%, transparent);
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 32%), color-mix(in srgb, var(--bg-surface) 92%, transparent);
   backdrop-filter: blur(22px);
 }
 .sulla-startup-card {
@@ -265,8 +262,8 @@ onUnmounted(() => {
   height: 34px;
   border-radius: 10px;
   color: var(--text-secondary);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 454.5455%, transparent), color-mix(in srgb, var(--accent) 1666.6667%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 294.1176%, transparent), 0 0 34px color-mix(in srgb, var(--accent) 285.7143%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hover) 22%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 34%, transparent), 0 0 34px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .sulla-startup-icon svg { width: 18px; height: 18px; }
 .sulla-startup-icon { color: var(--accent-hover); }

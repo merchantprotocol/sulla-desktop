@@ -162,5 +162,5 @@ function release(claimant: Claimant): void {
 .vault-host.popup { min-height: 100%; background: var(--bg-page); }
 .vault-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; color: var(--text-secondary); }
 .vault-state strong { color: var(--text-primary); }
-.vault-state button { border: 1px solid var(--border-default-default); border-radius: .5rem; padding: .5rem .9rem; background: var(--accent); color: var(--text-on-accent); }
+.vault-state button { border: 1px solid var(--border-default); border-radius: .5rem; padding: .5rem .9rem; background: var(--accent); color: var(--text-on-accent); }
 </style>

@@ -24,7 +24,7 @@
         >
           <button
             type="button"
-            class="flex items-center gap-1.5 text-xs [color:var(--text-dim)] hover:[color:var(--text-primary)] transition-colors"
+            class="flex items-center gap-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text-primary)] transition-colors"
             @click="$emit('back-to-vault')"
           >
             <svg
@@ -47,10 +47,10 @@
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
                   <span class="integrations-eyebrow">CONNECTED WORKSPACE</span>
-                  <p class="inline bg-linear-to-r from-sky-200 via-sky-400 to-sky-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                  <p class="inline bg-linear-to-r from-[var(--accent-dim)] via-[var(--accent)] to-[var(--accent-dim)] bg-clip-text font-display text-5xl tracking-tight text-transparent">
                     Native Integrations.
                   </p>
-                  <p class="mt-3 text-2xl tracking-tight [color:var(--text-dim)]">
+                  <p class="mt-3 text-2xl tracking-tight text-[var(--text-dim)]">
                     Connect your favorite tools and services with Sulla.
                   </p>
                 </div>
@@ -62,7 +62,7 @@
                     <svg
                       aria-hidden="true"
                       viewBox="0 0 20 20"
-                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500"
+                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-[var(--text-muted)]"
                     >
                       <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z" />
                     </svg>
@@ -71,9 +71,9 @@
                       v-model="search"
                       type="text"
                       placeholder="Search integrations"
-                      class="h-11 w-full rounded-lg [background:var(--bg-surface)]/95 pr-4 pl-12 text-sm [color:var(--bg-page)] ring-1 [--tw-ring-color:var(--border-default-subtle)] focus:outline-none focus:ring-2 focus:ring-sky-400/30 dark:[color:var(--bg-surface-hover)] dark:[--tw-ring-color:var(--bg-surface)]/5 dark:ring-inset integrations-search-input"
+                      class="h-11 w-full rounded-lg bg-[color-mix(in_srgb,var(--bg-surface)_95%,transparent)] pr-4 pl-12 text-sm text-[var(--text-primary)] ring-1 [--tw-ring-color:var(--border-subtle)] focus:outline-none focus:ring-2 focus:[--tw-ring-color:color-mix(in_srgb,var(--accent)_30%,transparent)] integrations-search-input"
                     >
-                    <kbd class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 font-medium [color:var(--text-dim)] md:block dark:[color:var(--text-muted)]">
+                    <kbd class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 font-medium text-[var(--text-dim)] md:block ">
                       <kbd class="font-sans">⌘</kbd><kbd class="font-sans">K</kbd>
                     </kbd>
                   </div>
@@ -89,7 +89,7 @@
               <!-- Category Sidebar -->
               <nav class="hidden md:block w-48 shrink-0">
                 <div class="sticky top-6">
-                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider [color:var(--text-dim)] dark:[color:var(--text-muted)]">
+                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)] ">
                     Categories
                   </h3>
                   <ul class="space-y-0.5">
@@ -135,7 +135,7 @@
               <!-- Mobile category select -->
               <div class="md:hidden mb-4 w-full">
                 <select
-                  class="w-full rounded-lg border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--bg-page)] dark:[border-color:var(--border-default-strong)] dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface-hover)]"
+                  class="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)]   "
                   :value="activeCategory ?? ''"
                   @change="activeCategory = ($event.target as HTMLSelectElement).value || null"
                 >
@@ -158,7 +158,7 @@
                 <template v-if="isSearching">
                   <div
                     v-if="searchResultsByCategory.length === 0"
-                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:[color:var(--bg-surface)]/60"
+                    class="flex h-40 items-center justify-center text-sm text-[var(--text-muted)] "
                   >
                     No integrations found.
                   </div>
@@ -170,9 +170,9 @@
                       v-for="group in searchResultsByCategory"
                       :key="group.category"
                     >
-                      <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                      <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)] ">
                         {{ group.category }}
-                        <span class="ml-1.5 text-xs font-normal tabular-nums [color:var(--text-dim)] dark:[color:var(--text-muted)]">{{ group.integrations.length }}</span>
+                        <span class="ml-1.5 text-xs font-normal tabular-nums text-[var(--text-dim)] ">{{ group.integrations.length }}</span>
                       </h3>
                       <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
                         <div
@@ -201,9 +201,9 @@
                                 >
                                   <div
                                     class="h-2 w-2 rounded-full integration-status-dot"
-                                    :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : '[background:var(--text-secondary)] integration-status-offline'"
+                                    :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : 'bg-[var(--bg-surface-hover)] integration-status-offline'"
                                   />
-                                  <span class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                                  <span class="text-xs text-[var(--text-muted)] ">
                                     {{ integration.connected ? 'Connected' : 'Disconnected' }}
                                   </span>
                                 </div>
@@ -216,7 +216,7 @@
                                   </span>
                                   <span
                                     v-if="integration.comingSoon"
-                                    class="inline-flex items-center rounded-full [background:var(--text-dim)] [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
+                                    class="inline-flex items-center rounded-full bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] text-xs px-2 py-0.5 font-medium"
                                   >
                                     COMING SOON
                                   </span>
@@ -224,11 +224,11 @@
                               </div>
                             </div>
 
-                            <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-2">
+                            <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-2">
                               {{ integration.name }}
                             </h3>
 
-                            <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-4 line-clamp-2">
+                            <p class="text-sm text-[var(--text-secondary)]  mb-4 line-clamp-2">
                               {{ integration.description }}
                             </p>
 
@@ -237,7 +237,7 @@
                                 {{ integration.category }}
                               </span>
 
-                              <div class="flex items-center gap-2 text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                              <div class="flex items-center gap-2 text-xs text-[var(--text-muted)] ">
                                 <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
                               </div>
                             </div>
@@ -265,7 +265,7 @@
                 <template v-else>
                   <div
                     v-if="categoryLoading"
-                    class="flex h-40 items-center justify-center text-sm [color:var(--text-dim)] dark:[color:var(--text-muted)]"
+                    class="flex h-40 items-center justify-center text-sm text-[var(--text-dim)] "
                   >
                     <svg
                       class="animate-spin -ml-1 mr-2 h-4 w-4"
@@ -291,7 +291,7 @@
                   </div>
                   <div
                     v-else-if="filteredIntegrations.length === 0"
-                    class="flex h-40 items-center justify-center text-sm text-[#0d0d0d]/60 dark:[color:var(--bg-surface)]/60"
+                    class="flex h-40 items-center justify-center text-sm text-[var(--text-muted)] "
                   >
                     No integrations found.
                   </div>
@@ -326,9 +326,9 @@
                             >
                               <div
                                 class="h-2 w-2 rounded-full integration-status-dot"
-                                :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : '[background:var(--text-secondary)] integration-status-offline'"
+                                :class="integration.connected ? 'bg-[var(--accent)] integration-status-connected' : 'bg-[var(--bg-surface-hover)] integration-status-offline'"
                               />
-                              <span class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                              <span class="text-xs text-[var(--text-muted)] ">
                                 {{ integration.connected ? 'Connected' : 'Disconnected' }}
                               </span>
                             </div>
@@ -341,7 +341,7 @@
                               </span>
                               <span
                                 v-if="integration.comingSoon"
-                                class="inline-flex items-center rounded-full [background:var(--text-dim)] [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
+                                class="inline-flex items-center rounded-full bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] text-xs px-2 py-0.5 font-medium"
                               >
                                 COMING SOON
                               </span>
@@ -349,11 +349,11 @@
                           </div>
                         </div>
 
-                        <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-2">
+                        <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-2">
                           {{ integration.name }}
                         </h3>
 
-                        <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-4 line-clamp-2">
+                        <p class="text-sm text-[var(--text-secondary)]  mb-4 line-clamp-2">
                           {{ integration.description }}
                         </p>
 
@@ -362,7 +362,7 @@
                             {{ integration.category }}
                           </span>
 
-                          <div class="flex items-center gap-2 text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                          <div class="flex items-center gap-2 text-xs text-[var(--text-muted)] ">
                             <span>Updated {{ formatFuzzyTime(integration.lastUpdated) }}</span>
                           </div>
                         </div>
@@ -733,7 +733,7 @@ onMounted(async() => {
 <style scoped>
 .page-root {
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .integrations-hero {
@@ -755,7 +755,7 @@ onMounted(async() => {
 }
 
 .integration-card:hover {
-  border-color: var(--border-default-muted);
+  border-color: var(--border-subtle);
 }
 
 .integration-icon-bg {
@@ -792,7 +792,7 @@ onMounted(async() => {
 
 .sidebar-item-inactive:hover {
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .sidebar-count-active {
@@ -837,7 +837,7 @@ onMounted(async() => {
 }
 
 .integrations-hero {
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .integrations-hero > div {
@@ -871,16 +871,16 @@ onMounted(async() => {
 
 .integrations-search-input {
   min-height: 44px;
-  border: 1px solid color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent), 0 14px 38px color-mix(in srgb, var(--shadow) 20%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 14px 38px rgba(0, 0, 0, 0.2);
   color: var(--text-primary);
 }
 
 .integrations-search-input:focus {
   border-color: color-mix(in srgb, var(--accent-hover) 40%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent), 0 16px 42px color-mix(in srgb, var(--shadow) 22.2222%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent), 0 16px 42px rgba(0, 0, 0, 0.222222);
 }
 
 .integrations-body nav h3,
@@ -922,10 +922,10 @@ onMounted(async() => {
 }
 
 .integration-card {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  background: var(--bg-surface-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   transition: transform 220ms ease, border-color 220ms ease, background 220ms ease, box-shadow 220ms ease;
 }
 
@@ -933,7 +933,7 @@ onMounted(async() => {
   transform: translateY(-4px);
   border-color: color-mix(in srgb, var(--accent-hover) 28%, transparent);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
-  box-shadow: 0 18px 46px color-mix(in srgb, var(--shadow) 26.6667%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4%, transparent);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.266667), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .integration-icon-bg {
@@ -959,13 +959,13 @@ onMounted(async() => {
 }
 
 .integration-status-offline {
-  background: var(--text-dim);
+  background: var(--bg-surface-hover);
 }
 
 .integration-tag {
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
-  color: var(--text-info);
+  color: var(--status-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6rem;
   letter-spacing: 0.06em;
@@ -977,7 +977,7 @@ onMounted(async() => {
   border-radius: 9px;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 
 @media (prefers-reduced-motion: reduce) {

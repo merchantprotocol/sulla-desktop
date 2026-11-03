@@ -81,7 +81,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="2"
-              class="h-4 w-4 text-sky-400"
+              class="h-4 w-4 text-[var(--status-info)]"
             >
               <path d="M20 6L9 17l-5-5" />
             </svg>
@@ -517,7 +517,7 @@ onMounted(regenerate);
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
   background: var(--bg-surface-alt);
 }
 
@@ -546,7 +546,7 @@ onMounted(regenerate);
   font-size: 13px;
   font-weight: 600;
   background: var(--accent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -574,7 +574,7 @@ onMounted(regenerate);
 /* ── Password display ── */
 .pwgen-display {
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   padding: 20px;
 }
@@ -587,7 +587,7 @@ onMounted(regenerate);
   letter-spacing: 0.05em;
   padding: 16px;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   min-height: 60px;
   user-select: all;
@@ -614,7 +614,7 @@ onMounted(regenerate);
   font-weight: 500;
   background: var(--bg-surface);
   color: var(--text-secondary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
@@ -622,7 +622,7 @@ onMounted(regenerate);
 
 .pwgen-action-btn:hover {
   color: var(--text-primary);
-  border-color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 /* ── Strength meter ── */
@@ -664,7 +664,7 @@ onMounted(regenerate);
 .pwgen-mode-toggle {
   display: flex;
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -683,7 +683,7 @@ onMounted(regenerate);
 
 .pwgen-mode-toggle button.active {
   background: var(--accent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 
 .pwgen-mode-toggle button:not(.active):hover {
@@ -694,7 +694,7 @@ onMounted(regenerate);
 /* ── Options ── */
 .pwgen-options {
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   padding: 16px 20px;
 }
@@ -707,7 +707,7 @@ onMounted(regenerate);
 }
 
 .pwgen-option-row + .pwgen-option-row {
-  border-top: 1px solid var(--border-default-default);
+  border-top: 1px solid var(--border-default);
 }
 
 .pwgen-option-label {
@@ -729,7 +729,7 @@ onMounted(regenerate);
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: var(--border-default-default);
+  background: var(--bg-surface-hover);
   border-radius: 2px;
   outline: none;
 }
@@ -741,7 +741,7 @@ onMounted(regenerate);
   border-radius: 50%;
   background: var(--accent);
   cursor: pointer;
-  border: 2px solid var(--bg-surface);
+  border: 2px solid var(--border-default);
 }
 
 .pwgen-num-input {
@@ -751,7 +751,7 @@ onMounted(regenerate);
   text-align: center;
   background: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   outline: none;
 }
@@ -787,7 +787,7 @@ onMounted(regenerate);
   font-size: 13px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   outline: none;
 }
@@ -808,8 +808,8 @@ onMounted(regenerate);
 .pwgen-header {
   min-height: 56px;
   padding: 0 30px;
-  border-bottom-color: var(--border-default-default);
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.62);
+  border-bottom-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
   backdrop-filter: blur(14px);
 }
 
@@ -879,18 +879,18 @@ onMounted(regenerate);
 .pwgen-password-box {
   min-height: 72px;
   padding: 18px;
-  border-color: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 10%, transparent);
   border-radius: 14px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.76);
+  background: color-mix(in srgb, var(--bg-surface-alt) 76%, transparent);
   color: var(--text-primary);
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.018);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.018);
 }
 
 .pwgen-action-btn {
   min-height: 32px;
-  border-color: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 14%, transparent);
   border-radius: 16px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.45);
+  background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
   color: var(--text-secondary);
   transition: transform 0.58s linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1), border-color 0.18s, color 0.18s;
 }
@@ -902,7 +902,7 @@ onMounted(regenerate);
 .pwgen-strength-bar {
   height: 6px;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 9%, transparent);
+  background: color-mix(in srgb, var(--accent-hover) 9%, transparent);
 }
 
 .pwgen-strength-fill {
@@ -925,8 +925,8 @@ onMounted(regenerate);
   padding: 3px;
   border: 0;
   border-radius: 18px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.64);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 10%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 64%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 10%, transparent);
 }
 
 .pwgen-mode-toggle button {
@@ -944,14 +944,14 @@ onMounted(regenerate);
 
 .pwgen-options {
   padding: 18px 20px;
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.015);
+  background: color-mix(in srgb, var(--accent-hover) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.015);
 }
 
 .pwgen-option-row + .pwgen-option-row {
-  border-top-color: var(--border-default-default);
+  border-top-color: var(--border-default);
 }
 
 .pwgen-option-label,
@@ -964,19 +964,19 @@ onMounted(regenerate);
   min-height: 36px;
   border: 0;
   border-radius: 11px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.68);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 12%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 12%, transparent);
   color: var(--text-primary);
 }
 
 .pwgen-slider {
-  background: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-hover) 12%, transparent);
 }
 
 .pwgen-slider::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
-  border: 3px solid var(--bg-surface);
+  border: 3px solid var(--border-default);
   background: var(--accent-hover);
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent-hover) 50%, transparent);
 }

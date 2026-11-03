@@ -188,8 +188,8 @@ export default {
 .general > .network-status {
   padding: 18px;
   border-radius: 18px;
-  background: color-mix(in srgb, var(--border-default-default) 43.75%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-default-default);
+  background: var(--bg-surface-alt);
+  box-shadow: inset 0 0 0 1px var(--border-default);
 }
 
 .general > hr {

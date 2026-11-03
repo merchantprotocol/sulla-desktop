@@ -183,7 +183,7 @@ export default {
 </script>
 
 <template>
-  <div class="system-preferences dark:[color:var(--text-dim)]">
+  <div class="system-preferences ">
     <rd-slider
       id="memoryInGBWrapper"
       ref="memory"

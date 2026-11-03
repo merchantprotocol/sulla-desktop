@@ -183,7 +183,7 @@
         class="flex gap-2"
       >
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:var(--text-primary)]/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle left pane"
           @click="$emit('toggle-left-pane')"
@@ -195,7 +195,7 @@
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <rect
               x="3"
@@ -226,7 +226,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:var(--text-primary)]/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle center pane"
           @click="$emit('toggle-center-pane')"
@@ -245,7 +245,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:var(--text-primary)]/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           aria-label="Toggle right pane"
           @click="$emit('toggle-right-pane')"
@@ -282,7 +282,7 @@
       >
         <label class="sr-only">Theme</label>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:var(--text-primary)]/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
@@ -291,7 +291,7 @@
             v-if="isDark"
             aria-hidden="true"
             viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <path
               fill-rule="evenodd"
@@ -303,7 +303,7 @@
             v-else
             aria-hidden="true"
             viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-sky-400"
+            class="h-3.5 w-3.5 fill-[var(--status-info)]"
           >
             <path
               fill-rule="evenodd"
@@ -317,7 +317,7 @@
       <div class="relative hidden lg:flex">
         <button
           type="button"
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:var(--text-primary)]/5 cursor-pointer"
+          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
           aria-label="More options"
           @click="openMoreMenu"
         >
@@ -359,7 +359,7 @@
             fill="none"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-5 w-5 stroke-slate-500"
+            class="h-5 w-5 stroke-[var(--text-muted)]"
           >
             <path d="M4 7h16M4 12h16M4 17h16" />
           </svg>
@@ -377,7 +377,7 @@
     class="fixed inset-0 z-40 lg:hidden"
   >
     <div
-      class="fixed inset-0 [background:var(--text-primary)]/50 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
+      class="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
     <div class="fixed top-10 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
@@ -1515,8 +1515,8 @@ function handleTabContextMenuAction(
 .tab-active-native {
   background-color: var(--tab-bg);
   color: var(--text-primary);
-  border-color: var(--border-default-default);
-  border-bottom: 1px solid var(--border-default-default);
+  border-color: var(--border-default);
+  border-bottom: 1px solid var(--border-default);
   border-radius: 999px;
   font-weight: 600;
   z-index: 2;
@@ -1528,7 +1528,7 @@ function handleTabContextMenuAction(
 .tab-active {
   background-color: var(--tab-bg);
   color: var(--text-primary);
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 10px 10px 0 0;
   font-weight: 600;
   z-index: 2;
@@ -1568,7 +1568,7 @@ function handleTabContextMenuAction(
 .tab-inactive:hover {
   color: var(--text-primary);
   background-color: var(--tab-bg-hover);
-  border-color: color-mix(in srgb, var(--border-default-default) 60%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .tab-native.tab-inactive:hover {
@@ -1583,7 +1583,7 @@ function handleTabContextMenuAction(
   top: 28%;
   height: 44%;
   width: 1px;
-  background: color-mix(in srgb, var(--border-default-default) 70%, transparent);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
@@ -1724,7 +1724,7 @@ function handleTabContextMenuAction(
   top: 25%;
   width: 1px;
   height: 50%;
-  background: var(--border-default-default);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
@@ -1742,7 +1742,7 @@ function handleTabContextMenuAction(
   padding: 3px 5px 5px;
   margin-left: 14px;
   background: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
   backdrop-filter: blur(10px);
 }
 
@@ -1864,12 +1864,12 @@ function handleTabContextMenuAction(
   top: 8px;
   width: 1px;
   height: 18px;
-  background: var(--border-default-strong);
+  background: var(--bg-surface-hover);
   pointer-events: none;
 }
 
 .app-titlebar .tab-preview {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default-strong) 75%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent);
 }
 
 .app-titlebar .tab-icon {
@@ -1949,7 +1949,7 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-close:hover {
   color: var(--read-1, var(--text-primary));
-  background: color-mix(in srgb, var(--border-default-strong) 87.5%, transparent);
+  background: var(--bg-surface-hover);
 }
 
 .app-titlebar .tab-new {
@@ -1996,7 +1996,7 @@ function handleTabContextMenuAction(
   top: 46px;
   width: 240px;
   padding: 12px;
-  border: 1px solid var(--border-default-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 14px;
   color: var(--read-1, var(--text-primary));
   background: var(--bg-elevated);
@@ -2008,7 +2008,7 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-peek {
   background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
-  box-shadow: var(--elev-rest-lg);
+  box-shadow: var(--elev-raised);
 }
 
 .app-titlebar .tab-peek-title,

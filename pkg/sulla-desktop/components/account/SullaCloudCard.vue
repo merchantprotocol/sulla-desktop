@@ -430,7 +430,7 @@ onBeforeUnmount(() => {
 .account-card {
   padding: 20px;
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -442,7 +442,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .account-card-icon {
@@ -479,7 +479,7 @@ onBeforeUnmount(() => {
   font-size: 14px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -509,7 +509,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   background: var(--accent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -531,7 +531,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
   background: transparent;
   color: var(--accent);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -560,7 +560,7 @@ onBeforeUnmount(() => {
 }
 
 .account-status-off {
-  background: var(--text-muted);
+  background: var(--bg-surface-hover);
 }
 
 .account-mono {
@@ -582,7 +582,7 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
   padding: 4px;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
 }
 
@@ -649,15 +649,15 @@ onBeforeUnmount(() => {
 
 .account-card {
   padding: 24px;
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  background: var(--bg-surface-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   color: var(--text-primary);
 }
 
 .account-card-header {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
 }
 
 .account-card-title {
@@ -672,7 +672,7 @@ onBeforeUnmount(() => {
 }
 
 .account-label {
-  color: var(--text-info);
+  color: var(--status-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.12em;
@@ -680,7 +680,7 @@ onBeforeUnmount(() => {
 
 .account-input {
   min-height: 40px;
-  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
   color: var(--text-primary);
@@ -697,7 +697,7 @@ onBeforeUnmount(() => {
 }
 
 .account-tabs {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
@@ -717,12 +717,12 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 
 .account-action-btn {
-  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   border-radius: 10px;
-  color: var(--text-info);
+  color: var(--status-info);
 }
 </style>

@@ -316,10 +316,10 @@ export default defineComponent({
 
 <style scoped>
 .sulla-showcase {
-  --sc-ink: var(--text-primary, var(--text-primary));
-  --sc-read: var(--text-primary, var(--text-secondary));
+  --sc-ink: var(--text-primary);
+  --sc-read: var(--text-secondary);
   --sc-accent: var(--accent);
-  --sc-hair: var(--border-default-strong);
+  --sc-hair: var(--border-strong);
 
   position: relative;
   box-sizing: border-box;

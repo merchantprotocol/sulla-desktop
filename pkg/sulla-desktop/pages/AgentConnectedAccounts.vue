@@ -25,13 +25,13 @@
                   <p class="vault-noir-eyebrow">
                     Password Vault
                   </p>
-                  <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent vault-title-default">
+                  <p class="inline bg-linear-to-r from-[var(--accent-dim)] via-[var(--accent)] to-[var(--accent-dim)] bg-clip-text font-display text-5xl tracking-tight text-transparent vault-title-default">
                     Password Manager.
                   </p>
                   <h1 class="vault-noir-title">
                     Everything important stays under your key.
                   </h1>
-                  <p class="mt-3 text-2xl tracking-tight [color:var(--text-dim)] vault-lead-default">
+                  <p class="mt-3 text-2xl tracking-tight text-[var(--text-dim)] vault-lead-default">
                     All your connected accounts and saved credentials in one place.
                   </p>
                   <p class="vault-noir-lead">
@@ -46,7 +46,7 @@
                     <svg
                       aria-hidden="true"
                       viewBox="0 0 20 20"
-                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-slate-400 dark:fill-slate-500"
+                      class="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 fill-[var(--text-muted)]"
                     >
                       <path d="M16.293 17.707a1 1 0 0 0 1.414-1.414l-1.414 1.414ZM9 14a5 5 0 0 1-5-5H2a7 7 0 0 0 7 7v-2ZM4 9a5 5 0 0 1 5-5V2a7 7 0 0 0-7 7h2Zm5-5a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7v2Zm8.707 12.293-3.757-3.757-1.414 1.414 3.757 3.757 1.414-1.414ZM14 9a4.98 4.98 0 0 1-1.464 3.536l1.414 1.414A6.98 6.98 0 0 0 16 9h-2Zm-1.464 3.536A4.98 4.98 0 0 1 9 14v2a6.98 6.98 0 0 0 4.95-2.05l-1.414-1.414Z" />
                     </svg>
@@ -55,12 +55,12 @@
                       v-model="search"
                       type="text"
                       placeholder="Search accounts..."
-                      class="h-11 w-full rounded-lg [background:var(--bg-surface)]/95 pr-4 pl-12 text-sm [color:var(--bg-page)] ring-1 [--tw-ring-color:var(--border-default-subtle)] focus:outline-none focus:ring-2 focus:[--tw-ring-color:var(--accent-hover)]/50 dark:[background:var(--bg-surface-alt)]/75 dark:[color:var(--bg-surface-hover)] dark:[--tw-ring-color:var(--bg-surface)]/5 dark:ring-inset"
+                      class="h-11 w-full rounded-lg bg-[color-mix(in_srgb,var(--bg-surface)_95%,transparent)] pr-4 pl-12 text-sm text-[var(--text-primary)] ring-1 [--tw-ring-color:var(--border-subtle)] focus:outline-none focus:ring-2 focus:[--tw-ring-color:color-mix(in_srgb,var(--accent-hover)_50%,transparent)]"
                     >
                   </div>
                   <button
                     type="button"
-                    class="h-11 px-4 rounded-lg [color:var(--bg-surface)] text-sm font-medium transition-colors flex items-center gap-2 accounts-btn-primary"
+                    class="h-11 px-4 rounded-lg text-[var(--text-on-accent)] text-sm font-medium transition-colors flex items-center gap-2 accounts-btn-primary"
                     @click="$emit('new-account')"
                   >
                     <svg
@@ -76,7 +76,7 @@
                   </button>
                   <button
                     type="button"
-                    class="h-11 px-4 rounded-lg border [border-color:var(--text-secondary)] hover:[border-color:var(--text-muted)] [color:var(--text-secondary)] hover:[color:var(--bg-surface)] text-sm font-medium transition-colors flex items-center gap-2"
+                    class="h-11 px-4 rounded-lg border border-[var(--border-subtle)] hover:border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm font-medium transition-colors flex items-center gap-2"
                     @click="$emit('generate-password')"
                   >
                     <svg
@@ -135,21 +135,21 @@
             <div class="flex items-center justify-end gap-2 mb-4">
               <button
                 type="button"
-                class="px-3 py-1.5 text-xs font-medium rounded-md [color:var(--text-dim)] hover:[color:var(--text-primary)] border [border-color:var(--border-default-strong)] hover:[border-color:var(--text-muted)] transition-colors"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-[var(--text-dim)] hover:text-[var(--text-primary)] border border-[var(--border-strong)] hover:border-[var(--border-subtle)] transition-colors"
                 @click="exportVault(false)"
               >
                 Export (JSON)
               </button>
               <button
                 type="button"
-                class="px-3 py-1.5 text-xs font-medium rounded-md [color:var(--text-dim)] hover:[color:var(--text-primary)] border [border-color:var(--border-default-strong)] hover:[border-color:var(--text-muted)] transition-colors"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-[var(--text-dim)] hover:text-[var(--text-primary)] border border-[var(--border-strong)] hover:border-[var(--border-subtle)] transition-colors"
                 @click="exportVault(true)"
               >
                 Export (Encrypted)
               </button>
               <button
                 type="button"
-                class="px-3 py-1.5 text-xs font-medium rounded-md [color:var(--text-dim)] hover:[color:var(--text-primary)] border [border-color:var(--border-default-strong)] hover:[border-color:var(--text-muted)] transition-colors"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-[var(--text-dim)] hover:text-[var(--text-primary)] border border-[var(--border-strong)] hover:border-[var(--border-subtle)] transition-colors"
                 @click="importVault()"
               >
                 Import
@@ -160,23 +160,23 @@
               class="flex items-center justify-end gap-2 mb-4"
               @submit.prevent="submitImportSecret"
             >
-              <span class="text-xs [color:var(--text-dim)]">This backup was made with a different vault key.</span>
+              <span class="text-xs text-[var(--text-dim)]">This backup was made with a different vault key.</span>
               <input
                 v-model="importSecret"
                 type="password"
                 autocomplete="off"
                 placeholder="Its master password or recovery key"
-                class="px-2 py-1 text-xs rounded-md bg-transparent border [border-color:var(--border-default-strong)] [color:var(--text-primary)] w-64"
+                class="px-2 py-1 text-xs rounded-md bg-transparent border border-[var(--border-strong)] text-[var(--text-primary)] w-64"
               >
               <button
                 type="submit"
-                class="px-3 py-1.5 text-xs font-medium rounded-md [color:var(--text-dim)] hover:[color:var(--text-primary)] border [border-color:var(--border-default-strong)] hover:[border-color:var(--text-muted)] transition-colors"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-[var(--text-dim)] hover:text-[var(--text-primary)] border border-[var(--border-strong)] hover:border-[var(--border-subtle)] transition-colors"
               >
                 Restore
               </button>
               <button
                 type="button"
-                class="px-3 py-1.5 text-xs font-medium rounded-md [color:var(--text-dim)] hover:[color:var(--text-primary)] border [border-color:var(--border-default-strong)] hover:[border-color:var(--text-muted)] transition-colors"
+                class="px-3 py-1.5 text-xs font-medium rounded-md text-[var(--text-dim)] hover:text-[var(--text-primary)] border border-[var(--border-strong)] hover:border-[var(--border-subtle)] transition-colors"
                 @click="cancelImportSecret"
               >
                 Cancel
@@ -185,13 +185,13 @@
             <p
               v-if="vaultNotice"
               class="mb-4 text-right text-xs"
-              :class="vaultNoticeIsError ? 'text-red-400' : '[color:var(--text-dim)]'"
+              :class="vaultNoticeIsError ? 'text-[var(--status-error)]' : 'text-[var(--text-dim)]'"
             >
               {{ vaultNotice }}
             </p>
             <p
               v-else-if="backupSummary"
-              class="mb-4 text-right text-xs [color:var(--text-muted)]"
+              class="mb-4 text-right text-xs text-[var(--text-muted)]"
             >
               {{ backupSummary }}
             </p>
@@ -199,7 +199,7 @@
               <!-- Filter Sidebar -->
               <nav class="hidden md:block w-48 shrink-0 vault-noir-nav">
                 <div class="sticky top-6">
-                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider [color:var(--text-dim)] dark:[color:var(--text-muted)]">
+                  <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)] ">
                     Filter by Type
                   </h3>
                   <ul
@@ -217,14 +217,14 @@
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors vault-noir-nav-row"
                         data-vault-filter="all"
                         :class="activeFilter === null
-                          ? 'bg-[var(--accent)]/10 text-[var(--accent)] font-medium dark:bg-[var(--accent)]/10 dark:text-[var(--accent-hover)]'
-                          : '[color:var(--text-secondary)] hover:[background:var(--bg-surface-hover)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[background:var(--bg-surface-alt)] dark:hover:[color:var(--text-primary)]'"
+                          ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)] font-medium  '
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]   '"
                         @click="activeFilter = null"
                       >
                         <span>All</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === null ? 'text-[var(--accent)] dark:text-[var(--accent-hover)]' : '[color:var(--text-dim)] dark:[color:var(--text-muted)]'"
+                          :class="activeFilter === null ? 'text-[var(--accent)] ' : 'text-[var(--text-dim)] '"
                         >{{ flatAccounts.length }}</span>
                       </button>
                     </li>
@@ -237,14 +237,14 @@
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors vault-noir-nav-row"
                         :data-vault-filter="type"
                         :class="activeFilter === type
-                          ? 'bg-[var(--accent)]/10 text-[var(--accent)] font-medium dark:bg-[var(--accent)]/10 dark:text-[var(--accent-hover)]'
-                          : '[color:var(--text-secondary)] hover:[background:var(--bg-surface-hover)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[background:var(--bg-surface-alt)] dark:hover:[color:var(--text-primary)]'"
+                          ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)] font-medium  '
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]   '"
                         @click="activeFilter = type"
                       >
                         <span>{{ integrationName(type) }}</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === type ? 'text-[var(--accent)] dark:text-[var(--accent-hover)]' : '[color:var(--text-dim)] dark:[color:var(--text-muted)]'"
+                          :class="activeFilter === type ? 'text-[var(--accent)] ' : 'text-[var(--text-dim)] '"
                         >{{ countByType(type) }}</span>
                       </button>
                     </li>
@@ -256,14 +256,14 @@
               <div class="flex-1 min-w-0">
                 <div
                   v-if="loading"
-                  class="text-center py-12 [color:var(--text-dim)]"
+                  class="text-center py-12 text-[var(--text-dim)]"
                 >
                   Loading accounts...
                 </div>
 
                 <div
                   v-else-if="filteredAccounts.length === 0"
-                  class="text-center py-12 [color:var(--text-dim)]"
+                  class="text-center py-12 text-[var(--text-dim)]"
                 >
                   <p class="text-lg mb-2">
                     No connected accounts found
@@ -280,7 +280,7 @@
                   <div
                     v-for="account in filteredAccounts"
                     :key="`${account.integrationId}-${account.accountId}`"
-                    class="group flex items-center gap-4 rounded-lg px-4 py-3 transition-colors cursor-pointer hover:[background:var(--bg-surface-hover)] dark:hover:[background:var(--bg-surface-alt)]/50 vault-noir-row"
+                    class="group flex items-center gap-4 rounded-lg px-4 py-3 hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer  vault-noir-row"
                     @click="openAccount(account)"
                   >
                     <!-- Icon / Type badge -->
@@ -294,20 +294,20 @@
                     <!-- Account info -->
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-2">
-                        <span class="font-medium [color:var(--bg-page)] dark:[color:var(--bg-surface-hover)] truncate">
+                        <span class="font-medium text-[var(--text-primary)]  truncate">
                           {{ account.label }}
                         </span>
                         <span
                           class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium vault-noir-state"
                           :class="account.connected
-                            ? 'bg-[var(--accent)]/10 text-[var(--accent)] dark:text-[var(--accent-hover)]'
-                            : '[background:var(--text-muted)]/10 [color:var(--text-muted)] dark:[color:var(--text-dim)]'"
+                            ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)] '
+                            : 'bg-[var(--bg-surface-alt)] text-[var(--text-muted)] '"
                         >
                           <span class="vault-noir-dot" />
                           {{ account.connected ? 'Connected' : 'Disconnected' }}
                         </span>
                       </div>
-                      <div class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)] mt-0.5 truncate vault-noir-meta">
+                      <div class="text-xs text-[var(--text-muted)]  mt-0.5 truncate vault-noir-meta">
                         {{ integrationName(account.integrationId) }}
                         <span
                           v-if="account.connectedAt"
@@ -339,7 +339,7 @@
 
                     <!-- Arrow -->
                     <svg
-                      class="h-4 w-4 shrink-0 [color:var(--text-dim)] opacity-0 group-hover:opacity-100 transition-opacity"
+                      class="h-4 w-4 shrink-0 text-[var(--text-dim)] opacity-0 group-hover:opacity-100 transition-opacity"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -457,24 +457,24 @@ const typeBadgeLabel = (id: string): string => {
 };
 
 const typeBadgeClass = (id: string): string => {
-  if (id === 'website') return 'bg-[var(--accent)]/20 text-[var(--accent)] dark:text-[var(--accent-hover)]';
+  if (id === 'website') return 'bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] text-[var(--accent)] ';
   const catalog = integrationCatalog[id];
-  if (!catalog) return '[background:var(--text-muted)]/20 [color:var(--text-muted)]';
+  if (!catalog) return 'bg-[var(--bg-surface-alt)] text-[var(--text-muted)]';
 
   const category = catalog.category?.toLowerCase() || '';
-  if (category.includes('ai')) return 'bg-purple-500/20 text-purple-600 dark:text-purple-400';
-  if (category.includes('communication')) return 'bg-blue-500/20 text-blue-600 dark:text-blue-400';
-  if (category.includes('developer')) return '[background:var(--text-muted)]/20 [color:var(--text-secondary)] dark:[color:var(--text-dim)]';
-  return 'bg-[var(--accent)]/20 text-[var(--accent)] dark:text-[var(--accent-hover)]';
+  if (category.includes('ai')) return 'bg-purple-500/20 text-purple-600';
+  if (category.includes('communication')) return 'bg-blue-500/20 text-blue-600 ';
+  if (category.includes('developer')) return 'bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] ';
+  return 'bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] text-[var(--accent)] ';
 };
 
 const llmAccessBadgeClass = (level: string): string => {
   switch (level) {
-  case 'none': return 'bg-red-500/10 text-red-600 dark:text-red-400';
-  case 'metadata': return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400';
-  case 'autofill': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400';
-  case 'full': return 'bg-[var(--accent)]/10 text-[var(--accent)] dark:text-[var(--accent-hover)]';
-  default: return '[background:var(--text-muted)]/10 [color:var(--text-muted)]';
+  case 'none': return 'bg-red-500/10 text-red-600';
+  case 'metadata': return 'bg-yellow-500/10 text-yellow-600';
+  case 'autofill': return 'bg-blue-500/10 text-blue-600 ';
+  case 'full': return 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)] ';
+  default: return 'bg-[var(--bg-surface-alt)] text-[var(--text-muted)]';
   }
 };
 
@@ -667,7 +667,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
 
 .accounts-hero {
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .vault-noir-head {
@@ -721,8 +721,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
   height: 40px;
   border: 0;
   border-radius: 12px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.72);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 12%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 12%, transparent);
   color: var(--text-primary);
 }
 
@@ -758,10 +758,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
 .vault-noir-nav {
   width: 230px;
   padding: 18px 14px;
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 20px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.6);
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.018);
+  background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.018);
   backdrop-filter: blur(14px);
 }
 
@@ -827,10 +827,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
   min-height: 72px;
   margin-bottom: 8px;
   padding: 12px 16px;
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.015);
+  background: color-mix(in srgb, var(--accent-hover) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.015);
 }
 
 .vault-noir-row:hover {
@@ -842,8 +842,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
   border: 1px solid color-mix(in srgb, var(--accent-hover) 20%, transparent);
   border-radius: 12px;
   background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 7%, transparent));
-  color: var(--accent-hover) calc(g + 16) calc(b + 16));
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.04);
+  color: var(--accent-hover);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
 .vault-noir-state {
@@ -865,8 +865,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateFilterGlass));
   box-shadow: 0 0 8px color-mix(in srgb, var(--status-success) 72%, transparent);
 }
 
-.vault-noir-state.[color:var(--text-muted)] .vault-noir-dot {
-  background: var(--text-dim);
+.vault-noir-state.text-[var(--text-muted)] .vault-noir-dot {
+  background: var(--bg-surface-hover);
   box-shadow: none;
 }
 

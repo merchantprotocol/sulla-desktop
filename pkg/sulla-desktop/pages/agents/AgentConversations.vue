@@ -24,10 +24,10 @@
         {{ conversationId ? '← Close' : '← All agents' }}
       </button>
       <div class="min-w-0">
-        <p class="text-sm font-medium [color:var(--text-primary)] dark:[color:var(--text-primary)] truncate">
+        <p class="text-sm font-medium text-[var(--text-primary)]  truncate">
           {{ agentName }}
         </p>
-        <p class="text-xs [color:var(--text-muted)] font-mono truncate">
+        <p class="text-xs text-[var(--text-muted)] font-mono truncate">
           {{ channel }}
         </p>
       </div>
@@ -38,13 +38,13 @@
       <aside v-if="!conversationId" class="conv-list flex-shrink-0 overflow-auto">
         <p
           v-if="listLoading && !conversations.length"
-          class="px-4 py-6 text-xs [color:var(--text-muted)]"
+          class="px-4 py-6 text-xs text-[var(--text-muted)]"
         >
           Loading conversations…
         </p>
         <p
           v-else-if="!conversations.length"
-          class="px-4 py-6 text-xs [color:var(--text-muted)]"
+          class="px-4 py-6 text-xs text-[var(--text-muted)]"
         >
           No stored conversations for this agent.
         </p>
@@ -59,12 +59,12 @@
           <div class="flex items-center gap-2">
             <span
               class="flex-shrink-0 inline-block w-2 h-2 rounded-full"
-              :class="conv.status === 'active' ? '[background:var(--status-success)]' : '[background:var(--text-muted)]'"
+              :class="conv.status === 'active' ? 'bg-[var(--status-success)]' : 'bg-[var(--bg-surface-alt)]'"
             />
-            <span class="text-xs [color:var(--text-muted)] truncate">{{ formatWhen(conv.lastActiveAt) }}</span>
-            <span class="ml-auto text-xs [color:var(--text-dim)] flex-shrink-0">{{ conv.messageCount }}</span>
+            <span class="text-xs text-[var(--text-muted)] truncate">{{ formatWhen(conv.lastActiveAt) }}</span>
+            <span class="ml-auto text-xs text-[var(--text-dim)] flex-shrink-0">{{ conv.messageCount }}</span>
           </div>
-          <p class="mt-1 text-xs [color:var(--text-primary)] dark:[color:var(--text-secondary)] conv-preview">
+          <p class="mt-1 text-xs text-[var(--text-primary)]  conv-preview">
             {{ conv.preview || conv.id }}
           </p>
         </button>
@@ -87,40 +87,40 @@
       >
         <p
           v-if="!selectedId"
-          class="text-sm [color:var(--text-muted)] py-10 text-center"
+          class="text-sm text-[var(--text-muted)] py-10 text-center"
         >
           Select a conversation.
         </p>
         <p
           v-else-if="detailLoading && !detail"
-          class="text-sm [color:var(--text-muted)] py-10 text-center"
+          class="text-sm text-[var(--text-muted)] py-10 text-center"
         >
           Loading…
         </p>
         <template v-else-if="detail">
           <div class="mb-4">
-            <p class="text-xs [color:var(--text-muted)] font-mono break-all">
+            <p class="text-xs text-[var(--text-muted)] font-mono break-all">
               {{ detail.id }}
             </p>
-            <p class="text-xs [color:var(--text-muted)] mt-0.5">
+            <p class="text-xs text-[var(--text-muted)] mt-0.5">
               {{ detail.status }} · started {{ formatWhen(detail.createdAt) }} · last active {{ formatWhen(detail.lastActiveAt) }}
             </p>
           </div>
           <p
             v-if="detail.missingLog"
-            class="text-sm [color:var(--text-muted)]"
+            class="text-sm text-[var(--text-muted)]"
           >
             This conversation is indexed in the database, but its message log file is missing.
           </p>
           <p
             v-else-if="!detail.entries.length"
-            class="text-sm [color:var(--text-muted)]"
+            class="text-sm text-[var(--text-muted)]"
           >
             No messages logged yet.
           </p>
           <p
             v-if="detail.truncated"
-            class="text-xs [color:var(--text-muted)] mb-3"
+            class="text-xs text-[var(--text-muted)] mb-3"
           >
             Showing the most recent part of a long conversation.
           </p>
@@ -132,7 +132,7 @@
             >
               <div
                 v-if="entry.kind === 'event'"
-                class="conv-event text-xs [color:var(--text-muted)]"
+                class="conv-event text-xs text-[var(--text-muted)]"
               >
                 {{ entry.text }} · {{ formatClock(entry.ts) }}
               </div>
@@ -141,9 +141,9 @@
                 v-else-if="entry.kind === 'tool'"
                 class="conv-tool text-xs"
               >
-                <summary class="cursor-pointer [color:var(--text-secondary)] dark:[color:var(--text-dim)]">
+                <summary class="cursor-pointer text-[var(--text-secondary)] ">
                   <span class="font-mono">{{ entry.toolName }}</span>
-                  <span class="[color:var(--text-dim)]"> · {{ formatClock(entry.ts) }}</span>
+                  <span class="text-[var(--text-dim)]"> · {{ formatClock(entry.ts) }}</span>
                 </summary>
                 <pre class="conv-pre mt-2">{{ entry.text }}</pre>
               </details>
@@ -153,7 +153,7 @@
                 class="conv-msg rounded-lg px-4 py-3"
                 :class="entry.kind === 'user' ? 'conv-msg-user' : 'conv-msg-assistant'"
               >
-                <p class="text-xs [color:var(--text-muted)] mb-1">
+                <p class="text-xs text-[var(--text-muted)] mb-1">
                   {{ entry.kind === 'user' ? 'Prompt' : agentName }} · {{ formatClock(entry.ts) }}
                 </p>
                 <div
@@ -355,7 +355,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 <style scoped>
 .conv-toolbar,
 .conv-list {
-  border-color: color-mix(in srgb, var(--text-secondary) 0.2%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 20%, transparent);
 }
 
 .conv-toolbar {
@@ -379,11 +379,11 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 }
 
 .conv-item {
-  border-bottom: 1px solid color-mix(in srgb, var(--text-secondary) 0.12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 12%, transparent);
 }
 
 .conv-item:hover {
-  background: color-mix(in srgb, var(--text-secondary) 0.06%, transparent);
+  background: var(--bg-surface-hover);
 }
 
 .conv-item-active {
@@ -407,11 +407,11 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-tool {
   padding: 0.25rem 0.75rem;
-  border-left: 2px solid color-mix(in srgb, var(--text-secondary) 0.3%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--border-default) 30%, transparent);
 }
 
 .conv-msg-user {
-  background: color-mix(in srgb, var(--text-secondary) 0.08%, transparent);
+  background: var(--bg-surface-alt);
 }
 
 .conv-msg-assistant {
@@ -442,7 +442,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 .conv-markdown :deep(pre) {
   white-space: pre-wrap;
   font-size: 0.75rem;
-  background: color-mix(in srgb, var(--text-secondary) 0.1%, transparent);
+  background: var(--bg-surface-alt);
   padding: 0.5rem;
   border-radius: 6px;
 }
@@ -462,7 +462,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-toolbar {
   min-height: 72px;
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   backdrop-filter: blur(18px);
 }
@@ -480,24 +480,24 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 }
 
 .conv-back {
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
-  color: var(--text-info);
+  background: var(--bg-surface-hover);
+  color: var(--status-info);
 }
 
 .conv-list {
   width: 350px;
   padding: 14px;
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 45%, transparent);
 }
 
 .conv-item {
   margin-bottom: 8px;
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--border-default-strong) 15.625%, transparent);
+  background: var(--bg-surface-hover);
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
@@ -523,16 +523,16 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-tool {
   padding: 11px 14px;
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-left: 3px solid var(--accent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
 }
 
 .conv-msg {
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 16px;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .conv-msg-user {
@@ -542,7 +542,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-msg-assistant {
   margin-right: clamp(1rem, 8vw, 7rem);
-  background: color-mix(in srgb, var(--border-default-strong) 20%, transparent);
+  background: var(--bg-surface-alt);
 }
 
 .conv-msg > p:first-child {
@@ -554,7 +554,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 }
 
 .conv-markdown :deep(pre) {
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
 }
 

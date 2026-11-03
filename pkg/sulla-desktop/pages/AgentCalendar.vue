@@ -23,7 +23,7 @@
         </div>
         <button
           type="button"
-          class="flex h-10 items-center gap-2 rounded-full border [border-color:var(--text-primary)]/10 [background:var(--accent)] px-4 text-sm font-semibold [color:var(--bg-surface)] shadow-sm hover:[background:var(--accent-hover)]"
+          class="flex h-10 items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--text-on-accent)] shadow-sm hover:bg-[var(--accent-hover)]"
           @click="showAddEventModal = true"
         >
           <svg
@@ -51,69 +51,69 @@
     <!-- Add Event Modal -->
     <div
       v-if="showAddEventModal"
-      class="fixed inset-0 z-50 flex items-center justify-center [background:var(--text-primary)]/50"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg-overlay)]"
       @click.self="closeModal"
     >
-      <div class="w-full max-w-md rounded-2xl border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] p-6 shadow-xl dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--text-primary)] calendar-modal-panel">
-        <h2 class="text-lg font-semibold [color:var(--text-primary)] dark:[color:var(--bg-surface)]">
+      <div class="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 shadow-xl   calendar-modal-panel">
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] ">
           Add Event
         </h2>
 
         <div class="mt-4 space-y-4">
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Title</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Title</label>
             <input
               v-model="newEventTitle"
               type="text"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Event title"
             >
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Date</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Date</label>
             <input
               v-model="newEventDate"
               type="date"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
             >
           </div>
 
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Start Time</label>
+              <label class="block text-sm font-medium text-[var(--text-secondary)] ">Start Time</label>
               <input
                 v-model="newEventStartTime"
                 type="time"
-                class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+                class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
               >
             </div>
             <div>
-              <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">End Time</label>
+              <label class="block text-sm font-medium text-[var(--text-secondary)] ">End Time</label>
               <input
                 v-model="newEventEndTime"
                 type="time"
-                class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+                class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
               >
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Location</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Location</label>
             <input
               v-model="newEventLocation"
               type="text"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Location (optional)"
             >
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Description</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Description</label>
             <textarea
               v-model="newEventDescription"
               rows="3"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Description (optional)"
             />
           </div>
@@ -122,14 +122,14 @@
         <div class="mt-6 flex justify-end gap-3">
           <button
             type="button"
-            class="rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-4 py-2 text-sm font-medium [color:var(--text-secondary)] [border-color:var(--bg-surface-hover)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--text-secondary)] dark:hover:[background:var(--text-secondary)]"
+            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] border-[var(--border-subtle)]    "
             @click="closeModal"
           >
             Cancel
           </button>
           <button
             type="button"
-            class="rounded-lg [background:var(--accent)] px-4 py-2 text-sm font-medium [color:var(--bg-surface)] hover:[background:var(--accent-hover)] disabled:opacity-50"
+            class="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
             :disabled="!newEventTitle.trim() || !newEventDate || savingEvent"
             @click="saveEvent"
           >
@@ -142,18 +142,18 @@
     <!-- Event Info Modal -->
     <div
       v-if="showEventInfoModal && selectedEvent"
-      class="fixed inset-0 z-50 flex items-center justify-center [background:var(--text-primary)]/50"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg-overlay)]"
       @click.self="showEventInfoModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] p-6 shadow-xl dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--text-primary)] calendar-modal-panel">
+      <div class="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 shadow-xl   calendar-modal-panel">
         <div class="flex items-start justify-between">
-          <h2 class="text-lg font-semibold [color:var(--text-primary)] dark:[color:var(--bg-surface)]">
+          <h2 class="text-lg font-semibold text-[var(--text-primary)] ">
             {{ selectedEvent.title }}
           </h2>
           <div class="flex items-center gap-1">
             <button
               type="button"
-              class="rounded-lg p-1 [color:var(--text-dim)] hover:[background:var(--bg-surface-hover)] hover:[color:var(--text-secondary)] dark:hover:[background:var(--bg-surface-alt)] dark:hover:[color:var(--text-secondary)]"
+              class="rounded-lg p-1 text-[var(--text-dim)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-secondary)]  "
               title="Edit event"
               @click="openEditModal"
             >
@@ -174,7 +174,7 @@
             </button>
             <button
               type="button"
-              class="rounded-lg p-1 [color:var(--text-dim)] hover:[background:var(--bg-surface-hover)] hover:[color:var(--text-secondary)] dark:hover:[background:var(--bg-surface-alt)] dark:hover:[color:var(--text-secondary)]"
+              class="rounded-lg p-1 text-[var(--text-dim)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-secondary)]  "
               @click="showEventInfoModal = false"
             >
               <svg
@@ -195,7 +195,7 @@
         </div>
 
         <div class="mt-4 space-y-3">
-          <div class="flex items-center gap-3 text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">
+          <div class="flex items-center gap-3 text-sm text-[var(--text-secondary)] ">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="16"
@@ -219,7 +219,7 @@
 
           <div
             v-if="selectedEvent.location"
-            class="flex items-center gap-3 text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]"
+            class="flex items-center gap-3 text-sm text-[var(--text-secondary)] "
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -244,7 +244,7 @@
 
           <div
             v-if="selectedEvent.description"
-            class="pt-2 text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)]"
+            class="pt-2 text-sm text-[var(--text-secondary)] "
           >
             {{ selectedEvent.description }}
           </div>
@@ -253,7 +253,7 @@
         <div class="mt-6 flex justify-end">
           <button
             type="button"
-            class="rounded-lg [background:var(--accent)] px-4 py-2 text-sm font-medium [color:var(--bg-surface)] hover:[background:var(--accent-hover)]"
+            class="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] hover:bg-[var(--accent-hover)]"
             @click="showEventInfoModal = false"
           >
             Close
@@ -265,69 +265,69 @@
     <!-- Edit Event Modal -->
     <div
       v-if="showEditEventModal"
-      class="fixed inset-0 z-50 flex items-center justify-center [background:var(--text-primary)]/50"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg-overlay)]"
       @click.self="closeEditModal"
     >
-      <div class="w-full max-w-md rounded-2xl border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] p-6 shadow-xl dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--text-primary)] calendar-modal-panel">
-        <h2 class="text-lg font-semibold [color:var(--text-primary)] dark:[color:var(--bg-surface)]">
+      <div class="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 shadow-xl   calendar-modal-panel">
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] ">
           Edit Event
         </h2>
 
         <div class="mt-4 space-y-4">
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Title</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Title</label>
             <input
               v-model="editEventTitle"
               type="text"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Event title"
             >
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Date</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Date</label>
             <input
               v-model="editEventDate"
               type="date"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
             >
           </div>
 
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Start Time</label>
+              <label class="block text-sm font-medium text-[var(--text-secondary)] ">Start Time</label>
               <input
                 v-model="editEventStartTime"
                 type="time"
-                class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+                class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
               >
             </div>
             <div>
-              <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">End Time</label>
+              <label class="block text-sm font-medium text-[var(--text-secondary)] ">End Time</label>
               <input
                 v-model="editEventEndTime"
                 type="time"
-                class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)]"
+                class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]   "
               >
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Location</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Location</label>
             <input
               v-model="editEventLocation"
               type="text"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Location (optional)"
             >
           </div>
 
           <div>
-            <label class="block text-sm font-medium [color:var(--text-secondary)] dark:[color:var(--text-secondary)]">Description</label>
+            <label class="block text-sm font-medium text-[var(--text-secondary)] ">Description</label>
             <textarea
               v-model="editEventDescription"
               rows="3"
-              class="mt-1 block w-full rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-3 py-2 text-sm [color:var(--text-primary)] [color:var(--text-dim)] focus:[border-color:var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--bg-surface)] dark:[color:var(--text-muted)]"
+              class="mt-1 block w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] text-[var(--text-dim)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:[--tw-ring-color:var(--accent)]    "
               placeholder="Description (optional)"
             />
           </div>
@@ -336,7 +336,7 @@
         <div class="mt-6 flex justify-between">
           <button
             type="button"
-            class="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-400 dark:hover:bg-red-900"
+            class="rounded-lg border border-[var(--status-error)] bg-[var(--status-error-soft)] px-4 py-2 text-sm font-medium text-[var(--status-error)] hover:bg-[var(--status-error-soft)]"
             @click="deleteEvent"
           >
             Delete
@@ -344,14 +344,14 @@
           <div class="flex gap-3">
             <button
               type="button"
-              class="rounded-lg border [border-color:var(--text-primary)]/10 [background:var(--bg-surface)] px-4 py-2 text-sm font-medium [color:var(--text-secondary)] [border-color:var(--bg-surface-hover)] dark:[border-color:var(--bg-surface)]/10 dark:[background:var(--bg-surface-alt)] dark:[color:var(--text-secondary)] dark:hover:[background:var(--text-secondary)]"
+              class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] border-[var(--border-subtle)]    "
               @click="closeEditModal"
             >
               Cancel
             </button>
             <button
               type="button"
-              class="rounded-lg [background:var(--accent)] px-4 py-2 text-sm font-medium [color:var(--bg-surface)] hover:[background:var(--accent-hover)] disabled:opacity-50"
+              class="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
               :disabled="!editEventTitle.trim() || !editEventDate || savingEditEvent"
               @click="updateEvent"
             >
@@ -780,7 +780,7 @@ const deleteEvent = async() => {
 .calendar-toolbar {
   justify-content: space-between;
   padding: 24px 30px 18px;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .calendar-heading {
@@ -807,7 +807,7 @@ const deleteEvent = async() => {
   border-color: color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 
 .page-root :deep(.sx__calendar-wrapper),
@@ -822,14 +822,14 @@ const deleteEvent = async() => {
 .page-root :deep(.sx__calendar-wrapper) {
   margin: 18px 24px 24px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-default-strong) 56.25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 56.25%, transparent);
   border-radius: 20px;
   background: color-mix(in srgb, var(--bg-surface) 56%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 26.6667%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 24px 70px rgba(0, 0, 0, 0.266667);
 }
 
 .page-root :deep(.sx__calendar-header) {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 56%, transparent);
   color: var(--text-primary);
 }
@@ -843,9 +843,9 @@ const deleteEvent = async() => {
 .page-root :deep(.sx__button),
 .page-root :deep(.sx__date-input),
 .page-root :deep(.sx__view-selection) {
-  border-color: color-mix(in srgb, var(--border-default-strong) 56.25%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 56.25%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
+  background: var(--bg-surface-hover);
   color: var(--text-secondary);
 }
 
@@ -853,7 +853,7 @@ const deleteEvent = async() => {
 .page-root :deep(.sx__date-grid-cell),
 .page-root :deep(.sx__time-grid-day),
 .page-root :deep(.sx__month-grid-day__header) {
-  border-color: color-mix(in srgb, var(--border-default-strong) 46.875%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 46.875%, transparent);
   background: transparent;
   color: var(--text-secondary);
 }
@@ -884,7 +884,7 @@ const deleteEvent = async() => {
   border: 1px solid color-mix(in srgb, var(--accent-hover) 24%, transparent);
   border-radius: 8px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4%, transparent), 0 5px 16px color-mix(in srgb, var(--shadow) 20%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 5px 16px rgba(0, 0, 0, 0.2);
   color: var(--text-primary);
 }
 
@@ -893,9 +893,9 @@ const deleteEvent = async() => {
 }
 
 .calendar-modal-panel {
-  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
-  box-shadow: 0 28px 90px color-mix(in srgb, var(--shadow) 66.6667%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 3.5%, transparent);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.666667), inset 0 1px 0 rgba(255, 255, 255, 0.035);
   backdrop-filter: blur(20px);
 }
 
@@ -907,7 +907,7 @@ const deleteEvent = async() => {
 }
 
 .calendar-modal-panel label {
-  color: var(--text-info);
+  color: var(--status-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.1em;
@@ -916,15 +916,15 @@ const deleteEvent = async() => {
 
 .calendar-modal-panel input,
 .calendar-modal-panel textarea {
-  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   color: var(--text-primary);
 }
 
-.calendar-modal-panel button.[background:var(--accent)] {
+.calendar-modal-panel button.bg-[var(--accent)] {
   border: 1px solid color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 </style>

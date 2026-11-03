@@ -963,7 +963,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   display: flex;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
   background: var(--bg-surface-alt);
 }
 
@@ -1012,7 +1012,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-loading-spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid var(--border-default-default);
+  border: 2px solid var(--border-default);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
@@ -1029,7 +1029,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   gap: 16px;
   padding: 20px;
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
 }
 
@@ -1040,7 +1040,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   border-radius: 12px;
   overflow: hidden;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1097,14 +1097,14 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-badge-type {
   background: var(--bg-surface);
   color: var(--text-secondary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
 }
 
 /* ── Cards ── */
 .editor-card {
   padding: 20px;
   background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
 }
 
@@ -1114,7 +1114,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   gap: 10px;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-default-default);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .editor-card-header-icon {
@@ -1159,7 +1159,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 14px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -1247,7 +1247,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-weight: 500;
   color: var(--accent);
   background: none;
-  border: 1px dashed var(--border-default-default);
+  border: 1px dashed var(--border-default);
   border-radius: 6px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
@@ -1325,7 +1325,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 14px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   outline: none;
   transition: border-color 0.15s;
@@ -1341,7 +1341,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   justify-content: center;
   width: 40px;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   color: var(--text-muted);
   cursor: pointer;
@@ -1350,7 +1350,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 
 .editor-select-refresh:hover {
   color: var(--text-primary);
-  border-color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 /* ── OAuth ── */
@@ -1364,7 +1364,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 14px;
   font-weight: 600;
   background: var(--accent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -1394,7 +1394,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--border-default-default);
+  background: var(--bg-surface-hover);
 }
 
 /* ── Action buttons ── */
@@ -1413,7 +1413,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-size: 14px;
   font-weight: 600;
   background: var(--accent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -1435,7 +1435,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   font-weight: 500;
   background: transparent;
   color: var(--text-secondary);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
@@ -1443,7 +1443,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 
 .editor-btn-secondary:hover {
   color: var(--text-primary);
-  border-color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 /* ── Danger zone ── */
@@ -1509,8 +1509,8 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-header {
   min-height: 56px;
   padding: 0 30px;
-  border-bottom-color: var(--border-default-default);
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.62);
+  border-bottom-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
   backdrop-filter: blur(14px);
 }
 
@@ -1573,9 +1573,9 @@ watch(() => [props.integrationId, props.accountId], () => {
 }
 
 .editor-hero-icon {
-  border-color: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-hover) 10%, transparent);
   border-radius: 14px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.62);
+  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
 }
 
 .editor-hero-title {
@@ -1601,14 +1601,14 @@ watch(() => [props.integrationId, props.accountId], () => {
 
 .editor-card,
 .editor-guide {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 var(--text-primary) calc(g + 10) calc(b + 7) / 0.015);
+  background: color-mix(in srgb, var(--accent-hover) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.015);
 }
 
 .editor-card-header {
-  border-bottom-color: var(--border-default-default);
+  border-bottom-color: var(--border-default);
 }
 
 .editor-card-title {
@@ -1628,8 +1628,8 @@ watch(() => [props.integrationId, props.accountId], () => {
   min-height: 40px;
   border: 0;
   border-radius: 12px;
-  background: var(--bg-surface-alt) calc(g + 3) calc(b + 2) / 0.66);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) calc(g + 16) calc(b + 16)) 12%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 12%, transparent);
   color: var(--text-primary);
 }
 
@@ -1664,14 +1664,14 @@ watch(() => [props.integrationId, props.accountId], () => {
 
 .editor-btn-secondary,
 .editor-add-btn {
-  border-color: var(--border-default-strong);
+  border-color: var(--border-strong);
   border-radius: 20px;
   color: var(--text-primary);
 }
 
 .editor-guide-summary,
 .editor-guide-content {
-  border-color: var(--border-default-default);
+  border-color: var(--border-default);
   background: transparent;
 }
 
@@ -1694,7 +1694,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 
 /* ── Installation guide ── */
 .editor-guide {
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -1724,7 +1724,7 @@ watch(() => [props.integrationId, props.accountId], () => {
 .editor-guide-content {
   padding: 16px 20px 20px;
   background: var(--bg-surface-alt);
-  border-top: 1px solid var(--border-default-default);
+  border-top: 1px solid var(--border-default);
 }
 
 .editor-guide-desc {
@@ -1749,7 +1749,7 @@ watch(() => [props.integrationId, props.accountId], () => {
   justify-content: center;
   border-radius: 50%;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   font-size: 11px;
   font-weight: 700;
   color: var(--accent);

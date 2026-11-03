@@ -21,7 +21,7 @@
           <!-- Navigation -->
           <div class="mb-6 flex items-center gap-4 integration-detail-nav">
             <button
-              class="flex items-center gap-2 text-sm [color:var(--text-secondary)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[color:var(--bg-surface)]"
+              class="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]  "
               @click="embedded ? $emit('back') : $router.push('/Integrations')"
             >
               <svg
@@ -41,7 +41,7 @@
             </button>
             <button
               v-if="embedded"
-              class="flex items-center gap-2 text-sm [color:var(--text-secondary)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[color:var(--bg-surface)]"
+              class="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]  "
               @click="$emit('back-to-vault')"
             >
               <svg
@@ -103,7 +103,7 @@
               >
                 <div class="relative">
                   <!-- Carousel Container -->
-                  <div class="overflow-hidden rounded-lg border [border-color:var(--border-default-subtle)] dark:[border-color:var(--text-secondary)]">
+                  <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] ">
                     <div class="relative">
                       <!-- Main Media -->
                       <div class="aspect-video">
@@ -123,15 +123,15 @@
                         >
                         <div
                           v-else
-                          class="flex h-full w-full items-center justify-center [background:var(--bg-surface-hover)] dark:[background:var(--bg-surface-alt)]"
+                          class="flex h-full w-full items-center justify-center bg-[var(--bg-surface-hover)] "
                         >
-                          <span class="text-sm [color:var(--text-dim)]">Image unavailable</span>
+                          <span class="text-sm text-[var(--text-dim)]">Image unavailable</span>
                         </div>
                         <div
                           v-if="integration.media[currentImageIndex].caption"
-                          class="absolute bottom-0 left-0 right-0 bg-gradient-to-t [--tw-gradient-from:var(--text-primary)]/60 to-transparent p-4"
+                          class="absolute bottom-0 left-0 right-0 bg-gradient-to-t [--tw-gradient-from:color-mix(in_srgb,var(--bg-overlay)_60%,transparent)] to-transparent p-4"
                         >
-                          <p class="text-sm [color:var(--bg-surface)]">
+                          <p class="text-sm text-[var(--text-on-accent)]">
                             {{ integration.media[currentImageIndex].caption }}
                           </p>
                         </div>
@@ -140,7 +140,7 @@
                       <!-- Navigation Arrows -->
                       <button
                         v-if="integration.media.length > 1"
-                        class="absolute left-4 top-1/2 -translate-y-1/2 rounded-full [background:var(--text-primary)]/50 p-2 [color:var(--bg-surface)] hover:[background:var(--text-primary)]/70 transition-colors"
+                        class="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-[var(--bg-overlay)] p-2 text-[var(--text-on-accent)] hover:bg-[color-mix(in_srgb,var(--bg-overlay)_70%,transparent)] transition-colors"
                         @click="previousImage"
                       >
                         <svg
@@ -159,7 +159,7 @@
                       </button>
                       <button
                         v-if="integration.media.length > 1"
-                        class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full [background:var(--text-primary)]/50 p-2 [color:var(--bg-surface)] hover:[background:var(--text-primary)]/70 transition-colors"
+                        class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-[var(--bg-overlay)] p-2 text-[var(--text-on-accent)] hover:bg-[color-mix(in_srgb,var(--bg-overlay)_70%,transparent)] transition-colors"
                         @click="nextImage"
                       >
                         <svg
@@ -188,7 +188,7 @@
                       v-for="(image, index) in integration.media"
                       :key="index"
                       class="flex-shrink-0 overflow-hidden rounded-lg border-2 transition-all"
-                      :class="currentImageIndex === index ? 'border-blue-500' : '[border-color:var(--border-default-subtle)] dark:[border-color:var(--text-secondary)]'"
+                      :class="currentImageIndex === index ? 'border-[var(--accent)]' : 'border-[var(--border-subtle)] '"
                       @click="currentImageIndex = index"
                     >
                       <img
@@ -203,7 +203,7 @@
 
               <!-- Header -->
               <div class="flex items-start gap-6">
-                <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl [background:var(--bg-surface-hover)] dark:[background:var(--bg-surface-alt)]">
+                <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-surface-hover)] ">
                   <img
                     v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
                     :src="safeIconSrc(integration.icon!)"
@@ -216,22 +216,22 @@
                   >{{ isImageIcon(integration.icon) ? '🔌' : integration.icon }}</span>
                 </div>
                 <div class="flex-1">
-                  <h1 class="text-3xl font-bold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-2">
+                  <h1 class="text-3xl font-bold text-[var(--text-primary)]  mb-2">
                     {{ integration.name }}
                   </h1>
-                  <p class="text-lg [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-4">
+                  <p class="text-lg text-[var(--text-secondary)]  mb-4">
                     {{ integration.description }}
                   </p>
                   <div class="flex items-center gap-4">
-                    <span class="inline-flex items-center rounded-full [background:var(--bg-surface-hover)] px-3 py-1 text-sm font-medium [color:var(--text-primary)] dark:[background:var(--border-default-strong)] dark:[color:var(--text-primary)]">
+                    <span class="inline-flex items-center rounded-full bg-[var(--bg-surface-hover)] px-3 py-1 text-sm font-medium text-[var(--text-primary)]  ">
                       {{ integration.category }}
                     </span>
                     <div class="flex items-center gap-2">
                       <div
                         class="h-2 w-2 rounded-full integration-detail-status-dot"
-                        :class="integration.connected ? 'bg-sky-500 integration-detail-status-on' : '[background:var(--text-secondary)]'"
+                        :class="integration.connected ? 'bg-[var(--status-success)] integration-detail-status-on' : 'bg-[var(--bg-surface-hover)]'"
                       />
-                      <span class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                      <span class="text-xs text-[var(--text-muted)] ">
                         {{ integration.connected
                           ? (connectedAccounts.length > 1
                             ? `${connectedAccounts.length} accounts connected`
@@ -242,20 +242,20 @@
                       <div class="flex gap-1 ml-2">
                         <span
                           v-if="integration.beta"
-                          class="inline-flex items-center rounded-full bg-blue-500 [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
+                          class="inline-flex items-center rounded-full bg-blue-500 text-[var(--text-on-accent)] text-xs px-2 py-0.5 font-medium"
                         >
                           BETA
                         </span>
                         <span
                           v-if="integration.comingSoon"
-                          class="inline-flex items-center rounded-full bg-orange-500 [color:var(--bg-surface)] text-xs px-2 py-0.5 font-medium"
+                          class="inline-flex items-center rounded-full bg-orange-500 text-[var(--text-on-accent)] text-xs px-2 py-0.5 font-medium"
                         >
                           COMING SOON
                         </span>
                       </div>
                     </div>
                   </div>
-                  <div class="flex items-center gap-1 text-sm [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="flex items-center gap-1 text-sm text-[var(--text-muted)] ">
                     <svg
                       class="h-4 w-4"
                       fill="none"
@@ -276,21 +276,21 @@
 
               <!-- Features -->
               <!-- <div class="space-y-4">
-                <h2 class="text-xl font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">Features</h2>
+                <h2 class="text-xl font-semibold text-[var(--text-primary)] ">Features</h2>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div
                     v-for="feature in integration.features"
                     :key="feature.title"
-                    class="flex gap-3 rounded-lg border [border-color:var(--border-default-subtle)] p-4 dark:[border-color:var(--text-secondary)]"
+                    class="flex gap-3 rounded-lg border border-[var(--border-subtle)] p-4 "
                   >
-                    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600  ">
                       <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
                     </div>
                     <div>
-                      <h3 class="font-medium [color:var(--bg-page)] dark:[color:var(--bg-surface)]">{{ feature.title }}</h3>
-                      <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">{{ feature.description }}</p>
+                      <h3 class="font-medium text-[var(--text-primary)] ">{{ feature.title }}</h3>
+                      <p class="text-sm text-[var(--text-secondary)] ">{{ feature.description }}</p>
                     </div>
                   </div>
                 </div>
@@ -299,15 +299,15 @@
               <!-- Connect Card — always shows as a fresh create form -->
               <div
                 v-if="showConnectionForm"
-                class="rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]"
+                class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  "
               >
                 <div class="flex items-center justify-between mb-4">
-                  <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                  <h3 class="text-lg font-semibold text-[var(--text-primary)] ">
                     Create New Connection
                   </h3>
                   <button
                     v-if="false"
-                    class="text-xs [color:var(--text-muted)] hover:[color:var(--text-primary)] dark:[color:var(--text-dim)] dark:hover:[color:var(--text-primary)] font-medium"
+                    class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]   font-medium"
                     @click="cancelAddAccount"
                   >
                     Cancel
@@ -319,7 +319,7 @@
                   v-if="integration.formGuide"
                   class="mb-6"
                 >
-                  <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">
+                  <p class="text-sm text-[var(--text-secondary)] ">
                     <span class="font-medium">Where to find this information:</span> {{ integration.formGuide }}
                   </p>
                 </div>
@@ -331,7 +331,7 @@
                 >
                   <button
                     :disabled="isLoading"
-                    class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium [color:var(--bg-surface)] transition-colors hover:bg-blue-700 flex items-center justify-center"
+                    class="w-full rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-hover)] flex items-center justify-center"
                     @click="handleOAuthConnect()"
                   >
                     <svg
@@ -356,18 +356,18 @@
                     </svg>
                     {{ isLoading ? 'Authorizing...' : `Sign in with ${integration.name}` }}
                   </button>
-                  <p class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <p class="text-xs text-[var(--text-muted)] ">
                     Your browser will open to sign in and authorize access.
                   </p>
                   <p
                     v-if="oauthError"
-                    class="text-xs text-red-500"
+                    class="text-xs text-[var(--status-error)]"
                   >
                     {{ oauthError }}
                   </p>
                   <div
                     v-if="oauthSuccess"
-                    class="flex items-center gap-2 rounded-md bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:bg-sky-900/20 dark:[color:var(--accent-hover)]"
+                    class="flex items-center gap-2 rounded-md bg-[var(--status-info-soft)] px-3 py-2 text-xs text-[var(--status-info)]  "
                   >
                     <svg
                       class="h-4 w-4 flex-shrink-0"
@@ -391,9 +391,9 @@
                   v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount && integration.properties?.some(p => p.key !== 'llm_access')"
                   class="flex items-center gap-3 mb-6"
                 >
-                  <div class="flex-1 border-t [border-color:var(--text-secondary)] dark:[border-color:var(--text-secondary)]" />
-                  <span class="text-xs [color:var(--text-dim)] dark:[color:var(--text-muted)] uppercase">or connect with credentials</span>
-                  <div class="flex-1 border-t [border-color:var(--text-secondary)] dark:[border-color:var(--text-secondary)]" />
+                  <div class="flex-1 border-t border-[var(--border-subtle)] " />
+                  <span class="text-xs text-[var(--text-dim)]  uppercase">or connect with credentials</span>
+                  <div class="flex-1 border-t border-[var(--border-subtle)] " />
                 </div>
 
                 <!-- Credentials section (account label + properties + connect button) -->
@@ -404,25 +404,25 @@
                   >
                     <label
                       for="__account_label"
-                      class="block text-sm font-medium [color:var(--text-primary)] dark:[color:var(--text-secondary)]"
+                      class="block text-sm font-medium text-[var(--text-primary)] "
                     >
                       Account Label
-                      <span class="text-red-500">*</span>
+                      <span class="text-[var(--status-error)]">*</span>
                     </label>
                     <input
                       id="__account_label"
                       v-model="newAccountLabel"
                       type="text"
                       placeholder="e.g. Work Gmail, Personal Gmail, Team Slack"
-                      class="w-full rounded-lg border [border-color:var(--text-secondary)] px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 dark:[border-color:var(--text-secondary)] dark:[background:var(--border-default-strong)] dark:[color:var(--bg-surface)]"
-                      :class="{ 'border-red-500': errors.__account_label }"
+                      class="w-full rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm focus:border-[var(--accent)] focus:[--tw-ring-color:var(--accent)]   "
+                      :class="{ 'border-[var(--status-error)]': errors.__account_label }"
                     >
-                    <p class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                    <p class="text-xs text-[var(--text-muted)] ">
                       A friendly name to identify this account (e.g. your email address or team name)
                     </p>
                     <p
                       v-if="errors.__account_label"
-                      class="text-xs text-red-500"
+                      class="text-xs text-[var(--status-error)]"
                     >
                       {{ errors.__account_label }}
                     </p>
@@ -440,12 +440,12 @@
                     >
                       <label
                         :for="property.key"
-                        class="block text-sm font-medium [color:var(--text-primary)] dark:[color:var(--text-secondary)]"
+                        class="block text-sm font-medium text-[var(--text-primary)] "
                       >
                         {{ property.title }}
                         <span
                           v-if="property.required"
-                          class="text-red-500"
+                          class="text-[var(--status-error)]"
                         >*</span>
                       </label>
 
@@ -458,8 +458,8 @@
                           :id="property.key"
                           v-model="formData[property.key]"
                           :required="property.required"
-                          class="w-full appearance-none rounded-lg border [border-color:var(--text-secondary)] px-3 py-2 pr-8 text-sm focus:border-blue-500 focus:ring-blue-500 dark:[border-color:var(--text-secondary)] dark:[background:var(--border-default-strong)] dark:[color:var(--bg-surface)]"
-                          :class="{ 'border-red-500': errors[property.key] }"
+                          class="w-full appearance-none rounded-lg border border-[var(--border-subtle)] px-3 py-2 pr-8 text-sm focus:border-[var(--accent)] focus:[--tw-ring-color:var(--accent)]   "
+                          :class="{ 'border-[var(--status-error)]': errors[property.key] }"
                         >
                           <option
                             value=""
@@ -477,7 +477,7 @@
                         </select>
                         <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
                           <svg
-                            class="h-4 w-4 [color:var(--text-dim)]"
+                            class="h-4 w-4 text-[var(--text-dim)]"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -493,7 +493,7 @@
                         <button
                           v-if="property.selectBoxId && !selectOptionsLoading[property.key]"
                           type="button"
-                          class="absolute right-7 top-1/2 -translate-y-1/2 [color:var(--text-dim)] hover:[color:var(--text-secondary)] dark:hover:[color:var(--text-primary)]"
+                          class="absolute right-7 top-1/2 -translate-y-1/2 text-[var(--text-dim)] hover:text-[var(--text-secondary)] "
                           title="Refresh options"
                           @click="fetchSelectOptions(property)"
                         >
@@ -524,13 +524,13 @@
                           :type="passwordVisible[property.key] ? 'text' : 'password'"
                           :placeholder="property.placeholder"
                           :required="property.required"
-                          class="w-full rounded-lg border [border-color:var(--text-secondary)] px-3 py-2 pr-10 text-sm focus:border-blue-500 focus:ring-blue-500 dark:[border-color:var(--text-secondary)] dark:[background:var(--border-default-strong)] dark:[color:var(--bg-surface)]"
-                          :class="{ 'border-red-500': errors[property.key] }"
+                          class="w-full rounded-lg border border-[var(--border-subtle)] px-3 py-2 pr-10 text-sm focus:border-[var(--accent)] focus:[--tw-ring-color:var(--accent)]   "
+                          :class="{ 'border-[var(--status-error)]': errors[property.key] }"
                           @blur="onDependencyFieldBlur(property.key)"
                         >
                         <button
                           type="button"
-                          class="absolute inset-y-0 right-0 flex items-center pr-3 [color:var(--text-dim)] hover:[color:var(--text-secondary)] dark:hover:[color:var(--text-secondary)]"
+                          class="absolute inset-y-0 right-0 flex items-center pr-3 text-[var(--text-dim)] hover:text-[var(--text-secondary)] "
                           :title="passwordVisible[property.key] ? 'Hide password' : 'Show password'"
                           @click="passwordVisible[property.key] = !passwordVisible[property.key]"
                         >
@@ -570,19 +570,19 @@
                         :type="property.type"
                         :placeholder="property.placeholder"
                         :required="property.required"
-                        class="w-full rounded-lg border [border-color:var(--text-secondary)] px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 dark:[border-color:var(--text-secondary)] dark:[background:var(--border-default-strong)] dark:[color:var(--bg-surface)]"
-                        :class="{ 'border-red-500': errors[property.key] }"
+                        class="w-full rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm focus:border-[var(--accent)] focus:[--tw-ring-color:var(--accent)]   "
+                        :class="{ 'border-[var(--status-error)]': errors[property.key] }"
                         @blur="onDependencyFieldBlur(property.key)"
                       >
                       <p
                         v-if="property.hint"
-                        class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]"
+                        class="text-xs text-[var(--text-muted)] "
                       >
                         {{ property.hint }}
                       </p>
                       <p
                         v-if="errors[property.key]"
-                        class="text-xs text-red-500"
+                        class="text-xs text-[var(--status-error)]"
                       >
                         {{ errors[property.key] }}
                       </p>
@@ -592,7 +592,7 @@
                   <div class="space-y-2">
                     <button
                       :disabled="isLoading"
-                      class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium [color:var(--bg-surface)] transition-colors hover:bg-blue-700 flex items-center justify-center"
+                      class="w-full rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-hover)] flex items-center justify-center"
                       @click="handleConnect()"
                     >
                       <svg
@@ -619,14 +619,14 @@
                         ? (isEditingAccount ? 'Saving...' : 'Connecting...')
                         : (isEditingAccount ? 'Save Changes' : 'Connect Now') }}
                     </button>
-                    <p class="text-xs [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                    <p class="text-xs text-[var(--text-muted)] ">
                       {{ isEditingAccount
                         ? 'Update and save credentials for this connected account'
                         : 'Connect your account to start using this integration' }}
                     </p>
                     <p
                       v-if="connectMessage"
-                      class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)]"
+                      class="text-sm text-[var(--text-secondary)] "
                     >
                       {{ connectMessage }}
                     </p>
@@ -636,7 +636,7 @@
 
               <!-- Guide Links -->
               <!-- <div v-if="integration.guideLinks && integration.guideLinks.length > 0" class="space-y-4">
-                <h2 class="text-xl font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">Guides & Documentation</h2>
+                <h2 class="text-xl font-semibold text-[var(--text-primary)] ">Guides & Documentation</h2>
                 <div class="space-y-3">
                   <a
                     v-for="link in integration.guideLinks"
@@ -644,20 +644,20 @@
                     :href="link.url"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="flex items-center justify-between rounded-lg border [border-color:var(--border-default-subtle)] p-4 [border-color:var(--bg-surface-hover)] dark:[border-color:var(--text-secondary)] dark:hover:[background:var(--bg-surface-alt)]"
+                    class="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] p-4 border-[var(--border-subtle)]  "
                   >
                     <div class="flex items-center gap-3">
-                      <div class="flex h-8 w-8 items-center justify-center rounded-lg [background:var(--bg-surface-hover)] dark:[background:var(--border-default-strong)]">
-                        <svg class="h-4 w-4 [color:var(--text-secondary)] dark:[color:var(--text-dim)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--bg-surface-hover)] ">
+                        <svg class="h-4 w-4 text-[var(--text-secondary)] " fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                       </div>
                       <div>
-                        <h3 class="font-medium [color:var(--bg-page)] dark:[color:var(--bg-surface)]">{{ link.title }}</h3>
-                        <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">{{ link.description }}</p>
+                        <h3 class="font-medium text-[var(--text-primary)] ">{{ link.title }}</h3>
+                        <p class="text-sm text-[var(--text-secondary)] ">{{ link.description }}</p>
                       </div>
                     </div>
-                    <svg class="h-4 w-4 [color:var(--text-dim)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4 text-[var(--text-dim)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
                   </a>
@@ -668,62 +668,62 @@
                    integration, and only when recent turns have been recorded. -->
               <div
                 v-if="integration.id === 'claude-code' && !claudeUsageLoading && claudeUsageSummary.totalTurns > 0"
-                class="mt-6 rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]"
+                class="mt-6 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  "
               >
-                <h2 class="mb-1 text-xl font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                <h2 class="mb-1 text-xl font-semibold text-[var(--text-primary)] ">
                   Recent usage
                 </h2>
-                <p class="mb-4 text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">
+                <p class="mb-4 text-sm text-[var(--text-secondary)] ">
                   Rolling 24-hour window, captured from Claude Code's stream-json
                   result events. Max/Pro quota limits are enforced server-side by
                   Anthropic and aren't shown here.
                 </p>
                 <div class="grid grid-cols-2 gap-4 md:grid-cols-3">
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Turns
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       {{ claudeUsageSummary.totalTurns.toLocaleString() }}
                     </div>
                   </div>
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Input tokens
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       {{ claudeUsageSummary.totalInputTokens.toLocaleString() }}
                     </div>
                   </div>
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Output tokens
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       {{ claudeUsageSummary.totalOutputTokens.toLocaleString() }}
                     </div>
                   </div>
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Cache read
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       {{ claudeUsageSummary.totalCacheReadTokens.toLocaleString() }}
                     </div>
                   </div>
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Est. cost
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       ${{ claudeUsageSummary.totalCostUsd.toFixed(4) }}
                     </div>
                   </div>
-                  <div class="rounded-lg [border-color:var(--bg-surface-hover)] p-3 dark:[background:var(--border-default-strong)]/50">
-                    <div class="text-xs uppercase tracking-wide [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                  <div class="rounded-lg border-[var(--border-subtle)] p-3 ">
+                    <div class="text-xs uppercase tracking-wide text-[var(--text-muted)] ">
                       Last turn
                     </div>
-                    <div class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                    <div class="text-lg font-semibold text-[var(--text-primary)] ">
                       {{ claudeUsageSummary.lastTurnRelative }}
                     </div>
                   </div>
@@ -739,12 +739,12 @@
                 <div class="lg:col-span-8">
                   <div
                     v-if="integration.installationGuide"
-                    class="rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]"
+                    class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  "
                   >
-                    <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-4">
+                    <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-4">
                       {{ integration.installationGuide.title }}
                     </h3>
-                    <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] mb-6">
+                    <p class="text-sm text-[var(--text-secondary)]  mb-6">
                       {{ integration.installationGuide.description }}
                     </p>
 
@@ -752,18 +752,18 @@
                       <div
                         v-for="(step, index) in integration.installationGuide.steps"
                         :key="index"
-                        class="border-l-2 border-blue-200 dark:border-blue-800 pl-4"
+                        class="border-l-2 border-[var(--accent-border)]  pl-4"
                       >
                         <div class="flex items-center gap-2 mb-2">
-                          <div class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 [color:var(--bg-surface)] text-xs font-medium">
+                          <div class="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--text-on-accent)] text-xs font-medium">
                             {{ index + 1 }}
                           </div>
-                          <h4 class="font-medium [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                          <h4 class="font-medium text-[var(--text-primary)] ">
                             {{ step.title }}
                           </h4>
                         </div>
                         <div class="prose prose-sm max-w-none dark:prose-invert">
-                          <div class="whitespace-pre-wrap text-sm [color:var(--text-secondary)] dark:[color:var(--text-secondary)] leading-relaxed">
+                          <div class="whitespace-pre-wrap text-sm text-[var(--text-secondary)]  leading-relaxed">
                             {{ step.content }}
                           </div>
                         </div>
@@ -772,12 +772,12 @@
 
                     <div
                       v-if="integration.installationGuide.importantNotes && integration.installationGuide.importantNotes.length > 0"
-                      class="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800"
+                      class="mt-6 p-4 bg-[var(--status-warning-soft)] rounded-lg border border-[var(--status-warning)]"
                     >
-                      <h5 class="font-medium text-amber-900 dark:text-amber-100 mb-2">
+                      <h5 class="font-medium text-[var(--status-warning)] mb-2">
                         Important Notes
                       </h5>
-                      <ul class="space-y-1 text-sm text-amber-800 dark:text-amber-200">
+                      <ul class="space-y-1 text-sm text-[var(--status-warning)]">
                         <li
                           v-for="(note, index) in integration.installationGuide.importantNotes"
                           :key="index"
@@ -806,9 +806,9 @@
                   <!-- Additional Resources -->
                   <div
                     v-if="integration.guideLinks && integration.guideLinks.length > 0"
-                    class="rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]"
+                    class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  "
                   >
-                    <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-4">
+                    <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-4">
                       Additional Resources
                     </h3>
                     <div class="space-y-3">
@@ -818,12 +818,12 @@
                         :href="link.url"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="flex items-center justify-between rounded-lg border [border-color:var(--border-default-subtle)] p-4 [border-color:var(--bg-surface-hover)] dark:[border-color:var(--text-secondary)] dark:hover:[background:var(--bg-surface-alt)]"
+                        class="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] p-4 border-[var(--border-subtle)]  "
                       >
                         <div class="flex items-center gap-3">
-                          <div class="flex h-8 w-8 items-center justify-center rounded-lg [background:var(--bg-surface-hover)] dark:[background:var(--border-default-strong)]">
+                          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--bg-surface-hover)] ">
                             <svg
-                              class="h-4 w-4 [color:var(--text-secondary)] dark:[color:var(--text-dim)]"
+                              class="h-4 w-4 text-[var(--text-secondary)] "
                               fill="none"
                               stroke="currentColor"
                               viewBox="0 0 24 24"
@@ -837,12 +837,12 @@
                             </svg>
                           </div>
                           <div>
-                            <h4 class="font-medium [color:var(--bg-page)] dark:[color:var(--bg-surface)] text-sm">{{ link.title }}</h4>
-                            <p class="text-xs [color:var(--text-secondary)] dark:[color:var(--text-dim)]">{{ link.description }}</p>
+                            <h4 class="font-medium text-[var(--text-primary)]  text-sm">{{ link.title }}</h4>
+                            <p class="text-xs text-[var(--text-secondary)] ">{{ link.description }}</p>
                           </div>
                         </div>
                         <svg
-                          class="h-4 w-4 [color:var(--text-dim)] flex-shrink-0"
+                          class="h-4 w-4 text-[var(--text-dim)] flex-shrink-0"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -859,40 +859,40 @@
                   </div>
 
                   <!-- Quick Info -->
-                  <div class="rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]">
-                    <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-4">
+                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  ">
+                    <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-4">
                       Quick Info
                     </h3>
                     <div class="space-y-3">
                       <div>
-                        <p class="text-xs font-medium [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                        <p class="text-xs font-medium text-[var(--text-muted)] ">
                           Category
                         </p>
-                        <p class="text-sm [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                        <p class="text-sm text-[var(--text-primary)] ">
                           {{ integration.category }}
                         </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                        <p class="text-xs font-medium text-[var(--text-muted)] ">
                           Version
                         </p>
-                        <p class="text-sm [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                        <p class="text-sm text-[var(--text-primary)] ">
                           {{ integration.version || '1.0.0' }}
                         </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                        <p class="text-xs font-medium text-[var(--text-muted)] ">
                           Last Updated
                         </p>
-                        <p class="text-sm [color:var(--bg-page)] dark:[color:var(--bg-surface)] capitalize">
+                        <p class="text-sm text-[var(--text-primary)]  capitalize">
                           {{ formatFuzzyTime(integration.lastUpdated) }}
                         </p>
                       </div>
                       <div>
-                        <p class="text-xs font-medium [color:var(--text-muted)] dark:[color:var(--text-dim)]">
+                        <p class="text-xs font-medium text-[var(--text-muted)] ">
                           Developer
                         </p>
-                        <p class="text-sm [color:var(--bg-page)] dark:[color:var(--bg-surface)]">
+                        <p class="text-sm text-[var(--text-primary)] ">
                           {{ integration.developer }}
                         </p>
                       </div>
@@ -902,12 +902,12 @@
               </div>
 
               <!-- Support -->
-              <!-- <div class="rounded-xl border [border-color:var(--border-default-subtle)] [background:var(--bg-surface)] p-6 dark:[border-color:var(--text-secondary)] dark:[background:var(--bg-surface-alt)]">
-                <h3 class="text-lg font-semibold [color:var(--bg-page)] dark:[color:var(--bg-surface)] mb-4">Need Help?</h3>
+              <!-- <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  ">
+                <h3 class="text-lg font-semibold text-[var(--text-primary)]  mb-4">Need Help?</h3>
                 <div class="space-y-3">
                   <a
                     href="#"
-                    class="flex items-center gap-3 text-sm [color:var(--text-secondary)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[color:var(--bg-surface)]"
+                    class="flex items-center gap-3 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]  "
                   >
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -916,7 +916,7 @@
                   </a>
                   <a
                     href="#"
-                    class="flex items-center gap-3 text-sm [color:var(--text-secondary)] hover:[color:var(--bg-page)] dark:[color:var(--text-dim)] dark:hover:[color:var(--bg-surface)]"
+                    class="flex items-center gap-3 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]  "
                   >
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -934,8 +934,8 @@
             class="flex h-64 items-center justify-center"
           >
             <div class="text-center">
-              <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 [border-color:var(--text-secondary)] border-t-blue-600" />
-              <p class="text-sm [color:var(--text-secondary)] dark:[color:var(--text-dim)]">
+              <div class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--border-subtle)] border-t-blue-600" />
+              <p class="text-sm text-[var(--text-secondary)] ">
                 Loading integration details...
               </p>
             </div>
@@ -1628,14 +1628,14 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
 
 .overflow-auto::-webkit-scrollbar-thumb,
 .overflow-y-auto::-webkit-scrollbar-thumb {
-  background: var(--border-default-default);
+  background: var(--bg-surface-hover);
   border-radius: 4px;
   transition: background-color 150ms;
 }
 
 .overflow-auto::-webkit-scrollbar-thumb:hover,
 .overflow-y-auto::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--bg-surface-hover);
 }
 
 .overflow-auto::-webkit-scrollbar-corner,
@@ -1667,10 +1667,10 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
   align-items: start;
   padding: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-default-strong) 56.25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 56.25%, transparent);
   border-radius: 24px;
   background: color-mix(in srgb, var(--bg-surface) 68%, transparent);
-  box-shadow: 0 28px 80px color-mix(in srgb, var(--shadow) 33.3333%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.333333), inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .integration-detail-nav {
@@ -1683,7 +1683,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
   gap: 8px;
   margin: 0;
   padding: 26px 18px;
-  border-right: 1px solid var(--border-default-default);
+  border-right: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-surface-alt) 56%, transparent);
 }
 
@@ -1770,7 +1770,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
 .integration-detail-nav-state {
   margin-top: auto;
   padding: 12px;
-  border: 1px solid var(--border-default-default);
+  border: 1px solid var(--border-default);
   border-radius: 14px;
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1783,7 +1783,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
   height: 7px;
   margin-right: 6px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--bg-surface-hover);
 }
 
 .integration-detail-nav-state .integration-detail-state-on {
@@ -1818,16 +1818,16 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
 
 .integration-detail-main .rounded-xl.border,
 .integration-detail-main .rounded-lg.border {
-  border-color: var(--border-default-default);
-  background: color-mix(in srgb, var(--border-default-strong) 21.875%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
+  border-color: var(--border-default);
+  background: var(--bg-surface-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .integration-detail-main input,
 .integration-detail-main select,
 .integration-detail-main textarea {
   min-height: 40px;
-  border-color: color-mix(in srgb, var(--border-default-strong) 62.5%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 62.5%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface-alt) 68%, transparent);
   color: var(--text-primary);
@@ -1841,11 +1841,11 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
   outline: none;
 }
 
-.integration-detail-main button.bg-blue-600 {
+.integration-detail-main button.bg-[var(--accent)] {
   border: 1px solid color-mix(in srgb, var(--accent-hover) 30%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--bg-surface);
+  color: var(--text-on-accent);
 }
 
 .integration-detail-status-on {
@@ -1867,7 +1867,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-requir
     position: static;
     min-height: auto;
     border-right: 0;
-    border-bottom: 1px solid var(--border-default-default);
+    border-bottom: 1px solid var(--border-default);
   }
 
   .integration-detail-nav-copy {
