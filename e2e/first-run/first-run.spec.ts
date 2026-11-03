@@ -85,7 +85,7 @@ async function state(i: Install) { return JSON.parse(await fs.readFile(i.statePa
 async function welcome(i: Install) { await i.page.getByRole('button', { name: /Get started/ }).click(); await expect(i.page.getByText('Create or connect your Sulla account')).toBeVisible(); }
 async function enterAccount(i: Install) { await welcome(i); await i.page.locator('#email').fill('person@example.test'); await i.page.locator('form.fr-account-step').getByRole('button', { name: 'Continue', exact: true }).click(); await i.page.locator('#cloudPassword').fill('password123'); }
 async function submitCloud(i: Install) { await i.page.locator('form.fr-account-step').getByRole('button', { name: /^(Continue|Retry|Create account and continue|Sign in and continue)$/ }).click(); }
-async function reachAi(i: Install) { await enterAccount(i); await submitCloud(i); await i.page.getByRole('button', { name: 'Sync everything' }).click(); await expect(i.page.getByText('Connect the AI you already use.')).toBeVisible(); }
+async function reachAi(i: Install) { await enterAccount(i); await submitCloud(i); await i.page.getByRole('button', { name: 'Turn on recommended' }).click(); await expect(i.page.getByText('Connect the AI you already use.')).toBeVisible(); }
 async function reachFinishing(i: Install) { await reachAi(i); await i.page.getByRole('button', { name: "I'll do this later" }).click(); await expect(i.page.getByText('Finishing setup')).toBeVisible(); await expect.poll(async() => (await state(i)).step).toBe(3); }
 async function writeState(home: string, value: unknown) { const dir = expectedUserData(home); await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'first-run-state.json'), `${ JSON.stringify(value) }\n`, { mode: 0o600 }); }
 
