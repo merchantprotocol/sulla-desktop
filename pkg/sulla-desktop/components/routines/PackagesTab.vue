@@ -17,7 +17,7 @@
       <nav class="nav-list">
         <button :class="{ selected: view === 'workflows' }" @click="showSection('workflows')"><UseCaseIcon name="workflow" /><span>Workflows</span></button>
         <button :class="{ selected: view === 'skills' }" @click="showSection('skills')"><UseCaseIcon name="skill" /><span>Saved Skills</span></button>
-        <button :class="{ selected: view === 'agents' }" @click="showSection('agents')"><UseCaseIcon name="agent" /><span>Custom Agents</span></button>
+        <button :class="{ selected: view === 'agents' }" @click="showSection('agents')"><UseCaseIcon name="agent" /><span>Agents</span></button>
         <button :class="{ selected: view === 'recipes' }" @click="showSection('recipes')"><UseCaseIcon name="recipe" /><span>Recipes</span></button>
       </nav>
       <hr class="rail-separator">

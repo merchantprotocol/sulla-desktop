@@ -15,6 +15,8 @@
     <template v-else-if="name === 'check'"><path d="m5 12.5 4.5 4.5L19 7.5"/></template>
     <template v-else-if="name === 'close'"><path d="M6 6l12 12M18 6 6 18"/></template>
     <template v-else-if="name === 'agent'"><rect x="5" y="7" width="14" height="12" rx="3"/><path d="M9 4v3m6-3v3M9 12h.01M15 12h.01M9.5 16h5"/></template>
+    <template v-else-if="name === 'manager'"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/></template>
+    <template v-else-if="name === 'warn'"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></template>
     <template v-else-if="name === 'skill'"><path d="M12 3.8l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 17l-5.2 2.8 1-5.8L3.6 9.9l5.8-.8z"/></template>
     <template v-else-if="name === 'workflow'"><rect x="3" y="4" width="6" height="5" rx="1.5"/><rect x="15" y="15" width="6" height="5" rx="1.5"/><path d="M6 9v4a2 2 0 0 0 2 2h7"/></template>
     <template v-else-if="name === 'function'"><path d="M8 4c-2 0-3 1-3 3v2c0 1-1 3-2 3 1 0 2 2 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1 1 3 2 3-1 0-2 2-2 3v2c0 2-1 3-3 3"/></template>
