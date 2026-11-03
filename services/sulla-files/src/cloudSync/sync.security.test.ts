@@ -5,12 +5,13 @@
 
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { sealManifest, signHead, stateHash, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import { CloudPuller, type ApplyRemoteInput, type ForkLocalInput, type LocalFileState, type PullRepository } from './pull.js';
 import { commitStateHash } from './push.js';
-import { parseManifestPlain, type RemoteVersion } from './validation.js';
+import { parseManifestPlain, validateNamespaceManifest, type RemoteVersion } from './validation.js';
 
 const COLLECTION = '0b6f0c32-4d1e-4c8a-9a59-2f9f6d1e0a11';
 const DEVICE = 'laptop';
@@ -144,6 +145,12 @@ test('encrypted folder create, rename, and delete apply without content download
   assert.deepEqual(repository.folders.get(fileId),{path:'Renamed folder',versionId:parent,deleted:true});
   assert.equal(repository.files.size,0,'folder metadata is not invented as a zero-byte file');
   assert.equal(repository.journal.length,0,'a pulled folder cannot enter the file upload journal');
+});
+
+test('Goal N shared namespace validator accepts the additive KAT exactly', () => {
+  const kat = JSON.parse(readFileSync(new URL('./__fixtures__/files-sync-namespace-v2-kat.json', import.meta.url), 'utf8'));
+  for (const vector of kat.valid) assert.equal(validateNamespaceManifest(vector.manifest), null, vector.label);
+  for (const vector of kat.invalid) assert.equal(validateNamespaceManifest(vector.manifest), vector.reason, vector.label);
 });
 
 test('Goal N namespace KAT pulls a nested encrypted file once without changing the v1 envelope', async()=>{

@@ -465,7 +465,7 @@ export class PgCloudSyncRepository implements PullRepository {
         // Delete only this stable identity. Descendants are independent encrypted items and remain visible.
         if (prior?.path) await client.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2 AND id=$3', [collectionId, prior.path, remote.fileId]);
       } else {
-        const path = await this.freeFolderPath(client, collectionId, manifest.path, remote.fileId, input.remoteDeviceLabel);
+        const path = await this.freeFolderPath(client, collectionId, manifest.path, remote.fileId, input.remoteDeviceLabel, !prior?.path);
         await ensureStoredFileParents(client, collectionId, `${ path }/.folder`, this.actor);
         if (prior?.path && prior.path !== path) await this.moveStoredSubtree(client, collectionId, prior.path, path);
         const existing = (await client.query('SELECT id::text AS id FROM file_folders WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
@@ -478,17 +478,21 @@ export class PgCloudSyncRepository implements PullRepository {
           await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id) VALUES($1,$2,$3,'user',$4)`,
             [remote.fileId, collectionId, path, this.actor.userId]);
         }
-        manifest.path = path;
+        await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
+          ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,
+        [collectionId, remote.fileId, remote.versionId, path, false]);
       }
-      await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
-        ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,
-      [collectionId, remote.fileId, remote.versionId, manifest.deleted ? null : manifest.path, manifest.deleted]);
+      if (manifest.deleted) {
+        await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,TRUE)
+          ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=COALESCE(EXCLUDED.path,files_cloud_folders.path),deleted=TRUE,updated_at=NOW()`,
+        [collectionId, remote.fileId, remote.versionId, prior?.path ?? null]);
+      }
       await this.upsertCloudHead(client, collectionId, remote.fileId, remote.versionId, manifest.deleted, remote.seq);
     });
   }
 
   async cloudFolderPath(collectionId:string, fileId:string):Promise<string | null> {
-    const row = (await this.db.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 AND deleted=FALSE', [collectionId, fileId])).rows[0];
+    const row = (await this.db.query('SELECT path FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2', [collectionId, fileId])).rows[0];
     return typeof row?.path === 'string' ? row.path : null;
   }
 
@@ -607,14 +611,14 @@ export class PgCloudSyncRepository implements PullRepository {
   }
 
 
-  private async freeFolderPath(client:pg.PoolClient, collectionId:string, wanted:string, sameFolderId:string, label:string):Promise<string> {
+  private async freeFolderPath(client:pg.PoolClient, collectionId:string, wanted:string, sameFolderId:string, label:string, mayAdoptSynthetic:boolean):Promise<string> {
     for (const candidate of [wanted, conflictPath(wanted, label), conflictPath(wanted, `${ label }-2`)]) {
       try {
         await assertStoredFolderPath(client, collectionId, candidate);
         const occupant = (await client.query('SELECT id::text AS id FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, candidate])).rows[0];
         if (!occupant || occupant.id === sameFolderId) return candidate;
         const claimed = (await client.query('SELECT 1 FROM files_cloud_folders WHERE collection_id=$1 AND file_id=$2 AND deleted=FALSE', [collectionId, occupant.id])).rowCount;
-        if (!claimed && candidate === wanted) return candidate;
+        if (!claimed && candidate === wanted && mayAdoptSynthetic) return candidate;
       } catch (error) {
         if (!(error instanceof StoredNamespaceConflict)) throw error;
       }

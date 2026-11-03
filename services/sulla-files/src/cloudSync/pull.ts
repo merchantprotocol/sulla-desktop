@@ -187,13 +187,15 @@ export class CloudPuller {
       if (!parentPath) throw new CloudSyncIntegrityError('namespace parent folder is unavailable');
     }
     const path = parentPath ? `${ parentPath }/${ manifest.name }` : manifest.name;
+    const mtime = new Date(manifest.mtime);
+    if (!Number.isFinite(mtime.getTime())) throw new CloudSyncIntegrityError('namespace modification time is invalid');
     return {
       v: 1,
       path,
       kind: manifest.kind,
       mime: manifest.mime ?? (manifest.kind === 'folder' ? 'application/x-directory' : 'application/octet-stream'),
       size: manifest.size,
-      mtime: new Date(manifest.mtime).toISOString(),
+      mtime: mtime.toISOString(),
       sha256: manifest.sha256 ?? '0'.repeat(64),
       chunks: manifest.chunks,
       deleted: manifest.deleted,
