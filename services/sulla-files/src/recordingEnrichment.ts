@@ -9,11 +9,13 @@ import { tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
+
 import type pg from 'pg';
 
 const run = promisify(execFile);
 
-interface Segment { start: number; end: number; text: string }
+export interface Segment { start: number; end: number; text: string }
 interface Runtime { whisper: string; model: string; ffmpeg?: string }
 
 async function executable(candidates:(string | undefined)[]):Promise<string | undefined> {
@@ -73,6 +75,56 @@ function chapters(segments:Segment[]):Array<{ start:number; end:number; title:st
   }
 
   return groups.map(group => ({ start: Math.round(group.start), end: Math.max(Math.round(group.end), Math.round(group.start) + 1), title: title(group.text) }));
+}
+
+
+export interface RecordingEnrichmentOutput {
+  fileId: string;
+  versionId: string;
+  language: string | null;
+  transcript: Segment[];
+  chapters: Array<{ start:number; end:number; title:string }>;
+  duration: number | null;
+}
+
+/** Final, lock-protected persistence boundary for transcript-derived plaintext. */
+export async function persistRecordingEnrichment(db:pg.Pool, output:RecordingEnrichmentOutput):Promise<'stored' | 'abandoned-ineligible' | 'abandoned-stale'> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const file = (await client.query(`SELECT f.path,f.current_version_id,f.deleted_at,c.system_area,
+      EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
+      FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f,c`, [output.fileId])).rows[0];
+    if (!file || file.deleted_at || file.protected || UNINDEXED_SYSTEM_AREAS.has(file.system_area)) {
+      await client.query('DELETE FROM recording_metadata WHERE file_id=$1', [output.fileId]);
+      await client.query('DELETE FROM file_search_text WHERE file_id=$1', [output.fileId]);
+      await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [output.fileId]);
+      await client.query('DELETE FROM file_index_jobs WHERE file_id=$1', [output.fileId]);
+      await client.query('DELETE FROM recording_enrichment_jobs WHERE file_id=$1', [output.fileId]);
+      await client.query('COMMIT');
+      return 'abandoned-ineligible';
+    }
+    if (file.current_version_id !== output.versionId) {
+      await client.query('DELETE FROM recording_enrichment_jobs WHERE version_id=$1', [output.versionId]);
+      await client.query('COMMIT');
+      return 'abandoned-stale';
+    }
+    await client.query(`INSERT INTO recording_metadata(file_id,version_id,language,transcript,chapters,duration_seconds,generator)
+      VALUES($1,$2,$3,$4,$5,$6,'whisper.cpp') ON CONFLICT(file_id) DO UPDATE SET version_id=EXCLUDED.version_id,language=EXCLUDED.language,
+      transcript=EXCLUDED.transcript,chapters=EXCLUDED.chapters,duration_seconds=EXCLUDED.duration_seconds,generator=EXCLUDED.generator,generated_at=NOW()`,
+    [output.fileId, output.versionId, output.language, JSON.stringify(output.transcript), JSON.stringify(output.chapters), output.duration]);
+    const text = output.transcript.map(segment => segment.text).join(' ');
+    await client.query('UPDATE file_search_text SET search_text=$2 WHERE file_id=$1', [output.fileId, text]);
+    await client.query("UPDATE files SET extraction_status='indexed',extracted_at=NOW() WHERE id=$1", [output.fileId]);
+    await client.query("UPDATE recording_enrichment_jobs SET status='completed',finished_at=NOW() WHERE version_id=$1", [output.versionId]);
+    await client.query('COMMIT');
+    return 'stored';
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -138,15 +190,10 @@ export class RecordingEnrichmentQueue {
       const raw = JSON.parse(await readFile(`${ output }.json`, 'utf8'));
       const transcript = normalize(raw); const chapterList = chapters(transcript);
       const duration = transcript.at(-1)?.end ?? null; const language = raw?.result?.language ?? raw?.language ?? null;
-      await this.db.query(`INSERT INTO recording_metadata(file_id,version_id,language,transcript,chapters,duration_seconds,generator)
-        VALUES($1,$2,$3,$4,$5,$6,'whisper.cpp') ON CONFLICT(file_id) DO UPDATE SET version_id=EXCLUDED.version_id,language=EXCLUDED.language,
-        transcript=EXCLUDED.transcript,chapters=EXCLUDED.chapters,duration_seconds=EXCLUDED.duration_seconds,generator=EXCLUDED.generator,generated_at=NOW()`,
-      [file.id, job.version_id, language, JSON.stringify(transcript), JSON.stringify(chapterList), duration]);
-      const text = transcript.map(segment => segment.text).join(' ');
-      await this.db.query('UPDATE file_search_text SET search_text=$2 WHERE file_id=$1', [file.id, text]);
-      await this.db.query("UPDATE files SET extraction_status='indexed',extracted_at=NOW() WHERE id=$1", [file.id]);
-      await this.db.query("UPDATE recording_enrichment_jobs SET status='completed',finished_at=NOW() WHERE version_id=$1", [job.version_id]);
-      console.log(`[SullaFiles] enriched recording ${ basename(file.path) } with ${ transcript.length } transcript segments and ${ chapterList.length } chapters`);
+      const outcome = await persistRecordingEnrichment(this.db, {
+        fileId: file.id, versionId: job.version_id, language, transcript, chapters: chapterList, duration,
+      });
+      if (outcome === 'stored') console.log(`[SullaFiles] enriched recording ${ basename(file.path) } with ${ transcript.length } transcript segments and ${ chapterList.length } chapters`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error); const terminal = job.attempts >= 3;
       await this.db.query(`UPDATE recording_enrichment_jobs SET status=$2,last_error=$3,available_at=NOW()+INTERVAL '30 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END WHERE version_id=$1`, [job.version_id, terminal ? 'failed' : 'pending', message.slice(0, 500)]);
