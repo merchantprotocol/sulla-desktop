@@ -8,16 +8,16 @@
  * mandatory. `placements` lists the hosts that are *eligible* to run a tool:
  * a host only offers a tool when it is eligible here AND it implements it.
  *
- * Placement types and the canonical tool id come directly from the portable
- * core so Desktop and mobile consumers cannot silently drift.
+ * Placement types come directly from the portable core so Desktop and mobile
+ * consumers cannot silently drift. This remains a type-only import because the
+ * tools service image intentionally copies Desktop agent code without packages.
  */
 
-import {
-  toolId,
-  type ToolCredential,
-  type ToolPlacement,
-  type ToolPlacementMetadata,
-  type ToolSideEffect,
+import type {
+  ToolCredential,
+  ToolPlacement,
+  ToolPlacementMetadata,
+  ToolSideEffect,
 } from '../../../../packages/agent-core/src/types';
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
 import policy from './tool-placement-policy.json';
@@ -40,7 +40,10 @@ export interface PlacementManifest {
 
 type FamilyName = keyof typeof policy.families;
 
-export { toolId };
+/** Portable tool id, the same `category/name` form agent-core's ToolSpec uses. */
+export function toolId(category: string, name: string): string {
+  return `${ category }/${ name }`;
+}
 
 /**
  * Name segments that mean sends, posts, pays or deletes (or edits something
