@@ -209,16 +209,35 @@ describe('one launch: hidden and tab children are both jobs', () => {
     expect(result.successBoolean).toBe(true);
   });
 
-  it('records depth on a grandchild tab without blocking it', async() => {
+  it('allows nesting a tab up to the depth cap, then refuses past it', async() => {
     const first = await launchTab('depth-root');
     const job = await getJob(first.jobId);
-    job!.tasks[0].depth = 4;
-    const result = await (parent(first.childThreadId) as any)._validatedCall({
+    job!.tasks[0].depth = 2; // this tab is itself depth 2
+    const grandchild = await (parent(first.childThreadId) as any)._validatedCall({
       tasks: [{ agentId: 'project-manager', prompt: 'deeper', visibility: 'tab' }],
     });
-    expect(result.successBoolean).toBe(true);
-    const child = await getJob(JSON.parse(result.responseString).jobId);
-    expect(child?.tasks[0].depth).toBe(5);
+    expect(grandchild.successBoolean).toBe(true);
+    const grandchildJob = await getJob(JSON.parse(grandchild.responseString).jobId);
+    expect(grandchildJob?.tasks[0].depth).toBe(3);
+
+    job!.tasks[0].depth = 3; // now at the cap
+    const refused = await (parent(first.childThreadId) as any)._validatedCall({
+      tasks: [{ agentId: 'project-manager', prompt: 'too deep', visibility: 'tab' }],
+    });
+    expect(refused.successBoolean).toBe(false);
+    expect(refused.responseString).toContain('max sub-agent depth 3 reached');
+  });
+
+  it('refuses a hidden spawn once the calling thread is already at the depth cap', async() => {
+    const tab = await launchTab('hidden-depth-root');
+    const job = await getJob(tab.jobId);
+    job!.tasks[0].depth = 3; // the tab itself is already at the cap
+    const result = await (parent(tab.childThreadId) as any)._validatedCall({
+      tasks: [{ agentId: 'codex-sol-worker', prompt: 'too deep' }],
+    });
+    expect(result.successBoolean).toBe(false);
+    expect(result.responseString).toContain('max sub-agent depth 3 reached');
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 
