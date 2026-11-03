@@ -525,8 +525,10 @@ export class SpawnAgentWorker extends BaseTool {
         const runLocation = effectiveAgentRunLocation(String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION));
         if (runLocation === 'container') {
           const { modelRouter } = await import('../../languagemodels/modelRouter');
-          const routed = (await modelRouter.resolve('agents', currentDefinition?.model_choice || { mode: 'list' }))[0];
-          const provider = String(subState.metadata.agent?.provider || routed?.provider || '').trim();
+          const { effectiveModelChoice } = await import('../../languagemodels/threadModelChoice');
+          const choice = effectiveModelChoice({ provider: subState.metadata.agent?.provider, model: subState.metadata.agent?.model, metadata: subState.metadata, agentChoice: currentDefinition?.model_choice });
+          const routed = (await modelRouter.resolve('agents', choice))[0];
+          const provider = String(routed?.provider || subState.metadata.agent?.provider || '').trim();
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
           const promptMessage = subState.messages[subState.messages.length - 1];
           if (typeof promptMessage?.content === 'string') {

@@ -1229,6 +1229,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Send token information to AgentPersona
       this.dispatchTokenInfoToAgentPersona(state, reply);
       await extensionHooks.runAction('after_model_response', { response: reply, model: this.llm.getModel(), threadId: state.metadata.threadId });
+      await modelRouter.markSuccess(this.routingCandidates[0]?.provider || this.llm.getProviderName());
 
       return reply;
     } catch (err) {
@@ -1254,17 +1255,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         } catch (serviceError) {
           lastErr = serviceError;
           lastRecovery = classifyLLMFailure(serviceError);
-          if (lastRecovery.kind === 'interrupted') throw serviceError;
-          await modelRouter.markFailure(candidate.provider, serviceError);
+          if (lastRecovery.kind === 'interrupted' || lastRecovery.kind === 'infrastructure') throw serviceError;
+          // Service construction is local routing/runtime work, not evidence that the provider failed.
           continue;
         }
         let recovery = index === 0 ? lastRecovery : classifyLLMFailure(lastErr);
-        const retryCount = recovery.retryPrimary ? Math.min(1, configuredRetries) : 0;
-        const attempts = index === 0 ? retryCount : 1 + Math.min(1, configuredRetries);
+        // The first candidate has already had its initial call above. Transient/unknown failures get two more
+        // attempts (three total); fallback candidates get up to three attempts themselves. Hard quota/auth errors advance.
+        const retryable = recovery.retryPrimary || recovery.kind === 'unknown';
+        const configuredAttempts = Math.max(3, configuredRetries + 1);
+        const attempts = retryable ? (index === 0 ? configuredAttempts - 1 : configuredAttempts) : (index === 0 ? 0 : 1);
 
         for (let attempt = 0; attempt < attempts; attempt++) {
           try {
             throwIfAborted(abortSignal);
+            if (attempt > 0 || index === 0) {
+              const delayMs = (index === 0 ? attempt : attempt - 1) === 0 ? 1_000 : 3_000;
+              await new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(resolve, delayMs);
+                abortSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(abortSignal.reason) }, { once: true });
+              });
+            }
             firstRunTrace('chat', attempt === 0 && index > 0 ? 'fallback route started' : 'provider retry started', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1 });
             const retryMessages = attempt > 0 || index === 0
               ? this.buildReducedRetryMessages(messages)
@@ -1288,12 +1299,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               (reply.metadata as any).retry_model = candidate.model;
             }
             this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
+            await modelRouter.markSuccess(candidate.provider);
             return reply;
           } catch (candidateError) {
             throwIfAborted(abortSignal);
             if (isContainerLifecycleLost(candidateError)) throw candidateError;
             recovery = classifyLLMFailure(candidateError);
-            if (recovery.kind === 'interrupted' || (candidateError as any)?.unsafeToFallback) throw candidateError;
+            if (recovery.kind === 'interrupted' || recovery.kind === 'infrastructure' || (candidateError as any)?.unsafeToFallback) throw candidateError;
             lastErr = candidateError;
             lastRecovery = recovery;
             firstRunTrace('chat', 'provider candidate failed', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1, recoveryKind: recovery.kind, error: redactLLMFailureMessage(candidateError) });
@@ -1301,12 +1313,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           }
         }
 
-        // Transient errors only consume the one bounded same-candidate retry.
-        // Quota, authentication and hard failures suppress this provider until
-        // its reset/expiry and immediately advance through the ordered list.
-        if (!lastRecovery.retryPrimary || lastRecovery.kind === 'quota' || lastRecovery.kind === 'rate_limit' || lastRecovery.kind === 'auth' || lastRecovery.kind === 'unknown') {
-          await modelRouter.markFailure(candidate.provider, lastErr);
-        }
+        // Count at most once per turn/provider, after that provider's bounded attempts are exhausted.
+        await modelRouter.markFailure(candidate.provider, lastErr);
       }
 
       const message = redactLLMFailureMessage(lastErr);

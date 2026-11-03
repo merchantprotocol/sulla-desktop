@@ -10,7 +10,24 @@ import { PROVIDER_FACTORIES } from './index';
 
 export type ModelCandidate = { provider: string; model: string };
 export type EditableState = EditableRoutingState;
-type Health = { status: 'cooling'|'error'; until: number; lastError: string };
+/**
+ * Soft provider health. A provider is never removed from routing: failures only push it towards the back of
+ * the line for a while. `failures` counts consecutive failed turns and resets on the first success.
+ */
+type Health = { status: 'cooling'|'error'; failures: number; until: number; lastError: string };
+
+/** Consecutive failed turns a provider gets before it is backed off at all. */
+export const BACKOFF_FREE_FAILURES = 2;
+const BACKOFF_BASE_MS = 30_000;
+const BACKOFF_MAX_MS = 15 * 60_000;
+/** A provider-stated reset (quota / rate limit) is honoured, but we still re-probe at least this often. */
+const PROVIDER_RESET_MAX_MS = 60 * 60_000;
+
+/** How long a provider sits at the back of the line after `failures` consecutive failed turns. */
+export function backoffMs(failures: number): number {
+  if (failures <= BACKOFF_FREE_FAILURES) return 0;
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - BACKOFF_FREE_FAILURES - 1));
+}
 
 const SETTING = 'modelRouting';
 const HEALTH_SETTING = 'modelRoutingProviderHealth';
@@ -73,6 +90,12 @@ export function recommendedState(connected = providerOrder): EditableState {
   };
 }
 
+export function canonicalProviderId(provider: string): string {
+  const normalized = String(provider || '').trim().toLowerCase();
+  const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai' };
+  return aliases[normalized] || normalized.replace(/_/g, '-');
+}
+
 function normalize(saved: Partial<EditableState>, defaults: EditableState): EditableState {
   const classes = emptyClasses();
   for (const cls of MODEL_CLASSES) classes[cls] = Array.isArray(saved.classes?.[cls]) ? saved.classes![cls] : defaults.classes[cls];
@@ -110,6 +133,8 @@ async function migrateLegacy(): Promise<EditableState> {
 }
 
 export class ModelRouter {
+  /** Optional provider-service source; tests inject one because ESM jest has no `require`. */
+  constructor(private readonly providerService?: () => any) {}
   private health = new Map<string, Health>();
   private loadedHealth = false;
   private listeners = new Set<() => void>();
@@ -117,14 +142,6 @@ export class ModelRouter {
 
   onStatusChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(): void { for (const listener of this.listeners) listener() }
-  private scheduleExpiry(): void {
-    if (this.expiryTimer) clearTimeout(this.expiryTimer);
-    const next = Math.min(...[...this.health.values()].map(item => item.until));
-    if (!Number.isFinite(next)) { this.expiryTimer = null; return }
-    this.expiryTimer = setTimeout(() => { this.expiryTimer = null; this.expire() }, Math.max(0, next - Date.now()));
-    this.expiryTimer.unref?.();
-  }
-
   async getEditableState(): Promise<EditableState> {
     const saved = await SullaSettingsModel.get(SETTING, null);
     return saved && typeof saved === 'object' ? normalize(saved, recommendedState()) : migrateLegacy();
@@ -170,37 +187,54 @@ export class ModelRouter {
     return this.set(current);
   }
 
+  // Health is in memory only. It is a routing hint, never a stored verdict: a restart starts every provider
+  // fresh. The old build persisted hard lockouts under HEALTH_SETTING; wipe them once so they cannot strand us.
   private async loadHealth(): Promise<void> {
     if (this.loadedHealth) return;
-    const saved = await SullaSettingsModel.get(HEALTH_SETTING, {});
-    for (const [provider, value] of Object.entries(saved || {})) this.health.set(provider, value as Health);
-    this.loadedHealth = true; this.expire(); this.scheduleExpiry();
+    this.loadedHealth = true;
+    try {
+      const saved = await SullaSettingsModel.get(HEALTH_SETTING, {});
+      if (!saved || typeof saved !== 'object' || Object.keys(saved).length) await SullaSettingsModel.set(HEALTH_SETTING, {}, 'json');
+    } catch { /* best effort */ }
   }
+  /** Is this provider currently backed off? Expired entries keep their failure count so the next failure backs off longer. */
+  private backedOff(provider: string, now = Date.now()): boolean { const h = this.health.get(canonicalProviderId(provider)); return !!h && h.until > now }
   private expire(): void {
-    const now = Date.now(); let changed = false;
-    for (const [provider, h] of this.health) if (h.until <= now) { this.health.delete(provider); changed = true }
-    if (changed) { void this.persistHealth(); this.emit() }
-    this.scheduleExpiry();
+    const now = Date.now(); let next = Infinity;
+    for (const h of this.health.values()) if (h.until > now) next = Math.min(next, h.until);
+    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    if (Number.isFinite(next)) { this.expiryTimer = setTimeout(() => { this.expiryTimer = null; this.emit(); this.expire() }, Math.max(0, next - now)); this.expiryTimer.unref?.() }
   }
-  private async persistHealth(): Promise<void> { await SullaSettingsModel.set(HEALTH_SETTING, Object.fromEntries(this.health), 'json') }
+  /** Record one failed turn for a provider (after its own retries). Repeated failures back it off longer. */
   async markFailure(provider: string, error: unknown, headers?: Record<string, string>): Promise<void> {
-    await this.loadHealth(); const failure = classifyLLMFailure(error); const text = redactLLMFailureMessage(error);
+    await this.loadHealth(); provider = canonicalProviderId(provider); const failure = classifyLLMFailure(error); const text = redactLLMFailureMessage(error);
+    if (failure.kind === 'interrupted' || failure.kind === 'infrastructure') return;
     const usage = failure.kind === 'quota' || failure.kind === 'rate_limit';
-    const errorHeaders = (error as any)?.headers || (error as any)?.response?.headers || {};
-    const readHeader = (name: string) => headers?.[name] || errorHeaders?.[name] || errorHeaders?.get?.(name);
-    const header = readHeader('retry-after') || readHeader('x-ratelimit-reset') || readHeader('ratelimit-reset');
-    const messageTime = text.match(/(?:reset|retry(?: after)?)[^\d]*(\d{10,13})/i)?.[1];
-    let until = Date.now() + 15 * 60_000;
-    if (header) until = /^\d+$/.test(header) ? (Number(header) > 1e9 ? Number(header) * (Number(header) < 1e12 ? 1000 : 1) : Date.now() + Number(header) * 1000) : Date.parse(header);
-    else if (messageTime) until = Number(messageTime) * (Number(messageTime) < 1e12 ? 1000 : 1);
-    this.health.set(provider, { status: usage ? 'cooling' : 'error', until: Number.isFinite(until) ? until : Date.now() + 15 * 60_000, lastError: text });
-    await this.persistHealth(); this.scheduleExpiry(); this.emit();
+    const failures = (this.health.get(provider)?.failures || 0) + 1;
+    const now = Date.now();
+    let until = now + backoffMs(failures);
+    if (usage) {
+      const errorHeaders = (error as any)?.headers || (error as any)?.response?.headers || {};
+      const readHeader = (name: string) => headers?.[name] || errorHeaders?.[name] || errorHeaders?.get?.(name);
+      const header = readHeader('retry-after') || readHeader('x-ratelimit-reset') || readHeader('ratelimit-reset');
+      const messageTime = text.match(/(?:reset|retry(?: after)?)[^\d]*(\d{10,13})/i)?.[1];
+      let reset = NaN;
+      if (header) reset = /^\d+$/.test(header) ? (Number(header) > 1e9 ? Number(header) * (Number(header) < 1e12 ? 1000 : 1) : now + Number(header) * 1000) : Date.parse(header);
+      else if (messageTime) reset = Number(messageTime) * (Number(messageTime) < 1e12 ? 1000 : 1);
+      if (Number.isFinite(reset) && reset > now) until = Math.max(until, Math.min(reset, now + PROVIDER_RESET_MAX_MS));
+    }
+    this.health.set(provider, { status: usage ? 'cooling' : 'error', failures, until, lastError: text });
+    this.expire(); this.emit();
   }
-  async clear(provider: string): Promise<void> { await this.loadHealth(); if (this.health.delete(provider)) { await this.persistHealth(); this.scheduleExpiry(); this.emit() } }
-  async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); this.expire(); return this.health.has(provider) }
+  /** A successful turn puts the provider straight back in its normal place. */
+  async markSuccess(provider: string): Promise<void> { await this.clear(provider) }
+  async clear(provider: string): Promise<void> { await this.loadHealth(); provider = canonicalProviderId(provider); if (this.health.delete(provider)) { this.expire(); this.emit() } }
+  /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
+  async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
   private async liveProviders(): Promise<Map<string, { connected: boolean; models: { id: string; label: string }[] }>> {
-    const mps = (() => { try { return require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
+    const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
     let available = new Map<string, boolean>();
     try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), provider.connected === true])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
@@ -217,22 +251,37 @@ export class ModelRouter {
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }): Promise<ModelCandidate[]> {
     const state = await this.getEditableState();
     const live = await this.liveProviders();
-    if (choice.mode === 'pin') return live.get(choice.provider)?.connected ? [{ provider: choice.provider, model: choice.model }] : [];
+    if (choice.mode === 'pin') return [{ provider: canonicalProviderId(choice.provider), model: choice.model }];
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
     const source = choice.mode === 'class'
       ? classWithFallback(state.classes, choice.class)
       : (target === 'subconscious' ? state.subconsciousList : state.agentsList).filter(row => row.enabled).flatMap(row => state.classes[row.class].filter(item => item.provider === row.provider).slice(0, 1));
-    const result: ModelCandidate[] = [];
-    for (const item of source) if (live.get(item.provider)?.connected && !await this.isUnavailable(item.provider) && !result.some(x => x.provider === item.provider && x.model === item.model)) result.push(item);
-    return result;
+    // Every connected provider stays in the result. Backed-off providers keep their relative order but move
+    // behind the healthy ones, so they are still tried as a last resort instead of producing "no provider".
+    await this.loadHealth();
+    const now = Date.now(); const healthy: ModelCandidate[] = []; const backedOff: ModelCandidate[] = [];
+    for (const item of source) {
+      if (!live.get(item.provider)?.connected) continue;
+      if ([...healthy, ...backedOff].some(x => x.provider === item.provider && x.model === item.model)) continue;
+      (this.backedOff(item.provider, now) ? backedOff : healthy).push(item);
+    }
+    // If every connected candidate is backed off, health has stopped being useful. Reset it so the next
+    // message starts from the configured top rather than preserving a de-facto lockout.
+    if (!healthy.length && backedOff.length) {
+      this.health.clear();
+      this.expire();
+      this.emit();
+      return backedOff;
+    }
+    return [...healthy, ...backedOff];
   }
 
   async providerInfo(): Promise<RoutingProviderInfo[]> {
-    await this.loadHealth(); this.expire();
-    const live = await this.liveProviders();
-    return providerOrder.map(id => { const h = this.health.get(id); const current = live.get(id); const connected = current?.connected === true; return { id, name: id, connected, local: localProviders.has(id), subscription: subscriptionProviders.has(id), status: !connected ? 'disconnected' : h?.status || 'ready', coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null, lastError: h?.lastError || null, models: current?.models.length ? current.models : [] } });
+    await this.loadHealth();
+    const live = await this.liveProviders(); const now = Date.now();
+    return providerOrder.map(id => { const h = this.backedOff(id, now) ? this.health.get(id) : undefined; const current = live.get(id); const connected = current?.connected === true; return { id, name: id, connected, local: localProviders.has(id), subscription: subscriptionProviders.has(id), status: !connected ? 'disconnected' : h?.status || 'ready', coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null, lastError: h?.lastError || null, models: current?.models.length ? current.models : [] } });
   }
 }
 
