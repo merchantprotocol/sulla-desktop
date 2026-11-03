@@ -500,6 +500,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /** Subclasses set true to run batched tool calls concurrently (results are
    *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
   protected parallelToolCalls = false;
+  private routingCandidates: ModelCandidate[] = [];
+  private routingPinned = false;
 
   constructor(id: string, name: string) {
     this.id = id;
