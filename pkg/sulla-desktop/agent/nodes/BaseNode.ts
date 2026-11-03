@@ -1648,21 +1648,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const executionContext = providerId && accountId
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
-      const timeoutMs = Math.max(1, Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60)) || 60) * 1_000;
-      const timeoutController = new AbortController();
-      let timedOut = false;
-      const timeout = setTimeout(() => { timedOut = true; timeoutController.abort() }, timeoutMs);
-      const signal = options.signal
-        ? AbortSignal.any([options.signal, timeoutController.signal])
-        : timeoutController.signal;
-      try {
-        reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent }, { ...options, signal, state, executionContext });
-      } catch (streamError) {
-        if (timedOut) throw new Error(`Model request timed out after ${ timeoutMs / 1_000 } seconds`, { cause: streamError });
-        throw streamError;
-      } finally {
-        clearTimeout(timeout);
-      }
+      // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
+      // for many minutes. Stalls are handled by the provider's own idle/abort logic.
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent }, { ...options, state, executionContext });
     } finally {
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while
