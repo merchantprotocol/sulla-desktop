@@ -1339,7 +1339,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-list::-webkit-scrollbar { width: 4px; }
 .bm-list::-webkit-scrollbar-track { background: transparent; }
 .bm-list::-webkit-scrollbar-thumb {
-  background: var(--border-default));
+  background: var(--border-default);
   border-radius: 2px;
 }
 .bm-list.drop-root {
