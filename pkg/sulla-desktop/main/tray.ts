@@ -182,8 +182,11 @@ export class Tray {
 
   private constructor(settings: Settings) {
     this.settings = settings;
+    const firstRunTestIcon = process.env.SULLA_E2E_REPO_ROOT
+      ? path.join(process.env.SULLA_E2E_REPO_ROOT, 'resources', 'icons', 'sulla-app-icon.png')
+      : path.join(paths.resources, 'icons', 'sulla-app-icon.png');
     const trayIcon = isFirstRunTestInstance()
-      ? Electron.nativeImage.createFromPath(path.resolve('resources', 'icons', 'sulla-app-icon.png')).resize({ width: 18, height: 18 })
+      ? Electron.nativeImage.createFromPath(firstRunTestIcon).resize({ width: 18, height: 18 })
       : this.trayIconSet.starting;
     this.trayMenu = new Electron.Tray(trayIcon);
     this.trayMenu.setToolTip(isFirstRunTestInstance() ? 'Sulla (first-run test)' : 'Sulla Desktop');
