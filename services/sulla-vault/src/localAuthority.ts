@@ -374,7 +374,7 @@ const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
   [/^\/device-tools\/tickets$/, ['POST']],
   // Remote support (supporter side): Workers enforces super-admin + accepted-by-caller on each route.
   [/^\/super-admin\/support\/sessions$/, ['GET']],
-  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/events$/, ['GET']],
+  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:events|presence)$/, ['GET']],
   [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:rpc|end|extend)$/, ['POST']],
   // Files catalog and just-in-time content stay scoped to the registered Desktop.
   [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}$/, ['PUT']],
