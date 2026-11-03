@@ -8,20 +8,20 @@
   <div class="studio-page">
     <StudioTopbar
       ref="topbarRef"
-      :crumbs="active ? ['Agents', active.name || 'New agent'] : ['Agents']"
+      :crumbs="active ? ['Agents', active.name || 'New agent'] : directoryDetail ? ['Agents', directoryDetail.name] : ['Agents']"
       v-model:search="search"
       :search-placeholder="innerTab === 'dir' ? 'Search name, slug, when to call, model…' : 'Search custom agents'"
-      @crumb="closeDetail"
-    ><template #actions><button v-if="!active" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
+      @crumb="closeCurrentDetail"
+    ><template #actions><button v-if="!active && !directoryDetail" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
     <div class="studio-content">
       <template v-if="!active">
-        <div class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span></div>
-        <div class="seg-tabs" ref="tabsRef">
+        <div v-if="!directoryDetail" class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span></div>
+        <div v-if="!directoryDetail" class="seg-tabs" ref="tabsRef">
           <i ref="tabIndRef" />
           <button :class="{ on: innerTab === 'dir' }" @click="selectTab('dir')">Directory</button>
           <button :class="{ on: innerTab === 'manage' }" @click="selectTab('manage')">Manage</button>
         </div>
-        <AgentDirectoryTab v-if="innerTab === 'dir'" :agents="agents" :loading="loading" v-model:search="search" @edit="openAgent" />
+        <AgentDirectoryTab v-if="innerTab === 'dir'" ref="directoryRef" :agents="agents" :loading="loading" v-model:search="search" @detail-change="directoryDetail = $event" @edit="editDirectoryAgent" />
         <template v-else>
           <div class="filters"><button :class="{ on: provider === 'all' }" @click="provider = 'all'">All {{ agents.length }}</button><button v-for="p in providers" :key="p.name" :class="{ on: provider === p.name }" @click="provider = p.name">{{ p.name }} {{ p.count }}</button></div>
           <div v-if="error" class="banner error"><div>{{ error }}</div><button class="btn sm" @click="load">Try again</button></div>
@@ -53,6 +53,8 @@ type Agent = AgentDefinitionResponse; type Manifest = Awaited<ReturnType<typeof 
 const agents = ref<Agent[]>([]); const manifests = ref(new Map<string, Manifest>()); const search = ref(''); const provider = ref('all'); const loading = ref(true); const error = ref(''); const active = ref<Agent | null>(null); const tab = ref<'profile'|'prompt'>('profile'); const saving = ref(false); const publishing = ref(false); const detailMessage = ref(''); const detailError = ref(false);
 const innerTab = ref<'dir' | 'manage'>('dir');
 const topbarRef = ref<InstanceType<typeof StudioTopbar> | null>(null);
+const directoryRef = ref<InstanceType<typeof AgentDirectoryTab> | null>(null);
+const directoryDetail = ref<Agent | null>(null);
 const tabsRef = ref<HTMLElement | null>(null);
 const tabIndRef = ref<HTMLElement | null>(null);
 
@@ -83,6 +85,8 @@ function slotLabel(tier: Agent['modelSlot']) { return tier === 'primary' ? 'Prim
 function modelLabel(agent: Agent | null) { return agent?.model ? `${agent.provider ?? 'Unknown'} / ${agent.model}` : slotLabel(agent?.modelSlot ?? null); }
 function sourceLabel(source: string) { return source === 'local' ? 'You' : source === 'builtin' || source === 'built-in' ? 'Built-in' : source || '—'; }
 async function load() { loading.value = true; error.value = ''; try { agents.value = await ipcRenderer.invoke('agent-definitions:list'); const pairs = await Promise.all(agents.value.map(async a => [a.slug, await ipcRenderer.invoke('agent-definitions:export', a.slug)] as const).map(p => p.catch(() => null))); manifests.value = new Map(pairs.filter((x): x is readonly [string, Manifest] => x !== null)); } catch (e) { error.value = e instanceof Error ? e.message : String(e); } finally { loading.value = false; } }
+function editDirectoryAgent(agent: Agent) { directoryDetail.value = null; innerTab.value = 'manage'; openAgent(agent); }
+function closeCurrentDetail() { if (active.value) closeDetail(); else directoryRef.value?.closeDetail(); }
 function openAgent(agent: Agent) { active.value = agent; Object.assign(form, { slug: agent.slug, name: agent.name, description: agent.description, provider: agent.provider ?? '', modelSlot: agent.modelSlot ?? 'secondary', prompt: agent.prompt }); tab.value = 'profile'; detailMessage.value = ''; }
 function newAgent() { active.value = { id: '', slug: '', name: '', description: '', provider: null, model: null, modelSlot: 'secondary', prompt: '', sourceKind: 'local', marketplaceVersion: null, status: 'production', enabled: true, runLocation: 'vm', whenToCall: '', whenNotToCall: '', send: '', returns: '', costTier: null, canCall: [], isBuiltin: false, frontDoor: null, updatedAt: '', type: null }; Object.assign(form, { slug: '', name: '', description: '', provider: '', modelSlot: 'secondary', prompt: '' }); tab.value = 'profile'; detailMessage.value = ''; }
 function closeDetail() { active.value = null; detailMessage.value = ''; }
