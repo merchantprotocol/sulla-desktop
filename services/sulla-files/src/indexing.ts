@@ -135,20 +135,20 @@ export class IndexingQueue {
     const job = claimed.rows[0]; if (!job) return false;
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
-      const client = await this.db.connect();
+      const eligibilityClient = await this.db.connect();
       let file:any;
       try {
-        await client.query('BEGIN');
-        file = (await client.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
+        await eligibilityClient.query('BEGIN');
+        file = (await eligibilityClient.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
         if (!file || file.deleted_at || file.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(file.system_area) || file.protected) {
-          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          await client.query('COMMIT');
+          await eligibilityClient.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
+          await eligibilityClient.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
+          await eligibilityClient.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
+          await eligibilityClient.query('COMMIT');
           return true;
         }
-        await client.query('COMMIT');
-      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+        await eligibilityClient.query('COMMIT');
+      } catch (error) { await eligibilityClient.query('ROLLBACK'); throw error } finally { eligibilityClient.release() }
       await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
       source = await this.source(file);
       const extracted = await extractIndexText(source.path, file.mime);
