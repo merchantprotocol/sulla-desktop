@@ -295,14 +295,17 @@ export class CodexService extends BaseLanguageModel {
     const startTime = performance.now();
 
     try {
+      let toolStarted = false;
       const guardedCallbacks: StreamCallbacks = {
         ...callbacks,
         onToken: (token: string) => {
           callbacks.onToken?.(token);
         },
         onToolEvent: (event) => {
+          toolStarted = true;
           callbacks.onToolEvent?.(event);
         },
+        onToolStarted: (event) => { toolStarted = true; callbacks.onToolStarted?.(event) },
       };
       let streamedText = '';
       guardedCallbacks.onToken = (token: string) => {
@@ -311,7 +314,7 @@ export class CodexService extends BaseLanguageModel {
       };
       const result = await runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
         signal:   options.signal,
-        canRetry: () => true,
+        canRetry: () => !toolStarted,
         onRetry:  (_error, attempt) => log.warn(`[CodexService] retrying failed CLI process (attempt ${ attempt })`),
       });
       if (streamedText) result.text = streamedText;
@@ -1043,6 +1046,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
             if (isTool && itemId) {
               if (parsed.type === 'item.started') {
+                callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input: item.arguments ?? item.input });
                 activeToolItems.set(itemId, {
                   startedAt: Date.now(),
                   approval:  /ask_user_question|approval|permission/i.test(String(item.tool ?? kind)),
@@ -1261,7 +1265,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // session must survive so the conversation resumes once codex is
         // re-provisioned).
         if (code === 127) {
-          reject(new Error('codex CLI is not installed in the VM yet. Restart Sulla Desktop to re-provision, or run: npm install --prefix /mnt/data/npm-global -g @openai/codex'));
+          import('./providerRecovery').then(({ InfrastructureFailure }) => reject(new InfrastructureFailure('codex CLI is not installed in the VM yet. Restart Sulla Desktop to re-provision, or run: npm install --prefix /mnt/data/npm-global -g @openai/codex')));
           return;
         }
 

@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import * as path from 'node:path';
 
 import Electron from 'electron';
+import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
@@ -253,7 +254,7 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
 }
 
-class GuestExecError extends Error {
+class GuestExecError extends InfrastructureFailure {
   constructor(
     message: string,
     readonly exitCode: number | null,
@@ -737,7 +738,7 @@ async function provisionContainerSecrets(
 ): Promise<string> {
   const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
   const encoded = Object.entries(secrets).map(([key, value]) => {
-    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new InfrastructureFailure(`Invalid container secret name ${ key }`);
     return `${ key }\t${ Buffer.from(value).toString('base64') }`;
   }).join('\n') + '\n';
   await guestExec([
@@ -763,7 +764,7 @@ async function provisionContainerSecrets(
 }
 
 async function removeContainerSecrets(secretDir: string): Promise<void> {
-  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to remove an unexpected secret path');
+  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new InfrastructureFailure('Refusing to remove an unexpected secret path');
   await guestExec(['sh', '-c', 'if [ -d "$1" ]; then sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1"; fi', 'sh', secretDir]);
 }
 
@@ -859,8 +860,8 @@ async function replaceContainerSecret(
   value: string,
   identity: GuestRuntimeIdentity,
 ): Promise<void> {
-  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to update an unexpected secret path');
-  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error(`Invalid container secret name ${ name }`);
+  if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new InfrastructureFailure('Refusing to update an unexpected secret path');
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new InfrastructureFailure(`Invalid container secret name ${ name }`);
   const target = `${ secretDir }/${ name }`;
   await guestExec(
     ['sh', '-c', 'set -eu; umask 077; sudo install -d -m 0700 -o "$2" -g "$3" "$(dirname "$1")"; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(identity.uid), String(identity.gid)],

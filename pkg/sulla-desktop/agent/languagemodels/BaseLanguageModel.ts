@@ -115,6 +115,8 @@ export interface StreamCallbacks {
     resultChars: number;
     isError?:    boolean;
   }) => void;
+  /** Fired as soon as a provider-owned tool begins, before its result exists. */
+  onToolStarted?: (event: { toolUseId: string; toolName: string; input?: unknown }) => void;
 }
 
 /**

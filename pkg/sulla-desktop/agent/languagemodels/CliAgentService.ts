@@ -522,7 +522,8 @@ export class CliAgentService extends BaseLanguageModel {
           return;
         }
         if (code === 127) {
-          reject(new Error(this.spec.missingMessage));
+          const { InfrastructureFailure } = await import('./providerRecovery');
+          reject(new InfrastructureFailure(this.spec.missingMessage));
           return;
         }
         if (errorMessage || code !== 0) {

@@ -148,6 +148,23 @@ describe('ModelRouter', () => {
     expect(await router.isUnavailable('codex')).toBe(false);
   });
 
+  it('ignores a stale failure from an attempt that began before a success', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    const router = new ModelRouter(providerService);
+    const stale = router.attemptToken('codex');
+    await router.markSuccess('codex');
+    for (let i = 0; i < 4; i++) await router.markFailure('codex', new Error('temporary'), undefined, stale);
+    expect(await router.isUnavailable('codex')).toBe(false);
+  });
+
+  it('does not count a typed Codex-not-installed infrastructure failure', async() => {
+    const { ModelRouter } = await import('../modelRouter');
+    const { InfrastructureFailure } = await import('../providerRecovery');
+    const router = new ModelRouter(providerService);
+    for (let i = 0; i < 4; i++) await router.markFailure('codex', new InfrastructureFailure('codex CLI is not installed in the VM yet'));
+    expect(await router.isUnavailable('codex')).toBe(false);
+  });
+
   it('wipes malformed legacy health without loading it', async() => {
     const { ModelRouter } = await import('../modelRouter');
     settings.set('modelRoutingProviderHealth', '{}');

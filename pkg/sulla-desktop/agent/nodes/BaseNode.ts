@@ -490,6 +490,9 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
 /**
  *
  */
+/** Pauses between routed retries of one provider (1s, then 3s). Exported so tests can shorten them. */
+export const routingRetryDelays = { firstMs: 1_000, laterMs: 3_000 };
+
 export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   id:                            string;
   name:                          string;
@@ -1157,6 +1160,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const nodeName = this.name;
     const previousRunContext = this.currentNodeRunContext;
     this.currentNodeRunContext = nodeRunContext;
+    const primaryAttemptEpoch = modelRouter.attemptToken?.(this.routingCandidates[0]?.provider || this.llm.getProviderName());
     try {
       // Primary attempt
       state.metadata.hadToolCalls = false;
@@ -1190,30 +1194,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         conversationId,
         nodeName,
         profileId:   (state.metadata as any).profileId,
+        routingOwnedRetry: true,
       }, nodeRunContext);
 
-      // Detect empty response (no content AND no tool calls) and retry once with reduced context
-      if (reply && !reply.content?.trim() && !reply.metadata.tool_calls?.length) {
-        console.warn(`[${ this.name }] Empty response from LLM (finish_reason=${ reply.metadata.finish_reason }, model=${ this.llm.getModel() }). Retrying with reduced context.`);
-        const systemMsgs = messages.filter(m => m.role === 'system');
-        const recentMsgs = messages.filter(m => m.role !== 'system').slice(-3);
-        const reducedMessages = [...systemMsgs, ...recentMsgs];
-
-        // Keep retry output on the same live UI path.
-        reply = await this.callLLMStreaming(state, reducedMessages, {
-          maxTokens:   options.maxTokens,
-          format:      options.format,
-          temperature: options.temperature,
-          signal:      state.metadata?.options?.abort?.signal,
-          tools:       llmTools,
-          conversationId,
-          nodeName,
-          profileId:   (state.metadata as any).profileId,
-        }, nodeRunContext);
-      }
 
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
-        throw new Error(`LLM returned empty response after retry (model=${ this.llm.getModel() }, provider=${ this.llm.getProviderName() })`);
+        throw new Error(`LLM returned empty response (model=${ this.llm.getModel() }, provider=${ this.llm.getProviderName() })`);
       }
 
       // In text mode, the LLM may spontaneously include <speak> tags — extract and dispatch them.
@@ -1236,11 +1222,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const abortSignal = state.metadata?.options?.abort?.signal;
       throwIfAborted(abortSignal);
       if (isContainerLifecycleLost(err)) throw err;
+      // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
+      if ((err as any)?.unsafeToFallback) throw err;
 
-      const fallbackEnabled = await SullaSettingsModel.get('fallbackEnabled', true);
-      const configuredRetries = Math.max(0, Number(await SullaSettingsModel.get('remoteRetryCount', 1)) || 0);
       const candidates = this.routingCandidates.length
-        ? this.routingCandidates.slice(0, fallbackEnabled && !this.routingPinned ? undefined : 1)
+        ? this.routingCandidates.slice(0, this.routingPinned ? 1 : undefined)
         : [{ provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '' }];
       let lastErr: unknown = err;
       let lastRecovery = classifyLLMFailure(err);
@@ -1249,6 +1235,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       for (let index = 0; index < candidates.length; index++) {
         const candidate = candidates[index];
+        const attemptEpoch = index === 0 ? primaryAttemptEpoch : modelRouter.attemptToken?.(candidate.provider);
         let service: BaseLanguageModel;
         try {
           service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model);
@@ -1259,18 +1246,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           // Service construction is local routing/runtime work, not evidence that the provider failed.
           continue;
         }
-        let recovery = index === 0 ? lastRecovery : classifyLLMFailure(lastErr);
-        // The first candidate has already had its initial call above. Transient/unknown failures get two more
-        // attempts (three total); fallback candidates get up to three attempts themselves. Hard quota/auth errors advance.
-        const retryable = recovery.retryPrimary || recovery.kind === 'unknown';
-        const configuredAttempts = Math.max(3, configuredRetries + 1);
-        const attempts = retryable ? (index === 0 ? configuredAttempts - 1 : configuredAttempts) : (index === 0 ? 0 : 1);
+        // The primary's initial call happened above. Every fallback candidate starts fresh;
+        // its own error (never the preceding provider's) decides whether it gets two retries.
+        let recovery = index === 0 ? lastRecovery : undefined;
+        const attempts = index === 0 ? ((recovery!.retryPrimary || recovery!.kind === 'unknown') ? 2 : 0) : 3;
 
         for (let attempt = 0; attempt < attempts; attempt++) {
           try {
             throwIfAborted(abortSignal);
-            if (attempt > 0 || index === 0) {
-              const delayMs = (index === 0 ? attempt : attempt - 1) === 0 ? 1_000 : 3_000;
+            if (index === 0 || attempt > 0) {
+              const retryNumber = index === 0 ? attempt : attempt - 1;
+              const delayMs = retryNumber === 0 ? routingRetryDelays.firstMs : routingRetryDelays.laterMs;
               await new Promise<void>((resolve, reject) => {
                 const timer = setTimeout(resolve, delayMs);
                 abortSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(abortSignal.reason) }, { once: true });
@@ -1282,7 +1268,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
-              signal: abortSignal, tools: llmTools, conversationId, nodeName,
+              signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
               profileId: (state.metadata as any).profileId,
             }, nodeRunContext, service);
             if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
@@ -1314,7 +1300,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
 
         // Count at most once per turn/provider, after that provider's bounded attempts are exhausted.
-        await modelRouter.markFailure(candidate.provider, lastErr);
+        if (attemptEpoch === undefined) await modelRouter.markFailure(candidate.provider, lastErr);
+        else await modelRouter.markFailure(candidate.provider, lastErr, undefined, attemptEpoch);
       }
 
       const message = redactLLMFailureMessage(lastErr);
@@ -1523,6 +1510,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
     let firstTokenSeen = false;
+    let providerToolStarted = false;
 
     const onToken = (token: string): void => {
       if (voiceTurnId && !firstTokenSeen) {
@@ -1636,6 +1624,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
+      providerToolStarted = true;
       this.logConversationToolCall(state, event.toolName, event.input, {
         chars: event.resultChars,
         error: event.isError || undefined,
@@ -1651,6 +1640,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         events.push({ toolName: event.toolName, input, isError: !!event.isError });
       }
     };
+    const onToolStarted = (): void => { providerToolStarted = true };
 
     let reply: NormalizedResponse | null;
     try {
@@ -1661,7 +1651,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         : undefined;
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent }, { ...options, state, executionContext });
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted }, { ...options, state, executionContext });
+    } catch (error) {
+      // Once a provider-owned tool began, replaying this call could repeat a side effect,
+      // even when the provider later reported a result for that tool.
+      if (providerToolStarted && error && typeof error === 'object') (error as any).unsafeToFallback = true;
+      throw error;
     } finally {
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while

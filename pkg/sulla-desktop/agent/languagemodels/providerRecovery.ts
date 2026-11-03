@@ -26,6 +26,15 @@ export interface LLMFailureRecovery {
   userMessage:     string;
 }
 
+/** A local Sulla runtime/setup failure. It is never evidence that a model provider is unhealthy. */
+export class InfrastructureFailure extends Error {
+  readonly code = 'SULLA_INFRA';
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'InfrastructureFailure';
+  }
+}
+
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{8,}\b/g,
   /\bsk-proj-[A-Za-z0-9_-]{8,}\b/g,
@@ -46,10 +55,10 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const lower = `${ name || '' } ${ message }`.toLowerCase();
 
   // Failures in Sulla's runtime/container plumbing are not provider failures and must never affect routing health.
-  const infrastructure =
+  const infrastructure = error instanceof InfrastructureFailure || (error as any)?.code === 'SULLA_INFRA' ||
     lower.includes('sulla-runtime exec') ||
     lower.includes('/dev/shm/sulla-agent-secrets/') ||
-    lower.includes('agent container') || lower.includes('container lifecycle') ||
+    lower.includes('container lifecycle') ||
     lower.includes('spawn error') || lower.includes('spawn failed') ||
     (lower.includes('enoent') && (lower.includes('/dev/shm/') || lower.includes('/mnt/') || lower.includes('sulla'))) ||
     lower.includes('getservicebyprovider');
