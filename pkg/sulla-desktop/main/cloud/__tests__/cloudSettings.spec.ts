@@ -1,3 +1,8 @@
+/**
+ * Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
 /** @jest-environment node */
 import { jest } from '@jest/globals';
 
