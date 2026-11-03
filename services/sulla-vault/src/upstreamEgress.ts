@@ -13,10 +13,13 @@
 import type { PinnedAddress } from './pinnedLookup.js';
 
 /** A fresh socket must finish TCP + TLS within this window or the attempt is treated as a connect timeout. */
-export const UPSTREAM_CONNECT_TIMEOUT_MS = 15_000;
+export const UPSTREAM_CONNECT_TIMEOUT_MS = 3_000;
 /** Happy-eyeballs per-address window. Node's 250 ms default aborts slow-but-working paths (VPNs, tethering). */
 export const UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS = 1_000;
 export const UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS = 3_000;
+/** Three attempts plus these short pauses stay inside a roughly ten-second recovery window. */
+export const UPSTREAM_RETRY_DELAYS_MS = [250, 750] as const;
+export const UPSTREAM_MAX_ATTEMPTS = UPSTREAM_RETRY_DELAYS_MS.length + 1;
 /** Seconds a caller should wait before retrying a transient egress failure. */
 export const UPSTREAM_RETRY_AFTER_SECONDS = 5;
 

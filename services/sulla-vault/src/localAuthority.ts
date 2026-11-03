@@ -43,7 +43,8 @@ import { isNativeOAuthIntegration, validateOAuthDestination } from './oauthPolic
 import { pinnedAddressesLookup, pinnedLookup, type PinnedAddress } from './pinnedLookup.js';
 import {
   describeUpstreamError, familySummary, formatUpstreamFailureLog, isReconnectableUpstreamError, retryAddressOrder,
-  UPSTREAM_CONNECT_TIMEOUT_MS, UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS,
+  UPSTREAM_CONNECT_TIMEOUT_MS, UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_MAX_ATTEMPTS,
+  UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_RETRY_DELAYS_MS,
   upstreamFailurePhase, upstreamFailureReason,
 } from './upstreamEgress.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
@@ -3203,16 +3204,21 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
    * a connect retry); nothing is cached across requests, so a network change
    * never leaves a stale pin behind.
    */
-  private async resolvePinnedAddresses(hostname: string): Promise<PinnedAddress[]> {
+  private async resolvePinnedAddresses(hostname: string, attempt = 1): Promise<PinnedAddress[]> {
     let addresses: Array<{ address: string; family: number }>;
     try {
       addresses = await dns.lookup(hostname, { all: true, verbatim: true });
     } catch (error) {
       const detail = describeUpstreamError(error);
+      const willRetry = detail.code === 'EAI_AGAIN' && attempt < UPSTREAM_MAX_ATTEMPTS;
       console.warn(formatUpstreamFailureLog({
-        operation: 'dns.lookup', hostname, attempt: 1, maxAttempts: 1, phase: 'dns', detail,
-        families: 'none', reusedSocket: false, willRetry: false,
+        operation: 'dns.lookup', hostname, attempt, maxAttempts: UPSTREAM_MAX_ATTEMPTS, phase: 'dns', detail,
+        families: 'none', reusedSocket: false, willRetry,
       }));
+      if (willRetry) {
+        await new Promise(resolve => setTimeout(resolve, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]));
+        return this.resolvePinnedAddresses(hostname, attempt + 1);
+      }
       throw new LocalVaultError('upstream_failed', 502, 'Broker upstream DNS lookup failed', upstreamFailureReason('dns', detail.code));
     }
     if (!addresses.length || addresses.some(candidate => privateAddress(candidate.address))) {
@@ -3226,7 +3232,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
    *
    * A failure before the TLS handshake completes on a fresh socket means no
    * request bytes reached the upstream, so it is safe to re-resolve DNS and
-   * try once more (other address family first). Reused keep-alive sockets and
+   * try twice more (other address family first). Reused keep-alive sockets and
    * failures after the handshake are never retried. Every failure is logged
    * with its errno/syscall/family and surfaces a non-secret reason code.
    */
@@ -3249,7 +3255,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       canRetry?(): boolean;
     },
   ): void {
-    const maxAttempts = 2;
+    const maxAttempts = UPSTREAM_MAX_ATTEMPTS;
     const start = (addresses: PinnedAddress[], attempt: number) => {
       let connected = false;
       let reusedSocket = false;
@@ -3312,7 +3318,18 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             hooks.onError(request, failure);
             return;
           }
-          start(retryAddressOrder(fresh, detail.attempts.length ? detail.attempts : addresses.map(candidate => `v${ candidate.family }:${ detail.code }`)), attempt + 1);
+          const retryAddresses = retryAddressOrder(fresh, detail.attempts.length ? detail.attempts : addresses.map(candidate => `v${ candidate.family }:${ detail.code }`));
+          setTimeout(() => {
+            if (!(hooks.canRetry?.() ?? true)) {
+              hooks.onError(request, failure);
+              return;
+            }
+            try {
+              start(retryAddresses, attempt + 1);
+            } catch (retryError) {
+              hooks.onError(request, retryError instanceof LocalVaultError ? retryError : failure);
+            }
+          }, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]);
         }).catch(resolveError => {
           hooks.onError(request, resolveError instanceof LocalVaultError ? resolveError : failure);
         });
