@@ -7,32 +7,24 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-
-import { jest } from '@jest/globals';
-
-import mockModules from '@pkg/utils/testUtils/mockModules';
+import { fileURLToPath } from 'node:url';
 
 const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-vault-session-'));
-const lock = jest.fn(async() => ({ state: 'locked', unlocked: false }));
-const markLocked = jest.fn();
-
-mockModules({
-  electron: { app: { getAppPath: () => home }, default: { app: { getAppPath: () => home } } },
-  '@pkg/utils/paths': { default: { appHome: home, sullaConfig: path.join(home, 'config') } },
-  '../DesktopVaultClient': { getDesktopVaultClient: () => ({ lock, markLocked }) },
-});
-
-const { VaultKeyService } = await import('../VaultKeyService');
+const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 afterAll(async() => { await fs.rm(home, { recursive: true, force: true }) });
 
-test('logout locks the vault and removes the OS-wrapped auto-unlock session', async() => {
+test('Cloud logout leaves the OS-wrapped local vault key in place', async() => {
   const wrapped = path.join(home, 'vault-v2-key.enc');
   await fs.writeFile(wrapped, 'synthetic-wrapped-session', { mode: 0o600 });
 
-  await new VaultKeyService().clearSignedInSession();
+  const authSource = await fs.readFile(path.join(dirname, '../../../main/sullaCloudAuth.ts'), 'utf8');
+  const logoutHandler = authSource.slice(
+    authSource.indexOf("ipcMainProxy.handle('sulla-cloud:logout'"),
+    authSource.indexOf('// Auto-pair relay on startup'),
+  );
 
-  expect(markLocked).toHaveBeenCalledTimes(1);
-  expect(lock).toHaveBeenCalledTimes(1);
-  await expect(fs.stat(wrapped)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(logoutHandler).not.toContain('VaultKeyService');
+  expect(logoutHandler).not.toContain('vault-v2-key.enc');
+  await expect(fs.readFile(wrapped, 'utf8')).resolves.toBe('synthetic-wrapped-session');
 });

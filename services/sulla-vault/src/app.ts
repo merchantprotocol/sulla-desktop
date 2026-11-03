@@ -553,13 +553,21 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'), request.body,
       ));
     });
+    const filesCloudEscrow = new FilesCloudEscrowService(db, {
+      withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
+      sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
+        config.approvalServiceId ?? '', config.approvalServiceToken, input,
+      ),
+    }, filesAudit);
     app.put('/v1/broker/sulla-cloud/session', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.adoptSullaCloudSession(identity.serviceId, identity.token, request.body));
     });
     app.delete('/v1/broker/sulla-cloud/session', async(request, response) => {
       const identity = serviceIdentity(request);
-      response.json(await localAuthority.clearSullaCloudSession(identity.serviceId, identity.token));
+      const result = await localAuthority.clearSullaCloudSession(identity.serviceId, identity.token);
+      filesCloudEscrow.clearCloudSessionKey();
+      response.json(result);
     });
     app.post('/v1/broker/sulla-cloud/account-wrap', async(request, response) => {
       const identity = serviceIdentity(request);
@@ -580,12 +588,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(await localAuthority.executeDesktopSullaCloudRequest(identity.serviceId, identity.token, request.body));
     });
-    registerFilesCloudEscrowRoute(app, new FilesCloudEscrowService(db, {
-      withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
-      sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
-        config.approvalServiceId ?? '', config.approvalServiceToken, input,
-      ),
-    }, filesAudit), request => {
+    registerFilesCloudEscrowRoute(app, filesCloudEscrow, request => {
       // Main calls with the approval service identity; Files/agents cannot invoke this route directly.
       const identity = serviceIdentity(request);
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);

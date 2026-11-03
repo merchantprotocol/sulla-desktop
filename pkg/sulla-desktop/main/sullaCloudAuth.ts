@@ -1488,12 +1488,6 @@ export function initSullaCloudAuthEvents(): void {
       console.warn('[SullaCloudAuth] Failed to clear apple_signin accounts:', err);
     }
     try {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      await getVaultKeyService().clearSignedInSession();
-    } catch (err) {
-      console.warn('[SullaCloudAuth] Cloud session was removed, but the local vault session could not be wiped:', err);
-    }
-    try {
       await getDesktopRelayClient().setPairedUserId('');
     } catch { /* ignore */ }
     try {

@@ -36,3 +36,36 @@ test('wrong Cloud password is refused after only status and bundle fetches',asyn
   await assert.rejects(service.unlockCloud('definitely wrong'),(error:any)=>error.code==='wrong_password');
   assert.deepEqual(paths,['/cloud-vault-sync/status',`/cloud-vault-sync/vaults/${vaultKat.desktop.bundle.vaultId}/bundle`]);
 });
+
+const restoreRequestId='bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+const restoreVaultId='12345678-9abc-4def-8123-456789abcdef';
+const restoreUserId='87654321-cba9-4fed-8321-fedcba987654';
+async function restoreRecipient(){const pair=await subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);return {pair,publicKey:b64u(new Uint8Array(await subtle.exportKey('raw',pair.publicKey)))}}
+
+test('restore uses the signed-in unlocked user key when no password-restored key is cached',async()=>{
+  const userKey=new Uint8Array(32).map((_,i)=>255-i); const {pair,publicKey}=await restoreRecipient(); const audits:any[]=[];
+  const db={query:async(sql:string,params?:unknown[])=>{
+    if(sql.includes('CREATE TABLE IF NOT EXISTS'))return {rows:[]};
+    if(sql.includes('SELECT EXISTS'))return {rows:[{present:true}]};
+    if(sql.includes('SELECT vault_id,epoch')){assert.deepEqual(params,[restoreUserId]);return {rows:[{vault_id:restoreVaultId,epoch:3}]};}
+    throw new Error(`Unexpected query: ${sql}`);
+  }} as any;
+  const service=new FilesCloudEscrowService(db,{withUnlockedUserKey:async(operation:any)=>operation({userId:restoreUserId,userKey,assertCurrent:()=>undefined}),sullaCloudRequest:async()=>{throw new Error('unused')}}, {emit:event=>audits.push(event)} as any);
+  const restored=await service.restoreKey(restoreRequestId,publicKey);
+  const expected=await deriveFilesEscrowKey(userKey,restoreVaultId,3);
+  try {assert.deepEqual(await referenceUnwrap(restored.transport,pair.privateKey,restoreRequestId,restoreVaultId,3),expected)} finally {expected.fill(0)}
+  assert.equal(audits[0]?.action,'files_cloud_restore_key_wrapped');
+});
+
+test('restore returns no_cloud_vault when Passwords sync has no local state',async()=>{
+  const {publicKey}=await restoreRecipient(); let authorityCalled=false;
+  const service=new FilesCloudEscrowService({query:async(sql:string)=>({rows:sql.includes('SELECT EXISTS')?[{present:false}]:[]})} as any,{withUnlockedUserKey:async()=>{authorityCalled=true;throw new Error('unused')},sullaCloudRequest:async()=>{throw new Error('unused')}});
+  await assert.rejects(service.restoreKey(restoreRequestId,publicKey),(error:any)=>error.code==='no_cloud_vault'&&error.status===409);
+  assert.equal(authorityCalled,false);
+});
+
+test('restore preserves the internal vault_locked 423 when the signed-in vault is locked',async()=>{
+  const {publicKey}=await restoreRecipient();
+  const service=new FilesCloudEscrowService({query:async()=>({rows:[{present:true}]})} as any,{withUnlockedUserKey:async()=>{throw Object.assign(new Error('locked'),{code:'vault_locked'})},sullaCloudRequest:async()=>{throw new Error('unused')}});
+  await assert.rejects(service.restoreKey(restoreRequestId,publicKey),(error:any)=>error.code==='vault_locked'&&error.status===423);
+});
