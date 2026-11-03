@@ -168,7 +168,8 @@
 }
 
 .chat-turn.you {
-  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  /* Solid accent in every theme; no gradient on the human message. */
+  background: var(--accent);
   box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .chat-turn.you .chat-body { color: var(--text-on-accent); }

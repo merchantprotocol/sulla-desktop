@@ -537,7 +537,7 @@ onMounted(() => props.conversationId ? loadDetail() : refreshList());
 
 .conv-msg-user {
   margin-left: clamp(2rem, 14vw, 12rem);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
 }
 
 .conv-msg-assistant {
