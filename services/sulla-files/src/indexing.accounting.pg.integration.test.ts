@@ -36,8 +36,11 @@ integration('restart reconciliation accounts for every eligible current file and
         VALUES($1,$2,'user','index-owner','text/plain') RETURNING id`, [targetCollectionId, path])).rows[0].id;
       const versionId = (await db.query(`INSERT INTO file_versions(file_id,chunk_collection_id,size,created_by_type,created_by_id,device_id)
         VALUES($1,$2,1,'user','index-owner','index-device') RETURNING id`, [fileId, targetCollectionId])).rows[0].id;
-      await db.query(`UPDATE files SET current_version_id=$2,size=1,extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,
-        extracted_at=CASE WHEN $3 IN('indexed','failed','unsupported') THEN NOW() END WHERE id=$1`, [fileId, versionId, status, reasonCode, reason]);
+      // The version trigger intentionally owns the initial queued state. Apply the synthetic
+      // restart outcome afterward so this fixture models a prior completed/interrupted run.
+      await db.query('UPDATE files SET current_version_id=$2,size=1 WHERE id=$1', [fileId, versionId]);
+      await db.query(`UPDATE files SET extraction_status=$2,extraction_reason_code=$3,extraction_reason=$4,
+        extracted_at=CASE WHEN $2 IN('indexed','failed','unsupported') THEN NOW() END WHERE id=$1`, [fileId, status, reasonCode, reason]);
       return { fileId, versionId };
     };
     const setJob = (fileId:string, versionId:string, status:string, reasonCode = 'contradictory', reason = 'Contradictory synthetic state.') => db.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,attempts,started_at,finished_at)
