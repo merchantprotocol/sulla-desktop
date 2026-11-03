@@ -6,7 +6,7 @@
 /** Human-owned Cloud upload preferences. Signing in never implies consent. */
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-import { planConsentInit } from './cloudConsentInit';
+import { planConsentInit, recommendedConsentPatch } from './cloudConsentInit';
 
 export interface CloudPreferences {
   enabled: boolean;
@@ -40,10 +40,11 @@ async function ensureInitialized(){
   await SullaSettingsModel.set(INITIALIZED_KEY,true,'boolean');
 }
 
+export function recommendedCloudPreferencesPatch():Partial<Record<keyof CloudPreferences,boolean>>{
+  return recommendedConsentPatch(RECOMMENDED_CLOUD_DATA_KINDS) as Partial<Record<keyof CloudPreferences,boolean>>;
+}
 export async function enableRecommendedCloudPreferences():Promise<CloudPreferences>{
-  const patch:Partial<Record<keyof CloudPreferences,boolean>>={enabled:true,remoteAccess:false,vault:false};
-  for(const kind of RECOMMENDED_CLOUD_DATA_KINDS)patch[kind]=true;
-  return setCloudPreferences(patch);
+  return setCloudPreferences(recommendedCloudPreferencesPatch());
 }
 
 export async function getCloudPreferences():Promise<CloudPreferences>{

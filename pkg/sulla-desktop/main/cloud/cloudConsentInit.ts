@@ -24,3 +24,8 @@ export function planConsentInit(keys: readonly string[], current: Record<string,
   }
   return plan;
 }
+
+/** Build the opt-in patch without touching excluded sensitive preferences. */
+export function recommendedConsentPatch(kinds: readonly string[]): Record<string, boolean> {
+  return Object.fromEntries([['enabled', true], ...kinds.map(kind => [kind, true])]);
+}
