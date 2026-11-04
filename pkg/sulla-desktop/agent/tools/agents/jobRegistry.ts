@@ -54,9 +54,15 @@ export interface AgentJobTask {
   agentId:    string;
   label:      string;
   prompt:     string;
+  /** Per-run routing overrides required to rehydrate this exact agent. */
+  provider?: string;
+  model?: string;
+  runLocation?: 'vm' | 'container';
+  /** Restart recovery attempts already consumed. */
+  restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
-  status:     'queued' | 'running' | 'completed' | 'blocked' | 'error' | 'stopped';
+  status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;
@@ -75,7 +81,7 @@ export interface AgentJobTask {
 
 export interface AgentJob {
   jobId:      string;
-  status:     'running' | 'completed' | 'failed' | 'stopped';
+  status:     'running' | 'parked' | 'completed' | 'failed' | 'stopped';
   createdAt:  number;
   finishedAt: number | null;
   taskCount:  number;
@@ -88,6 +94,8 @@ export interface AgentJob {
   visibility?: AgentJobVisibility;
   projectTaskIds?: string[];
   completionDeliveredAt?: number | null;
+  waitingOnChildren?: number;
+  restartResumeCount?: number;
   dismissedAt?: number | null;
 }
 
@@ -106,10 +114,13 @@ export const registerJobWatcher = (...args: Parameters<typeof agentJobProvider.s
 export const releaseJobWatcher = (...args: Parameters<typeof agentJobProvider.service.releaseJobWatcher>) => agentJobProvider.service.releaseJobWatcher(...args);
 export const getJobAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getJobAbortSignal>) => agentJobProvider.service.getJobAbortSignal(...args);
 export const abortJob = (...args: Parameters<typeof agentJobProvider.service.abortJob>) => agentJobProvider.service.abortJob(...args);
+export const stopJobCascade = (...args: Parameters<typeof agentJobProvider.service.stopJobCascade>) => agentJobProvider.service.stopJobCascade(...args);
 export const getJob = (...args: Parameters<typeof agentJobProvider.service.getJob>) => agentJobProvider.service.getJob(...args);
 export const getAllJobs = (...args: Parameters<typeof agentJobProvider.service.getAllJobs>) => agentJobProvider.service.getAllJobs(...args);
 export const boundJobList = (...args: Parameters<typeof agentJobProvider.service.boundJobList>) => agentJobProvider.service.boundJobList(...args);
 export const getJobsForList = (...args: Parameters<typeof agentJobProvider.service.getJobsForList>) => agentJobProvider.service.getJobsForList(...args);
+export const parkJobTask = (...args: Parameters<typeof agentJobProvider.service.parkJobTask>) => agentJobProvider.service.parkJobTask(...args);
+export const resumeParkedJob = (...args: Parameters<typeof agentJobProvider.service.resumeParkedJob>) => agentJobProvider.service.resumeParkedJob(...args);
 export const completeJob = (...args: Parameters<typeof agentJobProvider.service.completeJob>) => agentJobProvider.service.completeJob(...args);
 export const markCompletionDelivered = (...args: Parameters<typeof agentJobProvider.service.markCompletionDelivered>) => agentJobProvider.service.markCompletionDelivered(...args);
 export const getPendingCompletions = (...args: Parameters<typeof agentJobProvider.service.getPendingCompletions>) => agentJobProvider.service.getPendingCompletions(...args);

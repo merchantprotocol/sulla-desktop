@@ -46,7 +46,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
 
     return targets.filter(target =>
       (requestedTaskIndex === undefined || target.taskIndex === requestedTaskIndex) &&
-      ['queued', 'running'].includes(target.taskStatus),
+      ['queued', 'running', 'parked'].includes(target.taskStatus),
     );
   }
 
@@ -96,7 +96,12 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     percent?: number;
   }): Promise<{ target: AgentJobTaskTarget; checkin: AgentJobCheckin } | null> {
     const target = await this.taskForThread(threadId);
-    if (!target || target.jobStatus !== 'running' || !['queued', 'running'].includes(target.taskStatus)) return null;
+    // A parked manager's job row only flips back to 'running' when its own
+    // run settles (completeJob) — it never un-parks mid-wake. Rejecting
+    // 'parked' here would silently drop every check-in a rehydrated manager
+    // sends before it finishes, so it is accepted the same as recordTaskReturn
+    // and sendJobMessage already do.
+    if (!target || !['running', 'parked'].includes(target.jobStatus) || !['queued', 'running', 'parked'].includes(target.taskStatus)) return null;
 
     const rows = await this.connection.select<any>(
       `INSERT INTO agent_job_checkins
