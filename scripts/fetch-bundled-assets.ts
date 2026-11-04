@@ -103,7 +103,7 @@ async function fetchPinned(url: string, file: string, sha256: string, notice: st
 }
 
 /** Fetch every bundled asset for `arch` (`arm64` or `x86_64`). */
-export async function fetchBundledAssets(arch: string, skip = skippedParts(), root = process.cwd()): Promise<void> {
+export async function fetchBundledAssets(arch: string, skip: ReadonlySet<string> = skippedParts(), root = process.cwd()): Promise<void> {
   const darwin = bundleRoot(root);
 
   for (const part of skip) console.log(`fetch-bundled-assets: skipping ${ part } (SULLA_BUNDLE_SKIP); this tree cannot be packaged for release`);
@@ -148,7 +148,7 @@ export async function fetchBundledAssets(arch: string, skip = skippedParts(), ro
  * Problems that make `resourcesDarwin` unfit to ship for `arch`; empty when
  * complete. Packaging calls this on the copied app resources.
  */
-export function bundledAssetProblems(resourcesDarwin: string, arch: string, skip = skippedParts()): string[] {
+export function bundledAssetProblems(resourcesDarwin: string, arch: string, skip: ReadonlySet<string> = skippedParts()): string[] {
   const problems: string[] = [];
 
   if (!skip.has('images')) {

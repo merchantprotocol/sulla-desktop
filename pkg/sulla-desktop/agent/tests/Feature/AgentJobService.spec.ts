@@ -3,10 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TestDatabase } from '../Support/TestDatabase';
+
+import type { AgentJob } from '../../tools/agents/jobRegistry';
+
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 dbDescribe('AgentJobService state machine with real Postgres', () => {
   const database = new TestDatabase();
   let registry: typeof import('../../tools/agents/jobRegistry');
+  let terminalNotifications: AgentJob[];
   beforeAll(async() => {
     await database.initialize();
     process.env.SULLA_DATABASE_URL = database.appUrl();
@@ -16,6 +20,9 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     await postgresClient.initialize();
     await postgresClient.query(`SET search_path TO "${ database.schema }", public`);
     registry = await import('../../tools/agents/jobRegistry');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    terminalNotifications = [];
+    agentJobProvider.terminalTransitions.subscribe({ onJobTerminal: (job) => terminalNotifications.push(job) });
   }, 60_000);
   afterAll(async() => database.dispose());
   it('allows running jobs to become completed, failed, or stopped and forbids terminal transitions', async() => {
@@ -89,5 +96,30 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).not.toContain(parked.jobId);
     expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
     expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
+  });
+
+  it('notifies the terminal observer on every task thread the instant a job turns terminal, however it ends', async() => {
+    // risk: a hidden job's heartbeat keeps firing after it returns, is stopped, or fails —
+    // AgentJobService.terminalObserver is JobHeartbeatCleanup's real production trigger
+    // (see JobHeartbeatCleanup.ts), so this exercises the actual cleanup seam, from every
+    // entry point, instead of a caller-specific wrapper a direct service call could bypass.
+    const threadsNotifiedFor = (jobId: string) => terminalNotifications.filter(job => job.jobId === jobId).flatMap(job => job.tasks.map(task => task.threadId));
+
+    const completed = await registry.createJob([{ agentId: 'worker', label: 'c', prompt: 'x', status: 'running', threadId: 'thread-complete' }]);
+    await registry.completeJob(completed.jobId, [{ label: 'c', status: 'completed', output: 'done', threadId: 'thread-complete' }]);
+    expect(threadsNotifiedFor(completed.jobId)).toEqual(expect.arrayContaining(['thread-complete']));
+
+    const failed = await registry.createJob([{ agentId: 'worker', label: 'f', prompt: 'x', status: 'running', threadId: 'thread-fail' }]);
+    await registry.failJob(failed.jobId, 'boom');
+    expect(threadsNotifiedFor(failed.jobId)).toEqual(expect.arrayContaining(['thread-fail']));
+
+    const stopped = await registry.createJob([{ agentId: 'worker', label: 's', prompt: 'x', status: 'running', threadId: 'thread-stop' }]);
+    expect(registry.abortJob(stopped.jobId)).toBe('stopped');
+    expect(threadsNotifiedFor(stopped.jobId)).toEqual(expect.arrayContaining(['thread-stop']));
+
+    const root = await registry.createJob([{ agentId: 'manager', label: 'r', prompt: 'x', status: 'running', threadId: 'thread-cascade-root' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'ch', prompt: 'x', status: 'running', threadId: 'thread-cascade-child' }], 'manager', 'thread-cascade-root');
+    await registry.stopJobCascade(root.jobId);
+    expect([...threadsNotifiedFor(root.jobId), ...threadsNotifiedFor(child.jobId)]).toEqual(expect.arrayContaining(['thread-cascade-root', 'thread-cascade-child']));
   });
 });

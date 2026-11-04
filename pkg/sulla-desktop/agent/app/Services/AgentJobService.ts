@@ -7,9 +7,10 @@ import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
+import type { JobTerminalObserver } from './JobTerminalObserver';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly terminalObserver: JobTerminalObserver) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -104,6 +105,7 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
+  this.terminalObserver.notify(job);
   void this.persist(this.repository.stop(jobId, job.tasks));
   return 'stopped';
 }
@@ -119,6 +121,7 @@ async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-
     if (!job || !['running', 'parked'].includes(job.status)) continue;
     job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
     job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
+    this.terminalObserver.notify(job);
   }
   return 'stopped';
 }
@@ -259,6 +262,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     if (!result) return task;
     return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() };
   });
+  this.terminalObserver.notify(job);
 
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 
@@ -384,6 +388,7 @@ async failJob(jobId: string, error: string): Promise<void> {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
     : task);
+  this.terminalObserver.notify(job);
 
   await this.persist(this.repository.fail(jobId, error, job.tasks));
 }
