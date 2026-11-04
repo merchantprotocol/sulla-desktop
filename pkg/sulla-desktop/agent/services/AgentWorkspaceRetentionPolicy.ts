@@ -73,7 +73,9 @@ const JOB_WORKSPACE_NAME_PATTERN = /(?:^|-)(agent-job-\d+-\d+)-\d+-[A-Za-z0-9]{8
  * content. A workspace the WorkspaceInspector calls unsafe is retained
  * forever regardless of age or disk pressure; only a safe workspace may be
  * swept once it crosses the retention window, or earlier if the guest disk
- * is running low. Deletion failures are recorded and never abort the run.
+ * is running low. A non-git workspace only skips the window when it is
+ * literally empty; any file inside it waits the same window as a git
+ * checkout. Deletion failures are recorded and never abort the run.
  */
 export class AgentWorkspaceRetentionPolicy {
   constructor(
@@ -103,7 +105,7 @@ export class AgentWorkspaceRetentionPolicy {
         continue;
       }
 
-      if (!inspection.hasGitRepository) {
+      if (!inspection.hasGitRepository && await this.isEmptyDirectory(candidate.path, report)) {
         await this.remove(candidate, 'clean', report);
         continue;
       }
@@ -115,6 +117,17 @@ export class AgentWorkspaceRetentionPolicy {
 
     if (waitingForAge.length) await this.reclaimUnderDiskPressure(waitingForAge, report);
     return report;
+  }
+
+  /** Only a workspace with literally nothing inside it may skip the age window; any content waits like a git checkout. */
+  private async isEmptyDirectory(path: string, report: WorkspaceRetentionReport): Promise<boolean> {
+    try {
+      const names = await this.fileSystem.readdir(path);
+      return names.length === 0;
+    } catch (error) {
+      report.errors.push({ path, error: this.describe(error) });
+      return false;
+    }
   }
 
   private async listCandidates(report: WorkspaceRetentionReport): Promise<WorkspaceCandidate[]> {

@@ -84,16 +84,16 @@ export class WorkspaceInspector {
   }
 
   private async findGitRepoRoots(directory: string, depth: number): Promise<string[]> {
-    if (depth > this.maxDepth) return [];
-    let names: string[];
-    try { names = await this.fileSystem.readdir(directory) } catch { return [] }
+    if (depth > this.maxDepth) {
+      throw new Error(`workspace nesting exceeds max depth ${ this.maxDepth } at ${ directory }`);
+    }
+    const names = await this.fileSystem.readdir(directory);
     if (names.includes('.git')) return [directory];
     const roots: string[] = [];
     for (const name of names) {
       if (name === 'node_modules' || name === '.git') continue;
       const child = `${ directory }/${ name }`;
-      let stat: WorkspaceDirEntryStat;
-      try { stat = await this.fileSystem.lstat(child) } catch { continue }
+      const stat = await this.fileSystem.lstat(child);
       if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
       roots.push(...await this.findGitRepoRoots(child, depth + 1));
     }
@@ -107,10 +107,13 @@ export class WorkspaceInspector {
     if (status.stdout.trim()) reasons.push(`uncommitted or untracked changes in ${ repoRoot }`);
 
     const stash = await this.git.run(repoRoot, ['stash', 'list']);
-    if (stash.exitCode === 0 && stash.stdout.trim()) reasons.push(`stash entries in ${ repoRoot }`);
+    if (stash.exitCode !== 0) reasons.push(`git stash list failed in ${ repoRoot }`);
+    else if (stash.stdout.trim()) reasons.push(`stash entries in ${ repoRoot }`);
 
-    const unreachable = await this.git.run(repoRoot, ['log', '--branches', '--not', '--remotes', '--oneline']);
-    if (unreachable.exitCode === 0 && unreachable.stdout.trim()) {
+    const unreachable = await this.git.run(repoRoot, ['log', 'HEAD', '--branches', '--not', '--remotes', '--oneline']);
+    if (unreachable.exitCode !== 0) {
+      reasons.push(`git log failed in ${ repoRoot }`);
+    } else if (unreachable.stdout.trim()) {
       reasons.push(`commits not reachable from any remote-tracking ref in ${ repoRoot }`);
     }
 
@@ -118,7 +121,9 @@ export class WorkspaceInspector {
     const branchName = branch.exitCode === 0 ? branch.stdout.trim() : '';
     if (branchName && branchName !== 'HEAD') {
       const remoteRefs = await this.git.run(repoRoot, ['for-each-ref', `refs/remotes/*/${ branchName }`, '--format=%(refname)']);
-      if (remoteRefs.exitCode !== 0 || !remoteRefs.stdout.trim()) {
+      if (remoteRefs.exitCode !== 0) {
+        reasons.push(`git for-each-ref failed in ${ repoRoot }`);
+      } else if (!remoteRefs.stdout.trim()) {
         reasons.push(`branch ${ branchName } has no remote-tracking ref in ${ repoRoot }`);
       }
     }

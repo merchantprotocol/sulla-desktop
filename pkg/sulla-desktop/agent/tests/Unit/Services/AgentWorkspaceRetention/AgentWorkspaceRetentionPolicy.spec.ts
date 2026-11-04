@@ -10,7 +10,15 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { NodeWorkspaceFileSystem, SpawnGitCommandRunner, WorkspaceInspector } from '../../../../services/AgentWorkspaceInspector';
+import {
+  NodeWorkspaceFileSystem,
+  SpawnGitCommandRunner,
+  WorkspaceInspector,
+  type GitCommandResult,
+  type GitCommandRunner,
+  type WorkspaceDirEntryStat,
+  type WorkspaceFileSystem,
+} from '../../../../services/AgentWorkspaceInspector';
 import {
   AgentWorkspaceRetentionPolicy,
   type ActiveJobGuard,
@@ -74,6 +82,38 @@ class FixtureDiskSpaceProbe implements DiskSpaceProbe {
   async freeBytes(): Promise<number> { return this.bytes }
 }
 
+/** Wraps a real WorkspaceFileSystem but fails one specific path's readdir and/or lstat, to prove the inspector fails closed. */
+class SubpathFailingFileSystem implements WorkspaceFileSystem {
+  constructor(
+    private readonly delegate:       WorkspaceFileSystem,
+    private readonly failReaddirFor?: string,
+    private readonly failLstatFor?:   string,
+  ) {}
+
+  async readdir(path: string): Promise<string[]> {
+    if (path === this.failReaddirFor) throw new Error(`simulated readdir failure for ${ path }`);
+    return this.delegate.readdir(path);
+  }
+
+  async lstat(path: string): Promise<WorkspaceDirEntryStat> {
+    if (path === this.failLstatFor) throw new Error(`simulated lstat failure for ${ path }`);
+    return this.delegate.lstat(path);
+  }
+}
+
+/** Wraps a real GitCommandRunner but forces one git subcommand to fail, to prove the inspector fails closed. */
+class SubcommandFailingGitCommandRunner implements GitCommandRunner {
+  constructor(
+    private readonly delegate:          GitCommandRunner,
+    private readonly failingSubcommand: string,
+  ) {}
+
+  async run(cwd: string, args: string[]): Promise<GitCommandResult> {
+    if (args[0] === this.failingSubcommand) return { stdout: '', exitCode: 1 };
+    return this.delegate.run(cwd, args);
+  }
+}
+
 class FixtureWorkspaceRemover implements WorkspaceRemover {
   readonly removedPaths: string[] = [];
   private readonly failing = new Set<string>();
@@ -114,6 +154,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     remover?:          FixtureWorkspaceRemover;
     retentionWindowMs?: number;
     minFreeDiskBytes?: number;
+    inspector?:        WorkspaceInspector;
   } = {}) {
     const clock = new FixtureClock(options.now ?? Date.now());
     const guard = options.guard ?? new FixtureActiveJobGuard();
@@ -123,17 +164,24 @@ describe('AgentWorkspaceRetentionPolicy', () => {
       retentionWindowMs: options.retentionWindowMs,
       minFreeDiskBytes:  options.minFreeDiskBytes,
     });
-    const policy = new AgentWorkspaceRetentionPolicy(root, fileSystem, inspector, guard, clock, diskSpaceProbe, remover, config);
+    const policy = new AgentWorkspaceRetentionPolicy(
+      root, fileSystem, options.inspector ?? inspector, guard, clock, diskSpaceProbe, remover, config,
+    );
     return { policy, clock, guard, diskSpaceProbe, remover };
   }
 
-  it('removes a clean workspace of a terminal job', async() => {
+  function pushedCleanRepo(workspacePath: string, remoteDir: string): void {
+    initRepoWithRemote(workspacePath, remoteDir);
+    commit(workspacePath, 'a.txt', 'one');
+    git(workspacePath, ['push', '-u', 'origin', 'main']);
+  }
+
+  it('removes a truly empty non-git workspace of a terminal job immediately', async() => {
     // risk: 2,071 retained workspaces at 8.4 GB never get swept away; disk fills again
     const jobId = nextJobId();
     const dirName = workspaceDirName(jobId);
     const workspacePath = path.join(root, dirName);
     await fsPromises.mkdir(workspacePath);
-    await fsPromises.writeFile(path.join(workspacePath, 'notes.txt'), 'scratch output, no git');
 
     const { policy, remover } = buildPolicy();
     const report = await policy.enforce();
@@ -141,6 +189,35 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'clean' }]);
     expect(remover.removedPaths).toContain(workspacePath);
     await expect(fsPromises.access(workspacePath)).rejects.toThrow();
+  });
+
+  it('keeps a non-git workspace that still has files inside the retention window', async() => {
+    // risk: scratch output from a job that just finished is deleted before anyone can look at it
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    await fsPromises.writeFile(path.join(workspacePath, 'notes.txt'), 'scratch output, no git');
+
+    const { policy } = buildPolicy();
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toEqual([]);
+    await expect(fsPromises.access(workspacePath)).resolves.toBeUndefined();
+  });
+
+  it('removes a non-git workspace with files once it clears the retention window', async() => {
+    // risk: a non-git scratch workspace with files never ages out because it is never seen as "clean"
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    await fsPromises.writeFile(path.join(workspacePath, 'notes.txt'), 'scratch output, no git');
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const { policy } = buildPolicy({ now: Date.now() });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'age' }]);
   });
 
   it('keeps an uncommitted change forever, even past the seven-day window', async() => {
@@ -336,12 +413,10 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     const jobIdA = nextJobId();
     const workspaceA = path.join(root, workspaceDirName(jobIdA));
     await fsPromises.mkdir(workspaceA);
-    await fsPromises.writeFile(path.join(workspaceA, 'notes.txt'), 'scratch');
 
     const jobIdB = nextJobId();
     const workspaceB = path.join(root, workspaceDirName(jobIdB));
     await fsPromises.mkdir(workspaceB);
-    await fsPromises.writeFile(path.join(workspaceB, 'notes.txt'), 'scratch');
 
     const remover = new FixtureWorkspaceRemover();
     remover.failFor(workspaceA);
@@ -352,5 +427,100 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     expect(report.removed).toEqual([{ path: workspaceB, jobId: jobIdB, reason: 'clean' }]);
     await expect(fsPromises.access(workspaceA)).resolves.toBeUndefined();
     await expect(fsPromises.access(workspaceB)).rejects.toThrow();
+  });
+
+  it('keeps a workspace when a nested directory cannot be read', async() => {
+    // risk: a readdir error deep in the tree is swallowed and a repo that was never actually inspected gets deleted
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const brokenDir = path.join(workspacePath, 'broken');
+    await fsPromises.mkdir(brokenDir);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const failingFs = new SubpathFailingFileSystem(fileSystem, brokenDir);
+    const failingInspector = new WorkspaceInspector(failingFs, new SpawnGitCommandRunner());
+    const { policy } = buildPolicy({ now: Date.now(), inspector: failingInspector });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toHaveLength(1);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/inspection failed/);
+  });
+
+  it('keeps a workspace when a nested entry cannot be lstat-ed', async() => {
+    // risk: an lstat error on one entry is swallowed and the sibling that hides the real repo is skipped silently
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const brokenEntry = path.join(workspacePath, 'broken-entry');
+    await fsPromises.mkdir(brokenEntry);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const failingFs = new SubpathFailingFileSystem(fileSystem, undefined, brokenEntry);
+    const failingInspector = new WorkspaceInspector(failingFs, new SpawnGitCommandRunner());
+    const { policy } = buildPolicy({ now: Date.now(), inspector: failingInspector });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toHaveLength(1);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/inspection failed/);
+  });
+
+  it('keeps a workspace nested deeper than the inspector can fully walk', async() => {
+    // risk: a repo nested past maxDepth is silently skipped and treated as if it never existed
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    const deepDir = path.join(workspacePath, 'level1', 'level2');
+    await fsPromises.mkdir(deepDir, { recursive: true });
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const shallowInspector = new WorkspaceInspector(fileSystem, new SpawnGitCommandRunner(), 1);
+    const { policy } = buildPolicy({ now: Date.now(), inspector: shallowInspector });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toHaveLength(1);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/inspection failed/);
+  });
+
+  it.each(['stash', 'log', 'for-each-ref'])('keeps a workspace when git %s fails', async(subcommand) => {
+    // risk: a transient git failure (crash, timeout) is read as "no findings" instead of "couldn't check"
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const remoteDir = path.join(outsideRoot, 'remote.git');
+    pushedCleanRepo(workspacePath, remoteDir);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const failingGit = new SubcommandFailingGitCommandRunner(new SpawnGitCommandRunner(), subcommand);
+    const failingInspector = new WorkspaceInspector(fileSystem, failingGit);
+    const { policy } = buildPolicy({ now: Date.now(), inspector: failingInspector });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toHaveLength(1);
+    const reasonText = report.keptUnsafe[0].reasons.join(' ');
+    expect(reasonText).toContain(subcommand);
+    expect(reasonText).toMatch(/failed/);
+  });
+
+  it('keeps a detached-HEAD commit that was never pushed or branched', async() => {
+    // risk: a job that finished mid-rebase/cherry-pick in detached HEAD loses real, unpushed work
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const remoteDir = path.join(outsideRoot, 'remote.git');
+    pushedCleanRepo(workspacePath, remoteDir);
+    git(workspacePath, ['checkout', '-q', '--detach', 'HEAD']);
+    commit(workspacePath, 'b.txt', 'two');
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const { policy } = buildPolicy({ now: Date.now() });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe).toHaveLength(1);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any remote-tracking ref/);
   });
 });
