@@ -30,7 +30,7 @@ export class MeterableUsageNormalizer implements UsageSourceNormalizer {
     return { ...this.codec.sanitize({ ts: record.created_at, model: typeof metadata.model === 'string' ? metadata.model : undefined,
       input_tokens: input || undefined, output_tokens: output || undefined, total_tokens: Number(record.quantity),
       cached_input_tokens: this.codec.finite(metadata.cached_input_tokens) || undefined, cache_read_input_tokens: this.codec.finite(metadata.cache_read_input_tokens) || undefined,
-      cache_creation_input_tokens: this.codec.finite(metadata.cache_creation_input_tokens) || undefined, cost_usd: this.codec.finite(metadata.cost_usd) || undefined }),
+      cache_creation_input_tokens: this.codec.finite(metadata.cache_creation_input_tokens) || undefined }),
       providerId: provider.id, providerLabel: provider.label };
   }
 }
