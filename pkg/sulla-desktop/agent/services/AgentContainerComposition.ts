@@ -7,11 +7,21 @@ import type { ContainerRuntimeDriver } from '@pkg/runtime/containerRuntime';
 import type { Clock } from '@sulla/foundation';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentContainerLaunchCoordinator, type AgentLaunchJobReporter } from './AgentContainerLaunchCoordinator';
+import type { ActiveContainerGuard } from './AgentContainerRetentionPolicy';
 import { IdempotentRetry } from './AgentContainerStartupRetry';
 import { SullaFilesBindPlanner, SullaFilesMountHealthProbe, SullaRuntimeGuestCommandRunner, type MountAvailabilityView } from './SullaFilesMountHealthProbe';
 
 class DateClock implements Clock {
   now(): Date { return new Date() }
+}
+
+/** Instance-owned registry shielding created containers while their launch is still in flight. */
+export class ActiveAgentContainerRegistry implements ActiveContainerGuard {
+  private readonly containerIds = new Set<string>();
+
+  register(containerId: string): void { this.containerIds.add(containerId) }
+  unregister(containerId: string): void { this.containerIds.delete(containerId) }
+  isActive(containerId: string): boolean { return this.containerIds.has(containerId) }
 }
 
 export class AgentJobCheckinReporter implements AgentLaunchJobReporter {
@@ -29,10 +39,11 @@ export class AgentJobCheckinReporter implements AgentLaunchJobReporter {
 /** Per-launch composition: all mutable state stays in the injected instances. */
 export class AgentContainerLaunchComposition {
   constructor(
-    private readonly runtime: ContainerRuntimeDriver,
+    readonly runtime: ContainerRuntimeDriver,
     private readonly mountManager: MountAvailabilityView,
     private readonly runtimeBinary: string,
     private readonly clock: Clock = new DateClock(),
+    readonly activeContainers = new ActiveAgentContainerRegistry(),
   ) {}
 
   create(threadId?: string): AgentContainerLaunchCoordinator {
@@ -46,6 +57,7 @@ export class AgentContainerLaunchComposition {
       new IdempotentRetry(),
       new SullaFilesBindPlanner(probe),
       new AgentJobCheckinReporter(threadId),
+      this.activeContainers,
     );
   }
 }

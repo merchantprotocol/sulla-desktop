@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { ContainerRuntimeDriver } from '@pkg/runtime/containerRuntime';
-import { ContainerRetentionPolicy, RetentionConfig } from './AgentContainerRetentionPolicy';
+import { ContainerRetentionPolicy, RetentionConfig, type ActiveContainerGuard, type DiskSpaceProbe } from './AgentContainerRetentionPolicy';
 import { ContainerRetentionScheduler, type RetentionSchedulerLogger, type RetentionSchedulerTimer } from './AgentContainerRetentionScheduler';
 import { GuestDiskSpaceProbe, SullaRuntimeCommandRunner } from './GuestDiskSpaceProbe';
 
@@ -17,13 +17,15 @@ export class AgentContainerRetentionBootstrap {
     runtimeBinary: string,
     timer: RetentionSchedulerTimer,
     logger: RetentionSchedulerLogger,
+    activeContainers: ActiveContainerGuard,
     config = new RetentionConfig(),
+    disk: DiskSpaceProbe = new GuestDiskSpaceProbe(new SullaRuntimeCommandRunner(runtimeBinary)),
   ) {
     const policy = new ContainerRetentionPolicy(
       runtime,
-      new GuestDiskSpaceProbe(new SullaRuntimeCommandRunner(runtimeBinary)),
+      disk,
       { now: () => Date.now() },
-      { isActive: () => false },
+      activeContainers,
       config,
     );
     this.scheduler = new ContainerRetentionScheduler(policy, timer, logger, config.intervalMs);

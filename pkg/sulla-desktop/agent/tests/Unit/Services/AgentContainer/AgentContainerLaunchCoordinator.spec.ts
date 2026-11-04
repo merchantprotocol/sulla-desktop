@@ -8,6 +8,7 @@ import type { ContainerSpec } from '@pkg/runtime/containerRuntime';
 import { AgentContainerLaunchCoordinator, type AgentContainerDiagnosticRuntime, type AgentLaunchJobReporter } from '@pkg/agent/services/AgentContainerLaunchCoordinator';
 import { IdempotentRetry, StartupRetryError } from '@pkg/agent/services/AgentContainerStartupRetry';
 import { SullaFilesBindPlanner } from '@pkg/agent/services/SullaFilesMountHealthProbe';
+import { GuestDockerRuntimeDriver, type GuestDockerCommandExecutor } from '@pkg/agent/services/AgentContainerLauncher';
 
 class FakeRuntime implements AgentContainerDiagnosticRuntime {
   created: ContainerSpec[] = [];
@@ -35,6 +36,15 @@ class FakeReporter implements AgentLaunchJobReporter {
   failures: string[] = [];
   warning(message: string): Promise<void> { this.warnings.push(message); return Promise.resolve() }
   failure(message: string): Promise<void> { this.failures.push(message); return Promise.resolve() }
+}
+
+class StderrOnlyDockerExecutor implements GuestDockerCommandExecutor {
+  readonly commands: string[][] = [];
+  execute(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    this.commands.push(args);
+    if (args[0] === 'sh') return Promise.resolve({ stdout: '', stderr: 'fatal: startup exploded\n' });
+    return Promise.resolve({ stdout: '', stderr: '' });
+  }
 }
 
 class Harness {
@@ -72,6 +82,22 @@ describe('AgentContainerLaunchCoordinator', () => {
     expect(record.name).toBe('sulla-agent-job-1-0-failed-1');
     expect(h.reporter.failures[0]).toContain('Failure: mount failed');
     expect(h.reporter.failures[0]).toContain('tail=200');
+  });
+
+  it('records stderr-only Docker logs through the real guest runtime command path', async() => {
+    // risk: startup failures written only to stderr disappear from the retained job check-in
+    const executor = new StderrOnlyDockerExecutor();
+    const reporter = new FakeReporter();
+    const runtime = new GuestDockerRuntimeDriver(executor);
+    const coordinator = new AgentContainerLaunchCoordinator(
+      runtime, new IdempotentRetry(() => Promise.resolve()),
+      new SullaFilesBindPlanner({ check: () => Promise.resolve({ available: true }) }), reporter,
+    );
+    await coordinator.retainFailure('container-1', 'sulla-agent-job-1-0', new Error('start failed'));
+    expect(executor.commands).toContainEqual([
+      'sh', '-c', 'docker logs --tail "$1" "$2" 2>&1', 'sulla-docker-logs', '200', 'container-1',
+    ]);
+    expect(reporter.failures[0]).toContain('fatal: startup exploded');
   });
 
   it('reports the first start error end-to-end instead of the later missing container symptom', async() => {

@@ -7,6 +7,11 @@ import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/contain
 import type { SullaFilesBindPlan, SullaFilesBindPlanner } from './SullaFilesMountHealthProbe';
 import type { IdempotentRetry } from './AgentContainerStartupRetry';
 
+export interface ActiveLaunchRegistry {
+  register(containerId: string): void;
+  unregister(containerId: string): void;
+}
+
 export const FAILED_CONTAINER_LOG_TAIL = 200;
 export const FAILED_CONTAINER_SUFFIX = '-failed';
 
@@ -35,6 +40,7 @@ export class AgentContainerLaunchCoordinator {
     private readonly retry: IdempotentRetry,
     private readonly files: SullaFilesBindPlanner,
     private readonly reporter: AgentLaunchJobReporter,
+    private readonly activeContainers?: ActiveLaunchRegistry,
   ) {}
 
   async filesPlan(): Promise<SullaFilesBindPlan> {
@@ -43,29 +49,36 @@ export class AgentContainerLaunchCoordinator {
     return plan;
   }
 
-  create(spec: ContainerSpec): Promise<string> {
-    return this.runtime.create({ ...spec, autoRemove: false });
+  async create(spec: ContainerSpec): Promise<string> {
+    const id = await this.runtime.create({ ...spec, autoRemove: false });
+    this.activeContainers?.register(id);
+    return id;
   }
 
-  start(containerId: string, delaysMs: readonly number[], onRetry?: (message: string) => void): Promise<void> {
-    return this.retry.run(() => this.runtime.start(containerId), delaysMs, 'agent container start', onRetry);
+  async start(containerId: string, delaysMs: readonly number[], onRetry?: (message: string) => void): Promise<void> {
+    await this.retry.run(() => this.runtime.start(containerId), delaysMs, 'agent container start', onRetry);
+    this.activeContainers?.unregister(containerId);
   }
 
   async removeNormal(containerId: string): Promise<void> {
-    await this.runtime.remove(containerId, true);
+    try { await this.runtime.remove(containerId, true) } finally { this.activeContainers?.unregister(containerId) }
   }
 
   async retainFailure(containerId: string, originalName: string, failure: unknown): Promise<FailedContainerRecord> {
-    const runtime = this.diagnosticRuntime();
-    const reason = failure instanceof Error ? failure.message : String(failure);
-    await runtime.stop(containerId).catch(() => {});
-    const name = await this.renameForFailure(runtime, containerId, originalName);
-    const logs = await runtime.logs(containerId, FAILED_CONTAINER_LOG_TAIL).catch(error =>
-      `[failed to capture container logs: ${ error instanceof Error ? error.message : String(error) }]`);
-    // Docker labels are immutable. The existing com.sulla.job-id and com.sulla.workload=agent
-    // labels remain the durable identity/retention marker; failure reason and logs live in the job record.
-    await this.reporter.failure(`Agent container retained as ${ name }. Failure: ${ reason }\nLast ${ FAILED_CONTAINER_LOG_TAIL } log lines:\n${ logs }`);
-    return { containerId, name, reason, logs };
+    try {
+      const runtime = this.diagnosticRuntime();
+      const reason = failure instanceof Error ? failure.message : String(failure);
+      await runtime.stop(containerId).catch(() => {});
+      const name = await this.renameForFailure(runtime, containerId, originalName);
+      const logs = await runtime.logs(containerId, FAILED_CONTAINER_LOG_TAIL).catch(error =>
+        `[failed to capture container logs: ${ error instanceof Error ? error.message : String(error) }]`);
+      // Docker labels are immutable. The existing com.sulla.job-id and com.sulla.workload=agent
+      // labels remain the durable identity/retention marker; failure reason and logs live in the job record.
+      await this.reporter.failure(`Agent container retained as ${ name }. Failure: ${ reason }\nLast ${ FAILED_CONTAINER_LOG_TAIL } log lines:\n${ logs }`);
+      return { containerId, name, reason, logs };
+    } finally {
+      this.activeContainers?.unregister(containerId);
+    }
   }
 
   private diagnosticRuntime(): AgentContainerDiagnosticRuntime {
