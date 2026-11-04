@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "files": [
+    "pkg/sulla-desktop/entry/index.ts",
+    "pkg/sulla-desktop/entry/agent.ts",
+    "pkg/sulla-desktop/entry/process-manager.ts",
+    "pkg/sulla-desktop/entry/support.ts",
+    "pkg/sulla-desktop/entry/updates.ts",
+    "pkg/sulla-desktop/entry/first-run.ts",
+    "pkg/sulla-desktop/entry/side-panel.ts",
+    "pkg/sulla-desktop/entry/capture-studio.ts"
+  ]
+}

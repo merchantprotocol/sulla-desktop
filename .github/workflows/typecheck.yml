@@ -37,7 +37,15 @@ jobs:
           key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
           restore-keys: |
             typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
-      - name: Type-check production Desktop sources
+      - name: Type-check main and preload production graphs
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
-        run: yarn tsc --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/desktop.tsbuildinfo
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: yarn tsc --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+      - name: Type-check agent runtime
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: yarn tsc --project tsconfig.agent-check.json --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+      - name: Type-check renderer production graphs
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: yarn tsc --noEmit --project tsconfig.renderer-check.json --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
