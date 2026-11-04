@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: nightly-tests
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-agent-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg16
+        env:
+          POSTGRES_USER: sulla
+          POSTGRES_PASSWORD: sulla-ci
+          POSTGRES_DB: sulla_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sulla -d sulla_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      SULLA_TEST_DATABASE_URL: postgres://sulla:sulla-ci@127.0.0.1:5432/sulla_test
+      FC_NUM_RUNS: '10000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+      - name: Install dependencies (no lifecycle scripts, no Electron download)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Install BusyBox for guest disk characterization
+        run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Full suite with long property runs
+        run: yarn test:agent
