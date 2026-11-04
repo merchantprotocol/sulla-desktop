@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1140,
+  "entries": 1128,
   "files": {
     "background.ts": {
       "rules": {
@@ -1228,13 +1228,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/services/brokeredModelList.ts": {
-      "rules": {
-        "mutable-state": 2,
-        "procedural-module": 4
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/services/oauth/custody/LegacyDbCustody.ts": {
       "rules": {
         "raw-sql": 4
@@ -1276,14 +1269,6 @@
         "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/tools/agents/jobRegistry.ts": {
-      "rules": {
-        "long-file": 624,
-        "mutable-state": 5,
-        "procedural-module": 23
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/tools/agents/spawn_agent.ts": {
       "rules": {
@@ -1339,6 +1324,12 @@
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
+    },
+    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
+      "rules": {
+        "raw-sql": 1
+      },
+      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "pkg/sulla-desktop/agent/tools/episodic/search.ts": {
       "rules": {
@@ -1560,14 +1551,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/usage/providerUsage.ts": {
-      "rules": {
-        "long-file": 536,
-        "mutable-state": 1,
-        "procedural-module": 5
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/util/codexAuthFile.ts": {
       "rules": {
         "long-file": 423,
@@ -1605,13 +1588,6 @@
         "procedural-module": 36
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/workflow/WorkflowRecoveryService.ts": {
-      "rules": {
-        "mutable-state": 3,
-        "procedural-module": 3
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/workflow/WorkflowRegistry.ts": {
       "rules": {
@@ -2531,12 +2507,6 @@
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/devicesCloudApi.ts": {
-      "rules": {
-        "mutable-state": 4
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/main/dockerLinks.ts": {
       "rules": {
@@ -5154,12 +5124,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     }
   }
 }

@@ -4,6 +4,14 @@ Part of the Sulla OOP rebuild (Laravel-style; see `Projects/sulla-desktop/oop-re
 
 **Run it:** `node scripts/architecture-guard/guard.mjs` (plain Node 18+, no install, a second or less). CI runs it on every PR and on pushes to `main` (`.github/workflows/architecture-guard.yml`).
 
+## Test time budget (60 s rule)
+
+Every pull-request test run must finish in **under 60 seconds**. Run `yarn test:pr` (or `just test-pr`) locally. The command always runs this architecture guard, finds the merge base with `origin/main`, and asks Vitest to run only specs related to changed files. Changes to Vitest configuration, shared test support, `package.json`, or `yarn.lock` run a defined fast smoke set instead of the full suite. The runner terminates its process group and fails loudly at 60 seconds; the budget must not be raised.
+
+`.github/workflows/nightly-tests.yml` runs the complete agent suite and 10,000 fast-check cases on a schedule and by manual dispatch. It is intentionally not a pull-request trigger or required PR check.
+
+When a test is slow, profile the selected spec, create expensive fixtures once per worker, reset state with transactions or cheap clones, inject a fake clock instead of sleeping, and stub external network services at their boundary. Narrow the fixture or split the test when that preserves the regression coverage. **Do not fix a slow test by raising the 60-second budget or deleting bug/security coverage.**
+
 ## What fails a PR
 Only production code is checked. Tests, fixtures, `node_modules`, build output, dot-folders and `.d.ts` files are skipped.
 

@@ -10,7 +10,8 @@ import { migrationsRegistry } from '../../database/migrations';
 
 /** A disposable schema which exercises the same ordered migration registry as Desktop. */
 export class TestDatabase {
-  readonly schema = `spec_${ randomUUID().replaceAll('-', '') }`;
+  readonly schema = process.env.SULLA_TEST_SCHEMA ?? `spec_${ randomUUID().replaceAll('-', '') }`;
+  private readonly ownsSchema = !process.env.SULLA_TEST_SCHEMA;
   private admin: Pool;
   private pool: Pool | null = null;
 
@@ -22,9 +23,9 @@ export class TestDatabase {
 
   async initialize(): Promise<void> {
     if (!this.url) throw new Error('SULLA_TEST_DATABASE_URL is required for database characterization specs');
-    await this.admin.query(`CREATE SCHEMA "${ this.schema }"`);
+    if (this.ownsSchema) await this.admin.query(`CREATE SCHEMA "${ this.schema }"`);
     this.pool = new Pool({ connectionString: this.url, options: `-csearch_path=${ this.schema },public` });
-    await this.applyMigrations();
+    if (this.ownsSchema) await this.applyMigrations();
   }
 
   async applyMigrations(): Promise<void> {
@@ -61,7 +62,7 @@ export class TestDatabase {
 
   async dispose(): Promise<void> {
     await this.pool?.end();
-    await this.admin.query(`DROP SCHEMA IF EXISTS "${ this.schema }" CASCADE`);
+    if (this.ownsSchema) await this.admin.query(`DROP SCHEMA IF EXISTS "${ this.schema }" CASCADE`);
     await this.admin.end();
   }
 }

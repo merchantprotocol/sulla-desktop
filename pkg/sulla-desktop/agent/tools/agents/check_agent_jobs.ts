@@ -5,7 +5,7 @@
 
 import { AgentJobMessagingModel, type AgentJobCheckin, type AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import { BaseTool, ToolResponse } from '../base';
-import { getJob, getJobsForList, deleteJob } from './jobRegistry';
+import { getJob, getJobsForList } from './jobRegistry';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -113,13 +113,11 @@ export class CheckAgentJobsWorker extends BaseTool {
       if (!job) {
         return {
           successBoolean: false,
-          responseString: `Job "${ jobId }" not found. It may have expired (jobs are kept for 1 hour after completion).`,
+          responseString: `Job "${ jobId }" not found. It may not exist or may have been explicitly pruned after the retention period.`,
         };
       }
 
       const result = await serializeJob(job);
-      if (job.status !== 'running' && job.completionDeliveredAt) deleteJob(jobId);
-
       return {
         successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
         responseString: JSON.stringify(result, null, 2),

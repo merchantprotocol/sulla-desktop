@@ -198,6 +198,11 @@ test-all:
     @echo "🧪 Running all tests..."
     yarn test
 
+# Run only the specs related to this branch, plus the architecture guard.
+# scripts/test-pr.mjs enforces the non-negotiable 60-second PR budget.
+test-pr:
+    yarn test:pr
+
 # Run tests in watch mode for development
 test-watch:
     @echo "🧪 Running tests in watch mode..."

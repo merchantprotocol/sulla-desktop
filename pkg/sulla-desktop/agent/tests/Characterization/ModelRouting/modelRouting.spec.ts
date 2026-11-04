@@ -103,6 +103,6 @@ describe('BL-044 provider health is a temporary routing hint', () => {
         else { now += 1_000; vi.advanceTimersByTime(1_000) }
         expect(await subject.isUnavailable('openai')).toBe(unavailableUntil > now);
       }
-    }), { numRuns: 50 });
+    }), { numRuns: Number.parseInt(process.env.FC_NUM_RUNS ?? '50', 10) });
   });
 });

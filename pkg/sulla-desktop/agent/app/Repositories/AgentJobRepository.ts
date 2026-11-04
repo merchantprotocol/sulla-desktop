@@ -61,9 +61,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
-      SELECT * FROM agent_jobs WHERE status = 'running'
+      SELECT * FROM agent_jobs WHERE status = 'running' AND dismissed_at IS NULL
       UNION ALL
-      (SELECT * FROM agent_jobs WHERE status <> 'running' AND $2::boolean ORDER BY created_at DESC LIMIT $1)
+      (SELECT * FROM agent_jobs WHERE status <> 'running' AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
@@ -101,9 +101,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET status = 'failed', finished_at = now(), error = $2, tasks = $3::jsonb WHERE job_id = $1`, [jobId, error, JSON.stringify(tasks)]);
   }
 
-  async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
-
-  async pruneDismissed(): Promise<void> {
-    await this.connection.run(`DELETE FROM agent_jobs WHERE dismissed_at IS NOT NULL AND dismissed_at < now() - interval '1 hour'`);
+  async hasQueuedOrRunningChildren(job: AgentJob): Promise<boolean> {
+    const threadIds = job.tasks.map(task => task.threadId).filter((threadId): threadId is string => Boolean(threadId));
+    if (threadIds.length === 0) return false;
+    const row = await this.connection.first(`SELECT EXISTS (
+      SELECT 1 FROM agent_jobs child
+      WHERE child.parent_thread_id IN (SELECT jsonb_array_elements_text($1::jsonb))
+        AND (child.status = 'running' OR child.tasks @? '$[*] ? (@.status == "queued" || @.status == "running")')
+    ) AS present`, [JSON.stringify(threadIds)]);
+    return row?.present === true || row?.present === 't';
   }
+
+  async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
 }
