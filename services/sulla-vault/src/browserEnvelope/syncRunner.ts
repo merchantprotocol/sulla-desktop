@@ -25,6 +25,7 @@ import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, 
 import { ensureSyncSchema } from './schema.js';
 
 import type { Database } from '../db.js';
+import { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
 import type pg from 'pg';
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
@@ -122,7 +123,11 @@ export class CloudVaultSyncRunner {
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly db: Database, private readonly authority: CloudSyncAuthority) {}
+  constructor(
+    private readonly db: Database,
+    private readonly authority: CloudSyncAuthority,
+    private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
+  ) {}
 
   private async env(): Promise<SyncEnvelope> {
     this.envelope ??= createSyncEnvelope(await loadSodium());
@@ -278,11 +283,13 @@ export class CloudVaultSyncRunner {
             );
             const row = current.rows[0];
             if (!row) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
-            await client.query(
-              `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-               VALUES ($1,$2,$3,$4,$5,'cloud_rewrap')`,
-              [userId, row.login_hash_salt, row.login_hash_verifier, row.encrypted_user_key, row.kdf],
-            );
+            await this.rewrapHistory.preservePasswordWrap({
+              user_id: userId,
+              login_hash_salt: row.login_hash_salt,
+              login_hash_verifier: row.login_hash_verifier,
+              encrypted_user_key: row.encrypted_user_key,
+              kdf: row.kdf,
+            }, 'cloud_rewrap', client);
             const nextKdf = { authority: 'container', version: 1, password: { salt: remoteBundle.kdf.salt, parameters: { memoryBytes: remoteBundle.kdf.memoryBytes, operations: remoteBundle.kdf.ops } } };
             await client.query(
               'UPDATE users SET encrypted_user_key=$2,public_key=$3,encrypted_private_key=$4,kdf=$5,updated_at=now() WHERE id=$1',
