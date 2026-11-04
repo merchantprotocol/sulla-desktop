@@ -14,6 +14,8 @@ import {
   type AgentDefinition,
   type AgentDefinitionInput,
   type AgentDefinitionPatch,
+  type AgentDefinitionConfigPatch,
+  type AgentHeartbeatConfig,
   type AgentDefinitionStatus,
   type AgentModelSlot,
 } from '../database/models/AgentDefinitionModel';
@@ -72,6 +74,7 @@ function legacyModelSlot(value: unknown): AgentModelSlot | null {
 export class AgentDefinitionService {
   get(id: string): Promise<AgentDefinition | null> { return AgentDefinitionModel.get(id) }
   findBySlug(slug: string): Promise<AgentDefinition | null> { return AgentDefinitionModel.findBySlug(slug) }
+  getHeartbeatConfig(id: string): Promise<AgentHeartbeatConfig | null> { return AgentDefinitionModel.getHeartbeatConfig(id) }
   list(status?: AgentDefinitionStatus): Promise<AgentDefinition[]> { return AgentDefinitionModel.list(status) }
   create(input: AgentDefinitionInput): Promise<AgentDefinition> { return AgentDefinitionModel.create(input) }
   async update(id: string, patch: AgentDefinitionPatch): Promise<AgentDefinition | null> {
@@ -81,6 +84,11 @@ export class AgentDefinitionService {
       ? { ...current.prompt_files, 'prompt.md': patch.promptContent }
       : patch.promptFiles;
     return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) });
+  }
+
+  /** Merge config keys; unlike update({ config }), this preserves unrelated keys. */
+  patchConfig(id: string, patch: AgentDefinitionConfigPatch): Promise<AgentDefinition | null> {
+    return AgentDefinitionModel.patchConfig(id, patch);
   }
 
   setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> { return AgentDefinitionModel.setStatus(id, status) }
