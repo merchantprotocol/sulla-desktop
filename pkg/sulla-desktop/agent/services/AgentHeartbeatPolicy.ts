@@ -3,14 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
+import type { AgentDefinition, AgentHeartbeatConfig } from '../database/models/AgentDefinitionModel';
 
-export interface AgentHeartbeatConfig {
-  allowed: boolean;
-  defaultIntervalMinutes: number;
-  minIntervalMinutes: number;
-  maxIntervalMinutes: number;
-}
+export type { AgentHeartbeatConfig } from '../database/models/AgentDefinitionModel';
 
 export interface HeartbeatDecision {
   allowed: boolean;
@@ -44,7 +39,7 @@ export class AgentHeartbeatPolicy {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return this.denied(definition.slug, requestedIntervalMinutes, `Heartbeats are not allowed for agent ${ definition.slug }: set config.heartbeat.allowed = true in its agent definition.`);
     }
-    const validated = this.validateConfig(raw);
+    const validated = AgentHeartbeatPolicy.validateConfig(raw);
     if (!validated.config) return this.denied(definition.slug, requestedIntervalMinutes, `Invalid heartbeat configuration: ${ validated.field }.`);
     return this.evaluate(definition.slug, validated.config, requestedIntervalMinutes);
   }
@@ -54,11 +49,13 @@ export class AgentHeartbeatPolicy {
     return bySlug ?? await this.definitions.get(agentId);
   }
 
-  private validateConfig(raw: Record<string, unknown>): { config: AgentHeartbeatConfig | null; field: string } {
+  static validateConfig(raw: Record<string, unknown>): { config: AgentHeartbeatConfig | null; field: string } {
     const fields = ['allowed', 'defaultIntervalMinutes', 'minIntervalMinutes', 'maxIntervalMinutes'] as const;
     if (typeof raw.allowed !== 'boolean') return { config: null, field: 'config.heartbeat.allowed' };
     for (const field of fields.slice(1)) {
-      if (typeof raw[field] !== 'number' || !Number.isFinite(raw[field]) || raw[field] <= 0) return { config: null, field: `config.heartbeat.${ field }` };
+      if (typeof raw[field] !== 'number' || !Number.isFinite(raw[field]) || raw[field] <= 0 || raw[field] > 1440) {
+        return { config: null, field: `config.heartbeat.${ field }` };
+      }
     }
     const config = raw as unknown as AgentHeartbeatConfig;
     if (config.minIntervalMinutes > config.maxIntervalMinutes) return { config: null, field: 'config.heartbeat.minIntervalMinutes/maxIntervalMinutes' };

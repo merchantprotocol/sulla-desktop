@@ -23,6 +23,18 @@ export interface ModelPriorityEntry {
   model:    string;
 }
 
+export interface AgentHeartbeatConfig {
+  allowed: boolean;
+  defaultIntervalMinutes: number;
+  minIntervalMinutes: number;
+  maxIntervalMinutes: number;
+}
+
+export interface AgentDefinitionConfigPatch {
+  heartbeat?: AgentHeartbeatConfig;
+  [key: string]: unknown;
+}
+
 export interface AgentDefinition {
   id:                      string;
   slug:                    string;
@@ -364,6 +376,23 @@ export class AgentDefinitionModel {
     }
     const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
     return row ? rowToDefinition(row) : null;
+  }
+
+  /** Merge config keys without replacing unrelated agent configuration. */
+  static async patchConfig(id: string, patch: AgentDefinitionConfigPatch): Promise<AgentDefinition | null> {
+    const row = await postgresClient.queryOne(
+      `UPDATE agent_definitions SET config = COALESCE(config, '{}'::jsonb) || $2::jsonb, updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [id, JSON.stringify(patch)],
+    );
+    return row ? rowToDefinition(row) : null;
+  }
+
+  static async getHeartbeatConfig(id: string): Promise<AgentHeartbeatConfig | null> {
+    const row = await postgresClient.queryOne('SELECT config->\'heartbeat\' AS heartbeat FROM agent_definitions WHERE id = $1 LIMIT 1', [id]);
+    return row?.heartbeat && typeof row.heartbeat === 'object' && !Array.isArray(row.heartbeat)
+      ? row.heartbeat as AgentHeartbeatConfig
+      : null;
   }
 
   /**
