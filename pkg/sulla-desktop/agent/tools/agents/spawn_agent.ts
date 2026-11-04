@@ -18,7 +18,6 @@ import {
   abortJob,
   completeJob,
   createJob,
-  deleteJob,
   failJob,
   getJob,
   getJobAbortSignal,

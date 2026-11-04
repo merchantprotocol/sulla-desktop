@@ -60,4 +60,20 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect((await registry.getJob(job.jobId))?.completionDeliveredAt).toBe(deliveredAt);
     expect((await registry.getPendingCompletions()).some(item => item.jobId === job.jobId)).toBe(false);
   });
+  it('evicts only settled cache entries and rehydrates them from Postgres on demand', async() => {
+    // risk: cache bounding deletes durable history or drops live and parked work
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const settled = await registry.createJob(0);
+    await registry.completeJob(settled.jobId, []);
+    const running = await registry.createJob(0);
+    const parked = await registry.createJob([{ agentId: 'worker', label: 'parked', prompt: 'work', status: 'running' }]);
+
+    expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).toContain(settled.jobId);
+    expect(agentJobProvider.runtime.jobs.has(running.jobId)).toBe(true);
+    parked.status = 'completed';
+    parked.finishedAt = Date.now();
+    expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).not.toContain(parked.jobId);
+    expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
+    expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
+  });
 });

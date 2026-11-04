@@ -7,7 +7,6 @@ import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
-const JOB_TTL_MS = 60 * 60 * 1000;
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
@@ -146,7 +145,6 @@ async getJob(jobId: string): Promise<AgentJob | undefined> {
 
 async getAllJobs(): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
-  await this.pruneStaleJobs();
 
   // Union: in-memory (authoritative for this process) + persisted rows the
   // Map doesn't know about (pre-restart this.runtime.jobs within TTL).
@@ -157,6 +155,8 @@ async getAllJobs(): Promise<AgentJob[]> {
     console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
   }
 
+  this.runtime.evictSettledTerminalJobs();
+
   return Array.from(this.runtime.jobs.values());
 }
 
@@ -165,10 +165,11 @@ async getAllJobs(): Promise<AgentJob[]> {
  * Exported so the list contract can be checked without a database fixture.
  */
 boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): AgentJob[] {
-  const active = allJobs.filter(job => job.status === 'running');
+  const visible = allJobs.filter(job => !job.dismissedAt);
+  const active = visible.filter(job => job.status === 'running');
   if (!includeFinished) return active.sort((a, b) => b.createdAt - a.createdAt);
 
-  const finished = allJobs
+  const finished = visible
     .filter(job => job.status !== 'running')
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
@@ -182,7 +183,6 @@ boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): Agen
  */
 async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
-  await this.pruneStaleJobs();
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
   const persisted: AgentJob[] = [];
 
@@ -195,8 +195,10 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   // Hot records win, but only active this.runtime.jobs are added outside the DB window.
   const merged = new Map(persisted.map(job => [job.jobId, job]));
   for (const job of this.runtime.jobs.values()) {
-    if (job.status === 'running' || merged.has(job.jobId)) merged.set(job.jobId, job);
+    if (!job.dismissedAt && (job.status === 'running' || merged.has(job.jobId))) merged.set(job.jobId, job);
   }
+
+  this.runtime.evictSettledTerminalJobs();
 
   return this.boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
 }
@@ -372,24 +374,5 @@ failJob(jobId: string, error: string): void {
   void this.persist(this.repository.fail(jobId, error, job.tasks));
 }
 
-
-deleteJob(jobId: string): void {
-  this.runtime.jobs.delete(jobId);
-  this.runtime.abortControllers.delete(jobId);
-  void this.persist(this.repository.deleteJob(jobId));
-}
-
-private async pruneStaleJobs(): Promise<void> {
-  const now = this.clock.now().getTime();
-
-  for (const [id, job] of this.runtime.jobs.entries()) {
-    if (job.dismissedAt && (now - job.dismissedAt) > JOB_TTL_MS) {
-      this.runtime.jobs.delete(id);
-      this.runtime.abortControllers.delete(id);
-    }
-  }
-
-  await this.persist(this.repository.pruneDismissed());
-}
 
 }

@@ -120,4 +120,3 @@ export const countOpenTabJobs = (...args: Parameters<typeof agentJobProvider.ser
 export const recordTaskReturn = (...args: Parameters<typeof agentJobProvider.service.recordTaskReturn>) => agentJobProvider.service.recordTaskReturn(...args);
 export const markTaskPromoted = (...args: Parameters<typeof agentJobProvider.service.markTaskPromoted>) => agentJobProvider.service.markTaskPromoted(...args);
 export const failJob = (...args: Parameters<typeof agentJobProvider.service.failJob>) => agentJobProvider.service.failJob(...args);
-export const deleteJob = (...args: Parameters<typeof agentJobProvider.service.deleteJob>) => agentJobProvider.service.deleteJob(...args);
