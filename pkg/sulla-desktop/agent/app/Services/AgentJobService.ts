@@ -6,9 +6,10 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
+import type { JobTerminalObserver } from './JobTerminalObserver';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly terminalObserver: JobTerminalObserver) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -103,6 +104,7 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
+  this.terminalObserver.notify(job);
   void this.persist(this.repository.stop(jobId, job.tasks));
   return 'stopped';
 }
@@ -118,8 +120,7 @@ async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-
     if (!job || !['running', 'parked'].includes(job.status)) continue;
     job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
     job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
-    // A cascade stops several jobs at once; the jobRegistry wrapper below only covers abortJob/completeJob/failJob's single-job case.
-    void import('../../services/JobHeartbeatCleanup').then(({ jobHeartbeatCleanup }) => jobHeartbeatCleanup.disableForTasks(job.tasks));
+    this.terminalObserver.notify(job);
   }
   return 'stopped';
 }
@@ -252,6 +253,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     if (!result) return task;
     return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() };
   });
+  this.terminalObserver.notify(job);
 
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 
@@ -316,12 +318,6 @@ async delegationDepthForThread(threadId: string | undefined): Promise<number> {
   if (!owner) return 0;
   return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
 }
-
-/**
- * Deepest a sub-agent chain may go: the top-level chat is depth 0; its
- * children may be depth 1, 2 and 3. A spawn whose child would land past this
- * is refused (Jonathon, 2026-11-02 — supersedes the earlier no-depth-cap rule).
- */
 
 /**
  * Current depth of a thread's own agent: metadata set on the running thread
@@ -390,6 +386,7 @@ async failJob(jobId: string, error: string): Promise<void> {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
     : task);
+  this.terminalObserver.notify(job);
 
   await this.persist(this.repository.fail(jobId, error, job.tasks));
 }
