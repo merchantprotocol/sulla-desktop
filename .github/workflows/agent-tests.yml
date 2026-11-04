@@ -16,9 +16,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  agent-tests:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    outputs:
+      should_run: ${{ steps.classify.outputs.should_run }}
+      needs_busybox: ${{ steps.classify.outputs.needs_busybox }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          TEST_PR_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}
+        run: node scripts/agent-test-ci-gate.mjs
+      - name: Selection unit tests
+        run: node --test scripts/agent-test-selection.test.mjs
+      - name: Architecture guard
+        run: node scripts/architecture-guard/guard.mjs
+
+  agent-tests:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg16
@@ -29,7 +50,7 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U sulla -d sulla_test"
-          --health-interval 5s --health-timeout 5s --health-retries 20
+          --health-interval 2s --health-timeout 2s --health-retries 15
     env:
       SULLA_TEST_DATABASE_URL: postgres://sulla:sulla-ci@127.0.0.1:5432/sulla_test
     steps:
@@ -39,11 +60,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: package.json
-      - name: Install dependencies (no lifecycle scripts, no Electron download)
+          cache: yarn
+      - name: Restore exact dependency tree
+        id: dependency-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
+      - name: Install dependencies on cache miss
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
       - name: Install BusyBox for guest disk characterization
+        if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         if: github.event_name == 'pull_request'
