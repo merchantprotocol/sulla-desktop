@@ -34,4 +34,26 @@ describe('PublishApprovalCoordinator', () => {
     await Promise.resolve();
     expect(messages).toEqual([]);
   });
+
+  it('bounds delivered decisions while suppressing recent redelivery', async () => {
+    let listener: ((record: any) => void) | undefined;
+    const source = { subscribe: (next: (record: any) => void) => { listener = next; return () => { listener = undefined } } };
+    const subject = new PublishApprovalCoordinator(source);
+    let sends = 0;
+    subject.start();
+
+    for (let index = 0; index < 501; index += 1) {
+      const id = `d${ index }`;
+      subject.register(id, async () => { sends += 1; return true });
+      listener?.({ id, kind: 'approval', status: 'approved', payload: { filesPublishRequestId: `f${ index }` } });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sends).toBe(501);
+    expect((subject as any).delivered.size).toBe(500);
+    listener?.({ id: 'd500', kind: 'approval', status: 'approved', payload: { filesPublishRequestId: 'f500' } });
+    await Promise.resolve();
+    expect(sends).toBe(501);
+  });
 });
