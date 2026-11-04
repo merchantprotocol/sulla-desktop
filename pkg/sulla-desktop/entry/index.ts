@@ -18,6 +18,10 @@ import usePlugins from './plugins';
 import router from './router';
 import store from './store';
 
+import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { initiateWindowContext } from '@pkg/sulla';
 await initiateWindowContext();
 
@@ -34,6 +38,9 @@ const layoutName: string = (component as any)?.layout ?? 'default';
 const { default: layout } = await import(`../layouts/${ layoutName }.vue`);
 
 const app = createApp(layout);
+const agentStateClient = new AgentStateClient(ipcRenderer as any, window as any);
+app.provide(AGENT_STATE_CLIENT_KEY, agentStateClient);
+void agentStateClient.start();
 
 app.use(store);
 app.use(router);
