@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: typecheck
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - name: Install dependencies (no lifecycle scripts, no Electron download)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Restore incremental typecheck state
+        uses: actions/cache@v4
+        with:
+          path: .cache/typescript
+          key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
+      - name: Type-check production Desktop sources
+        run: yarn tsc --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/desktop.tsbuildinfo
