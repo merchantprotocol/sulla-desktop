@@ -5,12 +5,7 @@ name: agent-tests
 on:
   pull_request:
   push:
-    # TEMP(ci/typecheck-job baseline seed): also run on this branch so a
-    # direct push can regenerate+commit the initial baselines without a
-    # workflow_dispatch API call. Revert this branch addition once the
-    # baselines are seeded; workflow_dispatch is the documented refresh
-    # path going forward.
-    branches: [main, ci/typecheck-job]
+    branches: [main]
   workflow_dispatch:
     inputs:
       write_baseline:
@@ -62,16 +57,7 @@ jobs:
     permissions:
       contents: write
     env:
-      # TEMP: the `|| (github.event_name == 'push' ...)` arm seeds the
-      # baseline once via direct push (see the `on.push.branches` note
-      # above) and will be removed in the same cleanup commit.
-      WRITE_BASELINE: >-
-        ${{
-          (
-            (github.event_name == 'workflow_dispatch' && inputs.write_baseline) ||
-            (github.event_name == 'push' && github.ref_name == 'ci/typecheck-job')
-          ) && 'true' || 'false'
-        }}
+      WRITE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.write_baseline && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
