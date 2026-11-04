@@ -236,22 +236,18 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 
   await this.persist(this.repository.complete(job));
 }
-
 /** Persist one settled task before its siblings finish. */
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
   if (!job?.tasks[taskIndex]) return;
   job.results[taskIndex] = result;
-  job.tasks[taskIndex] = {
-    ...job.tasks[taskIndex],
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex],
     status: result.status,
     threadId: result.threadId || job.tasks[taskIndex].threadId,
     finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
-    completion: result,
-  };
+    completion: result };
   await this.persist(this.repository.updateTaskCompletions(jobId, job.tasks, job.results));
 }
-
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
@@ -261,7 +257,6 @@ async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<voi
   await this.persist(this.repository.updateTasks(jobId, job.tasks));
   if (job.completionDeliveredAt) await this.persist(this.repository.markCompletionDelivered(jobId));
 }
-
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
   const job = this.runtime.jobs.get(jobId);
