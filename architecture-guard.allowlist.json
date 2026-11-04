@@ -1325,6 +1325,12 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
+    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
+      "rules": {
+        "raw-sql": 1
+      },
+      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
+    },
     "pkg/sulla-desktop/agent/tools/episodic/search.ts": {
       "rules": {
         "raw-sql": 1
@@ -2516,12 +2522,6 @@
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/devicesCloudApi.ts": {
-      "rules": {
-        "mutable-state": 4
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/main/dockerLinks.ts": {
       "rules": {
@@ -5139,12 +5139,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     }
   }
 }
