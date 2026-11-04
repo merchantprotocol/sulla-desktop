@@ -2,6 +2,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import '../../Support/TestHomeEnv';
+
+import { tmpdir } from 'node:os';
+
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TestDatabase } from '../../Support/TestDatabase';
@@ -14,6 +18,13 @@ import { AbortService } from '../../../services/AbortService';
 vi.mock('../../../services/ModelProviderService', () => ({
   getModelProviderService: () => ({ isInitialized: () => true, getPrimaryProvider: () => 'anthropic' }),
 }));
+
+// GraphRegistry pulls in the real tool catalog (`../tools/manifests`), which
+// transitively imports AgentContainerLauncher.ts's top-level `import Electron
+// from 'electron'`. Outside the Electron runtime that throws ("Electron
+// failed to install correctly") the moment the module loads, matching the
+// convention backgroundHandoff.spec.ts already uses.
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 
