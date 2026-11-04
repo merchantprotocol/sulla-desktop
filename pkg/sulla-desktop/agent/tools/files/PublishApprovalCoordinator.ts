@@ -10,6 +10,7 @@ type Notifier = (message: string) => Promise<boolean>;
 
 /** Coordinates one-shot publish notifications for an application/session scope. */
 export class PublishApprovalCoordinator {
+  private static readonly MAX_DELIVERED_IDS = 500;
   private readonly pending = new Set<string>();
   private readonly notify = new Map<string, Notifier>();
   private readonly delivered = new Set<string>();
@@ -34,10 +35,19 @@ export class PublishApprovalCoordinator {
     try {
       const send = this.notify.get(record.id);
       if (send) await send(record.status === 'approved' ? 'File version publish approved.' : `File version publish request ${ record.status }.`);
-      this.delivered.add(record.id);
+      this.rememberDelivered(record.id);
     } finally {
       this.pending.delete(record.id);
       this.notify.delete(record.id);
+    }
+  }
+
+  private rememberDelivered(decisionId: string): void {
+    this.delivered.add(decisionId);
+    while (this.delivered.size > PublishApprovalCoordinator.MAX_DELIVERED_IDS) {
+      const oldest = this.delivered.values().next().value;
+      if (oldest === undefined) return;
+      this.delivered.delete(oldest);
     }
   }
 
