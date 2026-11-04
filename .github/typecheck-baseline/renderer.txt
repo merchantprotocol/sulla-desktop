@@ -1,0 +1,172 @@
+5	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS18046	'channel' is of type 'unknown'.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'Guild'.
+6	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'Message'.
+8	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'TextChannel'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'User'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2307	Cannot find module 'discord.js' or its corresponding type declarations.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2552	Cannot find name 'Events'. Did you mean 'Event'?
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'error' implicitly has an 'any' type.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'guild' implicitly has an 'any' type.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'message' implicitly has an 'any' type.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2307	Cannot find module '../../tools/BaseTool' or its corresponding type declarations.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2339	Property 'getArgsArray' does not exist on type 'DiscordTool'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2339	Property 'handleHelpRequest' does not exist on type 'DiscordTool'.
+3	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS4112	This member cannot have an 'override' modifier because its containing class 'DiscordTool' does not extend another class.
+1	pkg/sulla-desktop/agent/nodes/StreamBufferManager.ts	TS2339	Property 'getInstance' does not exist on type 'typeof RedisClient'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type '"running"' is not assignable to type '"completed"'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type '{ answer: number; }' is not assignable to type 'string'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type 'null' is not assignable to type 'number'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2416	Property 'call' in type 'CheckAgentJobsHarness' is not assignable to the same property in base type 'CheckAgentJobsWorker'.
+1	pkg/sulla-desktop/agent/tests/Characterization/BrokeredModelCatalog/BrokeredModelCatalog.spec.ts	TS2353	Object literal may only specify known properties, and 'created_at' does not exist in type 'IntegrationAccount'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobMessagingRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/PendingDecisionRepository.spec.ts	TS2322	Type '<T>(_sql: string, params?: unknown[] | undefined) => Promise<{ record: any; }[]>' is not assignable to type '<T>(sql: string, params?: unknown[] | undefined) => Promise<T[]>'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2307	Cannot find module 'vue/types/v3-component-options' or its corresponding type declarations.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property '_options' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property '$store' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'canPaginate' does not exist on type '(props: Props, ctx: { attrs: Attrs; slots: Readonly<{}>; emit: ((event: unknown, ...args: any[]) => void) | ((event: string, ...args: any[]) => void); expose: <Exposed extends Record<string, any> = Record<...>>(exposed?: Exposed | undefined) => void; }) => RenderFunction | Promise<...>'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'currentPage' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+3	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'currentPage' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'debouncedRequestPagination' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'inStore' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'page' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'pages' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'pages' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'pageSize' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'paginate' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'paginate' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+3	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'paginating' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'requestPagination' does not exist on type '(props: Props, ctx: { attrs: Attrs; slots: Readonly<{}>; emit: ((event: unknown, ...args: any[]) => void) | ((event: string, ...args: any[]) => void); expose: <Exposed extends Record<string, any> = Record<...>>(exposed?: Exposed | undefined) => void; }) => RenderFunction | Promise<...>'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'resourceType' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'search' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+2	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'totalResults' does not exist on type '{ canPaginate(): any; canLoadMore(): any; optionsInPage(): any; optionCounts(): any; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2339	Property 'totalResults' does not exist on type '{ loadMore(): void; setPaginationFilter(filter: string): void; requestPagination(resetPage?: boolean): Promise<void>; }'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2344	Type 'Data' does not satisfy the constraint 'string'.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS2774	This condition will always return true since this function is always defined. Did you mean to call it instead?
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS7023	'canLoadMore' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS7023	'canPaginate' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS7023	'optionCounts' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+1	pkg/sulla-desktop/components/form/labeled-select-utils/labeled-select-pagination.ts	TS7023	'optionsInPage' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+1	pkg/sulla-desktop/composables/useBrowserTabs.ts	TS2741	Property '"support-session"' is missing in type '{ welcome: string; browser: string; chat: string; calendar: string; integrations: string; document: string; secretary: string; vault: string; account: string; history: string; routines: string; marketplace: string; ... 7 more ...; docker: string; }' but required in type 'Record<BrowserTabMode, string>'.
+2	pkg/sulla-desktop/composables/useOAuthConnection.ts	TS2345	Argument of type '(_event: unknown, result: OAuthResult) => void | undefined' is not assignable to parameter of type '(event: IpcRendererEvent, event: FilesLiveEvent) => void'.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/clean-html-directive'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/clean-html-directive.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/directives'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/directives.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/i18n'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/i18n.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/shortkey'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/shortkey.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/trim-whitespace'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/trim-whitespace.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/plugins.ts	TS7016	Could not find a declaration file for module '../plugins/v-select'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/plugins/v-select.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/action-menu'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/action-menu.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/i18n'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/i18n.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/imageManager'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/imageManager.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/k8sManager'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/k8sManager.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/prefs'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/prefs.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/entry/store.ts	TS7016	Could not find a declaration file for module '../store/resource-fetch'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/store/resource-fetch.js' implicitly has an 'any' type.
+3	pkg/sulla-desktop/main/MCPServerHost.ts	TS2589	Type instantiation is excessively deep and possibly infinite.
+1	pkg/sulla-desktop/main/MCPServerHost.ts	TS7031	Binding element 'questions' implicitly has an 'any' type.
+1	pkg/sulla-desktop/main/MCPServerHost.ts	TS7031	Binding element 'timeoutMs' implicitly has an 'any' type.
+1	pkg/sulla-desktop/mixins/compact-input.ts	TS2339	Property 'label' does not exist on type '{ isCompact(): boolean; }'.
+1	pkg/sulla-desktop/mixins/compact-input.ts	TS2339	Property 'labelKey' does not exist on type '{ isCompact(): boolean; }'.
+2	pkg/sulla-desktop/mixins/compact-input.ts	TS2551	Property 'compact' does not exist on type '{ isCompact(): boolean; }'. Did you mean 'isCompact'?
+3	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property '$emit' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property '$emit' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property '$nextTick' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property '$refs' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'blurred' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'blurred' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'focused' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'focused' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'mode' does not exist on type '{ inheritAttrs: boolean; props: { mode: { type: StringConstructor; default: any; }; label: { type: StringConstructor; default: null; }; labelKey: { type: StringConstructor; default: null; }; ... 12 more ...; requireDirty: { ...; }; }; data(): LabeledFormElement; computed: { ...; }; methods: { ...; }; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'mode' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'options' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'raised' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'required' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'requireDirty' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+3	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'rules' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'value' does not exist on type '{ inheritAttrs: boolean; props: { mode: { type: StringConstructor; default: any; }; label: { type: StringConstructor; default: null; }; labelKey: { type: StringConstructor; default: null; }; ... 12 more ...; requireDirty: { ...; }; }; data(): LabeledFormElement; computed: { ...; }; methods: { ...; }; }'.
+2	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'value' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2339	Property 'value' does not exist on type '{ resizeHandler(): void; onFocus(): void; onFocusLabeled(): void; onBlur(): void; onBlurLabeled(): void; }'.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS2551	Property 'disabled' does not exist on type '{ requiredField(): boolean; empty(): boolean; isView(): boolean; isDisabled(): boolean; isSearchable(): boolean; isFilterable(): boolean; validationMessage(): string | undefined; }'. Did you mean 'isDisabled'?
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS7016	Could not find a declaration file for module '@pkg/config/query-params'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/config/query-params.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/mixins/labeled-form-element.ts	TS7016	Could not find a declaration file for module '@pkg/utils/width'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/utils/width.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/pages/agent/ChatInterface.ts	TS2345	Argument of type '(text: string, threadId: string, pipelineSequence: number | null, voiceTurnId: string | null) => void' is not assignable to parameter of type '(text: string, threadId: string, pipelineSequence: number | null) => void'.
+1	pkg/sulla-desktop/pages/agent/ChatInterface.ts	TS2614	Module '"*.vue"' has no exported member 'PendingAttachment'. Did you mean to use 'import PendingAttachment from "*.vue"' instead?
+1	pkg/sulla-desktop/pages/agent/ChatInterface.ts	TS2741	Property '[WritableComputedRefSymbol]' is missing in type 'ComputedRef<string>' but required in type 'WritableComputedRef<string, string>'.
+1	pkg/sulla-desktop/pages/agent/ChatMessageQueue.ts	TS2614	Module '"*.vue"' has no exported member 'PendingAttachment'. Did you mean to use 'import PendingAttachment from "*.vue"' instead?
+1	pkg/sulla-desktop/pages/agent/StartupProgressController.ts	TS2345	Argument of type '"lifecycle:status"' is not assignable to parameter of type 'keyof IpcMainEvents'.
+1	pkg/sulla-desktop/pages/agent/StartupProgressController.ts	TS2352	Conversion of type 'void' to type 'LifecycleStatus' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+2	pkg/sulla-desktop/pages/capture-studio/composables/useMicRecording.ts	TS2322	Type 'Buffer<ArrayBufferLike>' is not assignable to type 'Buffer<ArrayBuffer>'.
+1	pkg/sulla-desktop/pages/capture-studio/composables/useSpeakerCapture.ts	TS2322	Type 'Buffer<ArrayBufferLike>' is not assignable to type 'Buffer<ArrayBuffer>'.
+1	pkg/sulla-desktop/pages/chat/composables/useArtifactMentions.ts	TS2345	Argument of type 'string' is not assignable to parameter of type 'keyof IpcMainInvokeEvents'.
+1	pkg/sulla-desktop/pages/chat/services/PersonaAdapter.ts	TS2322	Type 'string | undefined' is not assignable to type 'string'.
+1	pkg/sulla-desktop/pages/chat/services/PersonaAdapter.ts	TS2339	Property 'state' does not exist on type 'WorkflowNode'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'Promise<{ accepted: boolean; }>' is not assignable to type 'Promise<void>'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'Promise<{ ok: boolean; versionId: string; }>' is not assignable to type 'Promise<void>'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'string' is not assignable to type '"error" | "synced" | "paused" | "syncing" | "conflict"'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2345	Argument of type '{ collectionId: string; destination: string; }' is not assignable to parameter of type 'string'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2345	Argument of type '{ collectionId: string; path: string; }' is not assignable to parameter of type 'string'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2554	Expected 1 arguments, but got 2.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2741	Property 'indexing' is missing in type 'SullaFilesStatus' but required in type '{ state: FilesSyncState; pendingFiles: number; lastError?: string | undefined; lastScanAt?: string | undefined; lastSyncAt?: string | undefined; serverConfigured: boolean; location?: "local" | ... 2 more ... | undefined; serverLabel?: string | undefined; legacyImport?: { ...; } | undefined; indexing: FilesIndexCover...'.
+1	pkg/sulla-desktop/pages/files/SyntheticFilesDataSource.ts	TS18048	'folder' is possibly 'undefined'.
+1	pkg/sulla-desktop/utils/array.ts	TS7016	Could not find a declaration file for module '@pkg/utils/object'. '/home/runner/work/sulla-desktop/sulla-desktop/pkg/sulla-desktop/utils/object.js' implicitly has an 'any' type.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'CheckSpelling' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'DockerBuildx' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'DockerCLI' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'DockerCompose' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'DockerProvidedCredHelpers' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'ECRCredHelper' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'GoLangCILint' as an instance property.
+1	scripts/dependencies/tools.ts	TS2610	'name' is defined as an accessor in class 'GlobalDependency<typeof GitHubDependency>.GlobalDependency & GitHubDependency', but is overridden here in 'SpinCLI' as an instance property.
+1	scripts/docker-cli-monitor.ts	TS7006	Parameter 'current' implicitly has an 'any' type.
+1	scripts/docker-cli-monitor.ts	TS7006	Parameter 'previous' implicitly has an 'any' type.
+1	scripts/docker-cli-monitor.ts	TS7006	Parameter 'tag' implicitly has an 'any' type.
+2	scripts/fetch-bundled-assets.ts	TS2345	Argument of type '"agent-desktop"' is not assignable to parameter of type '"images" | "audio" | "whisper"'.
+1	scripts/lib/build-utils.ts	TS7016	Could not find a declaration file for module 'babel.config.cjs'. '/home/runner/work/sulla-desktop/sulla-desktop/babel.config.cjs' implicitly has an 'any' type.
+3	scripts/lib/dependencies.ts	TS7006	Parameter 'release' implicitly has an 'any' type.
+1	scripts/lib/dependencies.ts	TS7006	Parameter 'tag' implicitly has an 'any' type.
+1	scripts/package.ts	TS2307	Cannot find module '@electron/fuses' or its corresponding type declarations.
+3	scripts/populate-update-server.ts	TS7006	Parameter 'asset' implicitly has an 'any' type.
+2	scripts/rddepman.ts	TS18046	'item' is of type 'unknown'.
+1	scripts/rddepman.ts	TS18046	'p' is of type 'unknown'.
+1	scripts/rddepman.ts	TS18046	'r' is of type 'unknown'.
+3	scripts/rddepman.ts	TS18046	'release' is of type 'unknown'.
+1	scripts/rddepman.ts	TS7006	Parameter 'pr' implicitly has an 'any' type.
+7	scripts/release-merge-to-main.ts	TS18046	'item' is of type 'unknown'.
+1	scripts/release-merge-to-main.ts	TS18046	'r' is of type 'unknown'.
+1	scripts/release-merge-to-main.ts	TS2339	Property 'html_url' does not exist on type '{}'.
+1	scripts/release-merge-to-main.ts	TS2339	Property 'number' does not exist on type '{}'.
+1	services/sulla-files/src/app.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-files/src/backup/accountEscrow.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-files/src/backup/accountEscrow.ts	TS2769	No overload matches this call.
+1	services/sulla-files/src/backup/s3.ts	TS2307	Cannot find module '@aws-sdk/client-s3' or its corresponding type declarations.
+1	services/sulla-files/src/keyBundleRecovery.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+2	services/sulla-files/src/keyExchange.ts	TS18048	'recovered' is possibly 'undefined'.
+1	services/sulla-files/src/keyExchange.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-files/src/residency.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-files/src/vaultKeyBundleAuthority.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-files/vite.config.ts	TS2307	Cannot find module '@vitejs/plugin-vue' or its corresponding type declarations.
+1	services/sulla-vault/console/app.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+4	services/sulla-vault/console/app.ts	TS2345	Argument of type 'Uint8Array<ArrayBufferLike> | null' is not assignable to parameter of type 'Uint8Array<ArrayBufferLike>'.
+1	services/sulla-vault/src/app.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/bitwardenImport.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/browserEnvelope/syncRunner.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/browserEnvelope/syncRunner.ts	TS7006	Parameter 'site' implicitly has an 'any' type.
+2	services/sulla-vault/src/browserEnvelope/syncRunner.ts	TS7053	Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ readonly metadata: 0; readonly autofill: 1; readonly full: 2; }'.
+1	services/sulla-vault/src/browserSync/providers.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/filesKeyBundleAuthority.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/filesKeyBundleRoutes.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/localAuthority.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+2	services/sulla-vault/src/localAuthority.ts	TS2769	No overload matches this call.
+4	services/sulla-vault/src/localAuthority.ts	TS7006	Parameter 'candidate' implicitly has an 'any' type.
+1	services/sulla-vault/src/localAuthority.ts	TS7006	Parameter 'host' implicitly has an 'any' type.
+1	services/sulla-vault/src/localAuthority.ts	TS7006	Parameter 'rule' implicitly has an 'any' type.
+2	services/sulla-vault/src/localAuthority.ts	TS7006	Parameter 'value' implicitly has an 'any' type.
+1	services/sulla-vault/src/localAuthority.ts	TS7031	Binding element 'name' implicitly has an 'any' type.
+1	services/sulla-vault/src/localAuthority.ts	TS7031	Binding element 'scheme' implicitly has an 'any' type.
+1	services/sulla-vault/src/localAuthority.ts	TS7031	Binding element 'target' implicitly has an 'any' type.
+1	services/sulla-vault/src/oauthPolicy.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/operationPolicy.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-vault/src/operationPolicy.ts	TS2339	Property 'hosts' does not exist on type '{ readonly integration: "openrouter"; readonly hosts: readonly ["openrouter.ai"]; readonly inference: RegExp; readonly discovery: RegExp; } | { readonly integration: "fireworks"; readonly hosts: readonly [...]; readonly inference: RegExp; readonly discovery: RegExp; } | ... 9 more ... | { ...; }'.
+2	services/sulla-vault/src/operationPolicy.ts	TS7006	Parameter 'allowed' implicitly has an 'any' type.
+1	services/sulla-vault/src/serverBootstrapCli.ts	TS2307	Cannot find module '@sulla/vault-crypto' or its corresponding type declarations.
+1	services/sulla-workflows/src/events.ts	TS2307	Cannot find module 'redis' or its corresponding type declarations.
+1	services/sulla-workflows/src/events.ts	TS7006	Parameter 'error' implicitly has an 'any' type.
