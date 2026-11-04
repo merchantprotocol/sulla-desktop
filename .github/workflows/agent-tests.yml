@@ -43,32 +43,6 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
-      - name: Install BusyBox for guest disk characterization
-        run: sudo apt-get update && sudo apt-get install -y busybox
-      - name: Per-PR agent runtime specs (hard 60-second test budget)
-        if: github.event_name == 'pull_request'
-        env:
-          TEST_PR_BASE_REF: origin/${{ github.base_ref }}
-        run: yarn test:pr
-      - name: Full agent runtime specs on main
-        if: github.event_name != 'pull_request'
-        run: yarn test:agent
-
-
-  typecheck:
-    name: typecheck
-    needs: agent-tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: package.json
-      - name: Install dependencies (no lifecycle scripts, no Electron download)
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
       - name: Restore incremental typecheck state
         uses: actions/cache@v4
         with:
@@ -88,3 +62,23 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: yarn tsc --noEmit --project tsconfig.renderer-check.json --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+      - name: Install BusyBox for guest disk characterization
+        run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Per-PR agent runtime specs (hard 60-second test budget)
+        if: github.event_name == 'pull_request'
+        env:
+          TEST_PR_BASE_REF: origin/${{ github.base_ref }}
+        run: yarn test:pr
+      - name: Full agent runtime specs on main
+        if: github.event_name != 'pull_request'
+        run: yarn test:agent
+
+
+
+  typecheck:
+    name: typecheck
+    needs: agent-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm production typecheck passed
+        run: echo 'Production typecheck passed in the dependency-owning agent-tests job.'
