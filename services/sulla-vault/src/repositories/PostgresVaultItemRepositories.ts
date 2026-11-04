@@ -17,7 +17,7 @@ export class PostgresVaultItemRepository {
   }
 
   listOwnedActiveForImport<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>(`SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL`, values);
+    return client.query<T>(`SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items WHERE deleted_at IS NULL`, values);
   }
 
   insertImportedItem<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
