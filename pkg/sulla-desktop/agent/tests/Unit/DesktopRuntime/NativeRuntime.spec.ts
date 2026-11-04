@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,36 +13,56 @@ import { NativeRuntime, RuntimeProcessSpawner } from '@pkg/backend/sullaRuntime/
 import { InstanceEnvironmentConfigurator } from '@pkg/utils/instance';
 import type { SullaRuntimeArtifacts } from '@pkg/backend/sullaRuntime/artifacts';
 
+class FakeRuntimeChildProcess extends EventEmitter {
+  readonly stdoutStream = new PassThrough();
+  readonly stderrStream = new PassThrough();
+  #exitCode: number | null = null;
+
+  get process(): ChildProcess {
+    return this as unknown as ChildProcess;
+  }
+
+  get stdout(): PassThrough {
+    return this.stdoutStream;
+  }
+
+  get stderr(): PassThrough {
+    return this.stderrStream;
+  }
+
+  get pid(): number {
+    return 123;
+  }
+
+  get exitCode(): number | null {
+    return this.#exitCode;
+  }
+
+  get signalCode(): NodeJS.Signals | null {
+    return null;
+  }
+
+  kill(): boolean {
+    this.#exitCode = 0;
+    this.emit('exit', 0, null);
+    return true;
+  }
+}
+
 class FakeRuntimeProcessSpawner implements RuntimeProcessSpawner {
   readonly spawnCalls: Array<{ binary: string; args: string[]; options: SpawnOptions }> = [];
-  readonly child = this.createChild();
+  readonly child = new FakeRuntimeChildProcess();
 
   spawn(binary: string, args: string[], options: SpawnOptions): ChildProcess {
     this.spawnCalls.push({ binary, args, options });
-    queueMicrotask(() => this.child.stdout!.write('docker-ready\n'));
+    queueMicrotask(() => this.child.stdoutStream.write('docker-ready\n'));
 
-    return this.child;
+    return this.child.process;
   }
 
   async spawnFile(_binary: string, args: string[]): Promise<{ stdout: string }> {
-    if (args[0] === 'stop') this.child.kill?.('SIGTERM');
+    if (args[0] === 'stop') this.child.kill();
     return { stdout: '' };
-  }
-
-  private createChild(): ChildProcess {
-    const child = new PassThrough() as PassThrough & Partial<ChildProcess>;
-    child.stdout = new PassThrough();
-    child.stderr = new PassThrough();
-    child.pid = 123;
-    child.exitCode = null;
-    child.signalCode = null;
-    child.kill = () => {
-      child.exitCode = 0;
-      child.emit('exit', 0, null);
-      return true;
-    };
-
-    return child as ChildProcess;
   }
 }
 

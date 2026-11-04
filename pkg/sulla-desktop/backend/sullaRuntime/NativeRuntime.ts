@@ -36,16 +36,18 @@ export async function forceStopOwnedSullaRuntime(): Promise<void> {
 }
 
 export interface RuntimeProcessSpawner {
-  spawn(binary: string, args: string[], options: SpawnOptions): ChildProcess;
-  spawnFile(binary: string, args: string[], options: SpawnOptions): Promise<{ stdout: string }>;
+  spawn(binary: string, args: string[], options: RuntimeProcessOptions): ChildProcess;
+  spawnFile(binary: string, args: string[], options: RuntimeProcessOptions): Promise<{ stdout: string }>;
 }
 
+type RuntimeProcessOptions = SpawnOptions & { stdio: ['ignore', 'pipe', 'pipe'] };
+
 class ChildProcessRuntimeSpawner implements RuntimeProcessSpawner {
-  spawn(binary: string, args: string[], options: SpawnOptions): ChildProcess {
+  spawn(binary: string, args: string[], options: RuntimeProcessOptions): ChildProcess {
     return spawn(binary, args, options);
   }
 
-  spawnFile(binary: string, args: string[], options: SpawnOptions): Promise<{ stdout: string }> {
+  spawnFile(binary: string, args: string[], options: RuntimeProcessOptions): Promise<{ stdout: string }> {
     return spawnFile(binary, args, options);
   }
 }
@@ -112,7 +114,7 @@ export class NativeRuntime {
     private readonly processSpawner: RuntimeProcessSpawner = new ChildProcessRuntimeSpawner(),
   ) {}
 
-  private runtimeProcessOptions(): SpawnOptions {
+  private runtimeProcessOptions(): RuntimeProcessOptions {
     return {
       env: { ...process.env, SULLA_RUNTIME_DIR: sullaRuntimeDirectory() },
       stdio: ['ignore', 'pipe', 'pipe'],
