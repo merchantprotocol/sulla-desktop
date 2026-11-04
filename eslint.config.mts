@@ -114,18 +114,6 @@ export default defineConfigWithVueTs(
     },
   },
   {
-    // Disable lints not needed in tests (mostly global imports).
-    name:            'sulla-desktop-spec',
-    files:           ['**/*.spec.js', '**/*.spec.ts'],
-    languageOptions: {
-      globals: globals.jest,
-    },
-    rules: {
-      '@typescript-eslint/no-require-imports': 'off',
-      'import-x/first':                        'off', // Often needed for mocks
-    },
-  },
-  {
     // Files imported from the upstream dashboard.
     name:  'dashboard-imports',
     files: [

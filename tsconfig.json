@@ -28,8 +28,7 @@
       "./node_modules/@types"
     ],
     "types": [
-      "@types/node",
-      "@types/jest"
+      "@types/node"
     ]
   },
   "exclude": [

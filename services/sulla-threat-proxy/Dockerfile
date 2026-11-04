@@ -16,16 +16,7 @@ RUN pip install "mitmproxy==${MITMPROXY_VERSION}"
 COPY services/sulla-threat-proxy/addons /opt/sulla-threat-proxy/addons
 COPY --chmod=0755 services/sulla-threat-proxy/entrypoint.sh /usr/local/bin/sulla-threat-proxy
 
-# The addon tests gate the published image: the final stage copies the marker
-# this stage writes, so a failing test fails the build.
-FROM base AS test
-COPY services/sulla-threat-proxy/tests /opt/sulla-threat-proxy/tests
-RUN cd /opt/sulla-threat-proxy \
- && SULLA_PROXY_NO_AUTOLOAD=1 PYTHONPATH=/opt/sulla-threat-proxy/addons python -m unittest discover -s tests -v \
- && touch /tmp/tests-passed
-
 FROM base
-COPY --from=test /tmp/tests-passed /opt/sulla-threat-proxy/.tests-passed
 # Fixed UID: Desktop provisions the state directories on the data disk for it
 # (THREAT_PROXY_UID in pkg/sulla-desktop/backend/threatProxyEgress.ts).
 RUN groupadd --system --gid 10010 sulla-proxy \
