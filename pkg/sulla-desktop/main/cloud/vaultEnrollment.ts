@@ -8,15 +8,15 @@ import { getConfiguredApprovalClient } from '@pkg/vault-broker';
 import { getDesktopDeviceId } from '../deviceIdentity';
 import { getCurrentUserId } from '../sullaCloudAuth';
 import { cloudRequest } from './cloudFetch';
-import { CloudVaultSyncHttpTransport, VaultSyncHttpError, type VaultSyncSignature } from './vaultSyncV3/transport';
+import { CloudVaultSyncHttpTransport, VaultSyncHttpError, type EnrollmentState, type EnrollmentRequest, type VaultSyncSignature } from './vaultSyncV3/transport';
 import { signDeviceMessage } from './deviceKey';
 
 export type EnrollmentDisposition='create'|'trusted'|'adopted'|'approval_available'|'waiting_for_approver'|'recovery';
-type State={state:'no_vault'|'trusted'|'approval_available'|'waiting_for_approver'|'recovery_required';vaultId?:string;epoch?:number};
+type State = EnrollmentState;
 let pending:Promise<EnrollmentDisposition>|null=null;
 let prepared:Promise<State>|null=null;
 let preparedForUserId='';
-let activeRequest:{id:string;vaultId:string;epoch:number;privateKeyJwk:JsonWebKey}|null=null;
+let activeRequest:(EnrollmentRequest & {vaultId:string;epoch:number;privateKeyJwk:JsonWebKey})|null=null;
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 function transport(): CloudVaultSyncHttpTransport {
  return new CloudVaultSyncHttpTransport({ client:{request:(url,init)=>cloudRequest(init?.method ?? 'GET',url,{headers:init?.headers as Record<string,string>|undefined,body:init?.body as BodyInit|undefined,responseType:'json'})}, authHeaders:async()=>({}) });

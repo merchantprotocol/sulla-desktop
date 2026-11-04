@@ -20,8 +20,18 @@ export interface VaultSyncHttpClient {
 export type VaultSyncAuthHeaderProvider = () => Promise<Record<string, string>> | Record<string, string>;
 export interface VaultSyncSignature { deviceId: string; timestamp: number; signature: string }
 export interface VaultStatus { enabled?: boolean; vaultId?: string; epoch?: number; [key: string]: unknown }
-export interface EnrollmentState { state: string; vaultId?: string; epoch?: number; [key: string]: unknown }
-export interface EnrollmentRequest { id: string; vaultId?: string; epoch?: number; requesterType?: string; requesterId?: string; publicKey?: string; nonce?: string; expiresAt?: string; [key: string]: unknown }
+export type EnrollmentStateName = 'no_vault' | 'trusted' | 'approval_available' | 'waiting_for_approver' | 'recovery_required';
+export interface EnrollmentState { state: EnrollmentStateName; vaultId?: string; epoch?: number }
+export interface EnrollmentRequest {
+  id: string;
+  vaultId?: string;
+  epoch?: number;
+  requesterType: string;
+  requesterId: string;
+  publicKey: string;
+  nonce: string;
+  expiresAt: string;
+}
 export interface VaultBundleResponse { bundle?: Record<string, unknown>; [key: string]: unknown }
 export interface VaultRecordsResponse { records?: unknown[]; head?: unknown; nextCursor?: string | null; syncPaused?: boolean; bundleGeneration?: number; epoch?: number; [key: string]: unknown }
 export interface VaultAuditResponse { audit?: unknown[]; nextCursor?: string | null; [key: string]: unknown }

@@ -10,10 +10,8 @@ import { getConfiguredApprovalClient } from '@pkg/vault-broker';
 import { getDesktopDeviceId } from '../deviceIdentity';
 import { getCurrentUserId } from '../sullaCloudAuth';
 import { cloudRequest } from './cloudFetch';
-import { CloudVaultSyncHttpTransport, type VaultSyncSignature } from './vaultSyncV3/transport';
+import { CloudVaultSyncHttpTransport, type EnrollmentRequest, type VaultSyncSignature } from './vaultSyncV3/transport';
 import { signDeviceMessage } from './deviceKey';
-
-interface EnrollmentRequest { id:string; requesterType:string; requesterId:string; publicKey:string; nonce:string; expiresAt:string }
 
 interface ApprovalRequest {
   id: string; vaultId: string; vaultEpoch: number; publicKey: string; expiresAt: string;
