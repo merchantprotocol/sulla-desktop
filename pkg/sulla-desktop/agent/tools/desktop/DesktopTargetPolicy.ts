@@ -5,7 +5,7 @@
 
 /** Privacy policy for desktop automation targets. */
 export class DesktopTargetPolicy {
-  private readonly blockedTargets = ['keychain access', '1password', 'bitwarden', 'localhost:4777'];
+  private readonly blockedTargets = ['keychain access', 'bitwarden', 'localhost:4777'];
 
   isBlocked(value: unknown): boolean {
     const text = typeof value === 'string' ? value.toLowerCase() : '';
