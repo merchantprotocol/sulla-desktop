@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Agent-runtime specs (OOP rebuild plan §11): real collaborators, real Postgres.
+name: agent-tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg16
+        env:
+          POSTGRES_USER: sulla
+          POSTGRES_PASSWORD: sulla-ci
+          POSTGRES_DB: sulla_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sulla -d sulla_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      SULLA_TEST_DATABASE_URL: postgres://sulla:sulla-ci@127.0.0.1:5432/sulla_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+      - name: Install dependencies (no lifecycle scripts, no Electron download)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Agent runtime specs
+        run: yarn test:agent
