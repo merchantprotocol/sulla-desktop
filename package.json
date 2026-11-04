@@ -36,7 +36,8 @@
     "postuninstall": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 electron-builder install-app-deps",
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
-    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts"
+    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
+    "test:agent": "vitest run --config vitest.agent.config.mts"
   },
   "main": "dist/app/background.js",
   "dependencies": {
@@ -179,6 +180,7 @@
     "eslint": "9.39.2",
     "eslint-plugin-vue": "10.7.0",
     "extract-zip": "2.0.1",
+    "fast-check": "3.23.2",
     "floating-vue": "5.2.2",
     "glob": "13.0.6",
     "globals": "17.0.0",
@@ -208,6 +210,7 @@
     "tsconfig-paths": "4.2.0",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
+    "vitest": "3.2.7",
     "vue-3-slider-component": "1.0.2",
     "vue-router": "4.6.4",
     "vue-select": "3.20.4",
