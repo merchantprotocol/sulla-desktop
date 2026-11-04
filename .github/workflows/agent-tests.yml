@@ -53,7 +53,7 @@ jobs:
       - name: Type-check agent runtime
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --project tsconfig.agent-check.json --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+        run: yarn tsc --project tsconfig.agent-runtime-check.json --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
       - name: Compile main and preload production graphs
         env:
           NODE_OPTIONS: --max-old-space-size=4096
