@@ -5,7 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { emitSubAgentExchange } from './jobExchange';
-import { abortJob, getJob, releaseJobWatcher } from './jobRegistry';
+import { getJob, releaseJobWatcher, stopJobCascade } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 
 export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
@@ -17,7 +17,7 @@ export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
   }
 
   const job = await getJob(jobId);
-  const outcome = abortJob(jobId);
+  const outcome = await stopJobCascade(jobId);
 
   switch (outcome) {
   case 'stopped':

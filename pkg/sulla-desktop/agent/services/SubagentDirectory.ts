@@ -44,7 +44,7 @@ function quote(text: string, max = 80): string {
 }
 
 function isOpen(job: AgentJob, task: AgentJobTask): boolean {
-  return job.status === 'running' && (task.status === 'running' || task.status === 'queued');
+  return (job.status === 'running' || job.status === 'parked') && ['running', 'queued', 'parked'].includes(task.status);
 }
 
 interface ChildRow {
@@ -75,7 +75,7 @@ function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetr
     task.agentId,
     task.promotedToTab ? 'hidden→tab' : visibility,
     open
-      ? `${ task.status === 'queued' ? 'queued' : 'running' } ${ span(now - startedAt) }`
+      ? `${ task.status === 'queued' ? 'queued' : task.status === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : 'running' } ${ span(now - startedAt) }`
       : `${ task.returnedAt ? 'returned' : task.status } ${ finishedAt ? ago(now - finishedAt) : '' }`.trim(),
     `contract ${ task.contract?.name ?? 'result' }`,
   ];

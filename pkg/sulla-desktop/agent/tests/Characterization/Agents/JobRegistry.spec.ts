@@ -2,11 +2,16 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TestDatabase } from '../../Support/TestDatabase';
 import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
 import { sendJobMessage } from '../../../tools/agents/send_job_message';
+
+const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
+vi.mock('../../../services/BackendGraphWebSocketService', () => ({
+  getBackendGraphWebSocketService: () => ({ wakeParkedAgent }),
+}));
 
 class CheckAgentJobsHarness extends CheckAgentJobsWorker {
   call(input: unknown) { return this._validatedCall(input); }
@@ -61,6 +66,22 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     await messaging.AgentJobMessagingModel.markMessagesDelivered([first.id, second.id], 'thread-msg');
     await messaging.AgentJobMessagingModel.markMessagesDelivered([first.id, second.id], 'thread-msg');
     expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread('thread-msg')).toEqual([]);
+  });
+
+  it('wakes a parked manager but leaves its message pending until the woken turn actually consumes it', async() => {
+    // risk: the ack fires at injection time, before the turn runs, so a dead-on-arrival wake silently loses the message
+    const job = await registry.createJob([{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'running', threadId: 'thread-parked-message' }], 'sulla-desktop', 'root-thread');
+    await registry.parkJobTask(job.jobId, 0, 1);
+
+    const response = await sendJobMessage({ jobId: job.jobId, message: 'continue the same goal' });
+
+    expect(response.successBoolean).toBe(true);
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'thread-parked-message', 'continue the same goal', 'coding-manager-sol', expect.objectContaining({ jobId: job.jobId, taskIndex: 0 }));
+    // Ack is written by dispatchToAgent's finally block, only once the woken
+    // turn consumed the message — send_job_message itself must not have
+    // marked it delivered. See ParkedManagerWakeLifecycle.spec.ts scenario (c)
+    // for the full consume-then-ack path with real Postgres.
+    expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread('thread-parked-message')).toHaveLength(1);
   });
 
   it('records one contract return and refuses duplicates and late returns', async() => {
