@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: package.json
@@ -45,5 +45,11 @@ jobs:
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
       - name: Install BusyBox for guest disk characterization
         run: sudo apt-get update && sudo apt-get install -y busybox
-      - name: Agent runtime specs
+      - name: Per-PR agent runtime specs (hard 60-second test budget)
+        if: github.event_name == 'pull_request'
+        env:
+          TEST_PR_BASE_REF: origin/${{ github.base_ref }}
+        run: yarn test:pr
+      - name: Full agent runtime specs on main
+        if: github.event_name != 'pull_request'
         run: yarn test:agent

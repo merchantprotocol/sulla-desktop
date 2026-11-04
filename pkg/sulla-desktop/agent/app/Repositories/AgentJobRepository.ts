@@ -61,9 +61,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
-      SELECT * FROM agent_jobs WHERE status = 'running'
+      SELECT * FROM agent_jobs WHERE status = 'running' AND dismissed_at IS NULL
       UNION ALL
-      (SELECT * FROM agent_jobs WHERE status <> 'running' AND $2::boolean ORDER BY created_at DESC LIMIT $1)
+      (SELECT * FROM agent_jobs WHERE status <> 'running' AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
