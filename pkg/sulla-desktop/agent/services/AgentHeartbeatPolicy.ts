@@ -18,6 +18,10 @@ export interface AgentDefinitionLookup {
   findBySlug(slug: string): Promise<AgentDefinition | null>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 const LEAD_DEFAULTS: AgentHeartbeatConfig = { allowed: true, defaultIntervalMinutes: 5, minIntervalMinutes: 1, maxIntervalMinutes: 1440 };
 
 /**
@@ -36,7 +40,7 @@ export class AgentHeartbeatPolicy {
       return this.denied(agentId, requestedIntervalMinutes, `Agent definition not found for ${ agentId }.`);
     }
     const raw = definition.config?.heartbeat;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    if (!isRecord(raw)) {
       return this.denied(definition.slug, requestedIntervalMinutes, `Heartbeats are not allowed for agent ${ definition.slug }: set config.heartbeat.allowed = true in its agent definition.`);
     }
     const validated = AgentHeartbeatPolicy.validateConfig(raw);
