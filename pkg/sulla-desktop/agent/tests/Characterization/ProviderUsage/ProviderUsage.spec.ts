@@ -88,10 +88,10 @@ describe('provider usage characterization', () => {
     }).toEqual({
       windowHours: 24,
       profileId: 'profile-1',
-      totals: { totalTokens: 1_600_010, inputTokens: 1_400_000, outputTokens: 200_000, cacheReadTokens: 250_000, cacheWriteTokens: 0, estimatedCostUsd: 6.90625, cacheSavingsUsd: 0.44, pricedTokens: 1_600_000 },
+      totals: { totalTokens: 1_600_010, inputTokens: 1_400_000, outputTokens: 200_000, cacheReadTokens: 250_000, cacheWriteTokens: 0, estimatedCostUsd: 6.06625, cacheSavingsUsd: 0.59625, pricedTokens: 1_600_000 },
       providers: [
         { id: 'claude-code', label: 'Claude Code', records: 1, totalTokens: 1_100_000, inputTokens: 1_000_000, outputTokens: 100_000, cacheReadTokens: 200_000, cacheWriteTokens: 0, estimatedCostUsd: 4.56, cacheSavingsUsd: 0.54, pricedTokens: 1_100_000 },
-        { id: 'openai', label: 'OpenAI API', records: 1, totalTokens: 500_000, inputTokens: 400_000, outputTokens: 100_000, cacheReadTokens: 50_000, cacheWriteTokens: 0, estimatedCostUsd: 2.34625, cacheSavingsUsd: 0.05625, pricedTokens: 500_000 },
+        { id: 'openai', label: 'OpenAI API', records: 1, totalTokens: 500_000, inputTokens: 400_000, outputTokens: 100_000, cacheReadTokens: 50_000, cacheWriteTokens: 0, estimatedCostUsd: 1.50625, cacheSavingsUsd: 0.05625, pricedTokens: 500_000 },
         { id: 'acme', label: 'Acme', records: 1, totalTokens: 10, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0, cacheSavingsUsd: 0, pricedTokens: 0 },
       ],
       models: expect.any(Array),
