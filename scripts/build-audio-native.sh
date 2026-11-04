@@ -19,25 +19,39 @@ AUDIO_DARWIN_DIR="pkg/sulla-desktop/main/audio-driver/platform/darwin"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "[audio-native] Building native binaries for macOS..."
 
+  AUDIO_NATIVE_WORK="$(mktemp -d "${TMPDIR:-/tmp}/sulla-audio-native.XXXXXX")"
+  trap 'rm -rf "$AUDIO_NATIVE_WORK"' EXIT
+
+  build_universal_binary() {
+    local compiler="$1" output="$2" source="$3"
+    shift 3
+
+    "$compiler" "$@" -target arm64-apple-macos11 \
+      -o "$AUDIO_NATIVE_WORK/arm64-$(basename "$output")" "$source"
+    "$compiler" "$@" -target x86_64-apple-macos11 \
+      -o "$AUDIO_NATIVE_WORK/x86_64-$(basename "$output")" "$source"
+    lipo -create \
+      "$AUDIO_NATIVE_WORK/arm64-$(basename "$output")" \
+      "$AUDIO_NATIVE_WORK/x86_64-$(basename "$output")" \
+      -output "$output"
+  }
+
   if [[ -f "$AUDIO_DARWIN_DIR/create-mirror.c" ]]; then
-    clang \
+    build_universal_binary clang "$AUDIO_DARWIN_DIR/create-mirror" "$AUDIO_DARWIN_DIR/create-mirror.c" \
       -framework CoreAudio \
       -framework AudioToolbox \
-      -framework CoreFoundation \
-      -o "$AUDIO_DARWIN_DIR/create-mirror" \
-      "$AUDIO_DARWIN_DIR/create-mirror.c"
+      -framework CoreFoundation
     echo "[audio-native] create-mirror compiled successfully"
   else
     echo "[audio-native] create-mirror.c not found — skipping"
   fi
 
   if [[ -f "$AUDIO_DARWIN_DIR/capture-loopback.cpp" ]]; then
-    clang++ -std=c++17 -O2 \
+    build_universal_binary clang++ "$AUDIO_DARWIN_DIR/capture-loopback" "$AUDIO_DARWIN_DIR/capture-loopback.cpp" \
+      -std=c++17 -O2 \
       -framework CoreAudio \
       -framework AudioToolbox \
-      -framework CoreFoundation \
-      -o "$AUDIO_DARWIN_DIR/capture-loopback" \
-      "$AUDIO_DARWIN_DIR/capture-loopback.cpp"
+      -framework CoreFoundation
     echo "[audio-native] capture-loopback compiled successfully"
   else
     echo "[audio-native] capture-loopback.cpp not found — skipping"
@@ -48,7 +62,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   # user's Mac, which macOS would offer to download on first use.
   SWIFT_HELPERS="detect-loopback create-multi-output watch-output set-system-device reset-default-output volume-control"
   for helper in $SWIFT_HELPERS; do
-    swiftc -O -suppress-warnings -o "$AUDIO_DARWIN_DIR/$helper" "$AUDIO_DARWIN_DIR/$helper.swift"
+    build_universal_binary swiftc "$AUDIO_DARWIN_DIR/$helper" "$AUDIO_DARWIN_DIR/$helper.swift" \
+      -O -suppress-warnings
   done
   echo "[audio-native] Swift helpers compiled successfully"
 
