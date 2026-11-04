@@ -32,9 +32,10 @@
 // the same branch automatically (see .github/workflows/agent-tests.yml).
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
-class TypeScriptDiagnostic {
+export class TypeScriptDiagnostic {
   constructor(file, line, code, message) {
     this.file = file;
     this.line = line;
@@ -55,6 +56,53 @@ class TypeScriptDiagnostic {
     if (!match) return null;
     const [, file, line, code, message] = match;
     return new TypeScriptDiagnostic(file, Number(line), code, TypeScriptDiagnostic.normalizeMessage(message));
+  }
+}
+
+export class GitHubAnnotationReporter {
+  constructor({ githubActions, summaryPath, commandWriter = (value) => process.stdout.write(value), summaryAppender = appendFileSync }) {
+    this.githubActions = githubActions;
+    this.summaryPath = summaryPath;
+    this.commandWriter = commandWriter;
+    this.summaryAppender = summaryAppender;
+  }
+
+  beforeTypecheck() {
+    if (this.githubActions) this.commandWriter('::remove-matcher owner=tsc::\n');
+  }
+
+  report(project, diagnostics, staleFingerprints) {
+    if (this.githubActions) {
+      for (const diagnostic of diagnostics) this.commandWriter(`${this.annotationFor(diagnostic)}\n`);
+    }
+    if (this.summaryPath) this.summaryAppender(this.summaryPath, this.summaryFor(project, diagnostics, staleFingerprints));
+  }
+
+  annotationFor(diagnostic) {
+    const title = `typecheck-gate new error ${diagnostic.code}`;
+    return `::error file=${this.escapeProperty(diagnostic.file)},line=${diagnostic.line},title=${this.escapeProperty(title)}::${this.escapeData(diagnostic.message)}`;
+  }
+
+  summaryFor(project, diagnostics, staleFingerprints) {
+    const lines = [
+      `## Typecheck gate: \`${project}\``,
+      '',
+      `**New TypeScript errors: ${diagnostics.length}**`,
+    ];
+    if (diagnostics.length === 0) lines.push('', '- None');
+    else lines.push('', ...diagnostics.map((diagnostic) => `- \`${diagnostic.file}:${diagnostic.line} ${diagnostic.code}\` ${diagnostic.message}`));
+    lines.push('', `**Stale baseline fingerprints: ${staleFingerprints.length}**`);
+    if (staleFingerprints.length === 0) lines.push('', '- None');
+    else lines.push('', ...staleFingerprints.map((fingerprint) => `- \`${fingerprint}\``));
+    return `${lines.join('\n')}\n\n`;
+  }
+
+  escapeData(value) {
+    return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  }
+
+  escapeProperty(value) {
+    return this.escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
   }
 }
 
@@ -98,11 +146,12 @@ class DiagnosticBaseline {
 }
 
 class TypecheckBaselineGate {
-  constructor({ project, baselinePath, extraArgs, writeBaseline }) {
+  constructor({ project, baselinePath, extraArgs, writeBaseline, reporter }) {
     this.project = project;
     this.baselinePath = baselinePath;
     this.extraArgs = extraArgs;
     this.writeBaseline = writeBaseline;
+    this.reporter = reporter;
   }
 
   runTsc() {
@@ -114,6 +163,7 @@ class TypecheckBaselineGate {
   }
 
   run() {
+    this.reporter.beforeTypecheck();
     const result = this.runTsc();
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
     process.stdout.write(output);
@@ -146,19 +196,27 @@ class TypecheckBaselineGate {
     }
 
     const baseline = DiagnosticBaseline.readFrom(this.baselinePath);
-    const newDiagnosticLines = [];
+    const newDiagnostics = [];
     for (const [fingerprint, count] of currentCounts) {
       const newCount = count - baseline.countFor(fingerprint);
       if (newCount <= 0) continue;
       const instances = instancesByFingerprint.get(fingerprint).sort((a, b) => a.line - b.line);
       for (const instance of instances.slice(-newCount)) {
-        newDiagnosticLines.push(`  ${instance.file}(${instance.line}): ${instance.code}: ${instance.message}`);
+        newDiagnostics.push(instance);
       }
     }
 
-    if (newDiagnosticLines.length > 0) {
-      console.error(`\ntypecheck-gate: ${newDiagnosticLines.length} new TypeScript error(s) not in baseline ${this.baselinePath}:`);
-      for (const line of newDiagnosticLines.sort()) console.error(line);
+    const stale = baseline.staleFingerprints(currentCounts);
+    const sortedNewDiagnostics = newDiagnostics.sort((a, b) =>
+      a.file.localeCompare(b.file) || a.line - b.line || a.code.localeCompare(b.code) || a.message.localeCompare(b.message),
+    );
+    this.reporter.report(this.project, sortedNewDiagnostics, stale);
+
+    if (sortedNewDiagnostics.length > 0) {
+      console.error(`\ntypecheck-gate: ${sortedNewDiagnostics.length} new TypeScript error(s) not in baseline ${this.baselinePath}:`);
+      for (const diagnostic of sortedNewDiagnostics) {
+        console.error(`  ${diagnostic.file}(${diagnostic.line}): ${diagnostic.code}: ${diagnostic.message}`);
+      }
       return 1;
     }
 
@@ -171,7 +229,6 @@ class TypecheckBaselineGate {
       console.log(`typecheck-gate: ${diagnostics.length} pre-existing error(s) remain within baseline for ${this.project} — no new errors.`);
     }
 
-    const stale = baseline.staleFingerprints(currentCounts);
     if (stale.length > 0) {
       console.log(
         `typecheck-gate: ${stale.length} baseline entr${stale.length === 1 ? 'y is' : 'ies are'} now stale (fixed) for ${this.project} — regenerate the baseline when convenient.`,
@@ -197,6 +254,12 @@ function parseArgs(argv) {
   return options;
 }
 
-const options = parseArgs(process.argv.slice(2));
-const gate = new TypecheckBaselineGate(options);
-process.exitCode = gate.run();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const options = parseArgs(process.argv.slice(2));
+  const reporter = new GitHubAnnotationReporter({
+    githubActions: process.env.GITHUB_ACTIONS === 'true',
+    summaryPath: process.env.GITHUB_STEP_SUMMARY,
+  });
+  const gate = new TypecheckBaselineGate({ ...options, reporter });
+  process.exitCode = gate.run();
+}
