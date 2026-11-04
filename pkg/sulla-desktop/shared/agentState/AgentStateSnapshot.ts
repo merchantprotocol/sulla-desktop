@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Live agent state contract shared by the main process (AgentStateService)
  * and the renderer (Live Agents, sub-agent drawer). Types only: no runtime
