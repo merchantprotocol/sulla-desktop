@@ -141,7 +141,7 @@ describe('SullaFilesMountHealthProbe', () => {
     expect(plan.warning).toContain('Transport endpoint is not connected');
   });
 
-  it('treats a hung guest probe as dead once the timeout fires', async() => {
+  it('treats a hung guest probe as dead once the host-side timeout fires, with a clear reason', async() => {
     // risk: a wedged FUSE adapter hangs every future agent launch instead of being treated as down
     const runner: GuestCommandRunner = {
       run: () => new Promise(resolve => {
@@ -151,10 +151,34 @@ describe('SullaFilesMountHealthProbe', () => {
         setTimeout(() => resolve({ code: -1, stdout: '', stderr: 'guest command timed out' }), 5);
       }),
     };
-    const probe = new SullaFilesMountHealthProbe(new FakeMountManager(), runner, new FakeClock());
+    const probe = new SullaFilesMountHealthProbe(new FakeMountManager(), runner, new FakeClock(), undefined, 3_000);
 
     const result = await probe.check();
-    expect(result).toEqual({ available: false, reason: 'guest command timed out' });
+    expect(result).toEqual({ available: false, reason: 'Sulla Files probe timed out after 3s' });
+  });
+
+  it('treats a guest-side `timeout -s KILL` kill (exit 137, no stderr) the same as a host-side timeout', async() => {
+    // risk: the guest's own timeout wrapper kills the wedged stat/ls, but the probe reports a bare, unhelpful exit code instead of "timed out"
+    const runner = new ScriptedGuestCommandRunner();
+    runner.enqueue({ code: 137, stdout: '', stderr: '' });
+    const probe = new SullaFilesMountHealthProbe(new FakeMountManager(), runner, new FakeClock(), undefined, 3_000);
+
+    const result = await probe.check();
+    expect(result).toEqual({ available: false, reason: 'Sulla Files probe timed out after 3s' });
+  });
+
+  it('wraps the guest probe commands in a configurable `timeout -s KILL` so a wedged guest process is killed, not just abandoned', async() => {
+    // risk: without a guest-side kill, a hung FUSE call leaves another stuck process in the guest on every launch
+    const runner = new ScriptedGuestCommandRunner();
+    runner.enqueue({ code: 0, stdout: '', stderr: '' });
+    const probe = new SullaFilesMountHealthProbe(new FakeMountManager(), runner, new FakeClock(), undefined, 3_000, 2);
+
+    await probe.check();
+
+    expect(runner.calls).toHaveLength(1);
+    const [script] = runner.calls[0].argv.slice(2, 3);
+    expect(script).toContain('timeout -s KILL "$t"');
+    expect(runner.calls[0].argv).toContain('2');
   });
 
   it('never runs a guest command when the mount manager flag is false', async() => {

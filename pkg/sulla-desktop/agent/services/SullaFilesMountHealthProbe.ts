@@ -11,6 +11,8 @@ import { SULLA_FILES_GUEST_MOUNT_PATH } from '@pkg/backend/guestMountInfo';
 
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
+/** Kept shorter than DEFAULT_PROBE_TIMEOUT_MS so a `timeout`-equipped guest kills its own wedged process before the host's SIGKILL on the local relay fires. */
+const DEFAULT_GUEST_TIMEOUT_SECONDS = 2;
 /**
  * Mirrors the single rslave bind AgentContainerLauncher's
  * `sullaFilesGuestBinds()` produces today. Keep both in sync; Story 4 wires
@@ -18,6 +20,8 @@ const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
  */
 const FILES_GUEST_BIND = `${ SULLA_FILES_GUEST_MOUNT_PATH }:${ SULLA_FILES_GUEST_MOUNT_PATH }:rslave`;
 const UNAVAILABLE_REASON_MAX_LENGTH = 200;
+/** Sentinel SullaRuntimeGuestCommandRunner reports when IT (not the guest) had to kill a hung process; probeGuest() turns this into a human reason. */
+const HOST_TIMEOUT_SENTINEL = 'guest command timed out';
 
 export interface GuestCommandResult {
   code:   number;
@@ -62,7 +66,7 @@ export class SullaRuntimeGuestCommandRunner implements GuestCommandRunner {
       proc.once('close', code => {
         clearTimeout(timer);
         resolve(timedOut
-          ? { code: -1, stdout, stderr: stderr.trim() || 'guest command timed out' }
+          ? { code: -1, stdout, stderr: stderr.trim() || HOST_TIMEOUT_SENTINEL }
           : { code: code ?? -1, stdout, stderr });
       });
       proc.stdin.end();
@@ -103,6 +107,7 @@ export class SullaFilesMountHealthProbe implements MountHealthCheck {
     private readonly clock: Clock,
     private readonly cacheTtlMs = DEFAULT_CACHE_TTL_MS,
     private readonly probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
+    private readonly guestTimeoutSeconds = DEFAULT_GUEST_TIMEOUT_SECONDS,
     private readonly guestPath = SULLA_FILES_GUEST_MOUNT_PATH,
   ) {}
 
@@ -131,12 +136,46 @@ export class SullaFilesMountHealthProbe implements MountHealthCheck {
   private async probeGuest(): Promise<SullaFilesMountAvailability> {
     // stat proves the path resolves at all; ls proves the FUSE adapter still
     // answers directory reads (a dead adapter can stat fine and hang on readdir).
+    // A hung FUSE mount can block either call forever, which would otherwise
+    // leave a stuck process in the guest on every launch and hang the launch
+    // itself. We can't confirm every guest build ships GNU/BusyBox `timeout`
+    // (the guest is a minimal custom erofs image; existing unmount code
+    // already hedges between BusyBox and util-linux tools), so the script
+    // probes for it at runtime and only wraps the commands when it's present.
+    // Either way, the host-side `timeoutMs` below stays as the real backstop:
+    // it kills the local relay process even if the guest has no `timeout`
+    // binary, or the hang is itself unkillable (a process wedged in an
+    // uninterruptible FUSE syscall).
+    const script = [
+      'p="$1"; t="$2";',
+      'if command -v timeout >/dev/null 2>&1; then',
+      '  timeout -s KILL "$t" stat "$p" >/dev/null && timeout -s KILL "$t" ls -A "$p" >/dev/null;',
+      'else',
+      '  stat "$p" >/dev/null && ls -A "$p" >/dev/null;',
+      'fi',
+    ].join(' ');
+
     const result = await this.runner.run(
-      ['sh', '-c', 'stat "$1" >/dev/null && ls -A "$1" >/dev/null', 'sh', this.guestPath],
+      ['sh', '-c', script, 'sh', this.guestPath, String(this.guestTimeoutSeconds)],
       { timeoutMs: this.probeTimeoutMs },
     );
     if (result.code === 0) return { available: true };
+    if (this.isTimeoutResult(result)) {
+      return { available: false, reason: `Sulla Files probe timed out after ${ this.probeTimeoutMs / 1000 }s` };
+    }
     return { available: false, reason: result.stderr.trim() || `guest probe exited with code ${ result.code }` };
+  }
+
+  /**
+   * 124 is the GNU/BusyBox `timeout` convention for "timed out, signal not
+   * propagated"; 137 is 128+SIGKILL. Either one with no stderr means our own
+   * guest-side wrapper fired, not a real stat/ls failure.
+   */
+  private static readonly GUEST_SIDE_TIMEOUT_EXIT_CODES: ReadonlySet<number> = new Set([124, 137]);
+
+  private isTimeoutResult(result: GuestCommandResult): boolean {
+    if (result.code === -1) return result.stderr.trim() === HOST_TIMEOUT_SENTINEL;
+    return SullaFilesMountHealthProbe.GUEST_SIDE_TIMEOUT_EXIT_CODES.has(result.code) && !result.stderr.trim();
   }
 }
 
