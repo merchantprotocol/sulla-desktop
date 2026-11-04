@@ -215,4 +215,42 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(worker.jobId) as any, results)).toBe(true);
     expect(inbox.takeAgentCompletions('coding-manager-sol', 'restart-d-manager-thread').map(e => e.jobId)).toContain(worker.jobId);
   });
+
+  it('e) a stale wake target does not abort send_job_message, and the other task is still woken', async() => {
+    // risk: wakeParkedAgent throwing for one target (job finished/stopped, or
+    // its agent definition went missing, between targetsForJob and the wake)
+    // aborts the whole tool call, stranding the message queued for every
+    // other target in the same send_job_message call
+    const manager = await registry.createJob(
+      [
+        { agentId: 'coding-manager-sol', label: 'manager-a', prompt: 'epic a', status: 'running', threadId: 'wake-e-thread-a', depth: 1 },
+        { agentId: 'coding-manager-sol', label: 'manager-b', prompt: 'epic b', status: 'parked', threadId: 'wake-e-thread-b', depth: 1 },
+      ],
+      'sulla-desktop', 'wake-e-root-thread',
+    );
+    // parkJobTask flips job.status and task 0's status together; task 1 was
+    // already created 'parked' above so both read as parked task targets.
+    await registry.parkJobTask(manager.jobId, 0, 1);
+
+    wakeParkedAgent.mockImplementation(async(_channel: string, threadId: string) => {
+      if (threadId === 'wake-e-thread-a') throw new Error(`Thread ${ threadId } is not a parked agent job.`);
+      return true;
+    });
+
+    const response = await sendJobMessage({ jobId: manager.jobId, message: 'continue the same goal' });
+
+    expect(response.successBoolean).toBe(true);
+    const parsed = JSON.parse(response.responseString!);
+    expect(parsed.deliveredLive).toBe(1);
+    expect(parsed.notWoken).toEqual([{ taskIndex: 0, reason: expect.stringContaining('not a parked agent job') }]);
+    expect(wakeParkedAgent).toHaveBeenCalledTimes(2);
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'wake-e-thread-b', 'continue the same goal', 'coding-manager-sol', expect.objectContaining({ taskIndex: 1 }));
+
+    // The failed target's message is untouched — still pending, job not
+    // resurrected or otherwise mutated by the failure.
+    expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread('wake-e-thread-a')).toHaveLength(1);
+    expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
+
+    wakeParkedAgent.mockImplementation(async() => undefined);
+  });
 });

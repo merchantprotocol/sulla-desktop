@@ -60,6 +60,21 @@ export class AgentJobLifecycleService {
   async resume(jobId: string, taskIndex: number): Promise<void> {
     await this.resumeTask(jobId, taskIndex);
   }
+
+  /**
+   * A dormant parked job (no live waiter in this process — e.g. after a
+   * restart) is truthfully 'running' for the duration of the dispatched
+   * turn that wakes it. parkTask/resumeTask already guard on the job's
+   * current status, so this is safe to call even if another path raced it.
+   */
+  async beginWakeTurn(jobId: string, taskIndex: number): Promise<void> {
+    await this.resumeTask(jobId, taskIndex);
+  }
+
+  /** Re-park only if the woken turn ended without completing the job (still 'running'). */
+  async endWakeTurn(jobId: string, taskIndex: number): Promise<void> {
+    await this.parkTask(jobId, taskIndex, 0);
+  }
 }
 
 export const agentJobLifecycle = new AgentJobLifecycleService(
