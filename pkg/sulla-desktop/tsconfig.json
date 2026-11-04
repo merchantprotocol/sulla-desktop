@@ -21,6 +21,18 @@
     "paths": {
       "@pkg/*": [
         "./*"
+      ],
+      "@sulla/foundation/postgres": [
+        "../../node_modules/@sulla/foundation/dist/drivers/postgres/index.d.ts"
+      ],
+      "@sulla/foundation/sqlite": [
+        "../../node_modules/@sulla/foundation/dist/drivers/sqlite/index.d.ts"
+      ],
+      "@sulla/foundation/d1": [
+        "../../node_modules/@sulla/foundation/dist/drivers/d1/index.d.ts"
+      ],
+      "@sulla/foundation/testing": [
+        "../../node_modules/@sulla/foundation/dist/testing/index.d.ts"
       ]
     },
     "typeRoots": [
