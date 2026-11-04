@@ -146,7 +146,11 @@ export class BackendGraphWebSocketService {
       // Wake the agent that owns the thread. The trigger default is the typed
       // sulla-desktop agent, so a voice thread's worker results came back from
       // the heavy agent instead of as a short spoken reply.
-      void parkedAgentRehydrator.resolve(threadId).then((parked) => {
+      void parkedAgentRehydrator.isTerminalDelegatedThread(threadId).then(async(terminal) => {
+        // A human stop is final. Child results remain readable and durably
+        // undelivered, but must never resurrect the stopped parent thread.
+        if (terminal) return;
+        const parked = await parkedAgentRehydrator.resolve(threadId);
         const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
         return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
           source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,

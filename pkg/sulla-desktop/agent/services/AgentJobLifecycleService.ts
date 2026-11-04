@@ -6,16 +6,23 @@ import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { parkJobTask, resumeParkedJob } from '../tools/agents/jobRegistry';
 
 interface ParkedWaiter { resolve: () => void; }
+export interface ChildDependencyCounter { openChildrenForThread(threadId: string): Promise<number>; }
 
 /** Owns the running -> parked -> running lifecycle for hidden delegated managers. */
 export class AgentJobLifecycleService {
   private readonly waiters = new Map<string, ParkedWaiter>();
   private readonly pendingWakes = new Set<string>();
 
+  constructor(
+    private readonly children: ChildDependencyCounter,
+    private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<void>,
+    private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<void>,
+  ) {}
+
   async parkWhenWaiting(jobId: string, taskIndex: number, threadId: string): Promise<boolean> {
-    const openChildren = await agentJobProvider.jobs.openChildrenForThread(threadId);
+    const openChildren = await this.children.openChildrenForThread(threadId);
     if (openChildren === 0) return false;
-    await parkJobTask(jobId, taskIndex, openChildren);
+    await this.parkTask(jobId, taskIndex, openChildren);
     return true;
   }
 
@@ -44,8 +51,12 @@ export class AgentJobLifecycleService {
   }
 
   async resume(jobId: string, taskIndex: number): Promise<void> {
-    await resumeParkedJob(jobId, taskIndex);
+    await this.resumeTask(jobId, taskIndex);
   }
 }
 
-export const agentJobLifecycle = new AgentJobLifecycleService();
+export const agentJobLifecycle = new AgentJobLifecycleService(
+  agentJobProvider.jobs,
+  parkJobTask,
+  resumeParkedJob,
+);

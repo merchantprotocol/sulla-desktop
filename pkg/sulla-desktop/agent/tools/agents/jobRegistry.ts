@@ -235,7 +235,7 @@ export function abortJob(jobId: string): 'stopped' | 'not-found' | 'already-fini
   abortControllers.get(jobId)?.abort();
   job.status = 'stopped';
   job.finishedAt = Date.now();
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? Date.now() }
     : task);
 
@@ -345,7 +345,7 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
   // 'stopped' verdict but record whatever partial results came back.
   if (job.status === 'stopped') {
     job.results = results;
-    job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+    job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
       ? { ...task, status: 'stopped', finishedAt: Date.now() }
       : task);
     await persist(agentJobProvider.jobs.saveStoppedResults(jobId, results, job.tasks));
@@ -498,7 +498,7 @@ export function failJob(jobId: string, error: string): void {
   job.status = 'failed';
   job.finishedAt = Date.now();
   job.error = error;
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'error', finishedAt: Date.now() }
     : task);
 
