@@ -7,6 +7,7 @@ import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { AgentJobService } from '../Services/AgentJobService';
+import { AgentStateService } from '../Services/AgentStateService';
 import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
 import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
@@ -18,6 +19,7 @@ export class AgentJobServiceProvider {
   readonly messaging: AgentJobMessagingRepository;
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
+  readonly states: AgentStateService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -25,6 +27,7 @@ export class AgentJobServiceProvider {
     this.messaging = new AgentJobMessagingRepository(connection);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
+    this.states = new AgentStateService(this.jobs, this.runtime);
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator);

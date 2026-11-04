@@ -43,6 +43,13 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       [job.jobId, job.taskCount, job.createdAt, job.parentChannel ?? null, job.parentThreadId ?? null, JSON.stringify(job.tasks), job.visibility ?? 'hidden', job.parentAgentId ?? null]);
   }
 
+  async replaceState(job: AgentJob): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = $2, tasks = $3::jsonb, results = $4::jsonb,
+      error = $5, finished_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE to_timestamp($6 / 1000.0) END,
+      waiting_on_children = $7 WHERE job_id = $1`, [job.jobId, job.status, JSON.stringify(job.tasks),
+      JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0]);
+  }
+
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }

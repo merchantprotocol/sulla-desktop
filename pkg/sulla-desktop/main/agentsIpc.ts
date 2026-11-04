@@ -16,6 +16,12 @@
 // agents:conversation reads one conversation's JSONL message log.
 
 import { ipcMain } from 'electron';
+import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
+import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
+import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
+import { hasAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
 
@@ -195,7 +201,20 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 // ── IPC handler ──────────────────────────────────────────────────────────────
 
+const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
+  latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+});
+const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+  graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
+  container: async task => hasAgentContainerRuntime(undefined, task.threadId),
+  lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
+});
+const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
+
 export function initAgentsIpc(): void {
+  const bootReconciliation = agentLivenessReconciler.reconcile();
+  agentLivenessReconciler.start();
+  agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return (await agentDefinitionService.list()).filter(a => a.status !== 'archive').map(a => ({
@@ -288,6 +307,7 @@ export function initAgentsIpc(): void {
   });
 
   ipcMain.handle('agents:list', async(): Promise<AgentsListResponse> => {
+    await bootReconciliation;
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.
 
@@ -305,16 +325,26 @@ export function initAgentsIpc(): void {
     if (!jobId || !Number.isInteger(taskIndex) || taskIndex < 0 || !message?.trim()) {
       return { ok: false, error: 'A job, task, and message are required.' };
     }
+    await bootReconciliation;
+    const job = await agentJobProvider.states.job(jobId);
+    if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return {
+      ok: false, stale: true, error: `Job ${ jobId } task ${ taskIndex } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
+    };
     const { sendJobMessage } = await import('@pkg/agent/tools/agents/send_job_message');
     const result = await sendJobMessage({ jobId, taskIndex, message: message.trim() });
-    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+    return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 
   ipcMain.handle('agents:stop-job', async(_event, jobId: string) => {
     if (!jobId) return { ok: false, error: 'A job is required.' };
+    await bootReconciliation;
+    const job = await agentJobProvider.states.job(jobId);
+    if (!job || !job.tasks.some(task => agentJobProvider.states.isLive(job, task))) return {
+      ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
+    };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
     const result = await stopAgentJob(jobId);
-    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+    return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 
   ipcMain.handle('agents:conversations', async(_event, channel: string, limit = 50, offset = 0): Promise<AgentConversationSummary[]> => {

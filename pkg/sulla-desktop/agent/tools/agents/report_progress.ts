@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ReportProgressWorker extends BaseTool {
@@ -40,6 +41,8 @@ export class ReportProgressWorker extends BaseTool {
     if (!result) {
       return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.' };
     }
+
+    agentJobProvider.states.touch();
 
     return {
       successBoolean: true,

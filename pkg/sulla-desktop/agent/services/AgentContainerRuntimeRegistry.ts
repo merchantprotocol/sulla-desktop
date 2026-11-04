@@ -26,6 +26,10 @@ export function withAgentContainerRuntime<T>(binding: AgentContainerRuntimeBindi
   return activeRuntime.run(binding, action);
 }
 
+export function hasAgentContainerRuntime(jobId?: string, threadId?: string): boolean {
+  return Array.from(bindings.values()).some(binding => (!jobId || binding.jobId === jobId) && (!threadId || binding.threadId === threadId));
+}
+
 export function currentAgentContainerRuntime(): AgentContainerRuntimeBinding | undefined {
   return activeRuntime.getStore();
 }
