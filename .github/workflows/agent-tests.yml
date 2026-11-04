@@ -7,6 +7,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      write_baseline:
+        description: >-
+          Regenerate .github/typecheck-baseline/{agent,main,renderer}.txt
+          from this ref's actual tsc output and commit them back to this
+          branch, instead of gating. Use after merging main into a branch
+          whose typecheck job needs fresh "pre-existing on main" baselines.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +25,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # `typecheck` semantically type-checks three entry graphs (agent runtime,
+  # main/preload, renderer) with real `tsc` diagnostics, not `--noCheck`
+  # syntax parsing. ubuntu-latest gives this public repo a 16 GB runner, so
+  # each graph gets a 12 GB heap (NODE_OPTIONS=--max-old-space-size=12288).
+  # A graph with pre-existing errors on main is still checked, not skipped:
+  # .github/scripts/typecheck-gate.mjs diffs that step's tsc output against
+  # .github/typecheck-baseline/<graph>.txt and fails only on errors NOT
+  # already in the baseline. A baseline entry is a count per (file, TS
+  # code, normalized message) fingerprint, not a line number, so an
+  # unrelated edit that shifts an existing error's line doesn't trip the
+  # gate; see .github/scripts/typecheck-gate.mjs for the fingerprint
+  # rules. To refresh a branch's baselines after accepting new
+  # pre-existing errors on purpose (e.g. merging main, or widening a
+  # graph's include set), run this workflow via "Run workflow" on that
+  # branch with write_baseline: true — it regenerates all three files
+  # from that ref's real tsc output and commits them back automatically.
+  # Equivalent by hand: node .github/scripts/typecheck-gate.mjs --project
+  # <tsconfig> --baseline .github/typecheck-baseline/<graph>.txt
+  # --write-baseline -- --incremental
+  # --tsBuildInfoFile .cache/typescript/<graph>.tsbuildinfo, then commit
+  # the rewritten file. Runs in parallel with `agent-tests`, which stays
+  # the job that actually runs the specs.
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
