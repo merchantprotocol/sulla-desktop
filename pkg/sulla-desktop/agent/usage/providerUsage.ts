@@ -7,9 +7,22 @@ import { providerUsageProvider, USAGE_PROVIDER_REGISTRY } from '../app/Providers
 import type { CliUsageRecord, UsageLimitSnapshot } from '../app/Services/ProviderUsage/ProviderUsageTypes';
 
 export { USAGE_PROVIDER_REGISTRY };
-export type { CliUsageRecord, DailyUsageSummary, ModelUsageSummary, ProviderUsageSummary, UsageAggregate, UsageLimitSnapshot, UsageLimitWindow, UsageProviderDefinition, UsageSummary } from '../app/Services/ProviderUsage/ProviderUsageTypes';
+export type {
+  CliUsageRecord,
+  DailyUsageSummary,
+  ModelUsageSummary,
+  ProviderUsageSummary,
+  UsageAggregate,
+  UsageLimitSnapshot,
+  UsageLimitWindow,
+  UsageProviderDefinition,
+  UsageSummary,
+} from '../app/Services/ProviderUsage/ProviderUsageTypes';
 
-export function recordCliUsage(providerId: string, record: Omit<CliUsageRecord, 'ts'> & { ts?: string }): Promise<void> {
+export function recordCliUsage(
+  providerId: string,
+  record: Omit<CliUsageRecord, 'ts'> & { ts?: string },
+): Promise<void> {
   return providerUsageProvider.usage.record(providerId, record);
 }
 export function recordCliLimitSnapshot(providerId: string, snapshot: UsageLimitSnapshot): Promise<void> {

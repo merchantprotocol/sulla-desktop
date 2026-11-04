@@ -4,18 +4,38 @@
 
 import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection';
 import { ProviderUsageRepository } from '../Repositories/ProviderUsageRepository';
-import { ProviderLimitNormalizerRegistry, ClaudeLimitNormalizer, CodexLimitNormalizer } from '../Services/ProviderUsage/ProviderLimitNormalizers';
+import {
+  ProviderLimitNormalizerRegistry,
+  ClaudeLimitNormalizer,
+  CodexLimitNormalizer,
+} from '../Services/ProviderUsage/ProviderLimitNormalizers';
 import { ProviderUsageService } from '../Services/ProviderUsage/ProviderUsageService';
 import type { UsageProviderDefinition } from '../Services/ProviderUsage/ProviderUsageTypes';
 import { PricingCatalog } from '../Services/ProviderUsage/PricingCatalog';
 import { UsageRecordCodec } from '../Services/ProviderUsage/UsageRecordCodec';
-import { MeterableUsageNormalizer, SettingsUsageNormalizer, UsageSourceNormalizerRegistry } from '../Services/ProviderUsage/UsageSourceStrategies';
+import {
+  MeterableUsageNormalizer,
+  SettingsUsageNormalizer,
+  UsageSourceNormalizerRegistry,
+} from '../Services/ProviderUsage/UsageSourceStrategies';
 import { UsageWriteQueue } from '../Services/ProviderUsage/UsageWriteQueue';
+import { UsageAggregator } from '../Services/ProviderUsage/UsageAggregator';
+import { UsageSummaryBuilder } from '../Services/ProviderUsage/UsageSummaryBuilder';
 import { postgresClient } from '../../database/PostgresClient';
 
 export const USAGE_PROVIDER_REGISTRY: Readonly<Record<string, UsageProviderDefinition>> = {
-  'claude-code': { id: 'claude-code', label: 'Claude Code', usageSource: { kind: 'settings', key: 'claudeCodeUsage' }, limitSource: { kind: 'settings', key: 'claudeCodeLimitSnapshot' } },
-  codex: { id: 'codex', label: 'Codex', usageSource: { kind: 'settings', key: 'codexUsage' }, limitSource: { kind: 'settings', key: 'codexLimitSnapshot' } },
+  'claude-code': {
+    id: 'claude-code',
+    label: 'Claude Code',
+    usageSource: { kind: 'settings', key: 'claudeCodeUsage' },
+    limitSource: { kind: 'settings', key: 'claudeCodeLimitSnapshot' },
+  },
+  codex: {
+    id: 'codex',
+    label: 'Codex',
+    usageSource: { kind: 'settings', key: 'codexUsage' },
+    limitSource: { kind: 'settings', key: 'codexLimitSnapshot' },
+  },
   opencode: { id: 'opencode', label: 'OpenCode', usageSource: { kind: 'settings', key: 'opencodeUsage' } },
   cursor: { id: 'cursor', label: 'Cursor', usageSource: { kind: 'settings', key: 'cursorUsage' } },
   grok: { id: 'grok', label: 'Grok', usageSource: { kind: 'meterable', providerId: 'grok' } },
@@ -35,12 +55,32 @@ export class ProviderUsageServiceProvider {
   readonly usage: ProviderUsageService;
   readonly limits: ProviderLimitNormalizerRegistry;
   constructor() {
-    const codec = new UsageRecordCodec(); const repository = new ProviderUsageRepository(new DesktopPostgresConnection(postgresClient));
-    const meterable = new MeterableUsageNormalizer(codec); const now = () => new Date();
+    const codec = new UsageRecordCodec();
+    const repository = new ProviderUsageRepository(new DesktopPostgresConnection(postgresClient));
+    const meterable = new MeterableUsageNormalizer(codec);
+    const now = () => new Date();
+    const pricing = new PricingCatalog(codec);
+    const aggregator = new UsageAggregator(pricing, codec, now);
+    const sources = new UsageSourceNormalizerRegistry([new SettingsUsageNormalizer(repository, codec), meterable]);
+    const summaryBuilder = new UsageSummaryBuilder(
+      repository,
+      sources,
+      meterable,
+      aggregator,
+      codec,
+      USAGE_PROVIDER_REGISTRY,
+      now,
+    );
     this.queue.start();
-    this.usage = new ProviderUsageService(repository, this.queue, new UsageSourceNormalizerRegistry([new SettingsUsageNormalizer(repository, codec), meterable]), meterable, new PricingCatalog(codec), codec, USAGE_PROVIDER_REGISTRY, now);
-    this.limits = new ProviderLimitNormalizerRegistry([new ClaudeLimitNormalizer(codec, now), new CodexLimitNormalizer(codec, now)]);
+    this.usage = new ProviderUsageService(repository, this.queue, summaryBuilder, codec, USAGE_PROVIDER_REGISTRY, now);
+    this.limits = new ProviderLimitNormalizerRegistry([
+      new ClaudeLimitNormalizer(codec, now),
+      new CodexLimitNormalizer(codec, now),
+    ]);
   }
-  dispose(): Promise<void> { return this.queue.dispose() }
+
+  dispose(): Promise<void> {
+    return this.queue.dispose();
+  }
 }
 export const providerUsageProvider = new ProviderUsageServiceProvider();
