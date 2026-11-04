@@ -2358,8 +2358,7 @@
     },
     "pkg/sulla-desktop/main/cloud/runtimeProjection/sync.ts": {
       "rules": {
-        "mutable-state": 2,
-        "procedural-module": 1
+        "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
