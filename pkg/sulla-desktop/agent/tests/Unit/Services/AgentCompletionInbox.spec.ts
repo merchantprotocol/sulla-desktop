@@ -54,15 +54,19 @@ describe('AgentCompletionInbox', () => {
   it('dispatches held contracts after an errored or aborted run', () => {
     // risk: data loss — an unsuccessful parent turn must not discard child results.
     const inbox = new AgentCompletionInbox();
-    const dispatch = vi.fn();
+    let unsuccessfulRunActive = true;
+    const dispatch = vi.fn((channel: string, threadId: string) => {
+      if (unsuccessfulRunActive) return;
+      inbox.take(channel, threadId);
+    });
     inbox.registerIdleDispatcher(dispatch);
-    inbox.setStopped('sulla-desktop', 'parent', true);
     inbox.enqueue('sulla-desktop', 'parent', { jobId: 'job-1', taskIndex: 0, results: [result('one')] });
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(inbox.take('sulla-desktop', 'missing')).toEqual([]);
 
-    inbox.setStopped('sulla-desktop', 'parent', false);
+    unsuccessfulRunActive = false;
     inbox.notifyReady('sulla-desktop', 'parent');
-    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(inbox.take('sulla-desktop', 'parent')).toEqual([]);
   });
 
   it('deduplicates per task rather than per job and never resends a taken batch', () => {

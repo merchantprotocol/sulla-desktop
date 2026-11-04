@@ -92,7 +92,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async pendingCompletions(): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE tasks @? '$[*] ? (@.completion != null)' AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY COALESCE(finished_at, created_at) ASC`);
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE (tasks @? '$[*] ? (@.completion != null)' OR (status = 'completed' AND completion_delivered_at IS NULL)) AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY COALESCE(finished_at, created_at) ASC`);
     return rows.map(row => this.map(row));
   }
 
