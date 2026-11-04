@@ -40,7 +40,7 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
 }
 
 export class RedisThreadStateRepository extends Service implements ThreadStateRepository {
-  private static readonly KEY_PREFIX = 'broken:threadstate:';
+  private static readonly KEY_PREFIX = 'sulla:threadstate:';
   constructor(private readonly client: RedisThreadStateClient, private readonly ttlSeconds = 3600) { super(); }
   async available(): Promise<boolean> {
     if (this.client.status !== 'ready') return false;
