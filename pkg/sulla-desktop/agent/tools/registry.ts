@@ -165,16 +165,18 @@ export class ToolRegistry {
    */
   registerManifests(manifests: ToolManifest[]) {
     for (const m of manifests) {
-      if (this.loaders.has(m.name)) continue;
-      this.schemaDefs.set(m.name, m.schemaDef);
+      const qualifiedName = m.name.startsWith(`${ m.category }_`) ? m.name : `${ m.category }_${ m.name }`;
+      const registeredName = this.loaders.has(m.name) ? qualifiedName : m.name;
+      if (this.loaders.has(registeredName)) continue;
+      this.schemaDefs.set(registeredName, m.schemaDef);
       if (m.isAnthropicNative && m.anthropicToolDefinition) {
-        this.nativeToolDefs.set(m.name, m.anthropicToolDefinition);
+        this.nativeToolDefs.set(registeredName, m.anthropicToolDefinition);
       }
-      this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
+      this.operationTypesMap.set(registeredName, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
       Object.assign(m, resolveToolPlacement(m));
       m.executionTarget ??= executionTargetFor(m.category, m.name);
-      this.executionTargets.set(m.name, m.executionTarget);
-      this.register(m.name, m.description, m.category, async() => {
+      this.executionTargets.set(registeredName, m.executionTarget);
+      this.register(registeredName, m.description, m.category, async() => {
         const mod = await m.loader();
         const workerClass: any = mod && typeof mod === 'object'
           ? Object.values(mod).find((v: any) =>
@@ -183,7 +185,7 @@ export class ToolRegistry {
               typeof v.prototype._validatedCall === 'function')
           : null;
         if (!workerClass) {
-          throw new Error(`Tool ${ m.name }: loader did not export a worker class`);
+          throw new Error(`Tool ${ registeredName }: loader did not export a worker class`);
         }
         const instance = new workerClass();
         instance.schemaDef = m.schemaDef;
@@ -241,6 +243,20 @@ export class ToolRegistry {
     const loader = this.loaders.get(name);
     if (!loader) throw new Error(`Tool ${ name } not registered`);
     return await loader();
+  }
+
+  /** Resolve only a tool registered in the requested category; never cross category boundaries. */
+  resolveRegisteredName(category: string, requested: string): string | undefined {
+    const qualified = requested.startsWith(`${ category }_`) ? requested : `${ category }_${ requested }`;
+    if (this.loaders.has(qualified) && this.categories.get(category)?.includes(qualified)) return qualified;
+    if (this.loaders.has(requested) && this.categories.get(category)?.includes(requested)) return requested;
+    return undefined;
+  }
+
+  async createToolForCategory(category: string, requested: string): Promise<any> {
+    const resolved = this.resolveRegisteredName(category, requested);
+    if (!resolved) throw new Error(`Tool ${ category }/${ requested } not registered`);
+    return await this.createTool(resolved);
   }
 
   isRegistered(name: string): boolean {
