@@ -46,7 +46,7 @@ describe('provider usage characterization', () => {
       providerId: 'claude-code',
       capturedAt: '2026-11-04T06:00:00.000Z',
       windows: [
-        { id: 'five_hour', label: '5-hour', usedPercent: 42, resetsAt: '2026-11-06T18:40:00.000Z', windowMinutes: 300 },
+        { id: 'five_hour', label: '5-hour', usedPercent: 42, resetsAt: '2026-11-06T21:20:00.000Z', windowMinutes: 300 },
         { id: 'seven_day_sonnet', label: 'Weekly · Sonnet', usedPercent: 87, resetsAt: '2026-11-09T00:00:00.000Z', windowMinutes: undefined },
       ],
     });
@@ -88,7 +88,7 @@ describe('provider usage characterization', () => {
     }).toEqual({
       windowHours: 24,
       profileId: 'profile-1',
-      totals: { totalTokens: 1_600_010, inputTokens: 1_400_000, outputTokens: 200_000, cacheReadTokens: 250_000, cacheWriteTokens: 0, estimatedCostUsd: 6.06625, cacheSavingsUsd: 0.59625, pricedTokens: 1_600_000 },
+      totals: { totalTokens: 1_600_010, inputTokens: 1_400_000, outputTokens: 200_000, cacheReadTokens: 250_000, cacheWriteTokens: 0, estimatedCostUsd: 6.06625, cacheSavingsUsd: 0.5962500000000001, pricedTokens: 1_600_000 },
       providers: [
         { id: 'claude-code', label: 'Claude Code', records: 1, totalTokens: 1_100_000, inputTokens: 1_000_000, outputTokens: 100_000, cacheReadTokens: 200_000, cacheWriteTokens: 0, estimatedCostUsd: 4.56, cacheSavingsUsd: 0.54, pricedTokens: 1_100_000 },
         { id: 'openai', label: 'OpenAI API', records: 1, totalTokens: 500_000, inputTokens: 400_000, outputTokens: 100_000, cacheReadTokens: 50_000, cacheWriteTokens: 0, estimatedCostUsd: 1.50625, cacheSavingsUsd: 0.05625, pricedTokens: 500_000 },
