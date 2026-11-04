@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1142,
+  "entries": 1141,
   "files": {
     "background.ts": {
       "rules": {
@@ -882,12 +882,6 @@
     "pkg/sulla-desktop/agent/services/ActiveAgentsRegistry.ts": {
       "rules": {
         "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/services/AgentCompletionInbox.ts": {
-      "rules": {
-        "mutable-state": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
