@@ -8,7 +8,7 @@ import type { ToolManifest } from '../registry';
 export const agentToolManifests: ToolManifest[] = [
   {
     name:        'spawn_agent',
-    description: 'The one way to delegate. Launch one or more child agents, each with a return contract. Every child runs hidden in the background (visible tabs are disabled; the human can open any child from the sub-agent rail). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
+    description: 'The one way to delegate. Launch one or more child agents, each with a return contract. If a container fails to start or exits unexpectedly, its reason and last 200 log lines appear in the job record; the failed container is retained up to 24 hours (10 maximum) and removed earlier below 5 GiB guest free disk.  Every child runs hidden in the background (visible tabs are disabled; the human can open any child from the sub-agent rail). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
     category:    'meta',
     schemaDef:   {
       tasks: {
@@ -75,7 +75,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'check_agent_jobs',
-    description: 'Inspect delegated jobs. A jobId returns full detail; the bounded list returns every active job plus recent compact summaries.',
+    description: 'Inspect delegated jobs. A jobId returns full detail, including retained failed-container reason and its last 200 log lines in check-ins; the bounded list returns every active job plus recent compact summaries. Failed agent containers are retained for diagnosis for up to 24 hours (10 maximum) and removed earlier when guest free disk falls below 5 GiB.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
