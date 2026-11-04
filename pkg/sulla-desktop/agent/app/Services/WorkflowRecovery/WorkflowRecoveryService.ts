@@ -49,6 +49,7 @@ export class WorkflowRecoveryService extends Service {
   async stop(): Promise<void> {
     if (this.state === 'stopped' || this.state === 'stopping') return;
     this.state = 'stopping';
+    if (this.timer) { this.clock.clearTimeout(this.timer); this.timer = null; }
     await this.gracefulShutdown();
     this.state = 'stopped';
   }
