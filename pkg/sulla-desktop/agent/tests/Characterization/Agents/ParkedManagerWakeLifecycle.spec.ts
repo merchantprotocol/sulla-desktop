@@ -234,7 +234,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     wakeParkedAgent.mockImplementation((async(_channel: string, threadId: string) => {
       if (threadId === 'wake-e-thread-a') throw new Error(`Thread ${ threadId } is not a parked agent job.`);
-      return undefined;
+      return true;
     }) as any);
 
     const response = await sendJobMessage({ jobId: manager.jobId, message: 'continue the same goal' });

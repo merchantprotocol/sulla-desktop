@@ -417,7 +417,7 @@ export class BackendGraphWebSocketService {
       },
       (job, reason) => {
         if (!job.parentChannel || !job.parentThreadId) return;
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, results: [], failureReason: reason });
+        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
