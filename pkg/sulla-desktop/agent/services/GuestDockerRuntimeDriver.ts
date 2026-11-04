@@ -68,7 +68,10 @@ export class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   async rename(id: string, name: string): Promise<void> { await this.executor.execute(['docker', 'rename', id, name]) }
   async logs(id: string, tail = 200): Promise<string> {
     const result = await this.executor.execute(['sh', '-c', 'docker logs --tail "$1" "$2" 2>&1', 'sulla-docker-logs', String(tail), id]);
-    return result.stdout;
+    const merged = result.stderr
+      ? `${ result.stdout }${ result.stdout && !result.stdout.endsWith('\n') ? '\n' : '' }[stderr]\n${ result.stderr }`
+      : result.stdout;
+    return merged.split(/\r?\n/).slice(-tail - (merged.endsWith('\n') ? 1 : 0)).join('\n');
   }
   async inspect(id: string): Promise<any> { return JSON.parse((await this.executor.execute(['docker', 'inspect', id])).stdout)[0] }
   async remove(id: string, force = true): Promise<void> {

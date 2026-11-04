@@ -25,7 +25,7 @@ export class AgentContainerRetentionBootstrap {
       runtime,
       disk,
       { now: () => Date.now() },
-      { isActive: () => false },
+      activeContainers,
       config,
     );
     this.scheduler = new ContainerRetentionScheduler(policy, timer, logger, config.intervalMs);
