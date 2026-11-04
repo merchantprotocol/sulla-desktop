@@ -57,7 +57,7 @@ export class SkillDefinitionCodec {
 
   static render(skill: Pick<SkillContent, 'frontmatter' | 'frontmatter_text' | 'body'>): string {
     const frontmatterText = skill.frontmatter_text || yaml.dump(skill.frontmatter ?? {}).replace(/\n$/, '');
-    return `---\n${frontmatterText}\n---\n`;
+    return `---\n${frontmatterText}\n---\n${skill.body ?? ''}`;
   }
 
   static hash(content: SkillContent | SkillDefinition): string {
