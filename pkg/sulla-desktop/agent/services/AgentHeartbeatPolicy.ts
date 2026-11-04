@@ -3,7 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { AgentDefinition, AgentHeartbeatConfig } from '../database/models/AgentDefinitionModel';
+import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
+
+export interface AgentHeartbeatConfig {
+  allowed: boolean;
+  defaultIntervalMinutes: number;
+  minIntervalMinutes: number;
+  maxIntervalMinutes: number;
+}
 
 export interface HeartbeatDecision {
   allowed: boolean;

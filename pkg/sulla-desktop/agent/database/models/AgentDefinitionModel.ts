@@ -23,13 +23,6 @@ export interface ModelPriorityEntry {
   model:    string;
 }
 
-export interface AgentHeartbeatConfig {
-  allowed: boolean;
-  defaultIntervalMinutes: number;
-  minIntervalMinutes: number;
-  maxIntervalMinutes: number;
-}
-
 export interface AgentDefinition {
   id:                      string;
   slug:                    string;
@@ -161,10 +154,6 @@ export interface AgentDefinitionPatch {
   isBuiltin?:             boolean;
   builtinHash?:           string | null;
   runLocation?:           AgentRunLocation;
-}
-
-export interface AgentDefinitionConfigPatch {
-  [key: string]: unknown;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -317,11 +306,6 @@ export class AgentDefinitionModel {
     return rowToDefinition(row);
   }
 
-  /**
-   * Apply a patch. When expectedUpdatedAt is given the write only lands if the
-   * row has not changed since it was read (compare-and-set on updated_at);
-   * otherwise null is returned and nothing is written.
-   */
   static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -342,7 +326,10 @@ export class AgentDefinitionModel {
     if (patch.enabled !== undefined) add('enabled', patch.enabled);
     if (patch.sourceTemplateSlug !== undefined) add('source_template_slug', patch.sourceTemplateSlug);
     if (patch.contentHash !== undefined) add('content_hash', patch.contentHash);
-    if (patch.config !== undefined) add('config', JSON.stringify(patch.config), '::jsonb');
+    if (patch.config !== undefined) {
+      sets.push(`config = COALESCE(config, '{}'::jsonb) || $${ params.length + 1 }::jsonb`);
+      params.push(JSON.stringify(patch.config));
+    }
     if (patch.promptContent !== undefined) add('prompt_content', patch.promptContent);
     if (patch.goalsContent !== undefined) add('goals_content', patch.goalsContent);
     if (patch.promptFiles !== undefined) add('prompt_files', JSON.stringify(patch.promptFiles), '::jsonb');
@@ -377,23 +364,6 @@ export class AgentDefinitionModel {
     }
     const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
     return row ? rowToDefinition(row) : null;
-  }
-
-  /** Merge config keys without replacing unrelated agent configuration. */
-  static async patchConfig(id: string, patch: AgentDefinitionConfigPatch): Promise<AgentDefinition | null> {
-    const row = await postgresClient.queryOne(
-      `UPDATE agent_definitions SET config = COALESCE(config, '{}'::jsonb) || $2::jsonb, updated_at = now()
-       WHERE id = $1 RETURNING *`,
-      [id, JSON.stringify(patch)],
-    );
-    return row ? rowToDefinition(row) : null;
-  }
-
-  static async getHeartbeatConfig(id: string): Promise<AgentHeartbeatConfig | null> {
-    const row = await postgresClient.queryOne('SELECT config->\'heartbeat\' AS heartbeat FROM agent_definitions WHERE id = $1 LIMIT 1', [id]);
-    return row?.heartbeat && typeof row.heartbeat === 'object' && !Array.isArray(row.heartbeat)
-      ? row.heartbeat as AgentHeartbeatConfig
-      : null;
   }
 
   /**
