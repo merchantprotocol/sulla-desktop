@@ -14,7 +14,7 @@ vi.mock('../../../services/BackendGraphWebSocketService', () => ({
 }));
 
 class ReportProgressHarness extends ReportProgressWorker {
-  invoke(threadId: string, input: unknown) {
+  runHarness(threadId: string, input: unknown) {
     this.setState({ metadata: { threadId } } as any);
     return this._validatedCall(input);
   }
@@ -152,7 +152,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // The woken manager's own report_progress and return_result land on the
     // SAME job/task — rehydration didn't fork a second job for this thread.
     const progressWorker = new ReportProgressHarness();
-    const progress = JSON.parse((await progressWorker.invoke('wake-c-manager-thread', { step: 'woken', summary: 'resumed after wake' })).responseString!);
+    const progress = JSON.parse((await progressWorker.runHarness('wake-c-manager-thread', { step: 'woken', summary: 'resumed after wake' })).responseString!);
     expect(progress.jobId).toBe(manager.jobId);
     expect(progress.taskIndex).toBe(0);
 
@@ -232,10 +232,10 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // already created 'parked' above so both read as parked task targets.
     await registry.parkJobTask(manager.jobId, 0, 1);
 
-    wakeParkedAgent.mockImplementation(async(_channel: string, threadId: string) => {
+    wakeParkedAgent.mockImplementation((async(_channel: string, threadId: string) => {
       if (threadId === 'wake-e-thread-a') throw new Error(`Thread ${ threadId } is not a parked agent job.`);
       return undefined;
-    });
+    }) as any);
 
     const response = await sendJobMessage({ jobId: manager.jobId, message: 'continue the same goal' });
 

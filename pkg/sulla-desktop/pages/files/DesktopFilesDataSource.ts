@@ -212,7 +212,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilities.upload = true;
     this.rootId = selectedRoot?.id ?? '';
     if (selectedRoot) {
-      status.state = ({ idle: 'synced', scanning: 'syncing', syncing: 'syncing', paused: 'paused', offline: 'error', error: 'error', detached: 'error' } as Record<string, string>)[selectedRoot.state ?? ''] ?? status.state;
+      status.state = ({ idle: 'synced', scanning: 'syncing', syncing: 'syncing', paused: 'paused', offline: 'error', error: 'error', detached: 'error' } as Record<string, FilesSnapshot['status']['state']>)[selectedRoot.state ?? ''] ?? status.state;
       status.pendingFiles = selectedRoot.pendingFiles ?? status.pendingFiles;
       status.lastError = selectedRoot.lastError;
       status.lastScanAt = selectedRoot.lastScanAt;

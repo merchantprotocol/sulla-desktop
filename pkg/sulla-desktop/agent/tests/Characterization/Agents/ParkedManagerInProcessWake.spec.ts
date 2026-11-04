@@ -60,14 +60,14 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   afterEach(() => { inbox.clearCompletionInboxes(); vi.restoreAllMocks() });
 
   class SpawnHarness extends SpawnAgentWorker {
-    invoke(threadId: string, wsChannel: string, input: unknown) {
+    runHarness(threadId: string, wsChannel: string, input: unknown) {
       this.setState({ metadata: { threadId, wsChannel } } as any);
       return this.runValidated(input as any);
     }
   }
 
   class ReturnResultHarness extends ReturnResultWorker {
-    invoke(threadId: string, input: unknown) {
+    runHarness(threadId: string, input: unknown) {
       this.setState({ metadata: { threadId } } as any);
       return this._validatedCall(input);
     }
@@ -118,7 +118,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
         // its own messages: it returns its OWN contract, the exact call a
         // real manager makes once it has what it was waiting for.
         const rr = new ReturnResultHarness();
-        const result = await rr.invoke(managerThreadId, { result: { ok: true }, summary: 'epic done' });
+        const result = await rr.runHarness(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
         return fakeState;
       }),
@@ -132,7 +132,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
       (threadId === managerThreadId ? { graph: fakeGraph, state: fakeState } as any : null));
 
     const spawn = new SpawnHarness();
-    const launch = JSON.parse((await spawn.invoke('grandparent-root-thread', 'sulla-desktop', {
+    const launch = JSON.parse((await spawn.runHarness('grandparent-root-thread', 'sulla-desktop', {
       tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic' }],
       async: true,
     })).responseString!);
