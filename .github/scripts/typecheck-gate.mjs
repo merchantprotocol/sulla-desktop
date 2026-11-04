@@ -7,30 +7,93 @@
 // carries pre-existing errors on main, without silently skipping the
 // check altogether.
 //
+// A diagnostic's fingerprint is `file\tTScode\tnormalized message` —
+// deliberately WITHOUT line/column. Line numbers shift whenever an
+// unrelated edit adds or removes a line above an existing error, which
+// would make a line-keyed baseline flag unchanged errors as "new". The
+// baseline instead stores, per fingerprint, how many instances of that
+// exact (file, code, message) tsc reported. If a graph gains another
+// occurrence of an already-baselined error in the same file (e.g. a
+// second `Cannot find module 'x'` in a file that already had one), the
+// count for that fingerprint goes up and the extra instance(s) fail the
+// gate, even though no new fingerprint was introduced. Fixing a
+// pre-existing error only ever lowers a count, which never fails the
+// gate — a stale baseline entry just gets logged as a reminder to
+// regenerate.
+//
 // Regenerate a baseline after intentionally accepting new pre-existing
 // errors (e.g. widening a graph's include set):
 //   node .github/scripts/typecheck-gate.mjs --project <tsconfig> \
 //     --baseline <baseline-file> --write-baseline [-- <extra tsc args>]
-// then commit the rewritten baseline file.
+// then commit the rewritten baseline file. In CI, run the `typecheck`
+// job via `workflow_dispatch` with `write_baseline: true` on the branch
+// whose baselines you want to refresh: it regenerates all three graphs'
+// baselines from that ref's actual tsc output and commits them back to
+// the same branch automatically (see .github/workflows/agent-tests.yml).
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 class TypeScriptDiagnostic {
-  constructor(file, line, code) {
+  constructor(file, line, code, message) {
     this.file = file;
     this.line = line;
     this.code = code;
+    this.message = message;
   }
 
-  get key() {
-    return `${this.file}(${this.line}): ${this.code}`;
+  get fingerprint() {
+    return `${this.file}\t${this.code}\t${this.message}`;
+  }
+
+  static normalizeMessage(message) {
+    return message.trim().replace(/\s+/g, ' ');
   }
 
   static parse(rawLine) {
-    const match = rawLine.match(/^(.+?)\((\d+),\d+\): error (TS\d+):/);
+    const match = rawLine.match(/^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$/);
     if (!match) return null;
-    return new TypeScriptDiagnostic(match[1], Number(match[2]), match[3]);
+    const [, file, line, code, message] = match;
+    return new TypeScriptDiagnostic(file, Number(line), code, TypeScriptDiagnostic.normalizeMessage(message));
+  }
+}
+
+class DiagnosticBaseline {
+  constructor(counts) {
+    this.counts = counts; // Map<fingerprint, number>
+  }
+
+  static empty() {
+    return new DiagnosticBaseline(new Map());
+  }
+
+  static readFrom(path) {
+    if (!existsSync(path)) return DiagnosticBaseline.empty();
+    const counts = new Map();
+    for (const rawLine of readFileSync(path, 'utf8').split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const tabIndex = line.indexOf('\t');
+      const count = Number(line.slice(0, tabIndex));
+      const fingerprint = line.slice(tabIndex + 1);
+      counts.set(fingerprint, count);
+    }
+    return new DiagnosticBaseline(counts);
+  }
+
+  countFor(fingerprint) {
+    return this.counts.get(fingerprint) ?? 0;
+  }
+
+  staleFingerprints(currentCounts) {
+    return [...this.counts.keys()].filter((fingerprint) => !currentCounts.has(fingerprint));
+  }
+
+  static serialize(currentCounts) {
+    const lines = [...currentCounts.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fingerprint, count]) => `${count}\t${fingerprint}`);
+    return lines.length ? `${lines.join('\n')}\n` : '';
   }
 }
 
@@ -40,16 +103,6 @@ class TypecheckBaselineGate {
     this.baselinePath = baselinePath;
     this.extraArgs = extraArgs;
     this.writeBaseline = writeBaseline;
-  }
-
-  readBaseline() {
-    if (!existsSync(this.baselinePath)) return new Set();
-    return new Set(
-      readFileSync(this.baselinePath, 'utf8')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
   }
 
   runTsc() {
@@ -69,31 +122,60 @@ class TypecheckBaselineGate {
       .split('\n')
       .map((line) => TypeScriptDiagnostic.parse(line))
       .filter(Boolean);
-    const current = new Set(diagnostics.map((diagnostic) => diagnostic.key));
-    const baseline = this.readBaseline();
-    const newErrors = [...current].filter((key) => !baseline.has(key));
+
+    const currentCounts = new Map();
+    const instancesByFingerprint = new Map();
+    for (const diagnostic of diagnostics) {
+      currentCounts.set(diagnostic.fingerprint, (currentCounts.get(diagnostic.fingerprint) ?? 0) + 1);
+      if (!instancesByFingerprint.has(diagnostic.fingerprint)) instancesByFingerprint.set(diagnostic.fingerprint, []);
+      instancesByFingerprint.get(diagnostic.fingerprint).push(diagnostic);
+    }
 
     if (this.writeBaseline) {
-      const body = [...current].sort().join('\n');
-      writeFileSync(this.baselinePath, current.size ? `${body}\n` : '');
-      console.log(`typecheck-gate: wrote ${current.size} baseline entries to ${this.baselinePath}`);
+      if (result.status !== 0 && diagnostics.length === 0) {
+        console.error(
+          `typecheck-gate: yarn tsc --project ${this.project} exited ${result.status} with no parsed diagnostics — refusing to write an empty baseline.`,
+        );
+        return result.status ?? 1;
+      }
+      writeFileSync(this.baselinePath, DiagnosticBaseline.serialize(currentCounts));
+      console.log(
+        `typecheck-gate: wrote ${currentCounts.size} baseline fingerprint(s) covering ${diagnostics.length} diagnostic instance(s) to ${this.baselinePath}`,
+      );
       return 0;
     }
 
-    if (newErrors.length > 0) {
-      console.error(`\ntypecheck-gate: ${newErrors.length} new TypeScript error(s) not in baseline ${this.baselinePath}:`);
-      for (const key of newErrors.sort()) console.error(`  ${key}`);
+    const baseline = DiagnosticBaseline.readFrom(this.baselinePath);
+    const newDiagnosticLines = [];
+    for (const [fingerprint, count] of currentCounts) {
+      const newCount = count - baseline.countFor(fingerprint);
+      if (newCount <= 0) continue;
+      const instances = instancesByFingerprint.get(fingerprint).sort((a, b) => a.line - b.line);
+      for (const instance of instances.slice(-newCount)) {
+        newDiagnosticLines.push(`  ${instance.file}(${instance.line}): ${instance.code}: ${instance.message}`);
+      }
+    }
+
+    if (newDiagnosticLines.length > 0) {
+      console.error(`\ntypecheck-gate: ${newDiagnosticLines.length} new TypeScript error(s) not in baseline ${this.baselinePath}:`);
+      for (const line of newDiagnosticLines.sort()) console.error(line);
       return 1;
     }
 
-    if (result.status !== 0 && current.size === 0) {
+    if (result.status !== 0 && diagnostics.length === 0) {
       console.error(`typecheck-gate: yarn tsc --project ${this.project} exited ${result.status} with no parsed diagnostics — treating as a hard failure.`);
       return result.status ?? 1;
     }
 
-    const carriedOver = current.size;
-    if (carriedOver > 0) {
-      console.log(`typecheck-gate: ${carriedOver} pre-existing error(s) remain within baseline for ${this.project} — no new errors.`);
+    if (diagnostics.length > 0) {
+      console.log(`typecheck-gate: ${diagnostics.length} pre-existing error(s) remain within baseline for ${this.project} — no new errors.`);
+    }
+
+    const stale = baseline.staleFingerprints(currentCounts);
+    if (stale.length > 0) {
+      console.log(
+        `typecheck-gate: ${stale.length} baseline entr${stale.length === 1 ? 'y is' : 'ies are'} now stale (fixed) for ${this.project} — regenerate the baseline when convenient.`,
+      );
     }
     return 0;
   }
