@@ -34,7 +34,7 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
   async save(state: BaseThreadState): Promise<void> { this.states.set(state.metadata.threadId, structuredClone(state)); }
   async load(threadId: string): Promise<BaseThreadState | null> {
     const state = this.states.get(threadId);
-    return null;
+    return state ? structuredClone(state) : null;
   }
   async delete(threadId: string): Promise<void> { this.states.delete(threadId); }
 }
