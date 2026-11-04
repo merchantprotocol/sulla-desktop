@@ -68,6 +68,9 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if (target.taskStatus === 'parked') {
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
       await getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
+      // wakeParkedAgent accepted the persisted message as the input for a new
+      // turn. A later boundary must not replay the same orchestrator message.
+      await AgentJobMessagingModel.markMessagesDelivered([record.id], target.threadId);
       deliveredLive += 1;
       continue;
     }
