@@ -2,29 +2,35 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-export class AgentTestChangeClassifier {
-  constructor({ agentRoot = 'pkg/sulla-desktop/agent/' } = {}) {
-    this.agentRoot = agentRoot;
-  }
+const IRRELEVANT_EXTENSIONS = /\.(md|vue|css|scss|less|svg|png|jpe?g|gif|ico|webp)$/;
 
+const RELEVANT_WORKFLOW_FILE = '.github/workflows/agent-tests.yml';
+
+const GUEST_DISK_ROOTS = [
+  'pkg/sulla-desktop/agent/tests/Characterization/DesktopRuntime/',
+  'src/runtime-agent/',
+  'services/sulla-tools/',
+];
+
+export class AgentTestChangeClassifier {
   classify(files) {
     const normalized = [...new Set(files.filter(Boolean))].sort();
     return {
       files: normalized,
-      shouldRun: normalized.some(file => this.isAgentRelevant(file)),
+      shouldRun: normalized.length > 0 && !normalized.every(file => this.isKnownIrrelevant(file)),
       needsBusyBox: normalized.some(file => this.needsGuestDiskCoverage(file)),
     };
   }
 
-  isAgentRelevant(file) {
-    return file.startsWith(this.agentRoot)
-      || ['package.json', 'yarn.lock', 'vitest.agent.config.mts', 'scripts/test-pr.mjs',
-        'scripts/agent-test-selection.mjs', 'scripts/agent-test-selection.test.mjs',
-        'scripts/agent-test-ci-gate.mjs', '.github/workflows/agent-tests.yml'].includes(file)
-      || file.startsWith('scripts/architecture-guard/');
+  isKnownIrrelevant(file) {
+    if (IRRELEVANT_EXTENSIONS.test(file)) return true;
+    if (file.startsWith('docs/')) return true;
+    if (file.startsWith('.github/workflows/') && file !== RELEVANT_WORKFLOW_FILE) return true;
+    return false;
   }
 
   needsGuestDiskCoverage(file) {
-    return /guestDisk|GuestDisk/.test(file);
+    if (/guestDisk|GuestDisk/.test(file)) return true;
+    return GUEST_DISK_ROOTS.some(root => file.startsWith(root));
   }
 }

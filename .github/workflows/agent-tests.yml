@@ -35,11 +35,18 @@ jobs:
       - name: Architecture guard
         run: node scripts/architecture-guard/guard.mjs
 
+  # Per-PR run: a hard 60-second test budget (enforced inside scripts/test-pr.mjs
+  # itself, which exits 124 on overrun). timeout-minutes here is deliberately
+  # larger than that budget — it only has to cover checkout, Node setup and the
+  # dependency install, which is a guaranteed cache miss on every run because
+  # Actions caches are disabled for this repo, plus Postgres container startup.
+  # Named "agent-tests" (not "agent-tests-pr") deliberately: branch protection's
+  # required status check targets this exact job name on pull_request events.
   agent-tests:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.should_run == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 5
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg16
@@ -76,10 +83,53 @@ jobs:
         if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Per-PR agent runtime specs (hard 60-second test budget)
-        if: github.event_name == 'pull_request'
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
         run: yarn test:pr
+
+  # Full run on push to main (and manual dispatch): yarn test:agent runs the
+  # whole agent-runtime suite, measured at 89-123s on #1959/#1964/#1968, plus
+  # the same guaranteed cache-miss install and Postgres startup as the PR job.
+  # The guest-disk characterization spec always runs here, so BusyBox is
+  # always installed, independent of the changed-file classification.
+  agent-tests-full:
+    needs: changes
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg16
+        env:
+          POSTGRES_USER: sulla
+          POSTGRES_PASSWORD: sulla-ci
+          POSTGRES_DB: sulla_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sulla -d sulla_test"
+          --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      SULLA_TEST_DATABASE_URL: postgres://sulla:sulla-ci@127.0.0.1:5432/sulla_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - name: Restore exact dependency tree
+        id: dependency-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
+      - name: Install dependencies on cache miss
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Install BusyBox for guest disk characterization
+        run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Full agent runtime specs on main
-        if: github.event_name != 'pull_request'
         run: yarn test:agent

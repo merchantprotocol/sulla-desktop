@@ -7,7 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { AgentTestChangeClassifier } from './agent-test-selection.mjs';
 
 export class GitChangedFileReader {
-  constructor({ baseRef, spawn = spawnSync } = {}) { this.baseRef = baseRef; this.spawn = spawn; }
+  constructor({ baseRef, spawn = spawnSync } = {}) {
+    this.baseRef = baseRef;
+    this.spawn = spawn;
+  }
+
   read() {
     const result = this.spawn('git', ['diff', '--name-only', '--diff-filter=ACMR', `${this.baseRef}...HEAD`], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(result.stderr || `git diff exited ${result.status}`);
@@ -16,7 +20,11 @@ export class GitChangedFileReader {
 }
 
 export class GitHubOutputWriter {
-  constructor({ outputPath = process.env.GITHUB_OUTPUT, append = appendFile } = {}) { this.outputPath = outputPath; this.append = append; }
+  constructor({ outputPath = process.env.GITHUB_OUTPUT, append = appendFile } = {}) {
+    this.outputPath = outputPath;
+    this.append = append;
+  }
+
   async write(classification) {
     if (!this.outputPath) throw new Error('GITHUB_OUTPUT is required');
     await this.append(this.outputPath, `should_run=${classification.shouldRun}\nneeds_busybox=${classification.needsBusyBox}\n`);
