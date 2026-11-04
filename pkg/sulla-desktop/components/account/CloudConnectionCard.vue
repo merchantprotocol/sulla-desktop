@@ -44,7 +44,7 @@ const channelLabel=computed(()=>({connected:'Connected',connecting:'Connecting�
 function revoke(clientId:string){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:revoke-client',clientId))}
 function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/cloud/devices.html')}
 const groups=[
- {title:'Activity',items:[['liveAgents','∿','Live agents',"What's running right now"],['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
+ {title:'Activity',items:[['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
  {title:'Private data',items:[privateRow('conversations','✉','Chat history','Your linked chat history','🔒 End-to-end encrypted'),privateRow('memory','⌘','Memory','What Sulla remembers about you and your business','🔒 End-to-end encrypted'),{...privateRow('files','▤','Files','Choose folders in File Manager','🔒 End-to-end encrypted'),link:openFiles},privateRow('vault','⚿','Passwords','Opens only with your master password','🔒 Zero-knowledge')]},
  {title:'Control',items:[{...row(['remoteAccess','⇄','Remote access','Let approved browsers and phones run tasks on this Desktop']),privacy:'Manage devices ›',link:()=>{showDevices.value=!showDevices.value}}]},
 ];
