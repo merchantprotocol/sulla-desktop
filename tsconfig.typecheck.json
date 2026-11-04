@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": false
+  },
+  "files": [
+    "bootstrapEntry.ts",
+    "pkg/sulla-desktop/window/browserTabPreload.ts"
+  ]
+}

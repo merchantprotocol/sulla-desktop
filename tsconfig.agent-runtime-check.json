@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.agent-check.json",
+  "compilerOptions": {
+    "types": [
+      "@types/node",
+      "electron"
+    ]
+  }
+}
