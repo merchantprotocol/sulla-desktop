@@ -46,8 +46,7 @@ describe('WorkflowRecoveryService', () => {
     const activate = vi.fn(async() => undefined);
     const service = new WorkflowRecoveryService(store, { activate }, new FakeClock(), { notify: vi.fn() });
 
-    await service.start();
-    await service.recover();
+    await Promise.all([service.start(), service.recover()]);
 
     expect(activate).toHaveBeenCalledTimes(1);
     expect(activate).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'automatic' }));
