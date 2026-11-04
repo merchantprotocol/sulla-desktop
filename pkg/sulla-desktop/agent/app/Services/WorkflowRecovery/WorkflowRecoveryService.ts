@@ -113,8 +113,9 @@ export class WorkflowRecoveryService extends Service {
     for (const execution of executions) {
       try { await this.registry.activate(execution); }
       catch (error) {
-        this.activationScheduled.delete(execution.executionId);
         console.error(`[WorkflowRecovery] Auto-restart error for "${ execution.executionId }":`, error);
+      } finally {
+        this.activationScheduled.delete(execution.executionId);
       }
     }
   }
