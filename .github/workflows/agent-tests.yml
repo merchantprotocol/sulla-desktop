@@ -72,9 +72,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/typescript
+          # TypeScript incremental state is valid only for the exact source graph.
+          # Cross-commit fallback caches can replay stale diagnostics into the baseline gate.
           key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
-          restore-keys: |
-            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
       - name: Type-check agent runtime graph
         if: env.WRITE_BASELINE == 'false'
         env:
