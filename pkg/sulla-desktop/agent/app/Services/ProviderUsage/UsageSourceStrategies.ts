@@ -31,7 +31,7 @@ export class SettingsUsageNormalizer implements UsageSourceNormalizer {
     const source = provider.usageSource as Extract<UsageSource, { kind: 'settings' }>;
     const records = this.codec.records(await this.repository.setting(source.key, '[]'));
     return records
-      .filter((record) => Date.parse(record.ts) >= context.since.getTime())
+      .filter((record) => Date.parse(record.ts) <= context.since.getTime())
       .map((record) => ({ ...record, providerId: provider.id, providerLabel: provider.label }));
   }
 }
