@@ -3,18 +3,16 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": [
+  "files": [
     "bootstrapEntry.ts",
-    "background.ts",
-    "pkg/sulla-desktop/**/*.ts",
-    "pkg/sulla-desktop/**/*.d.ts",
-    "pkg/sulla-desktop/**/*.tsx",
-    "pkg/sulla-desktop/**/*.vue"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "pkg/sulla-desktop/**/*.spec.ts",
-    "pkg/sulla-desktop/agent/tests/**"
+    "pkg/sulla-desktop/window/browserTabPreload.ts",
+    "pkg/sulla-desktop/entry/index.ts",
+    "pkg/sulla-desktop/entry/agent.ts",
+    "pkg/sulla-desktop/entry/process-manager.ts",
+    "pkg/sulla-desktop/entry/support.ts",
+    "pkg/sulla-desktop/entry/updates.ts",
+    "pkg/sulla-desktop/entry/first-run.ts",
+    "pkg/sulla-desktop/entry/side-panel.ts",
+    "pkg/sulla-desktop/entry/capture-studio.ts"
   ]
 }
