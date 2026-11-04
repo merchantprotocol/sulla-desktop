@@ -3,13 +3,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentDefinition } from '../../../database/models/AgentDefinitionModel';
 import { AgentHeartbeatPolicy, type AgentDefinitionLookup } from '../../../services/AgentHeartbeatPolicy';
 import { ChatHeartbeatScheduler } from '../../../services/ChatHeartbeatScheduler';
 import { SetChatHeartbeatWorker } from '../../../tools/chat/set_heartbeat';
 import type { ToolResponse } from '../../../tools/base';
+
+// set_heartbeat.ts imports ChatHeartbeatService for its constructor's default
+// scheduler factory, which transitively pulls in GraphRegistry's full tool
+// registry (many of those tools import Electron eagerly). Every fixture here
+// injects its own scheduler explicitly, so the real factory is never called —
+// mock the module instead of letting its import graph load outside Electron.
+vi.mock('@pkg/agent/services/ChatHeartbeatService', () => ({
+  getChatHeartbeatService: () => { throw new Error('getChatHeartbeatService() must not be called when a scheduler is injected') },
+}));
 
 const heartbeat = (allowed: boolean) => ({ allowed, defaultIntervalMinutes: 5, minIntervalMinutes: 2, maxIntervalMinutes: 10 });
 const definition = (slug: string, config: Record<string, unknown>): AgentDefinition => ({
