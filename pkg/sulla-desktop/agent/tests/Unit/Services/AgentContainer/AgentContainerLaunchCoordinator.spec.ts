@@ -8,7 +8,7 @@ import type { ContainerSpec } from '@pkg/runtime/containerRuntime';
 import { AgentContainerLaunchCoordinator, type AgentContainerDiagnosticRuntime, type AgentLaunchJobReporter } from '@pkg/agent/services/AgentContainerLaunchCoordinator';
 import { IdempotentRetry, StartupRetryError } from '@pkg/agent/services/AgentContainerStartupRetry';
 import { SullaFilesBindPlanner } from '@pkg/agent/services/SullaFilesMountHealthProbe';
-import { GuestDockerRuntimeDriver, type GuestDockerCommandExecutor } from '@pkg/agent/services/AgentContainerLauncher';
+import { GuestDockerRuntimeDriver, type GuestDockerCommandExecutor } from '@pkg/agent/services/GuestDockerRuntimeDriver';
 
 class FakeRuntime implements AgentContainerDiagnosticRuntime {
   created: ContainerSpec[] = [];
