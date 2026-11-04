@@ -1,6 +1,39 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { createServer, type Server } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { CloudVaultSyncHttpTransport, VaultSyncHttpError, type VaultSyncHttpClient } from '@pkg/main/cloud/vaultSyncV3/transport';
+
+class FetchHttpClient implements VaultSyncHttpClient {
+  request(url: string, init?: RequestInit): Promise<Response> {
+    return fetch(url, init);
+  }
+}
+
+class LocalVaultResponseServer {
+  private readonly server: Server;
+
+  constructor(private readonly recordsBody: string, private readonly statusBody: string) {
+    this.server = createServer((request, response) => {
+      const body = request.url?.includes('/records') ? this.recordsBody : this.statusBody;
+      response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+      response.end(body);
+    });
+  }
+
+  async start(): Promise<string> {
+    await new Promise<void>((resolve, reject) => {
+      this.server.once('error', reject);
+      this.server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = this.server.address();
+    if (!address || typeof address === 'string') throw new Error('Local HTTP server did not expose a port');
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  async close(): Promise<void> {
+    await new Promise<void>((resolve, reject) => this.server.close(error => error ? reject(error) : resolve()));
+  }
+}
 
 class FakeHttpClient implements VaultSyncHttpClient {
   readonly requests: { url: string; init?: RequestInit }[] = [];
@@ -32,5 +65,22 @@ describe('CloudVaultSyncHttpTransport', () => {
     const transport = new CloudVaultSyncHttpTransport({ client, authHeaders: async () => ({}), maxResponseBytes: 16 });
     await expect(transport.getStatus('v')).rejects.toMatchObject({ code: 'invalid_body' });
     oversized = true; await expect(transport.getStatus('v')).rejects.toMatchObject({ code: 'too_large' });
+  });
+});
+
+
+describe('CloudVaultSyncHttpTransport response limits', () => {
+  it('accepts a large records page while rejecting an oversized status response', async () => {
+    // risk: data availability — normal vault pages may exceed the small control-response cap.
+    const records = Array.from({ length: 20 }, (_, index) => ({ id: index, payload: 'x'.repeat(64 * 1024) }));
+    const server = new LocalVaultResponseServer(JSON.stringify({ records }), JSON.stringify({ status: 'x'.repeat(1024 * 1024) }));
+    const baseUrl = await server.start();
+    try {
+      const transport = new CloudVaultSyncHttpTransport({ client: new FetchHttpClient(), baseUrl, authHeaders: async () => ({}) });
+      await expect(transport.getRecords('vault-1', 'device-1')).resolves.toMatchObject({ records });
+      await expect(transport.getStatus('device-1')).rejects.toMatchObject({ code: 'too_large', status: 413 });
+    } finally {
+      await server.close();
+    }
   });
 });

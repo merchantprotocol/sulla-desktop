@@ -58,14 +58,17 @@ export interface VaultSyncTransportOptions {
   baseUrl?: string;
   errorMapper?: VaultSyncErrorMapper;
   maxResponseBytes?: number;
+  maxLargeResponseBytes?: number;
 }
 
 export class CloudVaultSyncHttpTransport {
   private readonly maxResponseBytes: number;
+  private readonly maxLargeResponseBytes: number;
   private readonly mapper: VaultSyncErrorMapper;
   constructor(private readonly options: VaultSyncTransportOptions) {
     this.mapper = options.errorMapper ?? new VaultSyncErrorMapper();
     this.maxResponseBytes = options.maxResponseBytes ?? 1024 * 1024;
+    this.maxLargeResponseBytes = options.maxLargeResponseBytes ?? 40 * 1024 * 1024;
   }
 
   getStatus(deviceId: string): Promise<VaultStatus> { return this.json('GET', `/cloud-vault-sync/status?deviceId=${encodeURIComponent(deviceId)}`); }
@@ -87,11 +90,11 @@ export class CloudVaultSyncHttpTransport {
   respondToEnrollmentRequest(vaultId: string, requestId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
     return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/respond`, vaultId, `enrollment-respond:${requestId}`, signature, body);
   }
-  getBundle(vaultId: string, deviceId: string): Promise<VaultBundleResponse> { return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`); }
+  getBundle(vaultId: string, deviceId: string): Promise<VaultBundleResponse> { return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`, undefined, {}, this.maxLargeResponseBytes); }
   getRecords(vaultId: string, deviceId: string, scope = 'personal', since?: number, cursor?: string, limit?: number): Promise<VaultRecordsResponse> {
     const query = new URLSearchParams({ scope, deviceId });
     if (since !== undefined) query.set('since', String(since)); if (cursor) query.set('cursor', cursor); if (limit !== undefined) query.set('limit', String(limit));
-    return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/records?${query}`);
+    return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/records?${query}`, undefined, {}, this.maxLargeResponseBytes);
   }
   commit(vaultId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> { return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/commit`, vaultId, 'commit', signature, body); }
   pause(vaultId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> { return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/pause`, vaultId, 'pause', signature, body); }
@@ -107,14 +110,14 @@ export class CloudVaultSyncHttpTransport {
       'X-Sulla-Timestamp': String(signature.timestamp), 'X-Sulla-Device-Signature': signature.signature,
     });
   }
-  private async json<T>(method: string, path: string, body?: Record<string, unknown>, headers: Record<string, string> = {}): Promise<T> {
+  private async json<T>(method: string, path: string, body?: Record<string, unknown>, headers: Record<string, string> = {}, maxResponseBytes = this.maxResponseBytes): Promise<T> {
     const merged = { ...(await this.options.authHeaders()), ...headers };
     if (body !== undefined) merged['Content-Type'] = 'application/json';
     const response = await this.options.client.request(`${this.options.baseUrl ?? ''}${path}`, { method, headers: merged, body: body === undefined ? undefined : JSON.stringify(body) });
     const length = Number(response.headers.get('content-length') ?? 0);
-    if (length > this.maxResponseBytes) throw this.mapper.map(413, { code: 'too_large' });
+    if (length > maxResponseBytes) throw this.mapper.map(413, { code: 'too_large' });
     const text = await response.text();
-    if (Buffer.byteLength(text, 'utf8') > this.maxResponseBytes) throw this.mapper.map(413, { code: 'too_large' });
+    if (Buffer.byteLength(text, 'utf8') > maxResponseBytes) throw this.mapper.map(413, { code: 'too_large' });
     let payload: unknown = null;
     if (text) { try { payload = JSON.parse(text); } catch { if (!response.ok) throw this.mapper.map(response.status, null); throw this.mapper.map(502, { code: 'invalid_body' }); } }
     if (!response.ok) throw this.mapper.map(response.status, payload);
