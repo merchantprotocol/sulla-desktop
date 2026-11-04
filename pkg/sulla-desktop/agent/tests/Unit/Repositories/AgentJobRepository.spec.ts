@@ -62,4 +62,38 @@ dbDescribe('AgentJobRepository', () => {
     expect(listed.filter(item => ['running', 'parked'].includes(item.status)).map(item => item.jobId)).toContain('bounded-active');
     expect(listed.filter(item => !['running', 'parked'].includes(item.status))).toHaveLength(25);
   });
+
+  it('detects queued or running children across multiple task threads', async() => {
+    // risk: agent job retention must not delete a parent with active children
+    const runningThreadId = 'repository-child-running-thread';
+    const completedThreadId = 'repository-child-completed-thread';
+    const unrelatedThreadId = 'repository-child-unrelated-thread';
+    const child = (jobId: string, parentThreadId: string): AgentJob => ({
+      ...job(jobId), parentThreadId,
+    });
+    const runningChild = child('repository-child-running', runningThreadId);
+    const completedChild = child('repository-child-completed', completedThreadId);
+    const unrelatedChild = child('repository-child-unrelated', unrelatedThreadId);
+    await repository.insertJob(runningChild);
+    await repository.insertJob(completedChild);
+    completedChild.status = 'completed';
+    completedChild.tasks = completedChild.tasks.map(task => ({ ...task, status: 'completed' }));
+    await repository.complete(completedChild);
+    await repository.insertJob(unrelatedChild);
+
+    const parent: AgentJob = {
+      ...job('repository-parent-with-children'),
+      tasks: [
+        { agentId: 'worker', label: 'running', prompt: 'work', status: 'completed', threadId: completedThreadId },
+        { agentId: 'worker', label: 'running', prompt: 'work', status: 'completed', threadId: runningThreadId },
+      ],
+    };
+    expect(await repository.hasQueuedOrRunningChildren(parent)).toBe(true);
+
+    const completedParent: AgentJob = {
+      ...parent,
+      tasks: parent.tasks.map(task => ({ ...task, threadId: completedThreadId })),
+    };
+    expect(await repository.hasQueuedOrRunningChildren(completedParent)).toBe(false);
+  });
 });

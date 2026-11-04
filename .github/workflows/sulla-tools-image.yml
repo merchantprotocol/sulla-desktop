@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'services/sulla-tools/**'
+      - 'vendor/sulla-core/**'
+      - 'package.json'
+      - 'yarn.lock'
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'
@@ -15,6 +18,9 @@ on:
     tags: ['v*']
     paths:
       - 'services/sulla-tools/**'
+      - 'vendor/sulla-core/**'
+      - 'package.json'
+      - 'yarn.lock'
       - 'pkg/sulla-desktop/agent/**'
       - 'pkg/sulla-desktop/runtime/**'
       - 'pkg/sulla-desktop/vault-broker/**'

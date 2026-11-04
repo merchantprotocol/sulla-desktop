@@ -307,6 +307,18 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
+  lifecycle.registerOnce('workflow-recovery', ['database-manager'],
+    async() => {
+      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
+      await workflowRecoveryService.start();
+      console.log('[Background] Workflow recovery initialized');
+    },
+    async() => {
+      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
+      await workflowRecoveryService.stop();
+    },
+  );
+
   lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();
@@ -1801,17 +1813,6 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
     await getTerminalServer().stop();
   } catch (err) {
     console.warn('[sullaEnd] Terminal server stop failed:', err);
-  }
-
-  // Suspend any in-flight workflows before the DB closes so boot recovery
-  // can find and resume them on next startup.
-  if (postgresClient.isConnected()) {
-    try {
-      const { gracefulShutdown } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
-      await gracefulShutdown();
-    } catch (err) {
-      console.warn('[sullaEnd] Workflow graceful shutdown failed:', err);
-    }
   }
 
   await lifecycle.stopAll(mode);

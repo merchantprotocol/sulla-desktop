@@ -6,9 +6,10 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
+import { JobTaskLocator } from './JobTaskLocator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -288,46 +289,13 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  * miss (a tab child after a restart) reads the persisted row.
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
-  if (!threadId) return undefined;
-  const cached = this.findCachedTaskByThread(threadId);
-  if (cached) return cached;
-  await this.recovery.ensureHydrated();
-  try {
-    const persisted = await this.repository.findByTaskThread(threadId);
-    if (persisted) {
-      const job = this.runtime.jobs.get(persisted.jobId) ?? persisted;
-      this.runtime.jobs.set(job.jobId, job);
-      const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-      if (taskIndex >= 0) return { job, taskIndex };
-    }
-  } catch (err) {
-    console.warn('[jobRegistry] thread task read failed:', (err as Error).message);
-  }
-  return undefined;
-}
-
-private findCachedTaskByThread(threadId: string): { job: AgentJob; taskIndex: number } | undefined {
-  let found: { job: AgentJob; taskIndex: number } | undefined;
-  for (const job of this.runtime.jobs.values()) {
-    const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-    if (taskIndex >= 0 && (!found || job.createdAt > found.job.createdAt)) found = { job, taskIndex };
-  }
-  return found;
+  return this.taskLocator.findTaskByThread(threadId);
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
 async delegationDepthForThread(threadId: string | undefined): Promise<number> {
-  if (!threadId) return 0;
-  const owner = await this.findTaskByThread(threadId);
-  if (!owner) return 0;
-  return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
+  return this.taskLocator.delegationDepthForThread(threadId);
 }
-
-/**
- * Deepest a sub-agent chain may go: the top-level chat is depth 0; its
- * children may be depth 1, 2 and 3. A spawn whose child would land past this
- * is refused (Jonathon, 2026-11-02 — supersedes the earlier no-depth-cap rule).
- */
 
 /**
  * Current depth of a thread's own agent: metadata set on the running thread
@@ -336,7 +304,7 @@ async delegationDepthForThread(threadId: string | undefined): Promise<number> {
  * a tab child cannot reset its depth just by never writing the metadata.
  */
 async resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undefined): Promise<number> {
-  return Math.max(Number(metadataSubAgentDepth) || 0, await this.delegationDepthForThread(threadId));
+  return this.taskLocator.resolveAgentDepth(metadataSubAgentDepth, threadId);
 }
 
 /** Tab this.runtime.jobs still open under one parent chat (each holds a renderer tab). */

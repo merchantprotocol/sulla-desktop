@@ -148,9 +148,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     if (threadIds.length === 0) return false;
     const row = await this.connection.first(`SELECT EXISTS (
       SELECT 1 FROM agent_jobs child
-      WHERE child.parent_thread_id = ANY($1::text[])
+      WHERE child.parent_thread_id IN (SELECT jsonb_array_elements_text($1::jsonb))
         AND (child.status = 'running' OR child.tasks @? '$[*] ? (@.status == "queued" || @.status == "running")')
-    ) AS present`, [threadIds]);
+    ) AS present`, [JSON.stringify(threadIds)]);
     return row?.present === true || row?.present === 't';
   }
 
