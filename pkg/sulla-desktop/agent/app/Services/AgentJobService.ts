@@ -6,10 +6,10 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
+import { JobTaskLocator } from './JobTaskLocator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
-const JOB_TTL_MS = 60 * 60 * 1000;
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -36,16 +36,12 @@ async createJob(
     completionDeliveredAt: null,
     dismissedAt: null,
   };
-
   this.runtime.jobs.set(jobId, job);
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
   this.runtime.abortControllers.set(jobId, new AbortController());
-
   await this.persist(this.repository.insertJob(job));
-
   return job;
 }
-
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
   const job = this.runtime.jobs.get(jobId);
@@ -56,7 +52,6 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
   job.tasks[index] = { ...job.tasks[index], ...nextPatch };
   await this.persist(this.repository.updateTasks(jobId, job.tasks));
 }
-
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
@@ -66,12 +61,10 @@ async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
   } catch (err) {
     console.warn('[jobRegistry] thread job read failed:', (err as Error).message);
   }
-
   return Array.from(this.runtime.jobs.values())
     .filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt)
     .sort((a, b) => a.createdAt - b.createdAt);
 }
-
 async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> {
   const job = await this.getJob(jobId);
   if (job?.parentThreadId !== parentThreadId || !job.tasks[taskIndex]) return false;
@@ -81,23 +74,19 @@ async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): 
   await this.persist(this.repository.dismissTasks(jobId, parentThreadId, job.tasks, allDismissed));
   return true;
 }
-
 /** Keep a job's dead-run watcher until releaseJobWatcher (tab this.runtime.jobs). */
 registerJobWatcher(jobId: string, stop: () => void): void {
   this.runtime.watchers.get(jobId)?.();
   this.runtime.watchers.set(jobId, stop);
 }
-
 releaseJobWatcher(jobId: string): void {
   this.runtime.watchers.get(jobId)?.();
   this.runtime.watchers.delete(jobId);
 }
-
 /** The abort signal for a job, for wiring into its sub-agents' state. */
 getJobAbortSignal(jobId: string): AbortSignal | undefined {
   return this.runtime.abortControllers.get(jobId)?.signal;
 }
-
 /**
  * Request cancellation of a running job. Fires its AbortController (which the
  * sub-agent graphs check cooperatively between steps) and marks it 'stopped'.
@@ -108,17 +97,29 @@ getJobAbortSignal(jobId: string): AbortSignal | undefined {
 abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   const job = this.runtime.jobs.get(jobId);
   if (!job) return 'not-found';
-  if (job.status !== 'running') return 'already-finished';
-
+  if (!['running', 'parked'].includes(job.status)) return 'already-finished';
   this.runtime.abortControllers.get(jobId)?.abort();
   job.status = 'stopped';
   job.finishedAt = this.clock.now().getTime();
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
-
   void this.persist(this.repository.stop(jobId, job.tasks));
-
+  return 'stopped';
+}
+async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
+  const root = await this.getJob(jobId);
+  if (!root) return 'not-found';
+  if (!['running', 'parked'].includes(root.status)) return 'already-finished';
+  const stoppedIds = await this.repository.stopCascade(jobId);
+  const stoppedAt = this.clock.now().getTime();
+  for (const stoppedId of stoppedIds) {
+    this.runtime.abortControllers.get(stoppedId)?.abort();
+    const job = this.runtime.jobs.get(stoppedId);
+    if (!job || !['running', 'parked'].includes(job.status)) continue;
+    job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
+    job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
+  }
   return 'stopped';
 }
 
@@ -146,7 +147,6 @@ async getJob(jobId: string): Promise<AgentJob | undefined> {
 
 async getAllJobs(): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
-  await this.pruneStaleJobs();
 
   // Union: in-memory (authoritative for this process) + persisted rows the
   // Map doesn't know about (pre-restart this.runtime.jobs within TTL).
@@ -157,6 +157,8 @@ async getAllJobs(): Promise<AgentJob[]> {
     console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
   }
 
+  this.runtime.evictSettledTerminalJobs();
+
   return Array.from(this.runtime.jobs.values());
 }
 
@@ -165,11 +167,12 @@ async getAllJobs(): Promise<AgentJob[]> {
  * Exported so the list contract can be checked without a database fixture.
  */
 boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): AgentJob[] {
-  const active = allJobs.filter(job => job.status === 'running');
+  const visible = allJobs.filter(job => !job.dismissedAt);
+  const active = visible.filter(job => job.status === 'running' || job.status === 'parked');
   if (!includeFinished) return active.sort((a, b) => b.createdAt - a.createdAt);
 
-  const finished = allJobs
-    .filter(job => job.status !== 'running')
+  const finished = visible
+    .filter(job => job.status !== 'running' && job.status !== 'parked')
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
 
@@ -182,7 +185,6 @@ boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): Agen
  */
 async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
-  await this.pruneStaleJobs();
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
   const persisted: AgentJob[] = [];
 
@@ -195,10 +197,38 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   // Hot records win, but only active this.runtime.jobs are added outside the DB window.
   const merged = new Map(persisted.map(job => [job.jobId, job]));
   for (const job of this.runtime.jobs.values()) {
-    if (job.status === 'running' || merged.has(job.jobId)) merged.set(job.jobId, job);
+    if (!job.dismissedAt && (job.status === 'running' || job.status === 'parked' || merged.has(job.jobId))) merged.set(job.jobId, job);
   }
 
+  this.runtime.evictSettledTerminalJobs();
+
   return this.boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
+}
+
+/**
+ * Task status is the source of truth; job.status is a rollup of its
+ * tasks — 'running' while any sibling task is still running or queued,
+ * 'parked' only once every non-terminal task has parked. A sibling task
+ * that is still running must stay visible to restart recovery even while
+ * this one task parks (AgentJobRepository.claimInterruptedJobs filters on
+ * job-level status).
+ */
+async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job || job.tasks[taskIndex]?.status !== 'running') return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'parked' };
+  job.status = job.tasks.some(task => task.status === 'running' || task.status === 'queued') ? 'running' : 'parked';
+  job.waitingOnChildren = waitingOnChildren;
+  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren, job.status as 'running' | 'parked'));
+}
+
+async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
+  job.status = 'running';
+  job.waitingOnChildren = 0;
+  await this.persist(this.repository.resume(jobId, job.tasks));
 }
 
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
@@ -211,7 +241,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   if (job.status === 'completed' || job.status === 'failed') return;
   if (job.status === 'stopped') {
     job.results = results;
-    job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+    job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
       ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() }
       : task);
     await this.persist(this.repository.saveStoppedResults(jobId, results, job.tasks));
@@ -234,7 +264,27 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 
   await this.persist(this.repository.complete(job));
 }
-
+/** Persist one settled task before its siblings finish. */
+async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job?.tasks[taskIndex]) return;
+  job.results[taskIndex] = result;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex],
+    status: result.status,
+    threadId: result.threadId || job.tasks[taskIndex].threadId,
+    finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
+    completion: result };
+  await this.persist(this.repository.updateTaskCompletions(jobId, job.tasks, job.results));
+}
+/** Acknowledge only the task whose contract actually entered a parent turn. */
+async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
+  if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
+  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  if (job.completionDeliveredAt) await this.persist(this.repository.markCompletionDelivered(jobId));
+}
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
   const job = this.runtime.jobs.get(jobId);
@@ -259,47 +309,13 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  * miss (a tab child after a restart) reads the persisted row.
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
-  if (!threadId) return undefined;
-  const cached = this.findCachedTaskByThread(threadId);
-  if (cached) return cached;
-  await this.recovery.ensureHydrated();
-  try {
-    const persisted = await this.repository.findByTaskThread(threadId);
-    if (persisted) {
-      const job = this.runtime.jobs.get(persisted.jobId) ?? persisted;
-      this.runtime.jobs.set(job.jobId, job);
-      const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-      if (taskIndex >= 0) return { job, taskIndex };
-    }
-  } catch (err) {
-    console.warn('[jobRegistry] thread task read failed:', (err as Error).message);
-  }
-  return undefined;
-}
-
-private findCachedTaskByThread(threadId: string): { job: AgentJob; taskIndex: number } | undefined {
-  let found: { job: AgentJob; taskIndex: number } | undefined;
-  for (const job of this.runtime.jobs.values()) {
-    const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-    if (taskIndex >= 0 && (!found || job.createdAt > found.job.createdAt)) found = { job, taskIndex };
-  }
-  return found;
+  return this.taskLocator.findTaskByThread(threadId);
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
 async delegationDepthForThread(threadId: string | undefined): Promise<number> {
-  if (!threadId) return 0;
-  const owner = await this.findTaskByThread(threadId);
-  if (!owner) return 0;
-  return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
+  return this.taskLocator.delegationDepthForThread(threadId);
 }
-
-/**
- * Deepest a sub-agent chain may go: the top-level chat is depth 0; its
- * children may be depth 1, 2 and 3. A spawn whose child would land past this
- * is refused (Jonathon, 2026-11-02 — supersedes the earlier no-depth-cap rule).
- */
-
 
 /**
  * Current depth of a thread's own agent: metadata set on the running thread
@@ -308,7 +324,7 @@ async delegationDepthForThread(threadId: string | undefined): Promise<number> {
  * a tab child cannot reset its depth just by never writing the metadata.
  */
 async resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undefined): Promise<number> {
-  return Math.max(Number(metadataSubAgentDepth) || 0, await this.delegationDepthForThread(threadId));
+  return this.taskLocator.resolveAgentDepth(metadataSubAgentDepth, threadId);
 }
 
 /** Tab this.runtime.jobs still open under one parent chat (each holds a renderer tab). */
@@ -331,7 +347,7 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
   const task = job?.tasks[taskIndex];
   if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
   if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
-  if (job.status !== 'running') throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
+  if (!['running', 'parked'].includes(job.status)) throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
   job.tasks[taskIndex] = {
     ...task,
     result:     patch.result,
@@ -354,42 +370,22 @@ async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask |
   return job.tasks[taskIndex];
 }
 
-failJob(jobId: string, error: string): void {
-  const job = this.runtime.jobs.get(jobId);
+async failJob(jobId: string, error: string): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
   if (!job) return;
   this.runtime.abortControllers.delete(jobId);
 
   // Terminal verdicts are immutable; late promise rejection cannot clobber them.
-  if (job.status !== 'running') return;
+  if (!['running', 'parked'].includes(job.status)) return;
 
   job.status = 'failed';
   job.finishedAt = this.clock.now().getTime();
   job.error = error;
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
+  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
     : task);
 
-  void this.persist(this.repository.fail(jobId, error, job.tasks));
-}
-
-
-deleteJob(jobId: string): void {
-  this.runtime.jobs.delete(jobId);
-  this.runtime.abortControllers.delete(jobId);
-  void this.persist(this.repository.deleteJob(jobId));
-}
-
-private async pruneStaleJobs(): Promise<void> {
-  const now = this.clock.now().getTime();
-
-  for (const [id, job] of this.runtime.jobs.entries()) {
-    if (job.dismissedAt && (now - job.dismissedAt) > JOB_TTL_MS) {
-      this.runtime.jobs.delete(id);
-      this.runtime.abortControllers.delete(id);
-    }
-  }
-
-  await this.persist(this.repository.pruneDismissed());
+  await this.persist(this.repository.fail(jobId, error, job.tasks));
 }
 
 }

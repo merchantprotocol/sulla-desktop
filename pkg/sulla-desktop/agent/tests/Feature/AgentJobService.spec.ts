@@ -22,11 +22,11 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     // risk: core business state machine
     const completed = await registry.createJob(0);
     await registry.completeJob(completed.jobId, []);
-    registry.failJob(completed.jobId, 'late failure');
+    await registry.failJob(completed.jobId, 'late failure');
     await registry.completeJob(completed.jobId, [{ label: 'late', status: 'error', output: 'late', threadId: 'late' }]);
     expect((await registry.getJob(completed.jobId))?.status).toBe('completed');
     const failed = await registry.createJob(0);
-    registry.failJob(failed.jobId, 'expected');
+    await registry.failJob(failed.jobId, 'expected');
     await registry.completeJob(failed.jobId, []);
     expect((await registry.getJob(failed.jobId))?.status).toBe('failed');
     const stopped = await registry.createJob(0);
@@ -35,19 +35,33 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect((await registry.getJob(stopped.jobId))?.status).toBe('stopped');
     expect(registry.abortJob(stopped.jobId)).toBe('already-finished');
   });
-  it('marks an interrupted hidden job failed while preserving a tab job across repeated hydration sweeps', async() => {
-    // risk: restart recovery
+  it('claims an interrupted hidden job for bounded restart recovery without failing parked managers', async() => {
+    // risk: restart silently kills delegated work or creates an infinite boot loop
     const hiddenId = `hydrate-hidden-${ Date.now() }`;
-    const tabId = `hydrate-tab-${ Date.now() }`;
-    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility) VALUES ($1, 'running', 0, now(), '[]', 'hidden'), ($2, 'running', 0, now(), '[]', 'tab')`, [hiddenId, tabId]);
+    const parkedId = `hydrate-parked-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility) VALUES
+      ($1, 'running', 1, now(), '[{"agentId":"worker","status":"running","threadId":"worker-thread"}]', 'hidden'),
+      ($2, 'parked', 1, now(), '[{"agentId":"manager","status":"parked","threadId":"manager-thread"}]', 'hidden')`, [hiddenId, parkedId]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    await agentJobProvider.jobs.sweepInterruptedJobs();
-    await agentJobProvider.jobs.sweepInterruptedJobs();
-    const hidden = await agentJobProvider.jobs.job(hiddenId);
-    const tab = await agentJobProvider.jobs.job(tabId);
-    expect(hidden?.status).toBe('failed');
-    expect(hidden?.error).toBe('app restarted mid-job');
-    expect(tab?.status).toBe('running');
+    const first = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    expect(first.resumable.map(job => job.jobId)).toContain(hiddenId);
+    expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('running');
+    expect((await agentJobProvider.jobs.job(parkedId))?.status).toBe('parked');
+    await agentJobProvider.jobs.claimInterruptedJobs(2);
+    const exhausted = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    expect(exhausted.exhausted.map(job => job.jobId)).toContain(hiddenId);
+    expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('failed');
+  });
+
+  it('stops a manager and every open descendant idempotently without changing terminal rows', async() => {
+    // risk: stopped managers leave workers producing irreversible side effects
+    const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'manager-thread' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'worker-thread' }], 'manager', 'manager-thread');
+    const grandchild = await registry.createJob([{ agentId: 'sub', label: 'sub', prompt: 'x', status: 'running', threadId: 'sub-thread' }], 'worker', 'worker-thread');
+    expect(await registry.stopJobCascade(root.jobId)).toBe('stopped');
+    expect((await registry.getJob(child.jobId))?.status).toBe('stopped');
+    expect((await registry.getJob(grandchild.jobId))?.status).toBe('stopped');
+    expect(await registry.stopJobCascade(root.jobId)).toBe('already-finished');
   });
   it('acknowledges completion delivery once even when retried', async() => {
     // risk: duplicate irreversible side effect
@@ -59,5 +73,21 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     await registry.markCompletionDelivered(job.jobId);
     expect((await registry.getJob(job.jobId))?.completionDeliveredAt).toBe(deliveredAt);
     expect((await registry.getPendingCompletions()).some(item => item.jobId === job.jobId)).toBe(false);
+  });
+  it('evicts only settled cache entries and rehydrates them from Postgres on demand', async() => {
+    // risk: cache bounding deletes durable history or drops live and parked work
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const settled = await registry.createJob(0);
+    await registry.completeJob(settled.jobId, []);
+    const running = await registry.createJob(0);
+    const parked = await registry.createJob([{ agentId: 'worker', label: 'parked', prompt: 'work', status: 'running' }]);
+
+    expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).toContain(settled.jobId);
+    expect(agentJobProvider.runtime.jobs.has(running.jobId)).toBe(true);
+    parked.status = 'completed';
+    parked.finishedAt = Date.now();
+    expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).not.toContain(parked.jobId);
+    expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
+    expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
   });
 });

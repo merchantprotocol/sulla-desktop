@@ -8,6 +8,7 @@ import { up as up_0103, down as down_0103 } from './0103_add_agent_job_project_t
 import { up as up_0104, down as down_0104 } from './0104_add_agent_job_ui_state';
 import { up as up_0105, down as down_0105 } from './0105_expand_agent_definitions';
 import { up as up_0137, down as down_0137 } from './0137_agent_model_slots';
+import { up as up_0146, down as down_0146 } from './0146_parked_agent_jobs';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -270,4 +271,5 @@ export const migrationsRegistry = [
   { name: '0143_agent_model_choice', up: up_0143, down: down_0143 },
   { name: '0144_memory_sync_v1', up: up_0144, down: down_0144 },
   { name: '0145_agent_heartbeat_policy', up: up_0145, down: down_0145 },
+  { name: '0146_parked_agent_jobs', up: up_0146, down: down_0146 },
 ] as const;

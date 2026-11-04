@@ -100,10 +100,11 @@ export class DesktopWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const app = typeof input.app === 'string' ? input.app : undefined;
+    if (this.isBlocked(app)) return refusal();
     if (process.platform !== 'darwin') return { successBoolean: false, responseString: 'Desktop control is only available on macOS' };
     const started = Date.now();
     const tool = this.name;
-    const app = typeof input.app === 'string' ? input.app : undefined;
     let action = tool;
     let response: ToolResponse | undefined;
     let auditedApp = app;
