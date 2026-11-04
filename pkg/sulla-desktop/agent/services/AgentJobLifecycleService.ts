@@ -10,6 +10,7 @@ interface ParkedWaiter { resolve: () => void; }
 /** Owns the running -> parked -> running lifecycle for hidden delegated managers. */
 export class AgentJobLifecycleService {
   private readonly waiters = new Map<string, ParkedWaiter>();
+  private readonly pendingWakes = new Set<string>();
 
   async parkWhenWaiting(jobId: string, taskIndex: number, threadId: string): Promise<boolean> {
     const openChildren = await agentJobProvider.jobs.openChildrenForThread(threadId);
@@ -19,6 +20,7 @@ export class AgentJobLifecycleService {
   }
 
   async waitForWake(threadId: string, signal?: AbortSignal): Promise<void> {
+    if (this.pendingWakes.delete(threadId)) return;
     await new Promise<void>((resolve) => {
       const finish = () => {
         this.waiters.delete(threadId);
@@ -33,7 +35,10 @@ export class AgentJobLifecycleService {
   /** Returns true when a live parked runner accepted the wake. */
   wake(threadId: string): boolean {
     const waiter = this.waiters.get(threadId);
-    if (!waiter) return false;
+    if (!waiter) {
+      this.pendingWakes.add(threadId);
+      return false;
+    }
     waiter.resolve();
     return true;
   }

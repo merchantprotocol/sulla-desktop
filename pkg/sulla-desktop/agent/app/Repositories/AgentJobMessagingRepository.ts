@@ -46,7 +46,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
 
     return targets.filter(target =>
       (requestedTaskIndex === undefined || target.taskIndex === requestedTaskIndex) &&
-      ['queued', 'running'].includes(target.taskStatus),
+      ['queued', 'running', 'parked'].includes(target.taskStatus),
     );
   }
 
@@ -96,7 +96,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     percent?: number;
   }): Promise<{ target: AgentJobTaskTarget; checkin: AgentJobCheckin } | null> {
     const target = await this.taskForThread(threadId);
-    if (!target || target.jobStatus !== 'running' || !['queued', 'running'].includes(target.taskStatus)) return null;
+    if (!target || target.jobStatus !== 'running' || !['queued', 'running', 'parked'].includes(target.taskStatus)) return null;
 
     const rows = await this.connection.select<any>(
       `INSERT INTO agent_job_checkins

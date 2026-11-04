@@ -18,7 +18,6 @@ import {
   abortJob,
   completeJob,
   createJob,
-  deleteJob,
   failJob,
   getJob,
   getJobAbortSignal,
@@ -563,6 +562,8 @@ export class SpawnAgentWorker extends BaseTool {
           subState.metadata.delegatedRunActive = false;
           await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
           if (jobAbortSignal?.aborted === true) break;
+          returned = await returnedTask();
+          if (returned) break;
           await agentJobLifecycle.resume(activityJobId, index);
           subState.metadata.delegatedRunActive = true;
           finalState = await executeGraph();

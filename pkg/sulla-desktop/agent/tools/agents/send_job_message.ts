@@ -32,7 +32,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         : `Job "${ jobId }" has no task at index ${ taskIndex } (or it has already finished).`,
     };
   }
-  if (targets.some(target => target.jobStatus !== 'running')) {
+  if (targets.some(target => !['running', 'parked'].includes(target.jobStatus))) {
     return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
   }
 
@@ -65,6 +65,12 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       continue;
     }
 
+    if (target.taskStatus === 'parked') {
+      const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+      await getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
+      deliveredLive += 1;
+      continue;
+    }
     const running = GraphRegistry.get(target.threadId);
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {

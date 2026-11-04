@@ -88,6 +88,7 @@ export interface AgentJob {
   visibility?: AgentJobVisibility;
   projectTaskIds?: string[];
   completionDeliveredAt?: number | null;
+  waitingOnChildren?: number;
   dismissedAt?: number | null;
 }
 

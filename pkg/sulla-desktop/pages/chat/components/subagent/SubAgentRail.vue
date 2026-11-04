@@ -149,9 +149,9 @@ const filters = [
   { value: 'finished', label: 'Finished' },
 ] as const;
 const filterIndex = computed(() => filters.findIndex(item => item.value === filter.value));
-const runningCount = computed(() => cards.value.filter(card => card.status === 'running').length);
-const visibleRunning = computed(() => filter.value === 'finished' ? [] : cards.value.filter(card => card.status === 'running'));
-const visibleFinished = computed(() => filter.value === 'running' ? [] : cards.value.filter(card => card.status !== 'running'));
+const runningCount = computed(() => cards.value.filter(card => card.status === 'running' || card.status === 'parked').length);
+const visibleRunning = computed(() => filter.value === 'finished' ? [] : cards.value.filter(card => card.status === 'running' || card.status === 'parked'));
+const visibleFinished = computed(() => filter.value === 'running' ? [] : cards.value.filter(card => card.status !== 'running' && card.status !== 'parked'));
 let timer: ReturnType<typeof setInterval> | null = null;
 let request = 0;
 let tick = 0;

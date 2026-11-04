@@ -16,6 +16,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { RunActivity } from './RunActivity';
+import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -102,6 +103,15 @@ export class BackendGraphWebSocketService {
     return timer;
   }
 
+  async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<void> {
+    const parked = await parkedAgentRehydrator.resolve(threadId);
+    if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
+    await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+      `[Message from orchestrator]\n${ message }`, threadId, undefined, agentId || parked.agentId, 'system', {
+        source: 'orchestrator_job_message', ...messageMeta,
+      });
+  }
+
   /** True while a turn is in flight for this thread (an idle chat is not running). */
   hasActiveRun(channelId: string, threadId: string): boolean {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
@@ -136,10 +146,15 @@ export class BackendGraphWebSocketService {
       // Wake the agent that owns the thread. The trigger default is the typed
       // sulla-desktop agent, so a voice thread's worker results came back from
       // the heavy agent instead of as a short spoken reply.
-      const threadAgentId = String((delegated?.state.metadata as any)?.agentId || '').trim() || undefined;
-      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
-        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
-      }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
+      void parkedAgentRehydrator.resolve(threadId).then((parked) => {
+        const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
+        return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
+          source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
+        });
+      }).catch(err => {
+        for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
+        console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
+      });
     });
     this.initialize();
   }
@@ -556,6 +571,7 @@ export class BackendGraphWebSocketService {
     }
 
     let state: AgentGraphState | undefined;
+    let turnConsumedInput = false;
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
 
@@ -565,6 +581,8 @@ export class BackendGraphWebSocketService {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
+      const parkedIdentity = await parkedAgentRehydrator.resolve(threadId);
+      if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
 
       if (newRoute) {
         applyThreadAgentRoute(state, newRoute.agent);
@@ -675,9 +693,6 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
-        await markCompletionDelivered(String(jobId));
-      }
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -776,6 +791,7 @@ export class BackendGraphWebSocketService {
       } else {
         await graph.execute(state, startNode);
       }
+      turnConsumedInput = true;
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
@@ -799,6 +815,13 @@ export class BackendGraphWebSocketService {
       }
     } finally {
       if (isCurrentRun()) {
+        if (turnConsumedInput) {
+          for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
+            await markCompletionDelivered(String(jobId));
+          }
+        } else {
+          for (const entry of metadata?.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+        }
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
