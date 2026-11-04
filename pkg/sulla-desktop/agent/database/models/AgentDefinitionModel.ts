@@ -150,7 +150,6 @@ export interface AgentDefinitionPatch {
   builtinHash?:           string | null;
   runLocation?:           AgentRunLocation;
 }
-
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : [];
 }
