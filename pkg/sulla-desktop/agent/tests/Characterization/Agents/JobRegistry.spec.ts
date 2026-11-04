@@ -16,6 +16,9 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
   beforeAll(async() => {
     await database.initialize();
     process.env.SULLA_DATABASE_URL = database.appUrl();
+    // pg also consults PGOPTIONS; this covers environments where a connection
+    // URL parser drops libpq's `options` query parameter.
+    process.env.PGOPTIONS = `-c search_path=${ database.schema },public`;
     registry = await import('../../../tools/agents/jobRegistry');
     messaging = await import('../../../database/models/AgentJobMessagingModel');
   }, 60_000);
