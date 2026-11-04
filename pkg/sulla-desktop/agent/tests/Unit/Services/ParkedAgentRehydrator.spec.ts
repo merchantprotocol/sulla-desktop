@@ -20,6 +20,7 @@ describe('ParkedAgentRehydrator', () => {
       { findByTaskThread: async() => parkedJob() },
       { findBySlug: async() => ({ slug: 'coding-manager-sol' }) },
       vi.fn(),
+      vi.fn(),
     );
     const identity = await service.resolve('manager-thread');
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0, job: { jobId: 'manager-job' } });
@@ -35,6 +36,7 @@ describe('ParkedAgentRehydrator', () => {
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => stopped },
       { findBySlug: async() => ({}) },
+      vi.fn(),
       vi.fn(),
     );
     expect(await service.isTerminalDelegatedThread('manager-thread')).toBe(true);

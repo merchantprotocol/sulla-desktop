@@ -47,6 +47,14 @@ describe('JobRetentionPolicy', () => {
     expect(repository.deleteJob).toHaveBeenCalledWith('retention-job');
   });
 
+  it('allows pruning at the exact seven-day boundary, never before it', async() => {
+    // risk: retention deletes operational evidence before the full promised window
+    const repository = new RetentionRepositoryFixture();
+    const policy = new JobRetentionPolicy(new FixedClock(8 * day), repository);
+    expect(await policy.prune(JobFixture.finished({ finishedAt: day }))).toBe(true);
+    expect(repository.deleteJob).toHaveBeenCalledWith('retention-job');
+  });
+
   it('keeps an old job while a child is queued or running', async() => {
     // risk: parked manager loses the workers that can wake it
     const repository = new RetentionRepositoryFixture();

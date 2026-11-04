@@ -81,8 +81,8 @@ export class ReturnResultWorker extends BaseTool {
       // settle it after a restart, so its return commits and wakes its parent
       // here. A live runner sees the same recorded return and completion is
       // idempotently coalesced by job id.
-      if (job.status === 'parked') {
-        await finishParkedJob(recorded, taskIndex);
+      if (job.status === 'parked' || Number(job.restartResumeCount) > 0) {
+        await finishRecoveredJob(recorded);
         return {
           successBoolean: true,
           responseString: `Contract "${ contract.name }" returned to the parent. Parked job ${ job.jobId } is closed.`,
@@ -103,13 +103,13 @@ export class ReturnResultWorker extends BaseTool {
 }
 
 
-async function finishParkedJob(job: AgentJob, taskIndex: number): Promise<void> {
-  const task = job.tasks[taskIndex];
-  const result = returnedJobResult(task, task.label, task.threadId ?? '');
-  await completeJob(job.jobId, [result]);
-  await deliverJobCompletion(job, [result]);
+async function finishRecoveredJob(job: AgentJob): Promise<void> {
+  if (!job.tasks.every(task => task.returnedAt)) return;
+  const results = job.tasks.map(task => returnedJobResult(task, task.label, task.threadId ?? ''));
+  await completeJob(job.jobId, results);
+  await deliverJobCompletion(job, results);
   const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
-  agentJobLifecycle.wake(task.threadId ?? '');
+  for (const task of job.tasks) agentJobLifecycle.wake(task.threadId ?? '');
 }
 
 /** Close a tab job on its return: settle, tell both chats, wake the parent. */

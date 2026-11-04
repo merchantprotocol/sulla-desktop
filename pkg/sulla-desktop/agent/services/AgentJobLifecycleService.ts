@@ -11,7 +11,9 @@ export interface ChildDependencyCounter { openChildrenForThread(threadId: string
 /** Owns the running -> parked -> running lifecycle for hidden delegated managers. */
 export class AgentJobLifecycleService {
   private readonly waiters = new Map<string, ParkedWaiter>();
-  private readonly pendingWakes = new Set<string>();
+  private readonly pendingWakes = new Map<string, number>();
+  private static readonly PENDING_WAKE_TTL_MS = 5 * 60_000;
+  private static readonly MAX_PENDING_WAKES = 1_000;
 
   constructor(
     private readonly children: ChildDependencyCounter,
@@ -27,7 +29,9 @@ export class AgentJobLifecycleService {
   }
 
   async waitForWake(threadId: string, signal?: AbortSignal): Promise<void> {
-    if (this.pendingWakes.delete(threadId)) return;
+    const queuedAt = this.pendingWakes.get(threadId);
+    this.pendingWakes.delete(threadId);
+    if (queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;
     await new Promise<void>((resolve) => {
       const finish = () => {
         this.waiters.delete(threadId);
@@ -43,7 +47,10 @@ export class AgentJobLifecycleService {
   wake(threadId: string): boolean {
     const waiter = this.waiters.get(threadId);
     if (!waiter) {
-      this.pendingWakes.add(threadId);
+      const cutoff = Date.now() - AgentJobLifecycleService.PENDING_WAKE_TTL_MS;
+      for (const [key, queuedAt] of this.pendingWakes) if (queuedAt < cutoff) this.pendingWakes.delete(key);
+      if (this.pendingWakes.size >= AgentJobLifecycleService.MAX_PENDING_WAKES) this.pendingWakes.delete(this.pendingWakes.keys().next().value as string);
+      this.pendingWakes.set(threadId, Date.now());
       return false;
     }
     waiter.resolve();

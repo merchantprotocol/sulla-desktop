@@ -15,6 +15,7 @@ import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './Conta
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { RunActivity } from './RunActivity';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -27,6 +28,7 @@ import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -133,11 +135,8 @@ export class BackendGraphWebSocketService {
           role:      'user',
           content,
           timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system' },
+          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries },
         } as any);
-        for (const entry of entries) {
-          markCompletionDelivered(entry.jobId).catch(err => console.warn('[BackendGraphWS] Failed to mark completion delivered:', err));
-        }
         return;
       }
       // Same trigger mapping as handleChannelMessage: only heartbeat has its own
@@ -344,6 +343,21 @@ export class BackendGraphWebSocketService {
     // an empty in-process bus and incorrectly acknowledged as delivered.
     recoverPendingAgentCompletions().catch(err =>
       console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
+    const interruptedRecovery = new InterruptedAgentRecoveryService(
+      agentJobProvider.jobs,
+      async(job, taskIndex) => {
+        const task = job.tasks[taskIndex];
+        const channel = job.parentChannel || 'sulla-desktop';
+        await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+          `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
+          task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
+      },
+      (job, reason) => {
+        if (!job.parentChannel || !job.parentThreadId) return;
+        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, results: [], failureReason: reason });
+      },
+    );
+    interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
   }
 
   /**
@@ -795,6 +809,14 @@ export class BackendGraphWebSocketService {
       } else {
         await graph.execute(state, startNode);
       }
+      // Completion steers are acknowledged only after a successful graph turn actually consumed them.
+      for (const message of state.messages as any[]) {
+        const steerMeta = message?.metadata;
+        if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
+        for (const jobId of Array.isArray(steerMeta.completionJobIds) ? steerMeta.completionJobIds : []) await markCompletionDelivered(String(jobId));
+        delete steerMeta.completionJobIds;
+        delete steerMeta.completionEntries;
+      }
       turnConsumedInput = true;
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
@@ -847,14 +869,15 @@ export class BackendGraphWebSocketService {
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
         const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
         if (leftovers.length || completions.length) {
+          const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
+          const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId) === index);
           const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
           const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
           this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
             ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
-            ...(completions.length ? { source: 'sub_agent_completion', completionJobIds: completions.map(entry => entry.jobId) } : {}),
-            ...(completions.length ? { completionEntries: completions } : {}),
+            ...(allCompletions.length ? { source: 'sub_agent_completion', completionJobIds: allCompletions.map(entry => entry.jobId), completionEntries: allCompletions } : {}),
           })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         }

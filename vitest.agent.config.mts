@@ -17,8 +17,12 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 20_000,
     hookTimeout: 60_000,
+    globalSetup: ['pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts'],
+    setupFiles: ['pkg/sulla-desktop/agent/tests/Support/UnexpectedNetworkGuard.ts'],
     // Specs that share the real database run in one worker, one file at a time.
     fileParallelism: false,
+    pool: 'threads',
+    maxWorkers: 2,
     passWithNoTests: true,
   },
 });
