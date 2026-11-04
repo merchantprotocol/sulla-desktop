@@ -52,6 +52,7 @@ export interface WorkspaceRetentionReport {
 
 interface WorkspaceCandidate {
   path:      string;
+  lease?:    WorkspaceDeletionLease;
   jobId:     string;
   mtimeMs:   number;
 }
@@ -66,6 +67,69 @@ interface WorkspaceCandidate {
  * prefix. If the job id scheme ever changes, this must change with it.
  */
 const JOB_WORKSPACE_NAME_PATTERN = /(?:^|-)(agent-job-\d+-\d+)-\d+-[A-Za-z0-9]{8}$/;
+const QUARANTINE_PREFIX = '.reclaiming-';
+
+export interface WorkspaceDeletionLease {
+  readonly inspectionPath: string;
+  captureInspectionMarker(): Promise<void>;
+  isUnchangedSinceInspection(): Promise<boolean>;
+  release(): Promise<void>;
+  consumed(): void;
+}
+
+export interface WorkspaceDeletionLeaseProvider {
+  acquire(workspacePath: string, expectedMtimeMs: number): Promise<WorkspaceDeletionLease | undefined>;
+  restoreOrphan(quarantinedPath: string): Promise<void>;
+}
+
+/** Same-filesystem rename lease: no other retention pass can claim the original path. */
+export class AtomicRenameWorkspaceDeletionLeaseProvider implements WorkspaceDeletionLeaseProvider {
+  constructor(private readonly fileSystem: WorkspaceFileSystem) {}
+
+  async acquire(workspacePath: string, expectedMtimeMs: number): Promise<WorkspaceDeletionLease | undefined> {
+    const claimedPath = `${ workspacePath.slice(0, workspacePath.lastIndexOf('/') + 1) }${ QUARANTINE_PREFIX }${ workspacePath.slice(workspacePath.lastIndexOf('/') + 1) }`;
+    await this.fileSystem.rename(workspacePath, claimedPath);
+    const claimedStat = await this.fileSystem.lstat(claimedPath);
+    if (claimedStat.mtimeMs !== expectedMtimeMs) {
+      await this.fileSystem.rename(claimedPath, workspacePath);
+      return undefined;
+    }
+    return new AtomicRenameWorkspaceDeletionLease(this.fileSystem, workspacePath, claimedPath);
+  }
+
+  async restoreOrphan(quarantinedPath: string): Promise<void> {
+    const name = quarantinedPath.slice(quarantinedPath.lastIndexOf('/') + 1);
+    const originalPath = `${ quarantinedPath.slice(0, quarantinedPath.lastIndexOf('/') + 1) }${ name.slice(QUARANTINE_PREFIX.length) }`;
+    await this.fileSystem.rename(quarantinedPath, originalPath);
+  }
+}
+
+class AtomicRenameWorkspaceDeletionLease implements WorkspaceDeletionLease {
+  readonly inspectionPath: string;
+  private inspectionMtimeMs?: number;
+  private consumedLease = false;
+
+  constructor(
+    private readonly fileSystem: WorkspaceFileSystem,
+    private readonly originalPath: string,
+    claimedPath: string,
+  ) { this.inspectionPath = claimedPath }
+
+  async captureInspectionMarker(): Promise<void> {
+    this.inspectionMtimeMs = (await this.fileSystem.lstat(this.inspectionPath)).mtimeMs;
+  }
+
+  async isUnchangedSinceInspection(): Promise<boolean> {
+    if (this.inspectionMtimeMs === undefined) return false;
+    return (await this.fileSystem.lstat(this.inspectionPath)).mtimeMs === this.inspectionMtimeMs;
+  }
+
+  async release(): Promise<void> {
+    if (!this.consumedLease) await this.fileSystem.rename(this.inspectionPath, this.originalPath);
+  }
+
+  consumed(): void { this.consumedLease = true }
+}
 
 /**
  * Reclaims guest agent-job workspaces under GUEST_AGENT_WORKSPACES_ROOT that
@@ -75,7 +139,10 @@ const JOB_WORKSPACE_NAME_PATTERN = /(?:^|-)(agent-job-\d+-\d+)-\d+-[A-Za-z0-9]{8
  * swept once it crosses the retention window, or earlier if the guest disk
  * is running low. A non-git workspace only skips the window when it is
  * literally empty; any file inside it waits the same window as a git
- * checkout. Deletion failures are recorded and never abort the run.
+ * checkout. Candidates are atomically renamed inside the same root before
+ * inspection. A resuming job then fails loudly instead of writing into a
+ * directory being deleted. The active guard is rechecked after this claim;
+ * unsafe or failed claims are restored, and failed restores stay quarantined.
  */
 export class AgentWorkspaceRetentionPolicy {
   constructor(
@@ -87,6 +154,7 @@ export class AgentWorkspaceRetentionPolicy {
     private readonly diskSpaceProbe:  DiskSpaceProbe,
     private readonly remover:         WorkspaceRemover,
     private readonly config = new WorkspaceRetentionConfig(),
+    private readonly leases: WorkspaceDeletionLeaseProvider = new AtomicRenameWorkspaceDeletionLeaseProvider(fileSystem),
   ) {}
 
   async enforce(): Promise<WorkspaceRetentionReport> {
@@ -97,15 +165,38 @@ export class AgentWorkspaceRetentionPolicy {
     for (const candidate of candidates) {
       if (this.activeJobGuard.isActive(candidate.jobId)) continue;
 
-      const inspection = await this.inspector.inspect(candidate.path).catch(error => ({
-        status: 'unsafe' as const, reasons: [`inspection failed: ${ this.describe(error) }`], hasGitRepository: true,
-      }));
-      if (inspection.status === 'unsafe') {
-        report.keptUnsafe.push({ path: candidate.path, jobId: candidate.jobId, reasons: inspection.reasons });
+      try {
+        candidate.lease = await this.leases.acquire(candidate.path, candidate.mtimeMs);
+      } catch (error) {
+        report.errors.push({ path: candidate.path, error: `failed to claim workspace: ${ this.describe(error) }` });
+      }
+      if (!candidate.lease) continue;
+      if (this.activeJobGuard.isActive(candidate.jobId)) {
+        await this.restore(candidate, report);
         continue;
       }
 
-      if (!inspection.hasGitRepository && await this.isEmptyDirectory(candidate.path, report)) {
+      const inspection = await this.inspector.inspect(candidate.lease.inspectionPath).catch(error => ({
+        status: 'unsafe' as const, reasons: [`inspection failed: ${ this.describe(error) }`], hasGitRepository: true,
+      }));
+      try {
+        await candidate.lease.captureInspectionMarker();
+      } catch (error) {
+        report.errors.push({ path: candidate.path, error: `failed to capture inspection marker: ${ this.describe(error) }` });
+        await this.restore(candidate, report);
+        continue;
+      }
+      if (this.activeJobGuard.isActive(candidate.jobId)) {
+        await this.restore(candidate, report);
+        continue;
+      }
+      if (inspection.status === 'unsafe') {
+        report.keptUnsafe.push({ path: candidate.path, jobId: candidate.jobId, reasons: inspection.reasons });
+        await this.restore(candidate, report);
+        continue;
+      }
+
+      if (!inspection.hasGitRepository && await this.isEmptyDirectory(candidate.lease.inspectionPath, report)) {
         await this.remove(candidate, 'clean', report);
         continue;
       }
@@ -116,6 +207,9 @@ export class AgentWorkspaceRetentionPolicy {
     }
 
     if (waitingForAge.length) await this.reclaimUnderDiskPressure(waitingForAge, report);
+    for (const candidate of waitingForAge) {
+      if (candidate.lease) await this.restore(candidate, report);
+    }
     return report;
   }
 
@@ -141,6 +235,10 @@ export class AgentWorkspaceRetentionPolicy {
 
     const candidates: WorkspaceCandidate[] = [];
     for (const name of names) {
+      if (name.startsWith(QUARANTINE_PREFIX)) {
+        await this.restoreLeftover(name, report);
+        continue;
+      }
       const childPath = `${ this.rootPath }/${ name }`;
       let stat;
       try {
@@ -155,6 +253,27 @@ export class AgentWorkspaceRetentionPolicy {
       candidates.push({ path: childPath, jobId: match[1], mtimeMs: stat.mtimeMs });
     }
     return candidates;
+  }
+
+  /** A crashed pass never turns a prior quarantine into a deletion candidate. */
+  private async restoreLeftover(name: string, report: WorkspaceRetentionReport): Promise<void> {
+    const quarantinedPath = `${ this.rootPath }/${ name }`;
+    try {
+      await this.leases.restoreOrphan(quarantinedPath);
+    } catch (error) {
+      report.errors.push({ path: quarantinedPath, error: `failed to restore quarantined workspace: ${ this.describe(error) }` });
+    }
+  }
+
+  private async restore(candidate: WorkspaceCandidate, report: WorkspaceRetentionReport): Promise<void> {
+    if (!candidate.lease) return;
+    const claimedPath = candidate.lease.inspectionPath;
+    try {
+      await candidate.lease.release();
+      candidate.lease = undefined;
+    } catch (error) {
+      report.errors.push({ path: claimedPath, error: `failed to restore workspace: ${ this.describe(error) }` });
+    }
   }
 
   private async reclaimUnderDiskPressure(
@@ -193,12 +312,25 @@ export class AgentWorkspaceRetentionPolicy {
     report: WorkspaceRetentionReport,
   ): Promise<number | undefined> {
     try {
-      const freed = await this.remover.remove(candidate.path);
+      if (this.activeJobGuard.isActive(candidate.jobId)) {
+        await this.restore(candidate, report);
+        return undefined;
+      }
+      if (!candidate.lease) throw new Error('workspace was not atomically claimed');
+      if (!await candidate.lease.isUnchangedSinceInspection()) {
+        report.errors.push({ path: candidate.path, error: 'workspace changed after inspection; deletion refused' });
+        await this.restore(candidate, report);
+        return undefined;
+      }
+      const freed = await this.remover.remove(candidate.lease.inspectionPath);
+      candidate.lease.consumed();
+      candidate.lease = undefined;
       report.removed.push({ path: candidate.path, jobId: candidate.jobId, reason });
       if (freed !== undefined) report.bytesFreed += freed;
       return freed;
     } catch (error) {
       report.errors.push({ path: candidate.path, error: this.describe(error) });
+      await this.restore(candidate, report);
       return undefined;
     }
   }

@@ -91,13 +91,21 @@ class SubpathFailingFileSystem implements WorkspaceFileSystem {
   ) {}
 
   async readdir(path: string): Promise<string[]> {
-    if (path === this.failReaddirFor) throw new Error(`simulated readdir failure for ${ path }`);
+    if (this.originalPath(path) === this.failReaddirFor) throw new Error(`simulated readdir failure for ${ path }`);
     return this.delegate.readdir(path);
   }
 
   async lstat(path: string): Promise<WorkspaceDirEntryStat> {
-    if (path === this.failLstatFor) throw new Error(`simulated lstat failure for ${ path }`);
+    if (this.originalPath(path) === this.failLstatFor) throw new Error(`simulated lstat failure for ${ path }`);
     return this.delegate.lstat(path);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    return this.delegate.rename(from, to);
+  }
+
+  private originalPath(candidate: string): string {
+    return candidate.replace('/.reclaiming-', '/');
   }
 }
 
@@ -114,6 +122,23 @@ class SubcommandFailingGitCommandRunner implements GitCommandRunner {
   }
 }
 
+class ActivatingGitCommandRunner implements GitCommandRunner {
+  private activated = false;
+
+  constructor(
+    private readonly delegate: GitCommandRunner,
+    private readonly activate: () => void,
+  ) {}
+
+  async run(cwd: string, args: string[]): Promise<GitCommandResult> {
+    if (!this.activated && args[0] === 'status') {
+      this.activated = true;
+      this.activate();
+    }
+    return this.delegate.run(cwd, args);
+  }
+}
+
 class FixtureWorkspaceRemover implements WorkspaceRemover {
   readonly removedPaths: string[] = [];
   private readonly failing = new Set<string>();
@@ -123,10 +148,11 @@ class FixtureWorkspaceRemover implements WorkspaceRemover {
   freeBytesFor(targetPath: string, bytes: number): void { this.freedBytesByPath.set(targetPath, bytes) }
 
   async remove(targetPath: string): Promise<number | undefined> {
-    if (this.failing.has(targetPath)) throw new Error(`simulated delete failure for ${ targetPath }`);
+    const originalPath = path.join(path.dirname(targetPath), path.basename(targetPath).replace(/^\.reclaiming-/, ''));
+    if (this.failing.has(originalPath)) throw new Error(`simulated delete failure for ${ originalPath }`);
     await fsPromises.rm(targetPath, { recursive: true, force: true });
-    this.removedPaths.push(targetPath);
-    return this.freedBytesByPath.get(targetPath);
+    this.removedPaths.push(originalPath);
+    return this.freedBytesByPath.get(originalPath);
   }
 }
 
@@ -258,7 +284,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     const report = await policy.enforce();
 
     expect(report.removed).toEqual([]);
-    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any remote-tracking ref/);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any live remote ref/);
   });
 
   it('keeps a branch with no remote-tracking ref even when its commit is otherwise safe', async() => {
@@ -277,7 +303,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     const report = await policy.enforce();
 
     expect(report.removed).toEqual([]);
-    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/feature has no remote-tracking ref/);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/feature has no live remote ref/);
   });
 
   it('removes a pushed, fully clean repo once it clears the retention window', async() => {
@@ -484,7 +510,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/inspection failed/);
   });
 
-  it.each(['stash', 'log', 'for-each-ref'])('keeps a workspace when git %s fails', async(subcommand) => {
+  it.each(['stash', 'rev-list', 'ls-remote'])('keeps a workspace when git %s fails', async(subcommand) => {
     // risk: a transient git failure (crash, timeout) is read as "no findings" instead of "couldn't check"
     const jobId = nextJobId();
     const workspacePath = path.join(root, workspaceDirName(jobId));
@@ -521,6 +547,131 @@ describe('AgentWorkspaceRetentionPolicy', () => {
 
     expect(report.removed).toEqual([]);
     expect(report.keptUnsafe).toHaveLength(1);
-    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any remote-tracking ref/);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any live remote ref/);
   });
+
+  it('keeps ignored secrets but permits ignored regenerable dependencies', async() => {
+    // risk: ignored secrets or databases are silently destroyed; generated dependencies unnecessarily block reclaim
+    const unsafeJobId = nextJobId();
+    const unsafePath = path.join(root, workspaceDirName(unsafeJobId));
+    await fsPromises.mkdir(unsafePath);
+    const unsafeRemote = path.join(outsideRoot, 'ignored-unsafe.git');
+    initRepoWithRemote(unsafePath, unsafeRemote);
+    writeFileSync(path.join(unsafePath, '.gitignore'), '.env\nnode_modules/\n');
+    git(unsafePath, ['add', '.gitignore']);
+    git(unsafePath, ['commit', '-q', '-m', 'ignore generated and secret files']);
+    git(unsafePath, ['push', '-u', 'origin', 'main']);
+    writeFileSync(path.join(unsafePath, '.env'), 'must survive');
+    await setMtime(unsafePath, Date.now() - 8 * day);
+
+    const safeJobId = nextJobId();
+    const safePath = path.join(root, workspaceDirName(safeJobId));
+    await fsPromises.mkdir(safePath);
+    const safeRemote = path.join(outsideRoot, 'ignored-safe.git');
+    initRepoWithRemote(safePath, safeRemote);
+    writeFileSync(path.join(safePath, '.gitignore'), 'node_modules/\n');
+    git(safePath, ['add', '.gitignore']);
+    git(safePath, ['commit', '-q', '-m', 'ignore dependencies']);
+    git(safePath, ['push', '-u', 'origin', 'main']);
+    await fsPromises.mkdir(path.join(safePath, 'node_modules'));
+    writeFileSync(path.join(safePath, 'node_modules', 'generated.js'), 'generated');
+    await setMtime(safePath, Date.now() - 8 * day);
+
+    const { policy } = buildPolicy({ now: Date.now() });
+    const report = await policy.enforce();
+
+    expect(report.keptUnsafe).toEqual([expect.objectContaining({ path: unsafePath, jobId: unsafeJobId })]);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/ignored non-regenerable files.*\.env/);
+    expect(report.removed).toEqual([{ path: safePath, jobId: safeJobId, reason: 'age' }]);
+    await expect(fsPromises.readFile(path.join(unsafePath, '.env'), 'utf8')).resolves.toBe('must survive');
+  });
+
+  it('keeps a clean parent when a nested submodule has an unpublished local branch commit', async() => {
+    // risk: unpublished work in a nested .git-file submodule is invisible and destroyed with its clean parent
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const childSource = path.join(outsideRoot, 'child-source');
+    const childRemote = path.join(outsideRoot, 'child.git');
+    await fsPromises.mkdir(childSource);
+    initRepoWithRemote(childSource, childRemote);
+    commit(childSource, 'child.txt', 'published');
+    git(childSource, ['push', '-u', 'origin', 'main']);
+    git(childRemote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+
+    const parentRemote = path.join(outsideRoot, 'parent.git');
+    initRepoWithRemote(workspacePath, parentRemote);
+    git(workspacePath, ['-c', 'protocol.file.allow=always', 'submodule', 'add', childRemote, 'child']);
+    git(workspacePath, ['commit', '-q', '-m', 'add child']);
+    git(workspacePath, ['push', '-u', 'origin', 'main']);
+    const childPath = path.join(workspacePath, 'child');
+    git(childPath, ['config', 'user.email', 'test@sulladesktop.com']);
+    git(childPath, ['config', 'user.name', 'Sulla Test']);
+    git(childPath, ['checkout', '-q', '-b', 'unpublished']);
+    commit(childPath, 'local.txt', 'only local');
+    git(childPath, ['checkout', '-q', 'main']);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const { policy } = buildPolicy({ now: Date.now() });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/not reachable from any live remote ref.*\/child/);
+    await expect(fsPromises.access(path.join(childPath, '.git'))).resolves.toBeUndefined();
+  });
+
+  it('keeps local commits after their live remote branch is deleted despite a stale tracking ref', async() => {
+    // risk: cached refs/remotes falsely claim that deleted remote work still has custody
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const remoteDir = path.join(outsideRoot, 'deleted-branch.git');
+    pushedCleanRepo(workspacePath, remoteDir);
+    git(remoteDir, ['update-ref', '-d', 'refs/heads/main']);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+
+    const { policy } = buildPolicy({ now: Date.now() });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(report.keptUnsafe[0].reasons.join(' ')).toMatch(/live remote origin has no refs|no live remote ref/);
+    expect(execFileSync('git', ['show-ref', '--verify', 'refs/remotes/origin/main'], { cwd: workspacePath, encoding: 'utf8' })).toContain('origin/main');
+  });
+
+  it('restores a claimed workspace when its job becomes active during inspection', async() => {
+    // risk: a resumed job loses its workspace between the first guard check and deletion
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    const remoteDir = path.join(outsideRoot, 'resume-race.git');
+    pushedCleanRepo(workspacePath, remoteDir);
+    await setMtime(workspacePath, Date.now() - 8 * day);
+    const guard = new FixtureActiveJobGuard();
+    const activatingGit = new ActivatingGitCommandRunner(new SpawnGitCommandRunner(), () => guard.markActive(jobId));
+    const raceInspector = new WorkspaceInspector(fileSystem, activatingGit);
+
+    const { policy, remover } = buildPolicy({ now: Date.now(), guard, inspector: raceInspector });
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(remover.removedPaths).toEqual([]);
+    await expect(fsPromises.readFile(path.join(workspacePath, 'a.txt'), 'utf8')).resolves.toBe('one');
+    await expect(fsPromises.access(path.join(root, `.reclaiming-${ path.basename(workspacePath) }`))).rejects.toThrow();
+  });
+
+  it('restores a quarantine left by a crashed pass without deleting it in that pass', async() => {
+    // risk: crash recovery converts an uncertain in-flight claim into automatic deletion
+    const jobId = nextJobId();
+    const originalPath = path.join(root, workspaceDirName(jobId));
+    const quarantinedPath = path.join(root, `.reclaiming-${ path.basename(originalPath) }`);
+    await fsPromises.mkdir(quarantinedPath);
+    await fsPromises.writeFile(path.join(quarantinedPath, 'recover.txt'), 'keep');
+
+    const { policy } = buildPolicy();
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    await expect(fsPromises.readFile(path.join(originalPath, 'recover.txt'), 'utf8')).resolves.toBe('keep');
+  });
+
 });
