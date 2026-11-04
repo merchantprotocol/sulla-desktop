@@ -44,7 +44,7 @@ export class UsageAggregator extends Service {
       const output = this.codec.finite(record.output_tokens);
       const cacheRead = this.codec.finite(record.cache_read_input_tokens ?? record.cached_input_tokens);
       const cacheWrite = this.codec.finite(record.cache_creation_input_tokens);
-      const total = this.codec.finite(record.total_tokens) || input + output;
+      const total = this.codec.finite(record.total_tokens);
       const estimate = this.pricing.estimate(record, total, input, output, cacheRead, cacheWrite);
       result.totalTokens += total;
       result.inputTokens += input;
