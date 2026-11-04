@@ -71,6 +71,7 @@ export class WorkflowRecoveryService extends Service {
       if (automatic.length) this.clock.defer(() => { void this.activate(automatic); });
       for (const execution of manual) {
         if (this.notified.has(execution.executionId)) continue;
+        this.notified.add(execution.executionId);
         await this.notifier.notify(execution);
       }
       await this.scheduleNextLeaseRecovery();

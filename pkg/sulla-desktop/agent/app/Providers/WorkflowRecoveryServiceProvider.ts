@@ -2,10 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection';
 import { WorkflowExecutionRepository } from '../Repositories/WorkflowExecutionRepository';
 import { WorkflowRecoveryService, type SuspendedExecution } from '../Services/WorkflowRecovery/WorkflowRecoveryService';
-import { postgresClient } from '../../database/PostgresClient';
 import Logging from '@pkg/utils/logging';
 
 class SystemRecoveryClock {
@@ -36,6 +34,6 @@ class DesktopWorkflowRecoveryRegistry {
 }
 
 export const workflowRecoveryService = new WorkflowRecoveryService(
-  new WorkflowExecutionRepository(new DesktopPostgresConnection(postgresClient)),
+  new WorkflowExecutionRepository(),
   new DesktopWorkflowRecoveryRegistry(), new SystemRecoveryClock(), new DesktopRecoveryNotifier(),
 );
