@@ -98,12 +98,18 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows.map(row => this.map(row));
   }
 
-  async park(jobId: string, tasks: AgentJobTask[], waitingOnChildren: number): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'parked', tasks = $2::jsonb, waiting_on_children = $3 WHERE job_id = $1 AND status = 'running'`, [jobId, JSON.stringify(tasks), waitingOnChildren]);
+  /**
+   * `status` is the job-level rollup the caller computed from every task's
+   * own status (running if any sibling is still running/queued, else
+   * parked) — a second task in the same job can park after the first
+   * without the job row already being 'parked' blocking the write.
+   */
+  async park(jobId: string, tasks: AgentJobTask[], waitingOnChildren: number, status: 'running' | 'parked'): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = $4, tasks = $2::jsonb, waiting_on_children = $3 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), waitingOnChildren, status]);
   }
 
   async resume(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'running', tasks = $2::jsonb, waiting_on_children = 0 WHERE job_id = $1 AND status = 'parked'`, [jobId, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'running', tasks = $2::jsonb, waiting_on_children = 0 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
   async openChildrenForThread(threadId: string): Promise<number> {

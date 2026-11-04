@@ -204,21 +204,29 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   return this.boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
 }
 
+/**
+ * Task status is the source of truth; job.status is a rollup of its
+ * tasks — 'running' while any sibling task is still running or queued,
+ * 'parked' only once every non-terminal task has parked. A sibling task
+ * that is still running must stay visible to restart recovery even while
+ * this one task parks (AgentJobRepository.claimInterruptedJobs filters on
+ * job-level status).
+ */
 async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.status !== 'running' || !job.tasks[taskIndex]) return;
-  job.status = 'parked';
-  job.waitingOnChildren = waitingOnChildren;
+  if (!job || job.tasks[taskIndex]?.status !== 'running') return;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'parked' };
-  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren));
+  job.status = job.tasks.some(task => task.status === 'running' || task.status === 'queued') ? 'running' : 'parked';
+  job.waitingOnChildren = waitingOnChildren;
+  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren, job.status as 'running' | 'parked'));
 }
 
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.status !== 'parked' || !job.tasks[taskIndex]) return;
+  if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
   job.status = 'running';
   job.waitingOnChildren = 0;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
   await this.persist(this.repository.resume(jobId, job.tasks));
 }
 

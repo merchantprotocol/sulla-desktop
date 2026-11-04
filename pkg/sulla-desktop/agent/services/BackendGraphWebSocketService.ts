@@ -774,11 +774,13 @@ export class BackendGraphWebSocketService {
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
-      // Only a dormant parked job — no live in-process waiter held this
+      // Only a dormant parked TASK — no live in-process waiter held this
       // abortKey, or this dispatch would have returned just above — is
       // flipped running for the turn's duration. Re-parked in the finally
-      // block unless the turn completes the job via return_result.
-      if (parkedIdentity && parkedIdentity.job.status === 'parked') {
+      // block unless the turn completes the job via return_result. Checked
+      // on the task, not the job's rollup status: a sibling task can keep
+      // the job itself 'running' while this one task is individually parked.
+      if (parkedIdentity && parkedIdentity.task.status === 'parked') {
         await agentJobLifecycle.beginWakeTurn(parkedIdentity.job.jobId, parkedIdentity.taskIndex);
         wakeTurnToRepark = { jobId: parkedIdentity.job.jobId, taskIndex: parkedIdentity.taskIndex };
       }
