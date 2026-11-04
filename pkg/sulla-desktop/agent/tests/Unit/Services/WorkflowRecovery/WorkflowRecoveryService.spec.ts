@@ -37,7 +37,7 @@ describe('WorkflowRecoveryService', () => {
     expect(service.takePending()).toEqual([expect.objectContaining({ executionId: 'stale' })]);
   });
 
-  it('activates an auto-restart execution only once when both boot entry points run', async() => {
+  it('coalesces concurrent boot recovery entry points for an auto-restart execution', async() => {
     // risk: duplicate boot recovery starts the same workflow execution twice
     const store = new ExecutionFixture();
     const automatic = row('automatic');
