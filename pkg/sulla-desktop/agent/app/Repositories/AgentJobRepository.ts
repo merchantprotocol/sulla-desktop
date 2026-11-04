@@ -48,7 +48,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async stop(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks)]);
   }
 
   async job(jobId: string): Promise<AgentJob | undefined> {
@@ -94,7 +94,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async complete(job: AgentJob): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
   }
 
   async markCompletionDelivered(jobId: string): Promise<void> {
@@ -112,7 +112,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async fail(jobId: string, error: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'failed', finished_at = now(), error = $2, tasks = $3::jsonb WHERE job_id = $1`, [jobId, error, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'failed', finished_at = now(), waiting_on_children = 0, error = $2, tasks = $3::jsonb WHERE job_id = $1`, [jobId, error, JSON.stringify(tasks)]);
   }
 
   async hasQueuedOrRunningChildren(job: AgentJob): Promise<boolean> {
