@@ -57,6 +57,7 @@ jobs:
 
   typecheck:
     name: typecheck
+    needs: agent-tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
