@@ -32,17 +32,13 @@
     "build:mac": "node scripts/ts-wrapper.js scripts/build.ts --mac",
     "package": "node scripts/ts-wrapper.js scripts/package.ts",
     "sign": "node scripts/ts-wrapper.js scripts/sign.ts",
-    "test": "yarn lint:nofix && yarn test:unit",
-    "test:unit": "yarn test:unit:jest",
-    "test:unit:jest": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:unit:watch": "yarn test:unit -- --watch",
     "postinstall": "node scripts/ts-wrapper.js scripts/postinstall.ts",
     "postuninstall": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 electron-builder install-app-deps",
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
     "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
-    "test:server-split-contracts": "node --test scripts/contracts/server-split-contract.test.mjs",
-    "e2e:first-run": "node scripts/e2e-first-run.mjs"
+    "test:agent": "vitest run --config vitest.agent.config.mts",
+    "test:pr": "node scripts/test-pr.mjs"
   },
   "main": "dist/app/background.js",
   "dependencies": {
@@ -107,7 +103,8 @@
     "yaml": "2.8.2",
     "yazl": "^3.3.1",
     "yjs": "13.6.33",
-    "zod": "3.25.76"
+    "zod": "3.25.76",
+    "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz"
   },
   "devDependencies": {
     "@babel/core": "7.29.0",
@@ -185,6 +182,7 @@
     "eslint": "9.39.2",
     "eslint-plugin-vue": "10.7.0",
     "extract-zip": "2.0.1",
+    "fast-check": "3.23.2",
     "floating-vue": "5.2.2",
     "glob": "13.0.6",
     "globals": "17.0.0",
@@ -214,6 +212,7 @@
     "tsconfig-paths": "4.2.0",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
+    "vitest": "3.2.7",
     "vue-3-slider-component": "1.0.2",
     "vue-router": "4.6.4",
     "vue-select": "3.20.4",

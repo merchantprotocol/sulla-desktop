@@ -76,11 +76,6 @@ linters:
       - legacy
       - std-error-handling
     rules:
-      - linters:
-          - errcheck
-          - gocritic
-          - gosec
-        path: _test\.go
       - # Ignore errors from syscall
         linters:
           - dogsled

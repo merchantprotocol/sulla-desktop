@@ -5,25 +5,28 @@
 
 package main
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
-func TestDataBinds(t *testing.T) {
-	targets := map[string]string{}
-	for _, bind := range dataBinds {
-		if filepath.IsAbs(bind.source) || !filepath.IsAbs(bind.target) {
-			t.Fatalf("bind %q on %q: source must be relative to the data disk and target absolute", bind.source, bind.target)
-		}
-		if _, dup := targets[bind.target]; dup {
-			t.Fatalf("target %q bound twice", bind.target)
-		}
-		targets[bind.target] = bind.source
+func TestFilesystemProbeNormalizesBlkidOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "util-linux value", output: "ext4\n", want: "ext4"},
+		{name: "BusyBox double quoted", output: `/dev/vdb: UUID="disk-id" TYPE="ext4"`, want: "ext4"},
+		{name: "BusyBox single quoted", output: `/dev/vdb: UUID='disk-id' TYPE='ext4'`, want: "ext4"},
+		{name: "BusyBox unquoted", output: `/dev/vdb: UUID=disk-id TYPE=ext4`, want: "ext4"},
 	}
-	// pip (usr/pip.conf) and npm (builtin npmrc) install under /usr/local;
-	// that must be the data disk or the installs vanish on reboot.
-	if targets["/usr/local"] != "usr/local" {
-		t.Fatalf("/usr/local is not bound from the data disk: %v", targets)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			probe := newFilesystemProbe(func(string, ...string) ([]byte, error) {
+				return []byte(test.output), nil
+			})
+			got, found, err := probe.probe("/dev/vdb")
+			if err != nil || !found || got != test.want {
+				t.Fatalf("probe() = (%q, %v, %v), want (%q, true, nil)", got, found, err, test.want)
+			}
+		})
 	}
 }

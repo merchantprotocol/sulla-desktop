@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import type { FilesCloudBroker } from '../cloudBroker.js';
 import type { SyncHead } from './envelope.js';
+import type { NamespaceBatchStatus } from './push.js';
 
 const BASE = '/files-sync/v1';
 
@@ -52,6 +53,15 @@ export class FilesSyncCloudApi {
     const body = response.body as ChangesPage;
     if (!body || !Array.isArray(body.versions) || !body.head) throw new Error('Cloud changes response is invalid');
     return body;
+  }
+
+  async namespaceBatchStatus(collectionId:string,batchId:string):Promise<NamespaceBatchStatus|null> {
+    const response=await this.call<any>(`${BASE}/collections/${collectionId}/namespace-batches/${batchId}`);
+    if (response.status===404) return null;
+    if (response.status!==200) throw Object.assign(new Error(`Cloud namespace batch request failed (${response.status})`),{status:response.status});
+    const body=response.body;
+    if (!body||typeof body.rootItemId!=='string'||typeof body.deviceId!=='string'||!Number.isSafeInteger(body.lastIndex)||!['active','completed'].includes(body.status)) throw new Error('Cloud namespace batch response is invalid');
+    return {rootItemId:body.rootItemId,deviceId:body.deviceId,lastIndex:body.lastIndex,final:body.status==='completed'};
   }
 
   /** null when the upload session is gone (expired or never existed). */

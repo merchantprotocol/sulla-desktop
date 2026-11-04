@@ -84,11 +84,25 @@ func diskHeadIsZero(device string) bool {
 	return true
 }
 
-// probeFilesystem returns the filesystem type blkid reports for a device.
-// found is false only when blkid ran and positively found no filesystem; any
-// other failure is returned as an error and must never be read as "empty".
-func probeFilesystem(device string) (fsType string, found bool, err error) {
-	out, err := exec.Command("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", device).Output()
+type commandOutput func(name string, args ...string) ([]byte, error)
+
+type filesystemProbe struct {
+	output      commandOutput
+	typePattern *regexp.Regexp
+}
+
+func newFilesystemProbe(output commandOutput) filesystemProbe {
+	return filesystemProbe{
+		output:      output,
+		typePattern: regexp.MustCompile(`(?:^|\s)TYPE=(?:"([^"]+)"|'([^']+)'|([^\s]+))`),
+	}
+}
+
+// probe returns the filesystem type from either util-linux's value-only output
+// or BusyBox's full device record. found is false only when blkid positively
+// found no signature; every other failure remains an error.
+func (probe filesystemProbe) probe(device string) (fsType string, found bool, err error) {
+	out, err := probe.output("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", device)
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
 		return "", false, nil
@@ -96,7 +110,15 @@ func probeFilesystem(device string) (fsType string, found bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	return strings.TrimSpace(string(out)), true, nil
+	value := strings.TrimSpace(string(out))
+	if match := probe.typePattern.FindStringSubmatch(value); match != nil {
+		for _, candidate := range match[1:] {
+			if candidate != "" {
+				return candidate, true, nil
+			}
+		}
+	}
+	return value, true, nil
 }
 
 // partitions lists the partition devices of a whole disk, in order.
@@ -122,7 +144,10 @@ func partitions(disk string) []string {
 // first ext4 partition of a partitioned disk. It formats only a disk that is
 // provably blank.
 func dataFilesystem(disk string) (string, error) {
-	fsType, found, err := probeFilesystem(disk)
+	probe := newFilesystemProbe(func(name string, args ...string) ([]byte, error) {
+		return exec.Command(name, args...).Output()
+	})
+	fsType, found, err := probe.probe(disk)
 	if err != nil {
 		return "", err
 	}
@@ -131,7 +156,7 @@ func dataFilesystem(disk string) (string, error) {
 	}
 	for _, part := range partitions(disk) {
 		waitForDevice(part)
-		if partType, ok, err := probeFilesystem(part); err == nil && ok && partType == "ext4" {
+		if partType, ok, err := probe.probe(part); err == nil && ok && partType == "ext4" {
 			return part, nil
 		}
 	}

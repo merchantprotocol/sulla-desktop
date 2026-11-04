@@ -109,28 +109,19 @@ export function initSullaEvents(): void {
   initSullaFilesIpc();
 
   // ─────────────────────────────────────────────────────────────
-  // DB-gated boot tasks: workflow recovery + gateway lobby
+  // DB-gated boot task: gateway lobby
   // ─────────────────────────────────────────────────────────────
 
   // Postgres runs inside the Sulla VM and can take a minute+ to come up on a
-  // cold boot. These tasks used to fire on a blind 5s timer (workflow
-  // recovery) or one unretried initialize() (gateway lobby), die with
+  // cold boot. This task used to make one unretried initialize() call, die with
   // ECONNREFUSED the host database port, and stay dead until the next app restart.
-  // Wait behind the shared unbounded DB boot gate, then run both once: a
+  // Wait behind the shared unbounded DB boot gate, then run once: a
   // finite deadline here turned a slow cold start into a session-long
   // recovery outage (2026-08-31 boot).
   (async() => {
     const { awaitDatabaseReady } = await import('@pkg/main/dbBootGate');
 
     await awaitDatabaseReady();
-
-    try {
-      const { recoverOnBoot } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
-
-      await recoverOnBoot();
-    } catch (err) {
-      console.error('[initSullaEvents] Workflow boot recovery failed:', err);
-    }
 
     // Auto-connect gateway lobby listener. All decision-making lives in
     // GatewayConnectionController.

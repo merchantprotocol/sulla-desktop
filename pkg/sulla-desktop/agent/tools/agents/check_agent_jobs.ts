@@ -5,7 +5,7 @@
 
 import { AgentJobMessagingModel, type AgentJobCheckin, type AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import { BaseTool, ToolResponse } from '../base';
-import { getJob, getAllJobs, deleteJob } from './jobRegistry';
+import { getJob, getJobsForList } from './jobRegistry';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -69,32 +69,62 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
   };
 }
 
+function compactCheckin(checkin: AgentJobCheckin | null): Record<string, unknown> | null {
+  if (!checkin) return null;
+  return {
+    step: checkin.step,
+    summary: checkin.summary.slice(0, 240),
+    time: new Date(checkin.createdAt).toISOString(),
+  };
+}
+
+function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobTaskTelemetry>): Record<string, unknown> {
+  return {
+    jobId: job.jobId,
+    status: job.status,
+    taskCount: job.taskCount,
+    elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
+    tasks: job.tasks.map((task, taskIndex) => ({
+      taskIndex,
+      agentId: task.agentId,
+      label: task.label,
+      taskId: task.taskId,
+      status: task.status,
+      visibility: task.visibility ?? job.visibility ?? 'hidden',
+      contract: task.contract?.name ?? 'result',
+      returned: !!task.returnedAt,
+      elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
+      latestCheckin: compactCheckin(telemetry[taskIndex]?.latestCheckin ?? null),
+      undeliveredOrchestratorMessages: telemetry[taskIndex]?.undeliveredMessages ?? 0,
+    })),
+  };
+}
+
 export class CheckAgentJobsWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { jobId } = input;
+    const { jobId, includeFinished = true } = input;
+    const limit = Math.min(100, Math.max(1, Math.trunc(Number(input.limit)) || 25));
 
     if (jobId) {
       const job = await getJob(jobId);
       if (!job) {
         return {
           successBoolean: false,
-          responseString: `Job "${ jobId }" not found. It may have expired (jobs are kept for 1 hour after completion).`,
+          responseString: `Job "${ jobId }" not found. It may not exist or may have been explicitly pruned after the retention period.`,
         };
       }
 
       const result = await serializeJob(job);
-      if (job.status !== 'running' && job.completionDeliveredAt) deleteJob(jobId);
-
       return {
         successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
         responseString: JSON.stringify(result, null, 2),
       };
     }
 
-    const allJobs = await getAllJobs();
+    const allJobs = await getJobsForList(limit, includeFinished !== false);
     if (allJobs.length === 0) {
       return {
         successBoolean: true,
@@ -102,7 +132,8 @@ export class CheckAgentJobsWorker extends BaseTool {
       };
     }
 
-    const jobs = await Promise.all(allJobs.map(serializeJob));
+    const telemetry = await AgentJobMessagingModel.latestTelemetryForJobs(allJobs.map(job => job.jobId));
+    const jobs = allJobs.map(job => serializeJobListItem(job, telemetry[job.jobId] ?? {}));
 
     return {
       successBoolean: true,

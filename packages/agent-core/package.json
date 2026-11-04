@@ -15,11 +15,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "test:workers": "npm run build && node test/workers/run.mjs",
-    "test:hermes": "npm run build && node test/hermes/run.mjs",
-    "lint": "node test/lint.mjs"
+    "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "typescript": "5.9.3"

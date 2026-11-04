@@ -136,7 +136,9 @@ else
         echo '{"error":"Blocked: do not call sulla CLI for this function. Preventing circular tool calling. Use the native exec tool instead."}' >&2
         exit 1
       fi
-      if is_tool_category "$PART1"; then
+      # Desktop is a bundled first-party category. Route it internally even when
+      # the remote catalog is stale or temporarily unavailable during startup.
+      if [ "$PART1" = "desktop" ] || is_tool_category "$PART1"; then
         # Tool call: category/tool_name
         URL="/v1/tools/internal/${PART1}/${PART2}/call"
       else

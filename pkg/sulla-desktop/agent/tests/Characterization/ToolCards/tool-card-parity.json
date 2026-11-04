@@ -1,0 +1,2675 @@
+[
+  {
+    "name": "exec",
+    "result": null,
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "exec",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "exec_command",
+    "result": null,
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "exec_command",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "shell",
+    "result": null,
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "shell",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "bash",
+    "result": null,
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "bash",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "run_command",
+    "result": null,
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "run_command",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bash",
+      "summary": "Running command",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "exechost",
+    "result": null,
+    "card": {
+      "label": "Host",
+      "summary": "Running on host",
+      "outputFormat": "code"
+    },
+    "output": {
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "exechost",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Host",
+      "summary": "Running on host",
+      "output": "done",
+      "outputFormat": "code"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "code"
+    }
+  },
+  {
+    "name": "file_search",
+    "result": null,
+    "card": {
+      "label": "Search",
+      "summary": "Searching for \"\" in ~"
+    },
+    "output": {}
+  },
+  {
+    "name": "file_search",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Search",
+      "summary": "Searching for \"\" in ~"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "read_file",
+    "result": null,
+    "card": {
+      "label": "File",
+      "summary": "Opening "
+    },
+    "output": {}
+  },
+  {
+    "name": "read_file",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "File",
+      "summary": "Opening "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "browser_tab",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Managing tab"
+    },
+    "output": {}
+  },
+  {
+    "name": "browser_tab",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Managing tab"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "click_element",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Clicking "
+    },
+    "output": {}
+  },
+  {
+    "name": "click_element",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Clicking "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "set_field",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Filling '' → ''"
+    },
+    "output": {}
+  },
+  {
+    "name": "set_field",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Filling '' → ''"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "get_page_snapshot",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Capturing page snapshot"
+    },
+    "output": {}
+  },
+  {
+    "name": "get_page_snapshot",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Capturing page snapshot"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "get_page_text",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Reading page text"
+    },
+    "output": {}
+  },
+  {
+    "name": "get_page_text",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Reading page text"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "get_form_values",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Reading form values"
+    },
+    "output": {}
+  },
+  {
+    "name": "get_form_values",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Reading form values"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "scroll_to_element",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Scrolling to "
+    },
+    "output": {}
+  },
+  {
+    "name": "scroll_to_element",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Scrolling to "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "wait_for_element",
+    "result": null,
+    "card": {
+      "label": "Browser",
+      "summary": "Waiting for "
+    },
+    "output": {}
+  },
+  {
+    "name": "wait_for_element",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Browser",
+      "summary": "Waiting for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_status",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Checking status"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_status",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Checking status"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_commit",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Committing: "
+    },
+    "output": {}
+  },
+  {
+    "name": "git_commit",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Committing: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_push",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Pushing to origin"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_push",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Pushing to origin"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_pull",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Pulling from origin"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_pull",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Pulling from origin"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_diff",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Comparing changes"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_diff",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Comparing changes"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_log",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Showing last 10 commits"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_log",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Showing last 10 commits"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_add",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Staging all files"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_add",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Staging all files"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_branch",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Managing branch"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_branch",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Managing branch"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_checkout",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Checking out files"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_checkout",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Checking out files"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_stash",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Stash: stash"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_stash",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Stash: stash"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_blame",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Blaming lines ?–?"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_blame",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Blaming lines ?–?"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "git_conflicts",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Listing merge conflicts"
+    },
+    "output": {}
+  },
+  {
+    "name": "git_conflicts",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Listing merge conflicts"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_create_pr",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating PR: "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_create_pr",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating PR: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_create_issue",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating issue: "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_create_issue",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating issue: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_get_issue",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Fetching issue #undefined"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_get_issue",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Fetching issue #undefined"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_get_issues",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Fetching open issues from /"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_get_issues",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Fetching open issues from /"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_read_file",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Reading "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_read_file",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Reading "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_create_file",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_create_file",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Creating "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_update_file",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Updating "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_update_file",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Updating "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_comment_on_issue",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Commenting on #undefined"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_comment_on_issue",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Commenting on #undefined"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_close_issue",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Closing issue #undefined"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_close_issue",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Closing issue #undefined"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_update_issue",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Updating issue #undefined"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_update_issue",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Updating issue #undefined"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_list_branches",
+    "result": null,
+    "card": {
+      "label": "GitHub",
+      "summary": "Listing branches on /"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_list_branches",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "GitHub",
+      "summary": "Listing branches on /"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_add_remote",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Adding remote "
+    },
+    "output": {}
+  },
+  {
+    "name": "github_add_remote",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Adding remote "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "github_init",
+    "result": null,
+    "card": {
+      "label": "Git",
+      "summary": "Initializing repository"
+    },
+    "output": {}
+  },
+  {
+    "name": "github_init",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Git",
+      "summary": "Initializing repository"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_build",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Building image"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_build",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Building image"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_run",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Running "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_run",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Running "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_exec",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Executing in "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_exec",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Executing in "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_ps",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Listing containers"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_ps",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Listing containers"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_logs",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Reading logs from "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_logs",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Reading logs from "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_pull",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Pulling "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_pull",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Pulling "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_stop",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Stopping "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_stop",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Stopping "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_rm",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Removing "
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_rm",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Removing "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_images",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Listing images"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_images",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Listing images"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_send_message",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Messaging ",
+      "input": ""
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_send_message",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Messaging ",
+      "input": ""
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_search_users",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Searching users: "
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_search_users",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Searching users: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_update",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Updating message in "
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_update",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Updating message in "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_thread",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Reading thread in "
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_thread",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Reading thread in "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_user",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Looking up user"
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_user",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Looking up user"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_unreact",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Removing :: from message"
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_unreact",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Removing :: from message"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "slack_connection_health",
+    "result": null,
+    "card": {
+      "label": "Slack",
+      "summary": "Checking Slack connection"
+    },
+    "output": {}
+  },
+  {
+    "name": "slack_connection_health",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Slack",
+      "summary": "Checking Slack connection"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "pg_query",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Querying: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_query",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Querying: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_queryall",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Querying all: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_queryall",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Querying all: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_queryone",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Querying one: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_queryone",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Querying one: ",
+      "outputFormat": "json"
+    },
+    "output": {
+      "output": "done",
+      "outputFormat": "json"
+    }
+  },
+  {
+    "name": "pg_execute",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Executing: "
+    },
+    "output": {}
+  },
+  {
+    "name": "pg_execute",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Executing: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "pg_count",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Counting: "
+    },
+    "output": {}
+  },
+  {
+    "name": "pg_count",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Counting: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "pg_transaction",
+    "result": null,
+    "card": {
+      "label": "Database",
+      "summary": "Running transaction"
+    },
+    "output": {}
+  },
+  {
+    "name": "pg_transaction",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Database",
+      "summary": "Running transaction"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_get",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Getting "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_get",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Getting "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_set",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Setting "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_set",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Setting "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_del",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Deleting 0 keys"
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_del",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Deleting 0 keys"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_hget",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Getting ."
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_hget",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Getting ."
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_hgetall",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Getting all fields of "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_hgetall",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Getting all fields of "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_hset",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Setting ."
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_hset",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Setting ."
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_incr",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Incrementing "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_incr",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Incrementing "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_decr",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Decrementing "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_decr",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Decrementing "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_lpop",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Popping from "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_lpop",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Popping from "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_rpush",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Appending to "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_rpush",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Appending to "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_expire",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Setting TTL on "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_expire",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Setting TTL on "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "redis_ttl",
+    "result": null,
+    "card": {
+      "label": "Redis",
+      "summary": "Checking TTL of "
+    },
+    "output": {}
+  },
+  {
+    "name": "redis_ttl",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Redis",
+      "summary": "Checking TTL of "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_create",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Creating event: "
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_create",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Creating event: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_list",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Listing events"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_list",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Listing events"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_list_upcoming",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Checking next 7 days"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_list_upcoming",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Checking next 7 days"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_get",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Getting event details"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_get",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Getting event details"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_update",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Updating event"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_update",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Updating event"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_cancel",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Cancelling event"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_cancel",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Cancelling event"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "calendar_delete",
+    "result": null,
+    "card": {
+      "label": "Calendar",
+      "summary": "Deleting event"
+    },
+    "output": {}
+  },
+  {
+    "name": "calendar_delete",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Calendar",
+      "summary": "Deleting event"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "execute_workflow",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Running workflow "
+    },
+    "output": {}
+  },
+  {
+    "name": "execute_workflow",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Running workflow "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "validate_workflow",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Validating workflow "
+    },
+    "output": {}
+  },
+  {
+    "name": "validate_workflow",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Validating workflow "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "validate_workflow_payload",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Validating payload: "
+    },
+    "output": {}
+  },
+  {
+    "name": "validate_workflow_payload",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Validating payload: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "patch_workflow",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Patching workflow  (? operations)"
+    },
+    "output": {}
+  },
+  {
+    "name": "patch_workflow",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Patching workflow  (? operations)"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "diagnose_webhook",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Diagnosing webhook for "
+    },
+    "output": {}
+  },
+  {
+    "name": "diagnose_webhook",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Diagnosing webhook for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "restart_from_checkpoint",
+    "result": null,
+    "card": {
+      "label": "Workflow",
+      "summary": "Restarting from node "
+    },
+    "output": {}
+  },
+  {
+    "name": "restart_from_checkpoint",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workflow",
+      "summary": "Restarting from node "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "install_extension",
+    "result": null,
+    "card": {
+      "label": "Extensions",
+      "summary": "Installing "
+    },
+    "output": {}
+  },
+  {
+    "name": "install_extension",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Extensions",
+      "summary": "Installing "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "uninstall_extension",
+    "result": null,
+    "card": {
+      "label": "Extensions",
+      "summary": "Uninstalling "
+    },
+    "output": {}
+  },
+  {
+    "name": "uninstall_extension",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Extensions",
+      "summary": "Uninstalling "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "list_installed_extensions",
+    "result": null,
+    "card": {
+      "label": "Extensions",
+      "summary": "Listing installed extensions"
+    },
+    "output": {}
+  },
+  {
+    "name": "list_installed_extensions",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Extensions",
+      "summary": "Listing installed extensions"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "list_extension_catalog",
+    "result": null,
+    "card": {
+      "label": "Extensions",
+      "summary": "Browsing extension catalog"
+    },
+    "output": {}
+  },
+  {
+    "name": "list_extension_catalog",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Extensions",
+      "summary": "Browsing extension catalog"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "spawn_agent",
+    "result": null,
+    "card": {
+      "label": "Agents",
+      "summary": "Spawning ? sub-agents"
+    },
+    "output": {}
+  },
+  {
+    "name": "spawn_agent",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Agents",
+      "summary": "Spawning ? sub-agents"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "check_agent_jobs",
+    "result": null,
+    "card": {
+      "label": "Agents",
+      "summary": "Checking job "
+    },
+    "output": {}
+  },
+  {
+    "name": "check_agent_jobs",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Agents",
+      "summary": "Checking job "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "list_agents",
+    "result": null,
+    "card": {
+      "label": "Agents",
+      "summary": "Listing available agents"
+    },
+    "output": {}
+  },
+  {
+    "name": "list_agents",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Agents",
+      "summary": "Listing available agents"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "agents_directory",
+    "result": null,
+    "card": {
+      "label": "Agents",
+      "summary": "Listing agent directory"
+    },
+    "output": {}
+  },
+  {
+    "name": "agents_directory",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Agents",
+      "summary": "Listing agent directory"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "send_notification_to_human",
+    "result": null,
+    "card": {
+      "label": "Bridge",
+      "summary": "Notifying human"
+    },
+    "output": {}
+  },
+  {
+    "name": "send_notification_to_human",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bridge",
+      "summary": "Notifying human"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "emit_html_message",
+    "result": null,
+    "card": {
+      "label": "Bridge",
+      "summary": "Sending rich message"
+    },
+    "output": {}
+  },
+  {
+    "name": "emit_html_message",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bridge",
+      "summary": "Sending rich message"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "update_human_presence",
+    "result": null,
+    "card": {
+      "label": "Bridge",
+      "summary": "Updating presence"
+    },
+    "output": {}
+  },
+  {
+    "name": "update_human_presence",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bridge",
+      "summary": "Updating presence"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "get_human_presence",
+    "result": null,
+    "card": {
+      "label": "Bridge",
+      "summary": "Checking presence"
+    },
+    "output": {}
+  },
+  {
+    "name": "get_human_presence",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Bridge",
+      "summary": "Checking presence"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "add_observational_memory",
+    "result": null,
+    "card": {
+      "label": "Memory",
+      "summary": "Remembering observation"
+    },
+    "output": {}
+  },
+  {
+    "name": "add_observational_memory",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Memory",
+      "summary": "Remembering observation",
+      "output": "done"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "remove_observational_memory",
+    "result": null,
+    "card": {
+      "label": "Memory",
+      "summary": "Forgetting observation "
+    },
+    "output": {}
+  },
+  {
+    "name": "remove_observational_memory",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Memory",
+      "summary": "Forgetting observation ",
+      "output": "done"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "create_workspace",
+    "result": null,
+    "card": {
+      "label": "Workspace",
+      "summary": "Creating workspace "
+    },
+    "output": {}
+  },
+  {
+    "name": "create_workspace",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workspace",
+      "summary": "Creating workspace "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "delete_workspace",
+    "result": null,
+    "card": {
+      "label": "Workspace",
+      "summary": "Deleting workspace "
+    },
+    "output": {}
+  },
+  {
+    "name": "delete_workspace",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workspace",
+      "summary": "Deleting workspace "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "get_workspace_path",
+    "result": null,
+    "card": {
+      "label": "Workspace",
+      "summary": "Getting path for "
+    },
+    "output": {}
+  },
+  {
+    "name": "get_workspace_path",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workspace",
+      "summary": "Getting path for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "view_workspace_files",
+    "result": null,
+    "card": {
+      "label": "Workspace",
+      "summary": "Listing files in "
+    },
+    "output": {}
+  },
+  {
+    "name": "view_workspace_files",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Workspace",
+      "summary": "Listing files in "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "create_skill",
+    "result": null,
+    "card": {
+      "label": "Skills",
+      "summary": "Creating skill: "
+    },
+    "output": {}
+  },
+  {
+    "name": "create_skill",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Skills",
+      "summary": "Creating skill: "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "integration_list",
+    "result": null,
+    "card": {
+      "label": "Integrations",
+      "summary": "Listing integrations"
+    },
+    "output": {}
+  },
+  {
+    "name": "integration_list",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Integrations",
+      "summary": "Listing integrations"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_is_enabled",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Checking "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_is_enabled",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Checking "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_read_secrets",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Reading credentials for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_read_secrets",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Reading credentials for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_list_accounts",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Listing accounts for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_list_accounts",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Listing accounts for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_set_active_account",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Setting active account for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_set_active_account",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Setting active account for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_set_credential",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Saving credential for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_set_credential",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Saving credential for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_create_password",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Saving password for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_create_password",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Saving password for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_generate_password",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Generating password for "
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_generate_password",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Generating password for "
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "vault_update_password",
+    "result": null,
+    "card": {
+      "label": "Vault",
+      "summary": "Rotating vault password"
+    },
+    "output": {}
+  },
+  {
+    "name": "vault_update_password",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Vault",
+      "summary": "Rotating vault password"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "fs_unknown_tool",
+    "result": null,
+    "card": {
+      "label": "Files",
+      "summary": "Fs Unknown Tool"
+    },
+    "output": {}
+  },
+  {
+    "name": "fs_unknown_tool",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Files",
+      "summary": "Fs Unknown Tool"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "kubectl_unknown_tool",
+    "result": null,
+    "card": {
+      "label": "Kubernetes",
+      "summary": "Kubectl Unknown Tool"
+    },
+    "output": {}
+  },
+  {
+    "name": "kubectl_unknown_tool",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Kubernetes",
+      "summary": "Kubectl Unknown Tool"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "mystery_tool",
+    "result": null,
+    "card": {
+      "label": "Tool",
+      "summary": "Mystery Tool"
+    },
+    "output": {}
+  },
+  {
+    "name": "mystery_tool",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Tool",
+      "summary": "Mystery Tool"
+    },
+    "output": {
+      "output": "done"
+    }
+  }
+]
