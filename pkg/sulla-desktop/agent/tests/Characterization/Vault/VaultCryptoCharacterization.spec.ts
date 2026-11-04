@@ -13,7 +13,7 @@ import {
   sealFilesKeyBundle,
   unwrapUserKey,
   generateX25519RecipientKeyPair,
-} from '../../../../../../../packages/vault-crypto/src/index';
+} from '../../../../../../packages/vault-crypto/src/index';
 
 interface KatRecord {
   id: string;
@@ -26,6 +26,7 @@ interface KatFixture {
   desktop: {
     bundle: {
       vaultId: string;
+      vaultUserId: string;
       kdf: { salt: string; memoryBytes: number; ops: number };
       encryptedUserKey: Parameters<typeof unwrapUserKey>[0];
     };
@@ -35,7 +36,7 @@ interface KatFixture {
 }
 
 async function fixture(): Promise<KatFixture> {
-  return JSON.parse(await readFile(new URL('../../../../../../../fixtures/crypto/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as KatFixture;
+  return JSON.parse(await readFile(new URL('../../../../../../fixtures/crypto/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as KatFixture;
 }
 
 describe('Desktop vault crypto public contract', () => {
@@ -53,7 +54,7 @@ describe('Desktop vault crypto public contract', () => {
         expect(record.item).toBeDefined();
         await expect(decryptItemText(record.item!, userKey, {
           itemId: record.id,
-          ownerId: bundle.vaultId,
+          ownerId: bundle.vaultUserId,
         })).resolves.toBe(plaintexts[record.id]);
       }
     } finally {
@@ -83,7 +84,7 @@ describe('Desktop vault crypto public contract', () => {
     tampered.ciphertext.ciphertext = `${tampered.ciphertext.ciphertext.slice(0, -1)}A`;
     await expect(decryptItemText(tampered, userKey, {
       itemId: record.id,
-      ownerId: bundle.vaultId,
+      ownerId: bundle.vaultUserId,
     })).rejects.toThrow();
     right.key.fill(0);
     userKey.fill(0);

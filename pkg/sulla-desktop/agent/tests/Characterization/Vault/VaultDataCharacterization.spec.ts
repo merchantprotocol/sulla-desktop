@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { validateCustomFields } from '../../../../../../../packages/vault-crypto/src/customFields';
+import { validateCustomFields } from '../../../../../../packages/vault-crypto/src/customFields';
 import { normalizeVaultCredentialValue, normalizeVaultCredentialValues } from '../../../services/vaultCredentialSchema';
 import { parseCSV } from '../../../services/vaultImportParsers';
 

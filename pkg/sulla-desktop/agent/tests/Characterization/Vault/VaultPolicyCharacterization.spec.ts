@@ -4,7 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { agentPolicyAllows, type AgentPolicy } from '../../../../../../../packages/vault-crypto/src/itemSchema';
+import { agentPolicyAllows, type AgentPolicy } from '../../../../../../packages/vault-crypto/src/itemSchema';
+import { legacyProviderFailure, providerFailureFromHttp, VaultLocked } from '../../../languagemodels/failures';
 import { mayInjectSecretIntoAgentCode, resolveLlmAccess } from '../../../services/vaultAccessPolicy';
 
 const policy = (overrides: Partial<AgentPolicy> = {}): AgentPolicy => ({
@@ -45,5 +46,12 @@ describe('Desktop vault agent policy public contract', () => {
     expect(resolveLlmAccess('none')).toBe('none');
     expect(resolveLlmAccess('metadata')).toBe('metadata');
     expect(resolveLlmAccess('full')).toBe('full');
+  });
+
+  it('BL-007 classifies HTTP and structured vault-locked failures as VaultLocked', () => {
+    // risk: authentication recovery — callers depend on instanceof to start the unlock path.
+    expect(providerFailureFromHttp('provider', 423)).toBeInstanceOf(VaultLocked);
+    expect(legacyProviderFailure('provider', { code: 'vault_locked' })).toBeInstanceOf(VaultLocked);
+    expect(legacyProviderFailure('provider', { status: 423 })).toBeInstanceOf(VaultLocked);
   });
 });
