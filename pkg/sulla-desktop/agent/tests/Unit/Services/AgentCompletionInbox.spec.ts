@@ -5,6 +5,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentCompletionInbox,
+  COMPLETION_RESULT_LIMIT,
+  formatCompletionBatch,
   clearCompletionInboxes,
   enqueueAgentCompletion,
   registerCompletionIdleDispatcher,
@@ -79,5 +81,21 @@ describe('AgentCompletionInbox', () => {
 
     expect(takeAgentCompletions('sulla-desktop', 'parent').map(entry => entry.taskIndex)).toEqual([0, 1]);
     expect(takeAgentCompletions('sulla-desktop', 'parent')).toEqual([]);
+
   });
+  it('formats sibling contracts with separators and bounds oversized results', () => {
+    // risk: prompt integrity — sibling contracts must remain distinct and bounded.
+    const one = result('one');
+    const content = formatCompletionBatch([
+      { jobId: 'job-1', taskIndex: 0, results: [one] },
+      { jobId: 'job-1', taskIndex: 1, results: [], failureReason: 'network failed' },
+    ]);
+    expect(content).toContain('one');
+    expect(content).toContain('network failed');
+    expect(content).toContain('\n\n==========\n\n');
+
+    const huge = formatCompletionBatch([{ jobId: 'job-2', taskIndex: 0, results: [{ ...one, output: 'x'.repeat(COMPLETION_RESULT_LIMIT + 500) }] }]);
+    expect(huge).toContain('Result truncated');
+  });
+
 });

@@ -21,12 +21,8 @@ interface Inbox {
   stopped: boolean;
 }
 
-/**
- * Per-thread completion queue. A task, not a job, is the delivery identity:
- * sibling contracts can therefore become ready and wake their parent
- * independently without allowing a retry to enqueue the same contract twice.
- */
-export class AgentCompletionInbox {
+/** Per-thread, per-task completion queue with no fixed delivery delay. */
+export class CompletionInboxStore {
   private readonly inboxes = new Map<string, Inbox>();
   private idleDispatcher?: (channel: string, threadId: string) => void;
 
@@ -64,6 +60,14 @@ export class AgentCompletionInbox {
     return entries;
   }
 
+  format(entries: PendingCompletion[]): string {
+    return entries.map(entry => {
+      const content = buildWakeContent(entry.jobId, entry.results, entry.failureReason);
+      if (content.length <= COMPLETION_RESULT_LIMIT) return content;
+      return `${ content.slice(0, COMPLETION_RESULT_LIMIT) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
+    }).join('\n\n==========\n\n');
+  }
+
   clear(): void {
     this.inboxes.clear();
     this.idleDispatcher = undefined;
@@ -74,37 +78,14 @@ export class AgentCompletionInbox {
   }
 }
 
-const completionInbox = new AgentCompletionInbox();
-
-export function registerCompletionIdleDispatcher(dispatcher: (channel: string, threadId: string) => void): void {
-  completionInbox.registerIdleDispatcher(dispatcher);
-}
-
-export function enqueueAgentCompletion(channel: string, threadId: string, completion: PendingCompletion): boolean {
-  return completionInbox.enqueue(channel, threadId, completion);
-}
-
-export function notifyAgentCompletionsReady(channel: string, threadId: string): void {
-  completionInbox.notifyReady(channel, threadId);
-}
-
-export function setCompletionInboxStopped(channel: string, threadId: string, stopped: boolean): void {
-  completionInbox.setStopped(channel, threadId, stopped);
-}
-
-export function takeAgentCompletions(channel: string, threadId: string): PendingCompletion[] {
-  return completionInbox.take(channel, threadId);
-}
-
-export function formatCompletionBatch(entries: PendingCompletion[]): string {
-  return entries.map(entry => {
-    const content = buildWakeContent(entry.jobId, entry.results, entry.failureReason);
-    if (content.length <= COMPLETION_RESULT_LIMIT) return content;
-    return `${ content.slice(0, COMPLETION_RESULT_LIMIT) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
-  }).join('\n\n==========\n\n');
-}
+export { CompletionInboxStore as AgentCompletionInbox };
+export const completionInboxStore = new CompletionInboxStore();
+export const registerCompletionIdleDispatcher = (dispatcher: (channel: string, threadId: string) => void): void => completionInboxStore.registerIdleDispatcher(dispatcher);
+export const enqueueAgentCompletion = (channel: string, threadId: string, completion: PendingCompletion): boolean => completionInboxStore.enqueue(channel, threadId, completion);
+export const notifyAgentCompletionsReady = (channel: string, threadId: string): void => completionInboxStore.notifyReady(channel, threadId);
+export const setCompletionInboxStopped = (channel: string, threadId: string, stopped: boolean): void => completionInboxStore.setStopped(channel, threadId, stopped);
+export const takeAgentCompletions = (channel: string, threadId: string): PendingCompletion[] => completionInboxStore.take(channel, threadId);
+export const formatCompletionBatch = (entries: PendingCompletion[]): string => completionInboxStore.format(entries);
 
 /** Test/process-shutdown hygiene; pending jobs remain durable in agent_jobs. */
-export function clearCompletionInboxes(): void {
-  completionInbox.clear();
-}
+export function clearCompletionInboxes(): void { completionInboxStore.clear(); }
