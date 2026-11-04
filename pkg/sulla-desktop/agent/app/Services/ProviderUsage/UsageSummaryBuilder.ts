@@ -72,7 +72,7 @@ export class UsageSummaryBuilder extends Service {
     );
     const dedicatedSourceIds = new Set(
       Object.values(this.providers).flatMap((provider) =>
-        provider.usageSource.kind === 'settings' ? [provider.id] : [],
+        provider.usageSource.kind === 'settings' ? [] : [],
       ),
     );
     for (const row of meterableRows) {
