@@ -17,6 +17,10 @@
 1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type '{ answer: number; }' is not assignable to type 'string'.
 1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type 'null' is not assignable to type 'number'.
 1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2416	Property 'call' in type 'CheckAgentJobsHarness' is not assignable to the same property in base type 'CheckAgentJobsWorker'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/ParkedManagerInProcessWake.spec.ts	TS2416	Property 'invoke' in type 'ReturnResultHarness' is not assignable to the same property in base type 'ReturnResultWorker'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/ParkedManagerInProcessWake.spec.ts	TS2416	Property 'invoke' in type 'SpawnHarness' is not assignable to the same property in base type 'SpawnAgentWorker'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/ParkedManagerWakeLifecycle.spec.ts	TS2345	Argument of type '(_channel: string, threadId: string) => Promise<undefined>' is not assignable to parameter of type 'NormalizedProcedure<() => Promise<undefined>>'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/ParkedManagerWakeLifecycle.spec.ts	TS2416	Property 'invoke' in type 'ReportProgressHarness' is not assignable to the same property in base type 'ReportProgressWorker'.
 1	pkg/sulla-desktop/agent/tests/Characterization/BrokeredModelCatalog/BrokeredModelCatalog.spec.ts	TS2353	Object literal may only specify known properties, and 'created_at' does not exist in type 'IntegrationAccount'.
 1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobMessagingRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
 1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
@@ -101,7 +105,7 @@
 1	pkg/sulla-desktop/pages/chat/services/PersonaAdapter.ts	TS2339	Property 'state' does not exist on type 'WorkflowNode'.
 1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'Promise<{ accepted: boolean; }>' is not assignable to type 'Promise<void>'.
 1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'Promise<{ ok: boolean; versionId: string; }>' is not assignable to type 'Promise<void>'.
-1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'string' is not assignable to type '"error" | "synced" | "paused" | "syncing" | "conflict"'.
+1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2322	Type 'string' is not assignable to type '"error" | "conflict" | "synced" | "paused" | "syncing"'.
 1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2345	Argument of type '{ collectionId: string; destination: string; }' is not assignable to parameter of type 'string'.
 1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2345	Argument of type '{ collectionId: string; path: string; }' is not assignable to parameter of type 'string'.
 1	pkg/sulla-desktop/pages/files/DesktopFilesDataSource.ts	TS2554	Expected 1 arguments, but got 2.
