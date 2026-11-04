@@ -18,8 +18,8 @@
  * survive a restart, and after the boot sweep a restarted job is
  * correctly reported dead, so nothing needs one.
  *
- * Jobs are cleaned up after retrieval or after a TTL (1 hour) — this is
- * operational state, not history; rows are really deleted.
+ * Reads never delete jobs. Durable rows remain available across cache eviction
+ * and restarts until an explicit retention run authorizes pruning.
  *
  * Every delegation is a job, hidden or tabbed. A tab job holds exactly one
  * task: a live chat tab the human can join. It stays 'running' across turns
@@ -96,7 +96,6 @@ export interface CreateJobOptions {
   parentAgentId?: string;
 }
 
-const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
 const jobs = new Map<string, AgentJob>();
 
 // Per-job AbortController. Kept out of the AgentJob record so it never leaks
@@ -268,8 +267,6 @@ export async function getJob(jobId: string): Promise<AgentJob | undefined> {
 
 export async function getAllJobs(): Promise<AgentJob[]> {
   await ensureBootSweep();
-  await pruneStaleJobs();
-
   // Union: in-memory (authoritative for this process) + persisted rows the
   // Map doesn't know about (pre-restart jobs within TTL).
   try {
@@ -304,7 +301,6 @@ export function boundJobList(allJobs: AgentJob[], limit: number, includeFinished
  */
 export async function getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   await ensureBootSweep();
-  await pruneStaleJobs();
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
   const persisted: AgentJob[] = [];
 
@@ -490,24 +486,4 @@ export function failJob(jobId: string, error: string): void {
     : task);
 
   void persist(agentJobProvider.jobs.fail(jobId, error, job.tasks));
-}
-
-
-export function deleteJob(jobId: string): void {
-  jobs.delete(jobId);
-  abortControllers.delete(jobId);
-  void persist(agentJobProvider.jobs.deleteJob(jobId));
-}
-
-async function pruneStaleJobs(): Promise<void> {
-  const now = Date.now();
-
-  for (const [id, job] of jobs.entries()) {
-    if (job.dismissedAt && (now - job.dismissedAt) > JOB_TTL_MS) {
-      jobs.delete(id);
-      abortControllers.delete(id);
-    }
-  }
-
-  await persist(agentJobProvider.jobs.pruneDismissed());
 }
