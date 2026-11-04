@@ -50,6 +50,7 @@ describe('ParkedAgentRehydrator', () => {
       { findByTaskThread: async() => parkedJob() },
       { findBySlug: async() => null },
       fail,
+      vi.fn(),
     );
     await expect(service.resolve('manager-thread')).rejects.toThrow('refusing default-agent fallback');
     expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
