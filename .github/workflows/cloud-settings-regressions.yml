@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Cloud settings regressions
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cloud-settings-regressions.yml'
+      - 'pkg/sulla-desktop/main/cloud/cloudSettings.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudConsentInit.ts'
+      - 'pkg/sulla-desktop/main/cloud/__tests__/cloudSettings.spec.ts'
+  push:
+    branches: [main]
+    paths:
+      - 'pkg/sulla-desktop/main/cloud/cloudSettings.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudConsentInit.ts'
+      - 'pkg/sulla-desktop/main/cloud/__tests__/cloudSettings.spec.ts'
+permissions:
+  contents: read
+jobs:
+  focused-cloud-settings:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - name: Use Yarn 1.22.22
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install JavaScript dependencies
+        run: yarn install --frozen-lockfile --ignore-platform --ignore-scripts
+      - name: Run focused cloud settings tests
+        run: yarn test:unit:jest --runInBand pkg/sulla-desktop/main/cloud/__tests__/cloudSettings.spec.ts
