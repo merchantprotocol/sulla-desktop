@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { Service } from '@sulla/foundation';
+
 import { SkillDefinitionCodec, type ParsedSkill } from './SkillDefinitionCodec';
 
 import type { SkillDefinition, SkillFile, SkillSourceKind } from '../../../database/models/SkillDefinitionModel';
@@ -27,10 +29,12 @@ export interface SkillFileSystem {
   rmSync(path: string, options: { recursive: true; force: true }): void;
 }
 
-export class SkillFolderService {
+export class SkillFolderService extends Service {
   private readonly skippedNames = new Set(['.git', '.DS_Store', 'node_modules', '.marketplace.json', '__pycache__']);
 
-  constructor(private readonly fileSystem: SkillFileSystem = fs) {}
+  constructor(private readonly fileSystem: SkillFileSystem = fs) {
+    super();
+  }
 
   readFiles(dir: string): Record<string, SkillFile> {
     const files: Record<string, SkillFile> = {};

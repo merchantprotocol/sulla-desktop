@@ -2,6 +2,9 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { Repository, type Connection } from '@sulla/foundation';
+
+import { SkillDefinitionEntry } from '../Models/SkillDefinitionEntry';
 import { SkillDefinitionModel } from '../../database/models/SkillDefinitionModel';
 
 import type {
@@ -16,7 +19,12 @@ export interface SkillRepositoryContract {
   update(id: string, patch: SkillDefinitionPatch): Promise<SkillDefinition | null>;
 }
 
-export class SkillRepository implements SkillRepositoryContract {
+export class SkillRepository extends Repository<SkillDefinitionEntry> implements SkillRepositoryContract {
+  protected readonly model = SkillDefinitionEntry;
+
+  constructor(connection: Connection) {
+    super(connection);
+  }
   findBySlug(slug: string): Promise<SkillDefinition | null> {
     return SkillDefinitionModel.findBySlug(slug);
   }
