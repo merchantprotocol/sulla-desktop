@@ -16,7 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  agent-tests:
+  typecheck:
+    name: typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -75,10 +76,10 @@ jobs:
 
 
 
-  typecheck:
-    name: typecheck
-    needs: agent-tests
+  agent-tests:
+    name: agent-tests
+    needs: typecheck
     runs-on: ubuntu-latest
     steps:
-      - name: Confirm production typecheck passed
-        run: echo 'Production typecheck passed in the dependency-owning agent-tests job.'
+      - name: Confirm agent tests passed
+        run: echo 'Agent tests and production typecheck passed in the dependency-owning typecheck job.'
