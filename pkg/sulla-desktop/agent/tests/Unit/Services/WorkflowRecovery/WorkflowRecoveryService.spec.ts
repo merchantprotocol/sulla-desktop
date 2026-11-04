@@ -53,6 +53,26 @@ describe('WorkflowRecoveryService', () => {
     expect(activate).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'automatic' }));
   });
 
+  it('activates the same execution again when it becomes stale after a successful restart', async() => {
+    // risk: a workflow whose renewed lease expires is stranded until the app restarts
+    const store = new ExecutionFixture();
+    const automatic = row('automatic');
+    automatic.attributes.auto_restart = true;
+    store.suspended = [automatic];
+    const activate = vi.fn(async() => undefined);
+    const service = new WorkflowRecoveryService(store, { activate }, new FakeClock(), { notify: vi.fn() });
+
+    await service.recover();
+    await settle();
+    store.suspended = [];
+    store.stale = [automatic];
+    store.recoveries.set('automatic', { execution: automatic });
+    await service.recover();
+    await settle();
+
+    expect(activate).toHaveBeenCalledTimes(2);
+  });
+
   it('notifies the same suspended run only once across recovery passes', async() => {
     // risk: lease scans repeatedly interrupt the user for one paused run
     const store = new ExecutionFixture(); store.suspended = [row('manual')];
