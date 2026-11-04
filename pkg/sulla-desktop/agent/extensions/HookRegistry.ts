@@ -68,7 +68,9 @@ export class HookRegistry {
       if (!outcome.called) continue;
       const result = outcome.result as any;
       if (result?.denied === true || result?.allow === false) return { value, denied: true, reason: String(result.reason || `Denied by ${ entry.extensionId }`) };
-      const candidate = result && typeof result === 'object' && 'value' in result ? result.value : result;
+      // Filter hooks replace the payload only through the explicit decision envelope.
+      // An empty object is a no-op, not a replacement payload.
+      const candidate = result && typeof result === 'object' && 'value' in result ? result.value : undefined;
       if (candidate !== undefined) value = restoreRedacted(candidate, value);
     }
     return { value };
