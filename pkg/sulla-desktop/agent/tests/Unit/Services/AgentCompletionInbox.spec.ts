@@ -4,9 +4,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { CompletionInboxStore } from '../../../services/AgentCompletionInbox';
+import { CompletionInboxStore, formatCompletionBatch } from '../../../services/AgentCompletionInbox';
 
 describe('CompletionInboxStore', () => {
+  it('formats every child contract into one wake batch', () => {
+    // risk: a parked manager wakes without the returned child contract
+    const result = { label: 'worker', status: 'completed' as const, output: 'contract-output', threadId: 'child' };
+    const content = formatCompletionBatch([{ jobId: 'worker-a', results: [result] }, { jobId: 'worker-b', results: [], failureReason: 'network failed' }]);
+    expect(content).toContain('[sub-agent job worker-a complete');
+    expect(content).toContain('contract-output');
+    expect(content).toContain('[sub-agent job worker-b FAILED] network failed');
+  });
+
   it('coalesces duplicate receipts while preserving two simultaneous workers', () => {
     // risk: concurrent child completion loss or duplicate parent turns
     const store = new CompletionInboxStore();

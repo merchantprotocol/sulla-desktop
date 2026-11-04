@@ -62,6 +62,10 @@ export class CompletionInboxStore {
     return entries;
   }
 
+  format(entries: PendingCompletion[]): string {
+    return entries.map(entry => buildWakeContent(entry.jobId, entry.results, entry.failureReason)).join('\n\n');
+  }
+
   clear(): void {
     for (const inbox of this.inboxes.values()) if (inbox.timer) clearTimeout(inbox.timer);
     this.inboxes.clear();
@@ -74,6 +78,7 @@ export const registerCompletionIdleDispatcher = (dispatcher: (channel: string, t
 export const enqueueAgentCompletion = (channel: string, threadId: string, completion: PendingCompletion): boolean => completionInboxStore.enqueue(channel, threadId, completion);
 export const setCompletionInboxStopped = (channel: string, threadId: string, stopped: boolean): void => completionInboxStore.setStopped(channel, threadId, stopped);
 export const takeAgentCompletions = (channel: string, threadId: string): PendingCompletion[] => completionInboxStore.take(channel, threadId);
+export const formatCompletionBatch = (entries: PendingCompletion[]): string => completionInboxStore.format(entries);
 
 /** Test/process-shutdown hygiene; pending jobs remain durable in agent_jobs. */
 export function clearCompletionInboxes(): void { completionInboxStore.clear(); }
