@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1136,
+  "entries": 1135,
   "files": {
     "background.ts": {
       "rules": {
@@ -1332,6 +1332,12 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
+    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
+      "rules": {
+        "raw-sql": 1
+      },
+      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
+    },
     "pkg/sulla-desktop/agent/tools/episodic/search.ts": {
       "rules": {
         "raw-sql": 1
@@ -2523,12 +2529,6 @@
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/devicesCloudApi.ts": {
-      "rules": {
-        "mutable-state": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/main/dockerLinks.ts": {
       "rules": {
@@ -5146,12 +5146,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/tools/desktop/desktop.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     }
   }
 }
