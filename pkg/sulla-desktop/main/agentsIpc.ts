@@ -155,7 +155,7 @@ export interface ThreadAgentCard {
   taskIndex:      number;
   agentId:        string;
   label:          string;
-  status:         'running' | 'done' | 'failed' | 'stopped';
+  status:         'running' | 'parked' | 'done' | 'failed' | 'stopped';
   createdAt:      number;
   finishedAt:     number | null;
   conversationId?: string;
@@ -386,7 +386,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
-    let lastActivity = task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
+    let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
     let lastActivityAt = RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
 
     if (task.threadId) {
@@ -449,6 +449,7 @@ function clipLine(text: string, max = 180): string {
 }
 
 function toCardStatus(taskStatus: string, jobStatus: string): ThreadAgentCard['status'] {
+  if (taskStatus === 'parked' || jobStatus === 'parked') return 'parked';
   if (taskStatus === 'completed') return 'done';
   if (taskStatus === 'error' || taskStatus === 'blocked' || jobStatus === 'failed') return 'failed';
   if (taskStatus === 'stopped' || jobStatus === 'stopped') return 'stopped';

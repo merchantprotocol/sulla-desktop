@@ -55,6 +55,7 @@ import { validateChatSelection } from '@pkg/main/chatSelection';
 import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
+import { RelayLivenessWatchdog } from '@pkg/main/relayLivenessWatchdog';
 
 
 const console = Logging.background;
@@ -77,6 +78,8 @@ const OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY = (deviceName: string) =>
 // (where TCP never FINs) well before Cloudflare's ~10min hibernation cutoff.
 const PING_INTERVAL_MS = 20_000;
 const STALE_SOCKET_MS  = 45_000;
+const WATCHDOG_DRIFT_THRESHOLD_MS = 5_000;
+const WATCHDOG_PONG_DEADLINE_MS = 5_000;
 // If a freshly-opened socket doesn't fire `open` in this window, we assume
 // it's stuck and tear it down. Prevents a wedged connect from pinning the
 // client in "connecting" forever.
@@ -189,8 +192,7 @@ export class DesktopRelayClient {
   // reconnect — the `close` event alone is unreliable when intermediaries
   // drop the connection without sending a TCP FIN.
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
-  private lastInboundAt = 0;
+  private watchdog: RelayLivenessWatchdog | null = null;
   // Guards against a stuck `new WebSocket()` that never resolves to `open`.
   private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   // Bumped per openSocket() call so a slower concurrent call can't open a
@@ -342,7 +344,7 @@ export class DesktopRelayClient {
   /** Stop all heartbeat/watchdog/connect timers. Idempotent. */
   private teardownLiveness() {
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
-    if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
+    if (this.watchdog) { this.watchdog.stop(); this.watchdog = null; }
     if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
   }
 
@@ -426,7 +428,6 @@ export class DesktopRelayClient {
       this.lastError = '';
       this.lastFailure = null;
       this.reconnectDelay = RECONNECT_BASE_MS;
-      this.lastInboundAt = Date.now();
       this.noteState('connected', `Connected — room=${ room }${ this.failedAttempts > 1 ? ` (recovered after ${ this.failedAttempts } attempts)` : '' }`);
       this.failedAttempts = 0;
       this.broadcastStatus();
@@ -444,25 +445,27 @@ export class DesktopRelayClient {
       // Clear any previous timers first — overwriting the handles leaked
       // intervals that later force-closed the healthy socket in bursts.
       if (this.pingTimer) clearInterval(this.pingTimer);
-      if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+      if (this.watchdog) this.watchdog.stop();
       this.pingTimer = setInterval(() => {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         try { this.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* socket in bad state; watchdog will handle */ }
       }, PING_INTERVAL_MS);
 
-      // Watchdog: any silent period >STALE_SOCKET_MS means the pipe is
-      // dead even if the browser hasn't fired `close` yet. Force-reconnect.
-      this.watchdogTimer = setInterval(() => {
-        const silentMs = Date.now() - this.lastInboundAt;
-        if (silentMs > STALE_SOCKET_MS) {
-          this.forceReconnect(`no inbound traffic for ${ silentMs }ms`);
-        }
-      }, Math.floor(STALE_SOCKET_MS / 3));
+      this.watchdog = new RelayLivenessWatchdog(
+        { now: () => Date.now(), setTimeout: (callback, delayMs) => setTimeout(callback, delayMs), clearTimeout: timer => clearTimeout(timer) },
+        {
+          ping: () => { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping' })); },
+          reconnect: reason => this.forceReconnect(reason),
+        },
+        console,
+        { staleSocketMs: STALE_SOCKET_MS, checkIntervalMs: Math.floor(STALE_SOCKET_MS / 3), driftThresholdMs: WATCHDOG_DRIFT_THRESHOLD_MS, pongDeadlineMs: WATCHDOG_PONG_DEADLINE_MS },
+      );
+      this.watchdog.start();
     });
 
     ws.addEventListener('message', (event) => {
       if (this.ws !== ws) return;
-      this.lastInboundAt = Date.now();
+      this.watchdog?.noteInbound();
       this.handleMessage(event.data as string, ws, gen);
     });
 
