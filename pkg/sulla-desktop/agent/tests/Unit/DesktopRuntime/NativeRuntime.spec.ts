@@ -9,6 +9,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { NativeRuntime, RuntimeProcessSpawner } from '@pkg/backend/sullaRuntime/NativeRuntime';
+import { InstanceEnvironmentConfigurator } from '@pkg/utils/instance';
 import type { SullaRuntimeArtifacts } from '@pkg/backend/sullaRuntime/artifacts';
 
 class FakeRuntimeProcessSpawner implements RuntimeProcessSpawner {
@@ -53,6 +54,36 @@ describe('NativeRuntime instance isolation', () => {
     else process.env.SULLA_INSTANCE = originalInstance;
     if (originalRuntimeDirectory === undefined) delete process.env.SULLA_RUNTIME_DIR;
     else process.env.SULLA_RUNTIME_DIR = originalRuntimeDirectory;
+  });
+
+  it('configures the named instance runtime directory for all inherited child environments', () => {
+    // risk: tenant/runtime isolation — every host child must inherit the named instance sockets.
+    process.env.SULLA_INSTANCE = 'firstrun-test';
+    delete process.env.SULLA_RUNTIME_DIR;
+
+    new InstanceEnvironmentConfigurator().configureRuntimeDirectory();
+
+    expect(process.env.SULLA_RUNTIME_DIR).toMatch(/Sulla-firstrun-test[\\/]runtime$/);
+  });
+
+  it('preserves a preset runtime directory', () => {
+    // risk: deployment compatibility — explicit runtime overrides must win over instance defaults.
+    process.env.SULLA_INSTANCE = 'firstrun-test';
+    process.env.SULLA_RUNTIME_DIR = '/tmp/explicit-runtime';
+
+    new InstanceEnvironmentConfigurator().configureRuntimeDirectory();
+
+    expect(process.env.SULLA_RUNTIME_DIR).toBe('/tmp/explicit-runtime');
+  });
+
+  it('leaves the runtime directory unset without an instance', () => {
+    // risk: default runtime behavior — ordinary launches must not gain an instance override.
+    delete process.env.SULLA_INSTANCE;
+    delete process.env.SULLA_RUNTIME_DIR;
+
+    new InstanceEnvironmentConfigurator().configureRuntimeDirectory();
+
+    expect(process.env.SULLA_RUNTIME_DIR).toBeUndefined();
   });
 
   it('passes the named instance runtime directory to the host process', async () => {
