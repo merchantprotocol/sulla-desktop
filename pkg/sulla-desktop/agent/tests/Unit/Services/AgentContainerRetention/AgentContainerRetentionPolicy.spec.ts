@@ -118,6 +118,47 @@ function buildPolicy(options: {
 }
 
 describe('ContainerRetentionPolicy', () => {
+  it('returns a list-stage error without removing anything when list fails', async() => {
+    // risk: a Docker listing failure aborts retention without an observable job-level error
+    const runtime = new FakeContainerRuntimeDriver();
+    runtime.listError = new Error('docker ps failed');
+    const { policy } = buildPolicy({ runtime });
+
+    const report = await policy.enforce();
+
+    expect(report.errors).toEqual([{ stage: 'list', message: 'docker ps failed' }]);
+    expect(report.removed).toEqual([]);
+    expect(report.keptCount).toBe(0);
+    expect(runtime.removedIds).toEqual([]);
+  });
+
+  it('records a first disk probe failure while preserving age and count removals', async() => {
+    // risk: a df failure hides retention errors or prevents age/count cleanup that protects disk
+    const clock = new FakeClock();
+    const runtime = new FakeContainerRuntimeDriver();
+    runtime.add(agentContainer({ id: 'old', finishedAt: new Date(clock.current - 25 * HOUR_MS).toISOString() }));
+    runtime.add(agentContainer({ id: 'older-kept', finishedAt: new Date(clock.current - 2 * HOUR_MS).toISOString() }));
+    runtime.add(agentContainer({ id: 'newest', finishedAt: new Date(clock.current - 1 * HOUR_MS).toISOString() }));
+    const disk = new FakeDiskSpaceProbe([100 * 1024 ** 3]);
+    disk.throwOnCall = 1;
+    const { policy } = buildPolicy({
+      runtime, clock, disk,
+      config: new RetentionConfig({ maxAgeMs: 24 * HOUR_MS, maxKept: 1 }),
+    });
+
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([
+      { id: 'old', name: 'old', reason: 'age' },
+      { id: 'older-kept', name: 'older-kept', reason: 'count' },
+    ]);
+    expect(report.freeBytesBefore).toBeNull();
+    expect(report.freeBytesAfter).toBeNull();
+    expect(report.errors).toEqual([{ stage: 'disk-probe', message: 'df failed' }]);
+    expect(report.keptCount).toBe(1);
+    expect(runtime.get('newest')).toBeDefined();
+  });
+
   it('removes a finished container older than maxAgeMs', async() => {
     // risk: a disk-filling pile of finished containers never clears because nothing enforces an age ceiling
     const clock = new FakeClock();
