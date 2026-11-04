@@ -53,20 +53,17 @@ import {
 } from './session.js';
 import {
   bundleMatchesAccount,
-  commit,
-  createPersonalVault,
   expectedBundleFields,
   findMember,
-  getBundle,
-  getHead,
-  listRecords,
-  orgVaultId,
   readableCollections,
   resolveScope,
-  rewrapBundle,
-  scopeStats,
   type Member,
 } from './store.js';
+import {
+  PostgresVaultBundleRepository,
+  PostgresVaultHeadRepository,
+  PostgresVaultRecordRepository,
+} from '../repositories/postgresVaultRepositories.js';
 
 import type { BrowserSyncConfig } from './config.js';
 import type { VaultConfig } from '../config.js';
@@ -139,7 +136,7 @@ function browserOnly(request: SyncRequest): BrowserSession {
 /** The org vault in the URL must be the caller's own org vault; anything else is 404. */
 async function ownVault(db: Database, request: SyncRequest): Promise<string> {
   const vaultId = request.params.vaultId;
-  const vault = await orgVaultId(db, member(request).orgId);
+  const vault = await bundles.findVaultId(member(request).orgId);
   if (!isUuid(vaultId) || vaultId !== vault) throw new SyncError(404, 'not_found');
   return vault;
 }
@@ -161,6 +158,9 @@ function bearerOrg(request: SyncRequest): string {
 }
 
 export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync: BrowserSyncConfig): express.Router {
+  const bundles = new PostgresVaultBundleRepository(db);
+  const heads = new PostgresVaultHeadRepository(db);
+  const records = new PostgresVaultRecordRepository(db);
   const router = express.Router();
   const bearerAuth = authenticate(config, db);
   const audit = (
@@ -235,8 +235,8 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
   // ── Status ──────────────────────────────────────────────────────────
   router.get('/status', route(async(request, response) => {
     const caller = member(request);
-    const vaultId = await orgVaultId(db, caller.orgId);
-    const bundle = await getBundle(db, vaultId, caller.userId);
+    const vaultId = await bundles.findVaultId(caller.orgId);
+    const bundle = await bundles.find(vaultId, caller.userId);
     const collections = await readableCollections(db, caller);
     if (!bundle) {
       return response.json({
@@ -257,8 +257,8 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
         bundleGeneration: bundle.bundle_generation,
       });
     }
-    const head = await getHead(db, vaultId, caller.userId);
-    const stats = await scopeStats(db, vaultId, caller.userId);
+    const head = await heads.find(vaultId, caller.userId);
+    const stats = await records.scopeStats(vaultId, caller.userId);
     return response.json({
       enabled:                true,
       orgId:                  caller.orgId,
@@ -369,7 +369,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
     browserOnly(request);
     const vaultId = await ownVault(db, request);
     const caller = member(request);
-    const current = await getBundle(db, vaultId, caller.userId);
+    const current = await bundles.find(vaultId, caller.userId);
     const generation = current ? current.bundle_generation + 1 : 1;
     const fields = await expectedBundleFields(db, caller, vaultId, generation, current?.epoch ?? 1);
     if (!fields) throw new SyncError(404, 'not_found');
@@ -389,7 +389,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
       const body = validateCreateBody(request.body, vaultId, caller.userId);
       const expected = await expectedBundleFields(db, caller, vaultId, body.bundle.bundleGeneration, body.bundle.epoch);
       if (!expected || !bundleMatchesAccount(body.bundle, expected)) throw new InvalidBody('bundle_mismatch', 409);
-      const created = await createPersonalVault(db, caller, vaultId, body);
+      const created = await bundles.createPersonalVault(caller, vaultId, body);
       if (!created.ok) throw new SyncError(409, created.error);
       const detail = { records: body.records.length, epoch: body.bundle.epoch, seq: body.head.seq };
       await audit(request, 'bundle_created', detail);
@@ -399,7 +399,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
       const body = validateRewrapBody(request.body, vaultId, caller.userId);
       const expected = await expectedBundleFields(db, caller, vaultId, body.bundle.bundleGeneration, body.bundle.epoch);
       if (!expected || !bundleMatchesAccount(body.bundle, expected)) throw new InvalidBody('bundle_mismatch', 409);
-      if (!await rewrapBundle(db, caller, vaultId, body.bundle, body.expectedBundleGeneration)) {
+      if (!await bundles.rewrap(caller, vaultId, body.bundle, body.expectedBundleGeneration)) {
         throw new SyncError(409, 'bundle_stale');
       }
       await audit(request, 'bundle_rewrapped', { bundleGeneration: body.bundle.bundleGeneration });
@@ -414,7 +414,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
     const caller = member(request);
     // Fresh-auth window: a bundle is only handed out within 12 hours of the console sign-in handoff.
     if (Date.now() - Date.parse(session.createdAt) > SESSION_TTL_MS) throw new SyncError(401, 'session_expired');
-    const stored = await getBundle(db, vaultId, caller.userId);
+    const stored = await bundles.find(vaultId, caller.userId);
     if (!stored) throw new SyncError(404, 'not_found');
     // After a password change the stored bundle would still open with the old password: refuse it.
     const expected = await expectedBundleFields(db, caller, vaultId, stored.bundle_generation, stored.epoch);
@@ -427,7 +427,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
     );
     const collections = [];
     for (const collection of await readableCollections(db, caller)) {
-      const head = await getHead(db, vaultId, collection.collectionId);
+      const head = await heads.find(vaultId, collection.collectionId);
       collections.push({
         collectionId:         collection.collectionId,
         encryptedName:        collection.encryptedName,
@@ -461,13 +461,13 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
     }
     const ref = await resolveScope(db, caller, scope);
     if (!ref) throw new SyncError(404, 'not_found');
-    const page = await listRecords(db, vaultId, ref.scopeOwner, since, cursor, limit);
+    const page = await records.list(vaultId, ref.scopeOwner, since, cursor, limit);
     if (!cursor) {
       const kind = scope === 'personal' ? 'personal' : 'collection';
       const collectionId = scope === 'personal' ? null : scope;
       await audit(request, 'records_downloaded', { scope: kind, since, count: page.records.length }, collectionId);
     }
-    const bundle = await getBundle(db, vaultId, caller.userId);
+    const bundle = await bundles.find(vaultId, caller.userId);
     response.json({
       ...page,
       syncPaused:       false,
@@ -492,11 +492,11 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
     const ref = await resolveScope(db, caller, body.scope);
     if (!ref) throw new SyncError(404, 'not_found');
     if (!ref.writable) throw new SyncError(403, 'edit_required');
-    if (body.scope === 'personal' && !await getBundle(db, vaultId, caller.userId)) {
+    if (body.scope === 'personal' && !await bundles.find(vaultId, caller.userId)) {
       throw new SyncError(404, 'not_found');
     }
     const collectionId = body.scope === 'personal' ? null : body.scope;
-    const result = await commit(db, vaultId, ref, body);
+    const result = await records.commit(vaultId, ref, body);
     if (result.ok) {
       await audit(request, 'commit_accepted', { count: result.written, seq: result.seq }, collectionId);
       return response.json({ ok: true, headSeq: result.seq });
