@@ -28,6 +28,19 @@ export class AgentJobLifecycleService {
     return true;
   }
 
+  /**
+   * True while this exact process has a spawn_agent runner blocked in
+   * waitForWake() for this thread — the manager is parked mid in-process
+   * loop, not dormant. A completion/message for such a thread must be
+   * injected into the live state and released with wake(), never re-entered
+   * through a brand-new dispatchToAgent turn: that second, disconnected
+   * execution would leave this exact Promise (and its own completeJob /
+   * deliverJobCompletion once the loop returns) blocked forever.
+   */
+  hasLiveWaiter(threadId: string): boolean {
+    return this.waiters.has(threadId);
+  }
+
   async waitForWake(threadId: string, signal?: AbortSignal): Promise<void> {
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);

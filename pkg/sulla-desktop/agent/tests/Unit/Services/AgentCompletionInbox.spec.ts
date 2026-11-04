@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { CompletionInboxStore, formatCompletionBatch } from '../../../services/AgentCompletionInbox';
+import { COMPLETION_RESULT_LIMIT, CompletionInboxStore, formatCompletionBatch } from '../../../services/AgentCompletionInbox';
 
 describe('CompletionInboxStore', () => {
   it('formats every child contract into one wake batch', () => {
@@ -14,6 +14,18 @@ describe('CompletionInboxStore', () => {
     expect(content).toContain('[sub-agent job worker-a complete');
     expect(content).toContain('contract-output');
     expect(content).toContain('[sub-agent job worker-b FAILED] network failed');
+    // risk: batched completions bleed into each other without a separator
+    expect(content).toContain('\n\n==========\n\n');
+  });
+
+  it('truncates one entry\'s content past COMPLETION_RESULT_LIMIT and points at check_agent_jobs', () => {
+    // risk: an oversized child result blows up the parent's prompt instead of
+    // being truncated with a pointer to the full text
+    const hugeOutput = 'x'.repeat(COMPLETION_RESULT_LIMIT + 500);
+    const result = { label: 'worker', status: 'completed' as const, output: hugeOutput, threadId: 'child' };
+    const content = formatCompletionBatch([{ jobId: 'worker-huge', results: [result] }]);
+    expect(content.length).toBeLessThan(hugeOutput.length);
+    expect(content).toContain('[Result truncated. Use agents/check_agent_jobs for the full text of worker-huge.]');
   });
 
   it('coalesces duplicate receipts while preserving two simultaneous workers', () => {

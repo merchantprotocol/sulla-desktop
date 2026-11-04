@@ -16,4 +16,19 @@ describe('AgentJobLifecycleService pending wake ownership', () => {
     abort.abort();
     await expect(waiting).resolves.toBeUndefined();
   });
+
+  it('reports a live waiter only while a call is actually blocked in waitForWake, and releases it on wake()', async() => {
+    // risk: a completion for a parked-but-dormant thread is mistaken for one
+    // with a live in-process runner (or vice versa), routing it down the
+    // wrong delivery path
+    const service = new AgentJobLifecycleService({ openChildrenForThread: async() => 1 }, vi.fn(), vi.fn());
+    expect(service.hasLiveWaiter('thread')).toBe(false);
+
+    const waiting = service.waitForWake('thread');
+    expect(service.hasLiveWaiter('thread')).toBe(true);
+
+    expect(service.wake('thread')).toBe(true);
+    await waiting;
+    expect(service.hasLiveWaiter('thread')).toBe(false);
+  });
 });
