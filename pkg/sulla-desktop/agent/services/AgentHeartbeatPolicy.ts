@@ -73,6 +73,12 @@ export class AgentHeartbeatPolicy {
     return { config, field: '' };
   }
 
+  static assertConfig(raw: Record<string, unknown>): AgentHeartbeatConfig {
+    const validated = AgentHeartbeatPolicy.validateConfig(raw);
+    if (!validated.config) throw new Error(`Invalid heartbeat configuration: ${ validated.field }.`);
+    return validated.config;
+  }
+
   private evaluate(slug: string, config: AgentHeartbeatConfig, requested?: number): HeartbeatDecision {
     const interval = requested === undefined ? config.defaultIntervalMinutes : requested;
     if (!Number.isFinite(interval) || interval < config.minIntervalMinutes || interval > config.maxIntervalMinutes) {
