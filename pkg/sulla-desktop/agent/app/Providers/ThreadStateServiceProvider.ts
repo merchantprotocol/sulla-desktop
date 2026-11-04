@@ -10,7 +10,7 @@ import { ConversationHistoryModel } from '../../database/models/ConversationHist
 
 export class ThreadStateServiceProvider {
   readonly memory = new MemoryThreadStateRepository();
-  readonly redis = new RedisThreadStateRepository(redisClient.getClient());
+  readonly redis = new RedisThreadStateRepository(redisClient);
   readonly recovery = new LogRecoveryThreadStateRepository(ConversationHistoryModel);
   readonly repository = new FallbackThreadStateRepository(this.redis, this.memory, this.recovery, console);
 }

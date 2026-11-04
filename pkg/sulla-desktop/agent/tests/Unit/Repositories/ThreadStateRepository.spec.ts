@@ -46,7 +46,7 @@ describe('ThreadStateRepository strategies', () => {
     const second = redisClient();
     let current = first;
     const source = { getClient: () => current };
-    const repository = new RedisThreadStateRepository(source as never);
+    const repository = new RedisThreadStateRepository(source);
 
     expect(await repository.available()).toBe(true);
     current = second;
@@ -59,7 +59,7 @@ describe('ThreadStateRepository strategies', () => {
   it('preserves Redis serialization, TTL, and delete behavior', async() => {
     // risk: thread data integrity
     const client = redisClient();
-    const repository = new RedisThreadStateRepository(client, 42);
+    const repository = new RedisThreadStateRepository({ getClient: () => client }, 42);
     await repository.save(state('redis-id', 'durable'));
 
     expect(client.setex).toHaveBeenCalledWith('sulla:threadstate:redis-id', 42, expect.any(String));
@@ -72,7 +72,7 @@ describe('ThreadStateRepository strategies', () => {
     // risk: conversation loss during Redis outage
     const client = redisClient();
     client.setex.mockRejectedValueOnce(new Error('offline'));
-    const redis = new RedisThreadStateRepository(client);
+    const redis = new RedisThreadStateRepository({ getClient: () => client });
     const memory = new MemoryThreadStateRepository();
     const recovery: ThreadStateRepository = {
       save: vi.fn(async() => undefined), delete: vi.fn(async() => undefined),

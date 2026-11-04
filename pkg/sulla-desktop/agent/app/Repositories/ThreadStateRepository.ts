@@ -21,6 +21,9 @@ export interface RedisThreadStateClient {
   get(key: string): Promise<string | null>;
   del(key: string): Promise<unknown>;
 }
+export interface RedisThreadStateClientSource {
+  getClient(): RedisThreadStateClient;
+}
 export interface ConversationHistoryLookup {
   getByThread(threadId: string): Promise<ConversationHistoryRecord | null>;
 }
@@ -41,19 +44,29 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
 
 export class RedisThreadStateRepository extends Service implements ThreadStateRepository {
   private static readonly KEY_PREFIX = 'sulla:threadstate:';
-  constructor(private readonly client: RedisThreadStateClient, private readonly ttlSeconds = 3600) { super(); }
+  constructor(private readonly clientSource: RedisThreadStateClientSource, private readonly ttlSeconds = 3600) { super(); }
   async available(): Promise<boolean> {
-    if (this.client.status !== 'ready') return false;
-    try { await this.client.ping(); return true; } catch { return false; }
+    const client = this.clientSource.getClient();
+    if (client.status !== 'ready') return false;
+    try {
+      await client.ping();
+      return true;
+    } catch {
+      return false;
+    }
   }
   async save(state: BaseThreadState): Promise<void> {
-    await this.client.setex(this.key(state.metadata.threadId), this.ttlSeconds, JSON.stringify(structuredClone(state)));
+    await this.clientSource.getClient().setex(
+      this.key(state.metadata.threadId), this.ttlSeconds, JSON.stringify(structuredClone(state)),
+    );
   }
   async load(threadId: string): Promise<BaseThreadState | null> {
-    const json = await this.client.get(this.key(threadId));
+    const json = await this.clientSource.getClient().get(this.key(threadId));
     return json ? structuredClone(JSON.parse(json) as BaseThreadState) : null;
   }
-  async delete(threadId: string): Promise<void> { await this.client.del(this.key(threadId)); }
+  async delete(threadId: string): Promise<void> {
+    await this.clientSource.getClient().del(this.key(threadId));
+  }
   private key(threadId: string): string { return RedisThreadStateRepository.KEY_PREFIX + threadId; }
 }
 
@@ -151,7 +164,10 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
   }
   async delete(threadId: string): Promise<void> {
     if (await this.redis.available()) {
-      try { await this.redis.delete(threadId); } catch (error) { this.logger.error('[ThreadStateStore] Redis delete failed:', error); }
+      try {
+        await this.redis.delete(threadId);
+        this.logger.log(`[ThreadStateStore] Deleted thread ${ threadId } from Redis`);
+      } catch (error) { this.logger.error('[ThreadStateStore] Redis delete failed:', error); }
     }
     await this.memory.delete(threadId);
   }
