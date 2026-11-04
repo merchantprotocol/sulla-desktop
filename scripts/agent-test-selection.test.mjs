@@ -29,3 +29,7 @@ test('guest disk changes alone request BusyBox setup', () => { // risk: characte
   assert.equal(classifier.classify(['pkg/sulla-desktop/agent/utils/guestDisk.ts']).needsBusyBox, true);
   assert.equal(classifier.classify(['pkg/sulla-desktop/agent/services/AgentJobService.ts']).needsBusyBox, false);
 });
+
+test('duplicate and empty paths are normalized before classification', () => { // risk: deterministic CI selection
+  assert.deepEqual(classifier.classify(['', 'docs/a.md', 'docs/a.md']).files, ['docs/a.md']);
+});
