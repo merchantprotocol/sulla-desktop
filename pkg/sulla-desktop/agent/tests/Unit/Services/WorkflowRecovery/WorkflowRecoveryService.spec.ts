@@ -37,6 +37,22 @@ describe('WorkflowRecoveryService', () => {
     expect(service.takePending()).toEqual([expect.objectContaining({ executionId: 'stale' })]);
   });
 
+  it('activates an auto-restart execution only once when both boot entry points run', async() => {
+    // risk: duplicate boot recovery starts the same workflow execution twice
+    const store = new ExecutionFixture();
+    const automatic = row('automatic');
+    automatic.attributes.auto_restart = true;
+    store.suspended = [automatic];
+    const activate = vi.fn(async() => undefined);
+    const service = new WorkflowRecoveryService(store, { activate }, new FakeClock(), { notify: vi.fn() });
+
+    await service.start();
+    await service.recover();
+
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'automatic' }));
+  });
+
   it('notifies the same suspended run only once across recovery passes', async() => {
     // risk: lease scans repeatedly interrupt the user for one paused run
     const store = new ExecutionFixture(); store.suspended = [row('manual')];
