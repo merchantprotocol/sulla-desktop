@@ -1815,17 +1815,6 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
     console.warn('[sullaEnd] Terminal server stop failed:', err);
   }
 
-  // Suspend any in-flight workflows before the DB closes so boot recovery
-  // can find and resume them on next startup.
-  if (postgresClient.isConnected()) {
-    try {
-      const { gracefulShutdown } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
-      await gracefulShutdown();
-    } catch (err) {
-      console.warn('[sullaEnd] Workflow graceful shutdown failed:', err);
-    }
-  }
-
   await lifecycle.stopAll(mode);
 
   // Force-close connection clients if they're still alive.
