@@ -1500,12 +1500,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/tools/toolCardFormatters.ts": {
-      "rules": {
-        "long-file": 597
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/agent/tools/toolPlacement.ts": {
       "rules": {
         "mutable-state": 3
