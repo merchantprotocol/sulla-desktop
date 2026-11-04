@@ -16,9 +16,15 @@ export interface ProviderUsageStore {
 }
 export class ProviderUsageRepository extends Repository<ProviderUsageEntry> implements ProviderUsageStore {
   protected readonly model = ProviderUsageEntry;
-  constructor(connection: Connection) { super(connection) }
-  setting(key: string, fallback: unknown): Promise<unknown> { return SullaSettingsModel.get(key, fallback) }
-  saveSetting(key: string, value: string): Promise<void> { return SullaSettingsModel.set(key, value) }
+  constructor(connection: Connection) {
+    super(connection);
+  }
+  setting(key: string, fallback: unknown): Promise<unknown> {
+    return SullaSettingsModel.get(key, fallback);
+  }
+  saveSetting(key: string, value: string): Promise<void> {
+    return SullaSettingsModel.set(key, value);
+  }
   async meterableRecords(profileId: string, since: Date): Promise<MeterableUsageRow[]> {
     return MeterableUsageModel.records(profileId, since);
   }
