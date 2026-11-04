@@ -86,7 +86,7 @@ export class AgentDefinitionService {
     return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) });
   }
 
-  /** Merge config keys; unlike update({ config }), this preserves unrelated keys. */
+  /** Merge config keys, same as update({ config }); unlike update, skips optimistic concurrency (no expectedUpdatedAt). */
   patchConfig(id: string, patch: AgentDefinitionConfigPatch): Promise<AgentDefinition | null> {
     return AgentDefinitionModel.patchConfig(id, patch);
   }

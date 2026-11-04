@@ -36,11 +36,12 @@ export class AgentHeartbeatPolicy {
     if (requestedIntervalMinutes === 0) return { allowed: true, intervalMinutes: 0, reason: 'Heartbeats are turned off.' };
     const definition = await this.resolve(agentId);
     if (!definition) {
-      if (agentId === 'sulla' || agentId === 'sulla-desktop') return this.evaluate(agentId, LEAD_DEFAULTS, requestedIntervalMinutes);
+      if (AgentHeartbeatPolicy.isPrimaryPersonaSlug(agentId)) return this.evaluate(agentId, LEAD_DEFAULTS, requestedIntervalMinutes);
       return this.denied(agentId, requestedIntervalMinutes, `Agent definition not found for ${ agentId }.`);
     }
     const raw = definition.config?.heartbeat;
     if (!isRecord(raw)) {
+      if (AgentHeartbeatPolicy.isPrimaryPersonaSlug(definition.slug)) return this.evaluate(definition.slug, LEAD_DEFAULTS, requestedIntervalMinutes);
       return this.denied(definition.slug, requestedIntervalMinutes, `Heartbeats are not allowed for agent ${ definition.slug }: set config.heartbeat.allowed = true in its agent definition.`);
     }
     const validated = AgentHeartbeatPolicy.validateConfig(raw);
@@ -51,6 +52,11 @@ export class AgentHeartbeatPolicy {
   private async resolve(agentId: string): Promise<AgentDefinition | null> {
     const bySlug = await this.definitions.findBySlug(agentId);
     return bySlug ?? await this.definitions.get(agentId);
+  }
+
+  /** The primary Sulla persona defaults to allowed even without a seeded config.heartbeat (acceptance 6). */
+  private static isPrimaryPersonaSlug(slug: string): boolean {
+    return slug === 'sulla' || slug === 'sulla-desktop';
   }
 
   static validateConfig(raw: Record<string, unknown>): { config: AgentHeartbeatConfig | null; field: string } {

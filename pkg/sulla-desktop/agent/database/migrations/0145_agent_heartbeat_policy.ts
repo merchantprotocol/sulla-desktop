@@ -8,6 +8,7 @@ export const up = `
   UPDATE agent_definitions AS a
   SET config = COALESCE(a.config, '{}'::jsonb) || jsonb_build_object('heartbeat', jsonb_build_object('allowed', v.allowed, 'defaultIntervalMinutes', 5, 'minIntervalMinutes', 1, 'maxIntervalMinutes', 1440))
   FROM (VALUES
+    ('sulla', true), ('sulla-desktop', true),
     ('account-manager', true), ('coding-manager', true), ('coding-manager-sol', true),
     ('coding-manager-gpt', true), ('coding-manager-grok', true), ('ui-test-manager', true),
     ('project-manager', true), ('director', true), ('heartbeat', true),
@@ -23,6 +24,7 @@ export const down = `
   UPDATE agent_definitions AS a
   SET config = a.config - 'heartbeat'
   FROM (VALUES
+    ('sulla', true), ('sulla-desktop', true),
     ('account-manager', true), ('coding-manager', true), ('coding-manager-sol', true),
     ('coding-manager-gpt', true), ('coding-manager-grok', true), ('ui-test-manager', true),
     ('project-manager', true), ('director', true), ('heartbeat', true),

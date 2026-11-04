@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { down, up } from '../../../database/migrations/0147_agent_heartbeat_policy';
+import { down, up } from '../../../database/migrations/0145_agent_heartbeat_policy';
 import { AgentDefinitionModel } from '../../../database/models/AgentDefinitionModel';
 import { postgresClient } from '../../../database/PostgresClient';
 import { TestDatabase } from '../../Support/TestDatabase';
@@ -53,6 +53,22 @@ dbDescribe('AgentDefinition heartbeat config persistence', () => {
 
     const [row] = await database.query<{ config: Record<string, unknown> }>('SELECT config FROM agent_definitions WHERE id = $1', [definition.id]);
     expect(row.config).toEqual({ heartbeat: custom, retained: true });
+  });
+
+  it('migration up seeds config.heartbeat on a pre-existing sulla row without touching its prompt or other config keys', async() => {
+    // risk: the primary persona's production row (predates this migration) never gets a seeded policy, so AgentHeartbeatPolicy.decide() denies it
+    const definition = await AgentDefinitionModel.create({
+      slug: 'sulla',
+      name: 'Sulla',
+      promptContent: 'custom primary persona prompt',
+      config: { retained: { enabled: true } },
+    });
+
+    await database.query(up);
+
+    const row = await AgentDefinitionModel.get(definition.id);
+    expect(row?.prompt_content).toBe('custom primary persona prompt');
+    expect(row?.config).toEqual({ retained: { enabled: true }, heartbeat: seeded });
   });
 
   it('migration down removes only the exact seeded heartbeat object', async() => {

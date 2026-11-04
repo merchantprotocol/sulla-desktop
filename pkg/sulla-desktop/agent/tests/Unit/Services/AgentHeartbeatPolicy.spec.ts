@@ -88,4 +88,12 @@ describe('AgentHeartbeatPolicy', () => {
     const policy = new AgentHeartbeatPolicy(new InMemoryDefinitions({}));
     await expect(policy.decide('sulla')).resolves.toMatchObject({ allowed: true, intervalMinutes: 5 });
   });
+
+  it('uses lead defaults for the primary persona even when its row exists without config.heartbeat', async () => {
+    // risk: a production 'sulla'/'sulla-desktop' row that predates this migration denies the primary agent instead of falling back
+    const policy = new AgentHeartbeatPolicy(new InMemoryDefinitions({
+      sulla: { id: 'sulla-id', slug: 'sulla', config: { retained: true } },
+    }));
+    await expect(policy.decide('sulla')).resolves.toMatchObject({ allowed: true, intervalMinutes: 5 });
+  });
 });
