@@ -19,6 +19,16 @@ describe('CompletionInboxStore', () => {
     store.clear();
   });
 
+  it('preserves a second child that finishes during the parent follow-up turn', () => {
+    // risk: a completion arriving during the next parent turn is dropped
+    const store = new CompletionInboxStore();
+    store.enqueue('manager', 'thread', { jobId: 'first', results: [] });
+    expect(store.take('manager', 'thread').map(entry => entry.jobId)).toEqual(['first']);
+    store.enqueue('manager', 'thread', { jobId: 'second', results: [] });
+    expect(store.take('manager', 'thread').map(entry => entry.jobId)).toEqual(['second']);
+    store.clear();
+  });
+
   it('nacks by allowing a failed reservation to be enqueued again', () => {
     // risk: failed dispatch permanently marks a child result delivered
     const store = new CompletionInboxStore();

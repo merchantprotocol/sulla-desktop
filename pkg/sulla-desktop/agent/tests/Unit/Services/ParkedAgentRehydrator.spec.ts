@@ -28,6 +28,19 @@ describe('ParkedAgentRehydrator', () => {
     expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1 });
   });
 
+  it('recognizes terminal delegated threads so late children cannot resurrect them', async() => {
+    // risk: a stopped parent is restarted by a late child completion
+    const stopped = parkedJob();
+    stopped.status = 'stopped';
+    const service = new ParkedAgentRehydrator(
+      { findByTaskThread: async() => stopped },
+      { findBySlug: async() => ({}) },
+      vi.fn(),
+    );
+    expect(await service.isTerminalDelegatedThread('manager-thread')).toBe(true);
+    expect(await service.resolve('manager-thread')).toBeNull();
+  });
+
   it('fails visibly instead of falling back when the definition is missing', async() => {
     // risk: a parked manager wakes as default Sulla with the wrong prompt/model
     const fail = vi.fn();
