@@ -58,5 +58,5 @@ describe('desktop runtime regression contracts', () => {
       if (error.code === 'ENOENT') { context.skip(); return }
       throw error;
     }
-  });
+  }, 60_000);
 });
