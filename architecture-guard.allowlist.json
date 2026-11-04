@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1136,
+  "entries": 1135,
   "files": {
     "background.ts": {
       "rules": {
@@ -1227,13 +1227,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/services/brokeredModelList.ts": {
-      "rules": {
-        "mutable-state": 2,
-        "procedural-module": 4
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/services/oauth/custody/LegacyDbCustody.ts": {
       "rules": {
