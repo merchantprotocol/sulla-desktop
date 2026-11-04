@@ -6,6 +6,7 @@
 import { randomUUID } from 'crypto';
 
 import { postgresClient } from '../database/PostgresClient';
+import { PendingDecisionRepository } from '../repositories/PendingDecisionRepository';
 
 import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
@@ -14,6 +15,7 @@ import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/sha
  * No tool arguments or credentials are copied into cloud snapshots.
  */
 export class DecisionService {
+  private readonly pendingDecisions = new PendingDecisionRepository(postgresClient);
   private readonly session = randomUUID();
   private readonly listeners = new Set<(record: DecisionRecord) => void>();
   subscribe(listener: (record: DecisionRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -43,6 +45,10 @@ export class DecisionService {
     if (signal?.aborted) abort();
     else this.changed(record);
     return { record, result };
+  }
+
+  async pendingApprovalForPayload(key: string, value: string): Promise<DecisionRecord | undefined> {
+    return this.pendingDecisions.findApproval(this.session, key, value, Date.now());
   }
 
   async list(): Promise<DecisionRecord[]> {
