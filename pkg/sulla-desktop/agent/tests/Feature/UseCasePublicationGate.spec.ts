@@ -45,6 +45,18 @@ class UseCasePublicationFixture {
     await this.pool.query('CREATE TRIGGER file_versions_prepare_lifecycle BEFORE INSERT ON file_versions FOR EACH ROW EXECUTE FUNCTION files_prepare_version_lifecycle()');
   }
 
+  async createVersion(path: string, creatorType = 'agent'): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null }> {
+    if (!this.pool) throw new Error('fixture not initialized');
+    const collectionId = randomUUID(), fileId = randomUUID(), versionId = randomUUID();
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)', [collectionId]);
+    await this.pool.query('INSERT INTO files(id,collection_id,path) VALUES($1,$2,$3)', [fileId, collectionId, path]);
+    await this.pool.query('INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,device_id) VALUES($1,$2,$3,$4,$5)',
+      [versionId, fileId, creatorType, creatorType === 'agent' ? 'chat-agent' : 'background-agent', 'job-1']);
+    const file = (await this.pool.query('SELECT draft_version_id,published_version_id FROM files WHERE id=$1', [fileId])).rows[0];
+    const versionStatus = (await this.pool.query('SELECT publication_status FROM file_versions WHERE id=$1', [versionId])).rows[0].publication_status;
+    return { versionStatus, draftVersionId:file.draft_version_id, publishedVersionId:file.published_version_id };
+  }
+
   async exercise(): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null; requests:number; publishedCount:number }> {
     if (!this.pool) throw new Error('fixture not initialized');
     const collectionId = randomUUID(), fileId = randomUUID(), versionId = randomUUID();
@@ -76,10 +88,24 @@ describeWithDatabase('Use Case publication gate', () => {
   beforeAll(() => fixture.initialize());
   afterAll(() => fixture.dispose());
 
-  it('keeps an agent-created first version draft through one approval', async() => {
-    // risk: permissions — agent content must never become runtime-visible without human approval.
+  it('keeps an agent-created home-collection Use Case draft through one approval', async() => {
+    // risk: permissions — agent-created Use Cases must never become runtime-visible without human approval.
     const result = await fixture.exercise();
     expect(result).toMatchObject({ versionStatus:'draft', publishedVersionId:null, requests:1, publishedCount:1 });
+    expect(result.draftVersionId).toBeTruthy();
+  });
+
+  it.each(['Projects/p/TASKS.md', 'Documents/x.md'])('publishes an agent-created home-collection file at %s', async(path) => {
+    // risk: data availability — ordinary chat-agent writes must remain immediately visible to the human.
+    const result = await fixture.createVersion(path);
+    expect(result).toMatchObject({ versionStatus:'published', draftVersionId:null });
+    expect(result.publishedVersionId).toBeTruthy();
+  });
+
+  it('keeps agent-run writes outside Use Cases draft', async() => {
+    // risk: permissions — background-agent publication behavior from migration 041 must not regress.
+    const result = await fixture.createVersion('Documents/background-report.md', 'agent-run');
+    expect(result).toMatchObject({ versionStatus:'draft', publishedVersionId:null });
     expect(result.draftVersionId).toBeTruthy();
   });
 });

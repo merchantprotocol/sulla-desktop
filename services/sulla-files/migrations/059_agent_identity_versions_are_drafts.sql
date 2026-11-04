@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-2.0-or-later
--- Authenticated chat agents are recorded as `agent`; background jobs are
--- recorded as `agent-run`. Both identities must pass through publication.
+-- Keep the existing agent-run publication gate, and make Use Cases draft-first
+-- in every collection regardless of the creator identity.
 CREATE OR REPLACE FUNCTION files_prepare_version_lifecycle() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE target files%ROWTYPE; latest_major INTEGER; latest_minor INTEGER;
 BEGIN
@@ -19,7 +19,7 @@ BEGIN
   ELSE NEW.major_version:=latest_major; NEW.minor_version:=latest_minor+1; END IF;
   IF NEW.publication_status IS NULL THEN
     NEW.publication_status:=CASE WHEN NOT target.require_approval AND EXISTS (SELECT 1 FROM collections c WHERE c.id=target.collection_id AND c.system_area='sulla' AND (target.path LIKE 'Memory/%' OR target.path LIKE 'Projects/%')) THEN 'published'
-      WHEN NEW.created_by_type IN ('agent','agent-run') OR target.require_approval OR target.path LIKE 'Use Cases/%' THEN 'draft' ELSE 'published' END;
+      WHEN NEW.created_by_type='agent-run' OR target.require_approval OR target.path LIKE 'Use Cases/%' THEN 'draft' ELSE 'published' END;
   END IF;
   IF NEW.deleted THEN NEW.publication_status:='superseded'; END IF;
   RETURN NEW;
