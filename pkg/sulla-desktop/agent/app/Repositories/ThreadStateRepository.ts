@@ -87,7 +87,7 @@ export class LogRecoveryThreadStateRepository extends Service implements ThreadS
       });
     }
     if (messages.length === 0) return null;
-    const summary = this.summaryMessage(record.last_summary);
+    const summary = this.summaryMessage(record.last_summary ?? null);
     if (summary) messages.unshift(summary);
     return this.reconstructedState(threadId, record, messages);
   }
