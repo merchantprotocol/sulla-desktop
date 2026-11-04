@@ -54,6 +54,10 @@ export interface AgentJobTask {
   agentId:    string;
   label:      string;
   prompt:     string;
+  /** Per-run routing overrides required to rehydrate this exact manager. */
+  provider?: string;
+  model?: string;
+  runLocation?: 'vm' | 'container';
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
   status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';

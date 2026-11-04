@@ -47,6 +47,12 @@ export class ParkedAgentRehydrator {
     state.metadata.delegatedJobId = identity.job.jobId;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
+    state.metadata.agent = {
+      ...(state.metadata.agent ?? {}),
+      ...(identity.task.provider ? { provider: identity.task.provider } : {}),
+      ...(identity.task.model ? { model: identity.task.model } : {}),
+      ...(identity.task.runLocation ? { runLocation: identity.task.runLocation } : {}),
+    };
   }
 }
 
