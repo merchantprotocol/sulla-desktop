@@ -17,7 +17,7 @@ import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrok
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
-import type { AgentContainerRetentionBootstrap } from '@pkg/agent/services/AgentContainerComposition';
+import type { AgentContainerRetentionBootstrap } from '@pkg/agent/services/AgentContainerRetentionBootstrap';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
@@ -1924,7 +1924,7 @@ export class ChatCompletionsServer {
     await this.loadApiToken();
     if (!this.containerRetention) {
       const [{ AgentContainerRetentionBootstrap }, { GuestDockerRuntimeDriver }] = await Promise.all([
-        import('@pkg/agent/services/AgentContainerComposition'),
+        import('@pkg/agent/services/AgentContainerRetentionBootstrap'),
         import('@pkg/agent/services/AgentContainerLauncher'),
       ]);
       this.containerRetention = new AgentContainerRetentionBootstrap(

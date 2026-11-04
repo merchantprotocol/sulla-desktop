@@ -8,9 +8,6 @@ import type { Clock } from '@sulla/foundation';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentContainerLaunchCoordinator, type AgentLaunchJobReporter } from './AgentContainerLaunchCoordinator';
 import { IdempotentRetry } from './AgentContainerStartupRetry';
-import { ContainerRetentionPolicy, RetentionConfig } from './AgentContainerRetentionPolicy';
-import { ContainerRetentionScheduler, type RetentionSchedulerLogger, type RetentionSchedulerTimer } from './AgentContainerRetentionScheduler';
-import { GuestDiskSpaceProbe, SullaRuntimeCommandRunner } from './GuestDiskSpaceProbe';
 import { SullaFilesBindPlanner, SullaFilesMountHealthProbe, SullaRuntimeGuestCommandRunner, type MountAvailabilityView } from './SullaFilesMountHealthProbe';
 
 class DateClock implements Clock {
@@ -51,29 +48,4 @@ export class AgentContainerLaunchComposition {
       new AgentJobCheckinReporter(threadId),
     );
   }
-}
-
-/** App-owned boot hook. start() is idempotent; dispose() releases its timer. */
-export class AgentContainerRetentionBootstrap {
-  private readonly scheduler: ContainerRetentionScheduler;
-
-  constructor(
-    runtime: ContainerRuntimeDriver,
-    runtimeBinary: string,
-    timer: RetentionSchedulerTimer,
-    logger: RetentionSchedulerLogger,
-    config = new RetentionConfig(),
-  ) {
-    const policy = new ContainerRetentionPolicy(
-      runtime,
-      new GuestDiskSpaceProbe(new SullaRuntimeCommandRunner(runtimeBinary)),
-      { now: () => Date.now() },
-      { isActive: () => false },
-      config,
-    );
-    this.scheduler = new ContainerRetentionScheduler(policy, timer, logger, config.intervalMs);
-  }
-
-  start(): void { this.scheduler.start() }
-  dispose(): void { this.scheduler.stop() }
 }

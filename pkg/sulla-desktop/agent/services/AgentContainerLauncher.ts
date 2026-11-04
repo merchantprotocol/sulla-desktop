@@ -1514,11 +1514,14 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const receipt = closePromise
       ? await closePromise
       : containerId
-        ? await launcher.retainFailure(containerId, containerName, error).then(() => ({
-          removedGuestPaths: [], retainedGuestPaths: workspacePath ? [workspacePath] : [],
-          recoveryWorkspacePath: workspacePath,
-          workspaceDecisionReason: 'workspace retained with failed container',
-        }))
+        ? await launcher.retainFailure(containerId, containerName, error).then(async() => {
+          await cleanupContainerResources(runtime, undefined, secretDir, providerFiles, undefined, []);
+          return {
+            removedGuestPaths: [], retainedGuestPaths: workspacePath ? [workspacePath] : [],
+            recoveryWorkspacePath: workspacePath,
+            workspaceDecisionReason: 'workspace retained with failed container',
+          };
+        })
         : await cleanupContainerResources(runtime, undefined, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
           name: containerName, reason: 'lifecycle-startup-failed', caller: 'createAgentContainerLifecycle.catch',
         });
@@ -1823,11 +1826,14 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     const receipt = containerId
-      ? await launcher.retainFailure(containerId, containerName, error).then(() => ({
-        removedGuestPaths: [], retainedGuestPaths: workspacePath ? [workspacePath] : [],
-        recoveryWorkspacePath: workspacePath,
-        workspaceDecisionReason: 'workspace retained with failed container',
-      }))
+      ? await launcher.retainFailure(containerId, containerName, error).then(async() => {
+        await cleanupContainerResources(runtime, undefined, secretDir, undefined, undefined, []);
+        return {
+          removedGuestPaths: [], retainedGuestPaths: workspacePath ? [workspacePath] : [],
+          recoveryWorkspacePath: workspacePath,
+          workspaceDecisionReason: 'workspace retained with failed container',
+        };
+      })
       : await cleanupContainerResources(runtime, undefined, secretDir, undefined, workspacePath, guestRuntimePaths, {
         name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
       });
