@@ -184,6 +184,12 @@ async function register(threadId: string): Promise<boolean> {
     if (!result?.success) throw new Error(result?.error || 'register failed');
     registeredThreadId = threadId;
     status.value = result.status;
+    // The scheduler may already hold a config set by the agent before this
+    // tab mounted. Hydrate the controller from scheduler state so every tab
+    // reflects the live source of truth, not only local UI changes.
+    if (result.status) {
+      controller.setHeartbeat(normalizeChatHeartbeatConfig(result.status));
+    }
     error.value = '';
     return true;
   } catch (err) {

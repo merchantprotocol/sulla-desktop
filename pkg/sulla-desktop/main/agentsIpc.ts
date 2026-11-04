@@ -18,8 +18,10 @@
 import { ipcMain } from 'electron';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
+import { AgentDefinitionsIpcService } from './AgentDefinitionsIpcService';
+import type { AgentDefinitionCreateRequest, AgentDefinitionUpdateRequest } from './AgentDefinitionsIpcService';
 
-import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
+import type { AgentHeartbeatConfig } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
 
 // ── Response shape ───────────────────────────────────────────────────────────
@@ -123,6 +125,7 @@ export interface AgentDefinitionResponse {
   updatedAt:          string;
   /** config.type ('lead' | 'planner' | 'worker' | 'designer' | ...): the other half of the Manager/Worker split, alongside canCall. */
   type:               string | null;
+  heartbeat:          AgentHeartbeatConfig | null;
 }
 
 export interface AgentConversationSummary {
@@ -223,32 +226,20 @@ export function initAgentsIpc(): void {
       frontDoor:          a.front_door,
       updatedAt:          toIso(a.updated_at),
       type:               typeof a.config?.type === 'string' ? a.config.type : null,
+      heartbeat:          a.config?.heartbeat && typeof a.config.heartbeat === 'object' && !Array.isArray(a.config.heartbeat)
+        ? a.config.heartbeat as AgentHeartbeatConfig
+        : null,
     }));
   });
 
-  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:create', async(_event, input: AgentDefinitionCreateRequest) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.create({
-      slug:          input.slug,
-      name:          input.name,
-      description:   input.description ?? '',
-      provider:      input.provider ?? null,
-      modelSlot:     input.modelSlot ?? 'secondary',
-      systemPrompt:  input.prompt,
-      promptContent: input.prompt,
-      promptFiles:   { 'prompt.md': input.prompt },
-      status:        'production',
-      sourceKind:    'local',
-      runLocation:   input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
-    });
+    return new AgentDefinitionsIpcService(agentDefinitionService).create(input);
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: AgentDefinitionUpdateRequest) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.update(id, {
-      ...patch,
-      ...(patch.prompt !== undefined ? { systemPrompt: patch.prompt, promptContent: patch.prompt } : {}),
-    });
+    return new AgentDefinitionsIpcService(agentDefinitionService).update(id, patch);
   });
 
   ipcMain.handle('agent-definitions:delete', async(_event, id: string) => {
