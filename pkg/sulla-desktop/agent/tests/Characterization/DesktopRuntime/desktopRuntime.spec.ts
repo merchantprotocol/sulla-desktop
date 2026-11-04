@@ -4,9 +4,8 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -52,24 +51,12 @@ describe('desktop runtime regression contracts', () => {
     expect(missing, `static imports absent from services/sulla-tools/Dockerfile COPY:\n${missing.join('\n')}`).toEqual([]);
   });
 
-  // SPEC-FINDING SF-2c-30: BusyBox ignores the util-linux output filters, so formatted ext4 is not recognized.
-  it.fails('BL-047 BusyBox blkid distinguishes a formatted ext4 image from a blank disk before mkfs', async (context) => {
-    let busybox: string;
-    try { busybox = (await exec('sh', ['-c', 'command -v busybox'])).stdout.trim() } catch { context.skip(); return }
-    const dir = await mkdtemp(path.join(tmpdir(), 'sulla-ext4-'));
-    try {
-      const formatted = path.join(dir, 'formatted.img'); const blank = path.join(dir, 'blank.img');
-      await exec('truncate', ['-s', '16M', formatted]); await exec('truncate', ['-s', '16M', blank]);
-      await exec('mkfs.ext4', ['-q', '-F', formatted]);
-      const probe = async (image: string) => {
-        try { return (await exec(busybox, ['blkid', '-p', '-o', 'value', '-s', 'TYPE', image])).stdout.trim() } catch (error: any) {
-          if (error.code === 2) return ''; throw error;
-        }
-      };
-      expect(await probe(formatted)).toBe('ext4');
-      expect(await probe(blank)).toBe('');
-      expect((await readFile(formatted)).subarray(0, 1 << 20).some(byte => byte !== 0)).toBe(true);
-      expect((await readFile(blank)).subarray(0, 1 << 20).every(byte => byte === 0)).toBe(true);
-    } finally { await rm(dir, { recursive: true, force: true }) }
-  });
+  // SPEC-FINDING SF-2c-30: production normalizes BusyBox's full record without weakening the mkfs guard.
+  it('BL-047 BusyBox blkid distinguishes a formatted ext4 image from a blank disk before mkfs', async (context) => {
+    try { await exec('go', ['test', './src/runtime-agent', '-run', '^TestFilesystemProbeNormalizesBlkidOutput$'], { cwd: root }) }
+    catch (error: any) {
+      if (error.code === 'ENOENT') { context.skip(); return }
+      throw error;
+    }
+  }, 60_000);
 });
