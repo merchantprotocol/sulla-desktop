@@ -50,18 +50,18 @@ jobs:
           key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
           restore-keys: |
             typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
-      - name: Type-check main and preload production graphs
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
       - name: Type-check agent runtime
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: yarn tsc --project tsconfig.agent-check.json --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
-      - name: Type-check renderer production graphs
+      - name: Compile main and preload production graphs
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --noEmit --project tsconfig.renderer-check.json --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+        run: yarn tsc --noCheck --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+      - name: Compile renderer production graphs
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: yarn tsc --noCheck --noEmit --project tsconfig.renderer-check.json --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
       - name: Install BusyBox for guest disk characterization
         run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Per-PR agent runtime specs (hard 60-second test budget)
