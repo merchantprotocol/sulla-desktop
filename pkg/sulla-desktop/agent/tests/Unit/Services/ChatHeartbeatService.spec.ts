@@ -67,6 +67,48 @@ describe('ChatHeartbeatService wiring — routes a beat to the right delivery pa
     expect(wsSend).not.toHaveBeenCalled();
   });
 
+  it('keeps two hidden jobs of the same agent isolated by thread and never cross-wakes them', async() => {
+    // risk: scheduler state keyed only by agentId wakes the wrong concurrent job
+    findTaskByThread.mockImplementation(async(threadId: string) => hiddenJobOwner(threadId));
+    wakeParkedAgent.mockResolvedValue(true);
+    const scheduler = await freshScheduler();
+
+    scheduler.register({ threadId: 'hidden-thread-a', channel: 'sulla-desktop', config: { intervalMinutes: 1, message: 'beat-a' }, busy: false });
+    scheduler.register({ threadId: 'hidden-thread-b', channel: 'sulla-desktop', config: { intervalMinutes: 1, message: 'beat-b' }, busy: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(wakeParkedAgent).toHaveBeenCalledTimes(2);
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'hidden-thread-a', 'beat-a', 'lead', { intervalMinutes: 1 });
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'hidden-thread-b', 'beat-b', 'lead', { intervalMinutes: 1 });
+  });
+
+  it('drops a restored registration for a terminal hidden job without firing or leaking a timer', async() => {
+    // risk: after restart, a restored heartbeat resurrects a completed job or retries forever
+    findTaskByThread.mockResolvedValue({
+      job: { jobId: 'job-terminal', status: 'completed', tasks: [{ agentId: 'lead', status: 'completed', threadId: 'terminal-thread', visibility: 'hidden' }] },
+      taskIndex: 0,
+    });
+    const scheduler = await freshScheduler();
+
+    scheduler.register({ threadId: 'terminal-thread', channel: 'sulla-desktop', config: { intervalMinutes: 1, message: 'beat' }, busy: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(wakeParkedAgent).not.toHaveBeenCalled();
+    expect(wsSend).not.toHaveBeenCalled();
+    expect(scheduler.status('terminal-thread')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('intervalMinutes zero disables a restored registration without allocating a timer', async() => {
+    // risk: malformed/off configuration spins a zero-delay timer loop
+    const scheduler = await freshScheduler();
+
+    const status = scheduler.register({ threadId: 'disabled-thread', channel: 'sulla-desktop', config: { intervalMinutes: 0, message: 'beat' }, busy: false });
+
+    expect(status).toMatchObject({ enabled: false, intervalMinutes: null, nextAt: null });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('a plain thread with no job task falls back to the WebSocket send — regression: unchanged for a normal chat', async() => {
     // risk: every ordinary top-level chat heartbeat breaks because the new lookup assumes a job exists
     findTaskByThread.mockResolvedValue(undefined);
