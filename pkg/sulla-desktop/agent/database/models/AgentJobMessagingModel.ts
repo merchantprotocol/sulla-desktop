@@ -213,4 +213,33 @@ export class AgentJobMessagingModel {
 
     return telemetry;
   }
+
+  /** Compact telemetry for a job list: one latest check-in and one message count per task. */
+  static async latestTelemetryForJobs(jobIds: string[]): Promise<Record<string, Record<number, AgentJobTaskTelemetry>>> {
+    if (jobIds.length === 0) return {};
+    const [checkinRows, messageRows] = await Promise.all([
+      postgresClient.query<any>(
+        `SELECT DISTINCT ON (job_id, task_index) *
+           FROM agent_job_checkins
+          WHERE job_id = ANY($1::text[])
+          ORDER BY job_id, task_index, created_at DESC`,
+        [jobIds],
+      ),
+      postgresClient.query<any>(
+        `SELECT job_id, task_index, count(*)::int AS count
+           FROM agent_job_messages
+          WHERE job_id = ANY($1::text[]) AND delivered_at IS NULL
+          GROUP BY job_id, task_index`,
+        [jobIds],
+      ),
+    ]);
+    const result: Record<string, Record<number, AgentJobTaskTelemetry>> = {};
+    const ensure = (jobId: string, index: number) => {
+      result[jobId] ??= {};
+      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0 };
+    };
+    for (const row of checkinRows ?? []) ensure(row.job_id, Number(row.task_index)).latestCheckin = rowToCheckin(row);
+    for (const row of messageRows ?? []) ensure(row.job_id, Number(row.task_index)).undeliveredMessages = Number(row.count);
+    return result;
+  }
 }

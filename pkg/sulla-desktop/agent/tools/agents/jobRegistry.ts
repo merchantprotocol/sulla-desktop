@@ -341,6 +341,74 @@ export async function getAllJobs(): Promise<AgentJob[]> {
   return Array.from(jobs.values());
 }
 
+/**
+ * Keep every live job, plus only the newest bounded slice of terminal jobs.
+ * Exported so the list contract can be checked without a database fixture.
+ */
+export function boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): AgentJob[] {
+  const active = allJobs.filter(job => job.status === 'running');
+  if (!includeFinished) return active.sort((a, b) => b.createdAt - a.createdAt);
+
+  const finished = allJobs
+    .filter(job => job.status !== 'running')
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+
+  return [...active, ...finished].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Lightweight list read. Unlike getAllJobs(), this never loads the unbounded
+ * durable history (including prompts and result payloads) into memory.
+ */
+export async function getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
+  await ensureBootSweep();
+  await pruneStaleJobs();
+  const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
+  const persisted: AgentJob[] = [];
+
+  try {
+    const rows = await postgresClient.query<any>(
+      `WITH selected AS (
+         SELECT * FROM agent_jobs WHERE status = 'running'
+         UNION ALL
+         (SELECT * FROM agent_jobs
+           WHERE status <> 'running' AND $2::boolean
+           ORDER BY created_at DESC
+           LIMIT $1)
+       )
+       SELECT job_id, status, created_at, finished_at, task_count, error,
+              parent_channel, parent_thread_id, parent_agent_id, visibility,
+              project_task_ids, completion_delivered_at, dismissed_at,
+              '[]'::jsonb AS results,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'agentId', task->>'agentId', 'label', task->>'label',
+                  'taskId', task->>'taskId', 'status', task->>'status',
+                  'visibility', task->>'visibility', 'startedAt', task->'startedAt',
+                  'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',
+                  'contract', CASE WHEN task ? 'contract' THEN jsonb_build_object('name', task->'contract'->>'name') ELSE NULL END
+                ))
+                FROM jsonb_array_elements(selected.tasks) AS task
+              ), '[]'::jsonb) AS tasks
+         FROM selected
+        ORDER BY created_at DESC`,
+      [safeLimit, includeFinished],
+    );
+    persisted.push(...(rows ?? []).map(rowToJob));
+  } catch (err) {
+    console.warn('[jobRegistry] bounded list read failed:', (err as Error).message);
+  }
+
+  // Hot records win, but only active jobs are added outside the DB window.
+  const merged = new Map(persisted.map(job => [job.jobId, job]));
+  for (const job of jobs.values()) {
+    if (job.status === 'running' || merged.has(job.jobId)) merged.set(job.jobId, job);
+  }
+
+  return boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
+}
+
 export async function completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   const job = jobs.get(jobId) ?? await getJob(jobId);
   if (!job) return;
