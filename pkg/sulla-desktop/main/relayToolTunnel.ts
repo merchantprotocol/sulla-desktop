@@ -25,13 +25,12 @@ async function executeThroughRegistry(
   args: unknown,
   signal: AbortSignal,
 ): Promise<RelayToolResult> {
-  // Registry keys are category-prefixed (e.g. `vault_list_api_keys`); callers
-  // send the bare tool name, so prefer the prefixed name when it's registered
-  // and fall back to the bare name otherwise, matching chatCompletionsServer.
-  const prefixed = `${ category }_${ toolName }`;
-  const resolvedName = !toolName.startsWith(`${ category }_`) && toolRegistry.isRegistered(prefixed)
-    ? prefixed
-    : toolName;
+  // Relay requests carry an explicit category capability. Resolve within that
+  // category only so a same-named tool in another category can never execute.
+  const resolvedName = toolRegistry.resolveRegisteredName(category, toolName);
+  if (!resolvedName) {
+    return { success: false, error: { code: 'tool_not_found', message: `Tool ${ category }/${ toolName } not registered` } };
+  }
   // Tool instances carry mutable state, approval signals, and verified caller
   // identity. A cached singleton lets concurrent calls overwrite each other.
   const tool = await toolRegistry.createTool(resolvedName);
