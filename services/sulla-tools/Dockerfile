@@ -14,11 +14,16 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
+# Preserve the root ESM package boundary for TypeScript imported from pkg/.
+# Without it, tsx loads those modules as CommonJS and named imports fail.
+COPY package.json ./package.json
 # First-run credentials only exist in Electron's main process. Agent modules
 # also run in this container, so give their guarded lookups an inert authority
 # instead of copying the Electron-only store (and its entire main-process graph).
 COPY services/sulla-tools/src/pendingCredentials.container.ts ./pkg/sulla-desktop/main/firstRun/pendingCredentials.ts
 COPY tsconfig.json ./tsconfig.json
+# Keep the container authority inert even as Desktop's first-run module evolves.
+RUN ./node_modules/.bin/tsx -e "import('/app/pkg/sulla-desktop/main/firstRun/pendingCredentials.ts').then(m=>{if(m.getPendingCredential('grok')!==undefined||m.hasPendingCredential('grok'))process.exit(1)})"
 # Import the real catalog entrypoint so every manifest/registry dependency must
 # resolve while the image is built, rather than failing later in production.
 RUN ./node_modules/.bin/tsx -e "import('./services/sulla-tools/src/catalog.ts').then(({initializeCatalog})=>initializeCatalog())"
