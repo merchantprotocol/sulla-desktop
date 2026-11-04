@@ -31,6 +31,7 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
+import { ThreadNotParkedError } from './ThreadNotParkedError';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -110,7 +111,7 @@ export class BackendGraphWebSocketService {
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
   async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
     const parked = await parkedAgentRehydrator.resolve(threadId);
-    if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
+    if (!parked) throw new ThreadNotParkedError(threadId);
     // The manager is blocked inside spawn_agent's own in-process wait for its
     // children (waitForWake registered for this exact thread in THIS
     // process). Its own loop owns that turn's lifecycle — inject the message

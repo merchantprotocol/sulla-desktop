@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AgentHeartbeatPolicy, type AgentDefinitionLookup } from '../../../services/AgentHeartbeatPolicy';
 import { JobHeartbeatDelivery, type JobThreadOwner } from '../../../services/JobHeartbeatDelivery';
+import { ThreadNotParkedError } from '../../../services/ThreadNotParkedError';
 
 import type { AgentDefinition } from '../../../database/models/AgentDefinitionModel';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
@@ -106,12 +107,26 @@ describe('JobHeartbeatDelivery — a hidden job thread wakes its own agent', () 
     // risk: an uncaught "not a parked agent job" throw crashes the scheduler's beat instead of politely waiting
     build(makeOwner('lead', 'running', 'running'));
     repository.set('lead', definition('lead', { heartbeat: heartbeat(true) }));
-    wakeParkedAgent.mockRejectedValue(new Error('Thread thread-1 is not a parked agent job.'));
+    wakeParkedAgent.mockRejectedValue(new ThreadNotParkedError('thread-1'));
 
     const outcome = await delivery.tryDeliver('sulla-desktop', 'thread-1', 'beat', 5);
 
     expect(outcome).toEqual({ applicable: true, delivered: false });
     expect(unregisterCalls).toEqual([]);
+    expect(logs).toEqual([]);
+  });
+
+  it('logs an unexpected error instead of swallowing it, while still waiting rather than throwing', async() => {
+    // risk: a real bug in wakeParkedAgent (DB failure, dispatch crash) silently vanishes forever, indistinguishable from a busy agent
+    build(makeOwner('lead', 'parked', 'parked'));
+    repository.set('lead', definition('lead', { heartbeat: heartbeat(true) }));
+    wakeParkedAgent.mockRejectedValue(new Error('dispatchToAgent blew up'));
+
+    const outcome = await delivery.tryDeliver('sulla-desktop', 'thread-1', 'beat', 5);
+
+    expect(outcome).toEqual({ applicable: true, delivered: false });
+    expect(unregisterCalls).toEqual([]);
+    expect(logs).toEqual([expect.stringContaining('dispatchToAgent blew up')]);
   });
 
   it('drops and unregisters a heartbeat for a job that already reached a terminal status', async() => {

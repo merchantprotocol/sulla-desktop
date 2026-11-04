@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentHeartbeatPolicy } from './AgentHeartbeatPolicy';
+import { ThreadNotParkedError } from './ThreadNotParkedError';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
 
@@ -63,9 +64,14 @@ export class JobHeartbeatDelivery {
       // without throwing, which the caller correctly treats as "wait".
       const delivered = await this.wakeParkedAgent(channelId, threadId, message, task.agentId, { intervalMinutes });
       return { applicable: true, delivered };
-    } catch {
+    } catch (error) {
       // Not parked at all: the agent is actively mid-turn on real work, not
-      // waiting on anything. That is busy, not an error — wait and retry.
+      // waiting on anything. That is busy, not an error — wait and retry
+      // quietly. Anything else is a real failure (e.g. a bug surfaced
+      // mid-dispatch) and must not vanish silently.
+      if (!(error instanceof ThreadNotParkedError)) {
+        this.log(`[JobHeartbeatDelivery] Unexpected error waking parked agent for thread ${ threadId }: ${ error instanceof Error ? error.stack ?? error.message : String(error) }`);
+      }
       return { applicable: true, delivered: false };
     }
   }
