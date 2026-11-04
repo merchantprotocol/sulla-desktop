@@ -42,7 +42,6 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     record: await AgentJobMessagingModel.queueMessage(target, message),
   })));
   let deliveredLive = 0;
-  const { GraphRegistry } = await import('../../services/GraphRegistry');
 
   for (const { target, record } of queued) {
     if (!target.threadId) continue;
@@ -67,10 +66,16 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
 
     if (target.taskStatus === 'parked') {
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+      // The ack is written by dispatchToAgent itself, only once the woken
+      // turn actually consumed this message (graph.execute succeeded) — the
+      // same turnConsumedInput gate used for completion steers. Acking here
+      // would mark it delivered even if the turn never ran (provider not
+      // ready, launch error, abort), losing the message for good.
       await getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
       deliveredLive += 1;
       continue;
     }
+    const { GraphRegistry } = await import('../../services/GraphRegistry');
     const running = GraphRegistry.get(target.threadId);
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {

@@ -29,6 +29,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -844,6 +845,16 @@ export class BackendGraphWebSocketService {
         if (turnConsumedInput) {
           for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
             await markCompletionDelivered(String(jobId));
+          }
+          // An orchestrator job message (send_job_message waking a parked
+          // manager) is acked only now, after the turn it was handed to
+          // actually ran — not when wakeParkedAgent was first called. A turn
+          // that never reached graph.execute leaves the message pending so
+          // it is redelivered rather than lost.
+          const jobMessageId = typeof metadata?.jobMessageId === 'string' ? metadata.jobMessageId : '';
+          const jobMessageThreadId = typeof metadata?.jobMessageThreadId === 'string' ? metadata.jobMessageThreadId : '';
+          if (jobMessageId && jobMessageThreadId) {
+            await AgentJobMessagingModel.markMessagesDelivered([jobMessageId], jobMessageThreadId);
           }
         } else {
           for (const entry of metadata?.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
