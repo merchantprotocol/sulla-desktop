@@ -37,7 +37,8 @@
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
     "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
-    "test:agent": "vitest run --config vitest.agent.config.mts"
+    "test:agent": "vitest run --config vitest.agent.config.mts",
+    "test:pr": "node scripts/test-pr.mjs"
   },
   "main": "dist/app/background.js",
   "dependencies": {
