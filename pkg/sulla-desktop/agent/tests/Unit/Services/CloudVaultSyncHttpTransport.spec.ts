@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { CloudVaultSyncHttpTransport, VaultSyncHttpError, type VaultSyncHttpClient } from '@pkg/main/cloud/vaultSyncV3/transport';
 
-class FetchHttpClient implements VaultSyncHttpClient {
+class NodeHttpClient implements VaultSyncHttpClient {
   request(url: string, init?: RequestInit): Promise<Response> {
-    return fetch(url, init);
+    return new Promise((resolve, reject) => {
+      const request = httpRequest(url, { method: init?.method, headers: init?.headers as Record<string, string> | undefined }, response => {
+        const chunks: Buffer[] = [];
+        response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+        response.on('end', () => resolve(new Response(Buffer.concat(chunks), {
+          status: response.statusCode ?? 500,
+          headers: Object.fromEntries(Object.entries(response.headers).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+        })));
+        response.on('error', reject);
+      });
+      request.on('error', reject);
+      if (typeof init?.body === 'string') request.write(init.body);
+      request.end();
+    });
   }
 }
 
@@ -76,7 +89,7 @@ describe('CloudVaultSyncHttpTransport response limits', () => {
     const server = new LocalVaultResponseServer(JSON.stringify({ records }), JSON.stringify({ status: 'x'.repeat(1024 * 1024) }));
     const baseUrl = await server.start();
     try {
-      const transport = new CloudVaultSyncHttpTransport({ client: new FetchHttpClient(), baseUrl, authHeaders: async () => ({}) });
+      const transport = new CloudVaultSyncHttpTransport({ client: new NodeHttpClient(), baseUrl, authHeaders: async () => ({}) });
       await expect(transport.getRecords('vault-1', 'device-1')).resolves.toMatchObject({ records });
       await expect(transport.getStatus('device-1')).rejects.toMatchObject({ code: 'too_large', status: 413 });
     } finally {
