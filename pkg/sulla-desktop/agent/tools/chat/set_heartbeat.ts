@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { getChatHeartbeatService } from '../../services/ChatHeartbeatService';
+import { agentDefinitionService } from '../../services/AgentDefinitionService';
+import { AgentHeartbeatPolicy } from '../../services/AgentHeartbeatPolicy';
+import { getChatHeartbeatService, type ChatHeartbeatScheduler } from '../../services/ChatHeartbeatService';
+import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { BaseTool, ToolResponse } from '../base';
 
 import { DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
@@ -12,13 +15,28 @@ export class SetChatHeartbeatWorker extends BaseTool {
   name = '';
   description = '';
 
-  protected _validatedCall(input: any): Promise<ToolResponse> {
+  constructor(
+    private readonly heartbeatPolicy = new AgentHeartbeatPolicy(agentDefinitionService),
+    private readonly heartbeatService: ChatHeartbeatScheduler = getChatHeartbeatService(),
+  ) {
+    super();
+  }
+
+  protected async _validatedCall(input: Record<string, unknown>): Promise<ToolResponse> {
     const threadId = String((this.state)?.metadata?.threadId || '').trim();
     if (!threadId) {
-      return Promise.resolve({ successBoolean: false, responseString: 'This tool must be called from a chat thread.' });
+      return { successBoolean: false, responseString: 'This tool must be called from a chat thread.' };
     }
 
-    const service = getChatHeartbeatService();
+    const rawMinutes = Number(input.intervalMinutes);
+    const requestedIntervalMinutes = Number.isFinite(rawMinutes) ? rawMinutes : Number.NaN;
+    const agentId = resolveAgentIdentity((this.state)?.metadata) || 'sulla';
+    const decision = await this.heartbeatPolicy.decide(agentId, requestedIntervalMinutes);
+    if (!decision.allowed) {
+      return { successBoolean: false, responseString: decision.reason };
+    }
+
+    const service = this.heartbeatService;
     // Threads with no open Desktop tab (relay chats, background threads) were never registered,
     // so the agent could not wake itself. Register them here on the thread's own channel; an open
     // tab re-registering later keeps this config and adds its UI callbacks.
@@ -29,18 +47,17 @@ export class SetChatHeartbeatWorker extends BaseTool {
       busy:    false,
     });
 
-    const rawMinutes = Number(input.intervalMinutes);
-    const intervalMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : null;
+    const intervalMinutes = decision.intervalMinutes === 0 ? null : decision.intervalMinutes;
     const message = typeof input.message === 'string' && input.message.trim()
       ? input.message.trim()
       : current.message || DEFAULT_CHAT_HEARTBEAT_MESSAGE;
     const status = service.configure(threadId, { intervalMinutes, message });
 
-    return Promise.resolve({
+    return {
       successBoolean: !!status,
       responseString: status?.enabled
         ? `This chat's heartbeat is on every ${ status.intervalMinutes } minute(s).`
         : 'This chat\'s heartbeat is off.',
-    });
+    };
   }
 }
