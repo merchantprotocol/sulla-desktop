@@ -61,6 +61,7 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
   return {
     jobId: job.jobId,
     status: job.status,
+    waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     error: job.error,
@@ -82,6 +83,7 @@ function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobT
   return {
     jobId: job.jobId,
     status: job.status,
+    waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     tasks: job.tasks.map((task, taskIndex) => ({
