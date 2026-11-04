@@ -1,0 +1,28 @@
+5	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS18046	'channel' is of type 'unknown'.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'Guild'.
+6	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'Message'.
+8	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'TextChannel'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2304	Cannot find name 'User'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2307	Cannot find module 'discord.js' or its corresponding type declarations.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS2552	Cannot find name 'Events'. Did you mean 'Event'?
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'error' implicitly has an 'any' type.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'guild' implicitly has an 'any' type.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordClient.ts	TS7006	Parameter 'message' implicitly has an 'any' type.
+2	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2307	Cannot find module '../../tools/BaseTool' or its corresponding type declarations.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2339	Property 'getArgsArray' does not exist on type 'DiscordTool'.
+1	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS2339	Property 'handleHelpRequest' does not exist on type 'DiscordTool'.
+3	pkg/sulla-desktop/agent/integrations/discord/DiscordTool.ts	TS4112	This member cannot have an 'override' modifier because its containing class 'DiscordTool' does not extend another class.
+1	pkg/sulla-desktop/agent/nodes/StreamBufferManager.ts	TS2339	Property 'getInstance' does not exist on type 'typeof RedisClient'.
+1	pkg/sulla-desktop/agent/services/JsonParseService.ts	TS7016	Could not find a declaration file for module 'dirty-json'. '/home/runner/work/sulla-desktop/sulla-desktop/node_modules/dirty-json/dirty-json.js' implicitly has an 'any' type.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type '"running"' is not assignable to type '"completed"'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type '{ answer: number; }' is not assignable to type 'string'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2322	Type 'null' is not assignable to type 'number'.
+1	pkg/sulla-desktop/agent/tests/Characterization/Agents/JobRegistry.spec.ts	TS2416	Property 'call' in type 'CheckAgentJobsHarness' is not assignable to the same property in base type 'CheckAgentJobsWorker'.
+1	pkg/sulla-desktop/agent/tests/Characterization/BrokeredModelCatalog/BrokeredModelCatalog.spec.ts	TS2353	Object literal may only specify known properties, and 'created_at' does not exist in type 'IntegrationAccount'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobMessagingRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/AgentJobRepository.spec.ts	TS2322	Type '<T = Row>(sql: string, bindings: readonly Binding[] | undefined) => Promise<{ rows: Record<string, unknown>[]; rowCount: number; }>' is not assignable to type '<T = Row>(text: string, values?: readonly Binding[] | undefined) => Promise<PostgresQueryResult<T>>'.
+1	pkg/sulla-desktop/agent/tests/Unit/Repositories/PendingDecisionRepository.spec.ts	TS2322	Type '<T>(_sql: string, params?: unknown[] | undefined) => Promise<{ record: any; }[]>' is not assignable to type '<T>(sql: string, params?: unknown[] | undefined) => Promise<T[]>'.
+1	pkg/sulla-desktop/main/audio-driver/controller/AudioNoiseProcessor.ts	TS7016	Could not find a declaration file for module '@echogarden/rnnoise-wasm'. '/home/runner/work/sulla-desktop/sulla-desktop/node_modules/@echogarden/rnnoise-wasm/rnnoise.js' implicitly has an 'any' type.
+3	pkg/sulla-desktop/main/MCPServerHost.ts	TS2589	Type instantiation is excessively deep and possibly infinite.
+1	pkg/sulla-desktop/main/MCPServerHost.ts	TS7031	Binding element 'questions' implicitly has an 'any' type.
+1	pkg/sulla-desktop/main/MCPServerHost.ts	TS7031	Binding element 'timeoutMs' implicitly has an 'any' type.
