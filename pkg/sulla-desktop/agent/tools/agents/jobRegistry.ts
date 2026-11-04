@@ -75,6 +75,10 @@ export interface AgentJobTask {
   result?:     unknown;
   summary?:    string;
   returnedAt?: number;
+  /** Settled result persisted as soon as this task finishes. */
+  completion?: AgentJobResult;
+  /** Set only after this task's contract is dispatched into a parent turn. */
+  completionDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
 }
@@ -122,6 +126,8 @@ export const getJobsForList = (...args: Parameters<typeof agentJobProvider.servi
 export const parkJobTask = (...args: Parameters<typeof agentJobProvider.service.parkJobTask>) => agentJobProvider.service.parkJobTask(...args);
 export const resumeParkedJob = (...args: Parameters<typeof agentJobProvider.service.resumeParkedJob>) => agentJobProvider.service.resumeParkedJob(...args);
 export const completeJob = (...args: Parameters<typeof agentJobProvider.service.completeJob>) => agentJobProvider.service.completeJob(...args);
+export const recordTaskCompletion = (...args: Parameters<typeof agentJobProvider.service.recordTaskCompletion>) => agentJobProvider.service.recordTaskCompletion(...args);
+export const markTaskCompletionDelivered = (...args: Parameters<typeof agentJobProvider.service.markTaskCompletionDelivered>) => agentJobProvider.service.markTaskCompletionDelivered(...args);
 export const markCompletionDelivered = (...args: Parameters<typeof agentJobProvider.service.markCompletionDelivered>) => agentJobProvider.service.markCompletionDelivered(...args);
 export const getPendingCompletions = (...args: Parameters<typeof agentJobProvider.service.getPendingCompletions>) => agentJobProvider.service.getPendingCompletions(...args);
 export const findTaskByThread = (...args: Parameters<typeof agentJobProvider.service.findTaskByThread>) => agentJobProvider.service.findTaskByThread(...args);

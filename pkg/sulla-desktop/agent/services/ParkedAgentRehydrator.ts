@@ -38,7 +38,7 @@ export class ParkedAgentRehydrator {
    */
   async resolve(threadId: string): Promise<ParkedAgentIdentity | null> {
     const job = await this.jobs.findByTaskThread(threadId);
-    if (!job) return null;
+    if (!job || ['stopped', 'failed', 'completed'].includes(job.status)) return null;
     const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
     const task = job.tasks[taskIndex];
     if (!task || (task.status !== 'parked' && !(task.status === 'running' && Number(job.restartResumeCount) > 0))) return null;
@@ -74,6 +74,6 @@ export const parkedAgentRehydrator = new ParkedAgentRehydrator(
   failJob,
   (job, error) => {
     if (!job.parentChannel || !job.parentThreadId) return;
-    void import('./AgentCompletionInbox').then(({ enqueueAgentCompletion }) => enqueueAgentCompletion(job.parentChannel!, job.parentThreadId!, { jobId: job.jobId, results: [], failureReason: error }));
+    void import('./AgentCompletionInbox').then(({ enqueueAgentCompletion }) => enqueueAgentCompletion(job.parentChannel!, job.parentThreadId!, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: error }));
   },
 );
