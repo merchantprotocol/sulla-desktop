@@ -1946,7 +1946,10 @@ export class ChatCompletionsServer {
         this.containerLaunchComposition.activeContainers,
         undefined,
         undefined,
-        { status: async(jobId: string) => (await import('@pkg/agent/tools/agents/jobRegistry')).getJob(jobId)?.status },
+        { status: async(jobId: string) => {
+          const registry = await import('@pkg/agent/tools/agents/jobRegistry');
+          return (await registry.getJob(jobId))?.status;
+        } },
       );
       this.containerRetention.start();
     }
