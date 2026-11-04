@@ -54,6 +54,12 @@ const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
+export interface ConversationTerminalReader { isTerminalDelegatedThread(threadId: string): Promise<boolean>; }
+export interface ConversationIdleTimer {
+  set(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clear(timer: ReturnType<typeof setTimeout>): void;
+}
+
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
 export function getBackendGraphWebSocketService(): BackendGraphWebSocketService {
@@ -64,6 +70,14 @@ export function getBackendGraphWebSocketService(): BackendGraphWebSocketService 
 }
 
 export class BackendGraphWebSocketService {
+  constructor(
+    private readonly terminalThreads: ConversationTerminalReader = parkedAgentRehydrator,
+    private readonly idleTimers: ConversationIdleTimer = {
+      set: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: timer => clearTimeout(timer),
+    },
+  ) {}
+
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
@@ -91,7 +105,7 @@ export class BackendGraphWebSocketService {
   }
 
   private armConversationIdle(key: string, lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle): ReturnType<typeof setTimeout> {
-    const timer = setTimeout(() => {
+    const timer = this.idleTimers.set(() => {
       const current = this.conversationContainers.get(key);
       if (current?.lifecycle !== lifecycle) return;
       const [channelId, ...threadParts] = key.split('|');
@@ -111,8 +125,8 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const current = this.conversationContainers.get(key);
     if (!current) return;
-    clearTimeout(current.idleTimer);
-    if (await parkedAgentRehydrator.isTerminalDelegatedThread(threadId)) {
+    this.idleTimers.clear(current.idleTimer);
+    if (await this.terminalThreads.isTerminalDelegatedThread(threadId)) {
       this.conversationContainers.delete(key);
       await current.lifecycle.close('agent-job-terminal', 'BackendGraphWebSocketService.settleConversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close terminal agent conversation container:', error));
@@ -250,7 +264,7 @@ export class BackendGraphWebSocketService {
     this.suspendedRuns.clear();
     this.resumeContexts.clear();
     for (const [, record] of this.conversationContainers) {
-      clearTimeout(record.idleTimer);
+      this.idleTimers.clear(record.idleTimer);
       record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
         .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
     }
@@ -315,11 +329,11 @@ export class BackendGraphWebSocketService {
     // ('primary', …) pin nothing, while 'fast' pins the resolved light model.
     const pinned = (value: string | undefined) => cliPinnedModelId(provider, value);
     if (existing && !existing.lifecycle.closed && existing.agentId === agentId && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
-      clearTimeout(existing.idleTimer);
+      this.idleTimers.clear(existing.idleTimer);
       return existing.lifecycle;
     }
     if (existing) {
-      clearTimeout(existing.idleTimer);
+      this.idleTimers.clear(existing.idleTimer);
       await existing.lifecycle.close(existing.agentId === agentId ? 'provider-or-model-switch' : 'agent-switch', 'BackendGraphWebSocketService.conversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
@@ -345,7 +359,7 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const current = this.conversationContainers.get(key);
     if (current?.lifecycle === lost) {
-      clearTimeout(current.idleTimer);
+      this.idleTimers.clear(current.idleTimer);
       this.conversationContainers.delete(key);
     }
     await lost.close('container-disappeared', 'BackendGraphWebSocketService.recoverConversationContainer')
@@ -499,7 +513,7 @@ export class BackendGraphWebSocketService {
         const key = this.abortKey(channelId, threadId);
         const container = this.conversationContainers.get(key);
         if (container) {
-          clearTimeout(container.idleTimer);
+          this.idleTimers.clear(container.idleTimer);
           this.conversationContainers.delete(key);
           await container.lifecycle.close('new-conversation', 'BackendGraphWebSocketService.handleChannelMessage')
             .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
