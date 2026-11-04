@@ -45,3 +45,7 @@ export type {
 // Registry
 export { AgentPersonaRegistry, getAgentPersonaRegistry } from './database/registry/AgentPersonaRegistry';
 export type { ChatMessage, AgentRegistryEntry } from './database/registry/AgentPersonaRegistry';
+
+// PROOF(ci/typecheck-job): deliberate type error to confirm the `typecheck`
+// CI check actually fails on a new error. Removed in the next commit.
+const __typecheckProof: number = 'x';
