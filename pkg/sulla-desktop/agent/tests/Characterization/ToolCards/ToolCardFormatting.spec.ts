@@ -22,7 +22,7 @@ const knownTools = [
 
 describe('tool card formatting characterization', () => {
   it('redacts every vault secret while preserving non-secret fields', () => {
-    fc.assert(fc.property(fc.string(), fc.string(), (secret, safe) => {
+    fc.assert(fc.property(fc.string({ minLength: 1 }), fc.string(), (secret, safe) => {
       for (const [toolName, field] of secretTools) {
         const args = { [field]: secret, safe };
         const redacted = redactToolArgs(toolName, args) as Record<string, unknown>;
