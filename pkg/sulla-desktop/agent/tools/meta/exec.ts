@@ -5,6 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { AgentExecDockerPolicy } from '../docker/AgentExecDockerPolicy';
 
 /**
  * Exec Tool - Worker class for execution
@@ -24,10 +25,13 @@ export class ExecWorker extends BaseTool {
     cwd:         { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
     timeout:     { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
     stdin:       { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
+    persistent:  { type: 'boolean' as const, optional: true, description: 'Allow a Docker restart policy; requires reason' },
+    reason:      { type: 'string' as const, optional: true, description: 'Audit reason required for persistent Docker containers' },
+    ttlSeconds:  { type: 'number' as const, optional: true, description: 'Agent container TTL (default 4 hours)' },
   };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const command = String(input.command ?? input.cmd ?? '').trim();
+    let command = String(input.command ?? input.cmd ?? '').trim();
 
     if (!command) {
       return {
@@ -36,6 +40,15 @@ export class ExecWorker extends BaseTool {
       };
     }
 
+    const metadata = this.state?.metadata ?? {};
+    try {
+      command = new AgentExecDockerPolicy().apply(command, input, {
+        jobId: String(metadata.jobId ?? metadata.threadId ?? 'unknown'),
+        agentId: String(metadata.agentId ?? metadata.wsChannel ?? 'unknown'),
+      });
+    } catch (error) {
+      return { successBoolean: false, responseString: (error as Error).message };
+    }
     const cwd = input.cwd ? String(input.cwd).trim() : undefined;
     const timeoutMs = input.timeout ? Number(input.timeout) : 120_000;
     const stdin = input.stdin ? String(input.stdin) : undefined;

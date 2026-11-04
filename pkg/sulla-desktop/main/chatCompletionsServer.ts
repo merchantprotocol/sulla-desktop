@@ -1944,6 +1944,9 @@ export class ChatCompletionsServer {
         { setTimeout: (callback, delayMs) => setTimeout(callback, delayMs), clearTimeout: timer => clearTimeout(timer) },
         { info: message => console.log(message), error: message => console.error(message) },
         this.containerLaunchComposition.activeContainers,
+        undefined,
+        undefined,
+        { status: async(jobId: string) => (await import('@pkg/agent/tools/agents/jobRegistry')).getJob(jobId)?.status },
       );
       this.containerRetention.start();
     }

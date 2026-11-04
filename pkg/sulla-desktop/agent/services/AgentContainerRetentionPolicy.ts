@@ -24,8 +24,9 @@ export interface Clock { now(): number; }
 
 /** Lets the launcher shield containers of launches that are still in flight. */
 export interface ActiveContainerGuard { isActive(containerId: string): boolean; }
+export interface AgentJobStatusReader { status(jobId: string): Promise<string | undefined>; }
 
-export type RemovalReason = 'age' | 'count' | 'disk';
+export type RemovalReason = 'age' | 'count' | 'disk' | 'expired' | 'terminal-owner' | 'pressure';
 
 export interface RemovedContainer {
   id:     string;
@@ -122,11 +123,14 @@ export class ContainerRetentionPolicy {
     private readonly clock:     Clock,
     private readonly guard:     ActiveContainerGuard,
     private readonly config:    RetentionConfig = new RetentionConfig(),
+    private readonly jobs?:      AgentJobStatusReader,
   ) {}
 
   async enforce(): Promise<RetentionReport> {
     const removed: RemovedContainer[] = [];
     const errors: RetentionError[] = [];
+    await this.reapAgentOwnedTemporaryContainers(removed, errors);
+
 
     let listed: any[];
     try {
@@ -203,6 +207,57 @@ export class ContainerRetentionPolicy {
     };
   }
 
+  private async reapAgentOwnedTemporaryContainers(removed: RemovedContainer[], errors: RetentionError[]): Promise<void> {
+    let listed: any[];
+    try {
+      listed = await this.runtime.list('com.sulla.owner=agent');
+    } catch (error) {
+      errors.push({ stage: 'list', message: errorMessage(error) });
+      return;
+    }
+    const nowSeconds = Math.floor(this.clock.now() / 1_000);
+    const candidates: Array<{ container: DescribedContainer; labels: Record<string, string> }> = [];
+    for (const entry of listed) {
+      const listedId = entry?.ID ?? entry?.Id ?? entry?.Names;
+      if (!listedId) continue;
+      try {
+        const details = await this.runtime.inspect(listedId);
+        const labels = details?.Config?.Labels ?? {};
+        if (labels['com.sulla.owner'] !== 'agent') continue;
+        const container = this.describe(String(listedId), details);
+        const persistent = labels['com.sulla.persistent'] === 'true';
+        const expiresAt = Number(labels['com.sulla.expires-at']);
+        const expired = Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= nowSeconds;
+        const jobId = String(labels['com.sulla.job-id'] ?? '');
+        let terminal = false;
+        if (jobId && this.jobs) {
+          try {
+            const status = await this.jobs.status(jobId);
+            terminal = !!status && ['completed', 'failed', 'stopped', 'cancelled'].includes(status);
+          } catch { terminal = false }
+        }
+        if (expired || (!persistent && terminal)) {
+          await this.remove(container, expired ? 'expired' : 'terminal-owner', removed, errors, true);
+          continue;
+        }
+        if (!persistent) candidates.push({ container, labels });
+      } catch (error) {
+        errors.push({ stage: 'inspect', id: String(listedId), message: errorMessage(error) });
+      }
+    }
+    if (!candidates.length) return;
+    try {
+      let free = await this.disk.freeBytes();
+      candidates.sort((a, b) => a.container.createdAtMs - b.container.createdAtMs);
+      while (free < this.config.minFreeDiskBytes && candidates.length) {
+        await this.remove(candidates.shift()!.container, 'pressure', removed, errors, true);
+        free = await this.disk.freeBytes();
+      }
+    } catch (error) {
+      errors.push({ stage: 'disk-probe', message: errorMessage(error) });
+    }
+  }
+
   private hasAgentWorkloadLabel(details: any): boolean {
     const labels = details?.Config?.Labels ?? {};
     return labels[AGENT_WORKLOAD_LABEL] === AGENT_WORKLOAD_VALUE;
@@ -230,9 +285,10 @@ export class ContainerRetentionPolicy {
     reason: RemovalReason,
     removed: RemovedContainer[],
     errors: RetentionError[],
+    force = false,
   ): Promise<boolean> {
     try {
-      await this.runtime.remove(container.id, false);
+      await this.runtime.remove(container.id, force);
       removed.push({ id: container.id, name: container.name, reason });
       return true;
     } catch (error) {

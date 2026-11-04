@@ -5,6 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runDockerCommand } from './runDockerCommand';
+import { AgentDockerRunPolicy } from './AgentDockerRunPolicy';
 
 /**
  * Docker Run Tool - Worker class for execution
@@ -13,12 +14,20 @@ export class DockerRunWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { image, name, command, options } = input;
-
-    const args = ['run'];
-    if (options) {
-      args.push(...options.split(' '));
+    const { image, name, command } = input;
+    const metadata = this.state?.metadata ?? {};
+    const identity = {
+      jobId: String(metadata.jobId ?? metadata.threadId ?? 'unknown'),
+      agentId: String(metadata.agentId ?? metadata.wsChannel ?? 'unknown'),
+    };
+    let policyResult;
+    try {
+      policyResult = new AgentDockerRunPolicy().apply(input, identity);
+    } catch (error) {
+      return { successBoolean: false, responseString: (error as Error).message };
     }
+
+    const args = ['run', ...policyResult.options];
     if (name) {
       args.push('--name', name);
     }
@@ -40,7 +49,7 @@ export class DockerRunWorker extends BaseTool {
       const containerId = res.stdout.trim();
       return {
         successBoolean: true,
-        responseString: `Container started successfully. Image: ${ image }, Container ID: ${ containerId }`,
+        responseString: `Container started successfully. Image: ${ image }, Container ID: ${ containerId }, Labels: ${ JSON.stringify(policyResult.labels) }`,
       };
     } catch (error) {
       return {

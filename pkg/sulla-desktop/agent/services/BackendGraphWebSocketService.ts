@@ -107,6 +107,20 @@ export class BackendGraphWebSocketService {
     return timer;
   }
 
+  private async settleConversationContainer(channelId: string, threadId: string): Promise<void> {
+    const key = this.abortKey(channelId, threadId);
+    const current = this.conversationContainers.get(key);
+    if (!current) return;
+    clearTimeout(current.idleTimer);
+    if (await parkedAgentRehydrator.isTerminalDelegatedThread(threadId)) {
+      this.conversationContainers.delete(key);
+      await current.lifecycle.close('agent-job-terminal', 'BackendGraphWebSocketService.settleConversationContainer')
+        .catch(error => console.warn('[BackendGraphWS] Failed to close terminal agent conversation container:', error));
+      return;
+    }
+    current.idleTimer = this.armConversationIdle(key, current.lifecycle);
+  }
+
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
   async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
     const parked = await parkedAgentRehydrator.resolve(threadId);
@@ -962,6 +976,7 @@ export class BackendGraphWebSocketService {
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
+        await this.settleConversationContainer(channelId, threadId);
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this

@@ -85,13 +85,16 @@ export const dockerToolManifests: ToolManifest[] = [
   },
   {
     name:        'docker_run',
-    description: 'Run a Docker container.',
+    description: 'Run a Docker container. Agent containers are temporary by default (4 hour TTL), reject restart policies, and are reaped when the job ends. Use persistent:true with a non-empty reason only when persistence is required.',
     category:    'docker',
     schemaDef:   {
       image:   { type: 'string', description: 'Docker image to run' },
       name:    { type: 'string', optional: true, description: 'Container name' },
       command: { type: 'string', optional: true, description: 'Command to run in the container' },
-      options: { type: 'string', optional: true, description: 'Additional docker run options' },
+      options:    { type: 'string', optional: true, description: 'Additional docker run options; restart policies require persistent:true and reason' },
+      persistent: { type: 'boolean', optional: true, description: 'Opt out of temporary-only restart-policy protection; requires reason' },
+      reason:     { type: 'string', optional: true, description: 'Required audit reason when persistent is true' },
+      ttlSeconds: { type: 'number', optional: true, description: 'Expiration in seconds (default 14400 / 4 hours)' },
     },
     operationTypes: ['create', 'update', 'execute'],
     loader:         () => import('./docker_run'),
