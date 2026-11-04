@@ -103,7 +103,7 @@ class PerPrTestRunner {
       if (error instanceof Error && error.message === 'TEST_BUDGET_EXCEEDED') {
         this.output.error("TEST BUDGET EXCEEDED: per-PR tests took >60s — make them faster, don't raise the budget (see ARCHITECTURE-GUARD.md)");
       } else this.output.error(error);
-      process.exitCode = 1;
+      process.exitCode = error instanceof Error && error.message === 'TEST_BUDGET_EXCEEDED' ? 124 : 1;
     }
   }
 }
