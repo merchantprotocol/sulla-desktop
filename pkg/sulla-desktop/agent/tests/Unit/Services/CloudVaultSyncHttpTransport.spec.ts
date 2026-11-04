@@ -29,7 +29,7 @@ describe('CloudVaultSyncHttpTransport', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const address = server.address(); if (!address || typeof address === 'string') throw new Error('server did not bind');
-      const transport = new CloudVaultSyncHttpTransport({ client: new LocalHttpClient(), baseUrl: `http://127.0.0.1:${address.port}`, authHeaders: {} });
+      const transport = new CloudVaultSyncHttpTransport({ client: new LocalHttpClient(), baseUrl: `http://127.0.0.1:${address.port}`, authHeaders: async () => ({}) });
       await expect(transport.getStatus('v')).rejects.toMatchObject({ code: 'vault_locked', status: 423 });
       try { await transport.getStatus('v'); } catch (error) { expect(error).toBeInstanceOf(VaultSyncHttpError); expect(String(error)).not.toContain('do-not-leak'); }
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
@@ -41,7 +41,7 @@ describe('CloudVaultSyncHttpTransport', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const address = server.address(); if (!address || typeof address === 'string') throw new Error('server did not bind');
-      const transport = new CloudVaultSyncHttpTransport({ client: new LocalHttpClient(), baseUrl: `http://127.0.0.1:${address.port}`, authHeaders: {}, maxResponseBytes: 16 });
+      const transport = new CloudVaultSyncHttpTransport({ client: new LocalHttpClient(), baseUrl: `http://127.0.0.1:${address.port}`, authHeaders: async () => ({}), maxResponseBytes: 16 });
       await expect(transport.getStatus('v')).rejects.toMatchObject({ code: 'invalid_body' });
       oversized = true; await expect(transport.getStatus('v')).rejects.toMatchObject({ code: 'too_large' });
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
