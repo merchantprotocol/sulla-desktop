@@ -76,9 +76,12 @@ export class BackendGraphWebSocketService {
       set: (callback, delayMs) => setTimeout(callback, delayMs),
       clear: timer => clearTimeout(timer),
     },
+    initialize = true,
   ) {
-    registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
-    this.initialize();
+    if (initialize) {
+      registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
+      this.initialize();
+    }
   }
 
   private readonly wsService = getWebSocketClientService();

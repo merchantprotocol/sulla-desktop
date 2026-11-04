@@ -19,7 +19,7 @@ describe('BackendGraphWebSocketService conversation container lifecycle', () => 
   it('re-arms the idle close after a finished manager turn', async() => {
     // risk: reusing a conversation clears its only timer and leaks the container forever
     const timers = new FakeIdleTimer();
-    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => false }, timers) as any;
+    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => false }, timers, false) as any;
     const lifecycle = { close: vi.fn().mockResolvedValue(undefined) };
     service.conversationContainers.set('sulla-desktop|thread-a', { provider: 'openai', agentId: 'manager', lifecycle, idleTimer: 7 });
     await service.settleConversationContainer('sulla-desktop', 'thread-a');
@@ -31,7 +31,7 @@ describe('BackendGraphWebSocketService conversation container lifecycle', () => 
   it('closes and forgets a manager container as soon as its job is terminal', async() => {
     // risk: completed manager session containers remain up beyond their job end
     const timers = new FakeIdleTimer();
-    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => true }, timers) as any;
+    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => true }, timers, false) as any;
     const lifecycle = { close: vi.fn().mockResolvedValue(undefined) };
     service.conversationContainers.set('sulla-desktop|thread-done', { provider: 'openai', agentId: 'manager', lifecycle, idleTimer: 8 });
     await service.settleConversationContainer('sulla-desktop', 'thread-done');
