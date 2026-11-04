@@ -129,8 +129,9 @@ export class ContainerRetentionPolicy {
   async enforce(): Promise<RetentionReport> {
     const removed: RemovedContainer[] = [];
     const errors: RetentionError[] = [];
-    await this.reapAgentOwnedTemporaryContainers(removed, errors);
-
+    if (!await this.reapAgentOwnedTemporaryContainers(removed, errors)) {
+      return { removed, errors, keptCount: 0, freeBytesBefore: null, freeBytesAfter: null };
+    }
 
     let listed: any[];
     try {
@@ -207,13 +208,13 @@ export class ContainerRetentionPolicy {
     };
   }
 
-  private async reapAgentOwnedTemporaryContainers(removed: RemovedContainer[], errors: RetentionError[]): Promise<void> {
+  private async reapAgentOwnedTemporaryContainers(removed: RemovedContainer[], errors: RetentionError[]): Promise<boolean> {
     let listed: any[];
     try {
       listed = await this.runtime.list('com.sulla.owner=agent');
     } catch (error) {
       errors.push({ stage: 'list', message: errorMessage(error) });
-      return;
+      return false;
     }
     const nowSeconds = Math.floor(this.clock.now() / 1_000);
     const candidates: Array<{ container: DescribedContainer; labels: Record<string, string> }> = [];
@@ -245,7 +246,7 @@ export class ContainerRetentionPolicy {
         errors.push({ stage: 'inspect', id: String(listedId), message: errorMessage(error) });
       }
     }
-    if (!candidates.length) return;
+    if (!candidates.length) return true;
     try {
       let free = await this.disk.freeBytes();
       candidates.sort((a, b) => a.container.createdAtMs - b.container.createdAtMs);
@@ -256,6 +257,7 @@ export class ContainerRetentionPolicy {
     } catch (error) {
       errors.push({ stage: 'disk-probe', message: errorMessage(error) });
     }
+    return true;
   }
 
   private hasAgentWorkloadLabel(details: any): boolean {
