@@ -26,7 +26,7 @@ import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
-import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
+import { abortJob, getJobsForParentThread, markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
@@ -109,27 +109,11 @@ export class BackendGraphWebSocketService {
 
   constructor() {
     registerCompletionIdleDispatcher((channelId, threadId) => {
-      if (this.hasActiveRun(channelId, threadId)) return;
+      const delegated = GraphRegistry.get(threadId);
+      if (this.hasActiveRun(channelId, threadId) || (delegated?.state.metadata as any)?.delegatedRunActive) return;
       const entries = takeAgentCompletions(channelId, threadId);
       if (!entries.length) return;
       const content = formatCompletionBatch(entries);
-      // A parent that is itself a hidden delegated child runs under its
-      // spawn_agent runner, not activeAborts. Starting a second execution on
-      // that state would race the runner, so hand it the batch as one steer.
-      const delegated = GraphRegistry.get(threadId);
-      if ((delegated?.state.metadata as any)?.delegatedRunActive) {
-        injectSteer(delegated!.state, {
-          id:        nextMessageId(),
-          role:      'user',
-          content,
-          timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system' },
-        } as any);
-        for (const entry of entries) {
-          markCompletionDelivered(entry.jobId).catch(err => console.warn('[BackendGraphWS] Failed to mark completion delivered:', err));
-        }
-        return;
-      }
       // Same trigger mapping as handleChannelMessage: only heartbeat has its own
       // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
       const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
@@ -138,7 +122,7 @@ export class BackendGraphWebSocketService {
       // the heavy agent instead of as a short spoken reply.
       const threadAgentId = String((delegated?.state.metadata as any)?.agentId || '').trim() || undefined;
       this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
-        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
+        source: 'sub_agent_completion', completionEntries: entries,
       }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
     });
     this.initialize();
@@ -521,7 +505,7 @@ export class BackendGraphWebSocketService {
         message = `${ message }\n\n${ formatCompletionBatch(pendingCompletions) }`;
         metadata = {
           ...metadata,
-          completionJobIds: pendingCompletions.map(entry => entry.jobId),
+          completionEntries: pendingCompletions,
         };
       }
     }
@@ -675,8 +659,8 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
-        await markCompletionDelivered(String(jobId));
+      for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
+        await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
       }
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
@@ -818,7 +802,7 @@ export class BackendGraphWebSocketService {
         // would otherwise sit unread in an idle thread. Run it as a new turn.
         // Skipped when the run was stopped by the user — stop means stop.
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
+        const completions = takeAgentCompletions(channelId, threadId);
         if (leftovers.length || completions.length) {
           const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
@@ -826,7 +810,7 @@ export class BackendGraphWebSocketService {
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
           this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
             ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
-            ...(completions.length ? { source: 'sub_agent_completion', completionJobIds: completions.map(entry => entry.jobId) } : {}),
+            ...(completions.length ? { source: 'sub_agent_completion' } : {}),
             ...(completions.length ? { completionEntries: completions } : {}),
           })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
