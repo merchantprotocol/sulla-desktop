@@ -55,6 +55,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     await registry.completeJob(job.jobId, []);
     await registry.markCompletionDelivered(job.jobId);
     const deliveredAt = (await registry.getJob(job.jobId))?.completionDeliveredAt;
+    await new Promise(resolve => setTimeout(resolve, 5));
     await registry.markCompletionDelivered(job.jobId);
     expect((await registry.getJob(job.jobId))?.completionDeliveredAt).toBe(deliveredAt);
     expect((await registry.getPendingCompletions()).some(item => item.jobId === job.jobId)).toBe(false);
