@@ -7,11 +7,14 @@ import { FilesTool } from './common';
 import { decisionService } from '../../services/DecisionService';
 import { PublishApprovalCoordinator } from './PublishApprovalCoordinator';
 import { toolRuntime } from '../toolRuntime';
-import { filesContainerJson } from '../../files/containerClient';
 import type { ToolResponse } from '../base';
+import type { DecisionService } from '../../services/DecisionService';
 
 export class FilesRequestPublishWorker extends FilesTool {
-  constructor(private readonly approvalCoordinator: PublishApprovalCoordinator = toolRuntime.publishApprovalCoordinator) {
+  constructor(
+    private readonly approvalCoordinator: PublishApprovalCoordinator = toolRuntime.publishApprovalCoordinator,
+    private readonly decisions: Pick<DecisionService, 'pendingApprovalForPayload' | 'request'> = decisionService,
+  ) {
     super();
     this.approvalCoordinator.start();
   }
@@ -40,7 +43,12 @@ export class FilesRequestPublishWorker extends FilesTool {
     const requestId = request?.id || request?.requestId;
     if (!requestId) throw new Error('Files service did not return a publish request id');
     const metadata = (this.state as any)?.metadata ?? {};
-    const { record } = await decisionService.request({
+    const pending = await this.decisions.pendingApprovalForPayload('filesPublishRequestId', requestId);
+    if (pending) {
+      this.approvalCoordinator.register(pending.id, message => this.emitMessage(message, 'file_publish_result'));
+      return { successBoolean: true, responseString: JSON.stringify({ request_id: requestId, decision_id: pending.id, status: 'pending' }) };
+    }
+    const { record } = await this.decisions.request({
       kind: 'approval',
       title: `${ label }?`,
       toolName: 'files_request_publish',

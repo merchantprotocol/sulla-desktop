@@ -6,10 +6,11 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
+import { JobTaskLocator } from './JobTaskLocator';
 import type { JobTerminalObserver } from './JobTerminalObserver';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly terminalObserver: JobTerminalObserver) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly terminalObserver: JobTerminalObserver) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -207,21 +208,29 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
   return this.boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
 }
 
+/**
+ * Task status is the source of truth; job.status is a rollup of its
+ * tasks — 'running' while any sibling task is still running or queued,
+ * 'parked' only once every non-terminal task has parked. A sibling task
+ * that is still running must stay visible to restart recovery even while
+ * this one task parks (AgentJobRepository.claimInterruptedJobs filters on
+ * job-level status).
+ */
 async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.status !== 'running' || !job.tasks[taskIndex]) return;
-  job.status = 'parked';
-  job.waitingOnChildren = waitingOnChildren;
+  if (!job || job.tasks[taskIndex]?.status !== 'running') return;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'parked' };
-  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren));
+  job.status = job.tasks.some(task => task.status === 'running' || task.status === 'queued') ? 'running' : 'parked';
+  job.waitingOnChildren = waitingOnChildren;
+  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren, job.status as 'running' | 'parked'));
 }
 
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.status !== 'parked' || !job.tasks[taskIndex]) return;
+  if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
   job.status = 'running';
   job.waitingOnChildren = 0;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
   await this.persist(this.repository.resume(jobId, job.tasks));
 }
 
@@ -259,7 +268,27 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 
   await this.persist(this.repository.complete(job));
 }
-
+/** Persist one settled task before its siblings finish. */
+async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job?.tasks[taskIndex]) return;
+  job.results[taskIndex] = result;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex],
+    status: result.status,
+    threadId: result.threadId || job.tasks[taskIndex].threadId,
+    finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
+    completion: result };
+  await this.persist(this.repository.updateTaskCompletions(jobId, job.tasks, job.results));
+}
+/** Acknowledge only the task whose contract actually entered a parent turn. */
+async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
+  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
+  if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
+  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  if (job.completionDeliveredAt) await this.persist(this.repository.markCompletionDelivered(jobId));
+}
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
   const job = this.runtime.jobs.get(jobId);
@@ -284,39 +313,12 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  * miss (a tab child after a restart) reads the persisted row.
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
-  if (!threadId) return undefined;
-  const cached = this.findCachedTaskByThread(threadId);
-  if (cached) return cached;
-  await this.recovery.ensureHydrated();
-  try {
-    const persisted = await this.repository.findByTaskThread(threadId);
-    if (persisted) {
-      const job = this.runtime.jobs.get(persisted.jobId) ?? persisted;
-      this.runtime.jobs.set(job.jobId, job);
-      const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-      if (taskIndex >= 0) return { job, taskIndex };
-    }
-  } catch (err) {
-    console.warn('[jobRegistry] thread task read failed:', (err as Error).message);
-  }
-  return undefined;
-}
-
-private findCachedTaskByThread(threadId: string): { job: AgentJob; taskIndex: number } | undefined {
-  let found: { job: AgentJob; taskIndex: number } | undefined;
-  for (const job of this.runtime.jobs.values()) {
-    const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
-    if (taskIndex >= 0 && (!found || job.createdAt > found.job.createdAt)) found = { job, taskIndex };
-  }
-  return found;
+  return this.taskLocator.findTaskByThread(threadId);
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
 async delegationDepthForThread(threadId: string | undefined): Promise<number> {
-  if (!threadId) return 0;
-  const owner = await this.findTaskByThread(threadId);
-  if (!owner) return 0;
-  return Number(owner.job.tasks[owner.taskIndex].depth) || 1;
+  return this.taskLocator.delegationDepthForThread(threadId);
 }
 
 /**
@@ -326,7 +328,7 @@ async delegationDepthForThread(threadId: string | undefined): Promise<number> {
  * a tab child cannot reset its depth just by never writing the metadata.
  */
 async resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undefined): Promise<number> {
-  return Math.max(Number(metadataSubAgentDepth) || 0, await this.delegationDepthForThread(threadId));
+  return this.taskLocator.resolveAgentDepth(metadataSubAgentDepth, threadId);
 }
 
 /** Tab this.runtime.jobs still open under one parent chat (each holds a renderer tab). */

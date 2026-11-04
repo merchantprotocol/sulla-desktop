@@ -448,8 +448,13 @@ function clipLine(text: string, max = 180): string {
   return text.length > max ? `${ text.slice(0, max) }…` : text;
 }
 
+/**
+ * Task status, not the job-level rollup, decides a sibling's card: one
+ * task parking flips the job's own rollup status to 'parked' only once
+ * every task has, so a still-running sibling must never read as parked.
+ */
 function toCardStatus(taskStatus: string, jobStatus: string): ThreadAgentCard['status'] {
-  if (taskStatus === 'parked' || jobStatus === 'parked') return 'parked';
+  if (taskStatus === 'parked') return 'parked';
   if (taskStatus === 'completed') return 'done';
   if (taskStatus === 'error' || taskStatus === 'blocked' || jobStatus === 'failed') return 'failed';
   if (taskStatus === 'stopped' || jobStatus === 'stopped') return 'stopped';

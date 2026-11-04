@@ -413,8 +413,7 @@ export class ChatCompletionsServer {
       const deadlineMs = Math.max(1, Math.min(Number(req.body?.deadlineMs ?? 30_000), 60_000));
       try {
         const { toolRegistry } = await import('@pkg/agent/tools/registry');
-        const prefixed = `${ category }_${ requested }`;
-        const worker = await toolRegistry.createTool(prefixed).catch(() => toolRegistry.createTool(requested));
+        const worker = await toolRegistry.createToolForCategory(category, requested);
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);

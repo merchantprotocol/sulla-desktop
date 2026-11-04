@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz",
     "express": "5.2.1",
     "ioredis": "5.9.3",
     "pg": "8.18.0",

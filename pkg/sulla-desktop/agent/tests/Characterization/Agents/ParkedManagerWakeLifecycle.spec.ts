@@ -14,7 +14,7 @@ vi.mock('../../../services/BackendGraphWebSocketService', () => ({
 }));
 
 class ReportProgressHarness extends ReportProgressWorker {
-  call(threadId: string, input: unknown) {
+  runHarness(threadId: string, input: unknown) {
     this.setState({ metadata: { threadId } } as any);
     return this._validatedCall(input);
   }
@@ -152,7 +152,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // The woken manager's own report_progress and return_result land on the
     // SAME job/task — rehydration didn't fork a second job for this thread.
     const progressWorker = new ReportProgressHarness();
-    const progress = JSON.parse((await progressWorker.call('wake-c-manager-thread', { step: 'woken', summary: 'resumed after wake' })).responseString!);
+    const progress = JSON.parse((await progressWorker.runHarness('wake-c-manager-thread', { step: 'woken', summary: 'resumed after wake' })).responseString!);
     expect(progress.jobId).toBe(manager.jobId);
     expect(progress.taskIndex).toBe(0);
 
@@ -232,10 +232,10 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // already created 'parked' above so both read as parked task targets.
     await registry.parkJobTask(manager.jobId, 0, 1);
 
-    wakeParkedAgent.mockImplementation(async(_channel: string, threadId: string) => {
+    wakeParkedAgent.mockImplementation((async(_channel: string, threadId: string) => {
       if (threadId === 'wake-e-thread-a') throw new Error(`Thread ${ threadId } is not a parked agent job.`);
       return true;
-    });
+    }) as any);
 
     const response = await sendJobMessage({ jobId: manager.jobId, message: 'continue the same goal' });
 
@@ -252,5 +252,98 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
 
     wakeParkedAgent.mockImplementation(async() => undefined);
+  });
+
+  it('f) a multi-task job keeps its still-running sibling claimable for restart recovery even after another task in the same job parks', async() => {
+    // risk: parkJobTask flipping the WHOLE job to 'parked' hides a sibling task's own job from claimInterruptedJobs, so a genuinely orphaned run never resumes after a restart
+    const job = await registry.createJob(
+      [
+        { agentId: 'codex-sol-worker', label: 'worker-sibling', prompt: 'build', status: 'running', threadId: 'multi-f-worker-thread', depth: 1 },
+        { agentId: 'coding-manager-sol', label: 'manager-sibling', prompt: 'own epic', status: 'running', threadId: 'multi-f-manager-thread', depth: 1 },
+      ],
+      'sulla-desktop', 'multi-f-root-thread',
+    );
+    await registry.parkJobTask(job.jobId, 1, 0);
+
+    // Job-level status is a rollup: the still-running sibling keeps it 'running'.
+    const parked = await agentJobProvider.jobs.job(job.jobId);
+    expect(parked?.status).toBe('running');
+    expect(parked?.tasks[0].status).toBe('running');
+    expect(parked?.tasks[1].status).toBe('parked');
+
+    // A fresh recovery service bound straight to the repository models a cold restart.
+    const resumed: Array<{ jobId: string; taskIndex: number }> = [];
+    const bootRecovery = new InterruptedAgentRecoveryService(
+      agentJobProvider.jobs,
+      async(resumedJob, taskIndex) => { resumed.push({ jobId: resumedJob.jobId, taskIndex }) },
+      () => {},
+      2,
+    );
+    await bootRecovery.recover();
+
+    // Only the still-running sibling is reclaimed; the parked manager task is left alone.
+    expect(resumed).toEqual([{ jobId: job.jobId, taskIndex: 0 }]);
+    const afterRecovery = await agentJobProvider.jobs.job(job.jobId);
+    expect(afterRecovery?.tasks[1].status).toBe('parked');
+    expect(afterRecovery?.restartResumeCount).toBe(1);
+  });
+
+  it('g) a parked manager sharing its job with a running sibling is still found and woken by its own child worker\'s contract', async() => {
+    // risk: resolve() gates rehydration on the job-level rollup status, so a running sibling keeps the job 'running' and the manager's own individually-parked task is never recognised as dormant
+    const manager = await registry.createJob(
+      [
+        { agentId: 'codex-sol-worker', label: 'worker-sibling', prompt: 'build', status: 'running', threadId: 'multi-g-worker-sibling-thread', depth: 1 },
+        { agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'multi-g-manager-thread', depth: 1 },
+      ],
+      'sulla-desktop', 'multi-g-root-thread',
+    );
+    await registry.parkJobTask(manager.jobId, 1, 1);
+    expect((await agentJobProvider.jobs.job(manager.jobId))?.status).toBe('running');
+
+    const child = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: 'multi-g-child-thread', depth: 2 }],
+      'coding-manager-sol', 'multi-g-manager-thread',
+    );
+
+    // The task-level rehydrator must find the manager's own task as parked,
+    // independent of the job's rollup status staying 'running'.
+    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
+    const identity = await rehydrator.resolve('multi-g-manager-thread');
+    expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 1 });
+    expect(identity?.job.jobId).toBe(manager.jobId);
+
+    // The child's contract return must wake that exact manager thread.
+    await registry.recordTaskReturn(child.jobId, 0, { result: { done: true }, status: 'completed' });
+    const results = [{ label: 'worker', status: 'completed' as const, output: 'built', threadId: 'multi-g-child-thread' }];
+    await registry.completeJob(child.jobId, results);
+    expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
+    expect(inbox.takeAgentCompletions('coding-manager-sol', 'multi-g-manager-thread').map(e => e.jobId)).toContain(child.jobId);
+  });
+
+  it('h) a completed, stopped, or failed job is never reclaimed by restart recovery', async() => {
+    // risk: restart recovery resurrects settled work and re-dispatches a duplicate, irreversible side effect
+    const completed = await registry.createJob([{ agentId: 'worker', label: 'done', prompt: 'x', status: 'running', threadId: 'terminal-h-completed-thread' }]);
+    await registry.completeJob(completed.jobId, [{ label: 'done', status: 'completed', output: 'ok', threadId: 'terminal-h-completed-thread' }]);
+    const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running', threadId: 'terminal-h-stopped-thread' }]);
+    registry.abortJob(stopped.jobId);
+    await registry.completeJob(stopped.jobId, []);
+    const failed = await registry.createJob([{ agentId: 'worker', label: 'failed', prompt: 'x', status: 'running', threadId: 'terminal-h-failed-thread' }]);
+    await registry.failJob(failed.jobId, 'boom');
+
+    const resumed: string[] = [];
+    const bootRecovery = new InterruptedAgentRecoveryService(
+      agentJobProvider.jobs,
+      async(resumedJob) => { resumed.push(resumedJob.jobId) },
+      () => {},
+      2,
+    );
+    await bootRecovery.recover();
+
+    expect(resumed).not.toContain(completed.jobId);
+    expect(resumed).not.toContain(stopped.jobId);
+    expect(resumed).not.toContain(failed.jobId);
+    expect((await agentJobProvider.jobs.job(completed.jobId))?.status).toBe('completed');
+    expect((await agentJobProvider.jobs.job(stopped.jobId))?.status).toBe('stopped');
+    expect((await agentJobProvider.jobs.job(failed.jobId))?.status).toBe('failed');
   });
 });

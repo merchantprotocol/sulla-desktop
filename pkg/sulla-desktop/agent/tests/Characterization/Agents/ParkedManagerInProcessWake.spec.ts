@@ -2,6 +2,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import '../../Support/TestHomeEnv';
+
+import { tmpdir } from 'node:os';
+
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TestDatabase } from '../../Support/TestDatabase';
@@ -15,6 +19,13 @@ import { SpawnAgentWorker } from '../../../tools/agents/spawn_agent';
 vi.mock('../../../services/ModelProviderService', () => ({
   getModelProviderService: () => ({ isInitialized: () => true, getPrimaryProvider: () => 'anthropic' }),
 }));
+
+// GraphRegistry pulls in the real tool catalog (`../tools/manifests`), which
+// transitively imports AgentContainerLauncher.ts's top-level `import Electron
+// from 'electron'`. Outside the Electron runtime that throws ("Electron
+// failed to install correctly") the moment the module loads, matching the
+// convention backgroundHandoff.spec.ts already uses.
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 
@@ -49,14 +60,14 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   afterEach(() => { inbox.clearCompletionInboxes(); vi.restoreAllMocks() });
 
   class SpawnHarness extends SpawnAgentWorker {
-    call(threadId: string, wsChannel: string, input: unknown) {
+    runHarness(threadId: string, wsChannel: string, input: unknown) {
       this.setState({ metadata: { threadId, wsChannel } } as any);
       return this.runValidated(input as any);
     }
   }
 
   class ReturnResultHarness extends ReturnResultWorker {
-    call(threadId: string, input: unknown) {
+    runHarness(threadId: string, input: unknown) {
       this.setState({ metadata: { threadId } } as any);
       return this._validatedCall(input);
     }
@@ -107,21 +118,21 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
         // its own messages: it returns its OWN contract, the exact call a
         // real manager makes once it has what it was waiting for.
         const rr = new ReturnResultHarness();
-        const result = await rr.call(managerThreadId, { result: { ok: true }, summary: 'epic done' });
+        const result = await rr.runHarness(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
         return fakeState;
       }),
     };
-    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation(async(_channel: string, threadId: string) => {
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation((async(_channel: string, threadId: string) => {
       managerThreadId = threadId;
       fakeState.metadata.threadId = threadId;
       return { graph: fakeGraph, state: fakeState };
-    });
+    }) as any);
     vi.spyOn(GraphRegistry, 'get').mockImplementation((threadId: string) =>
       (threadId === managerThreadId ? { graph: fakeGraph, state: fakeState } as any : null));
 
     const spawn = new SpawnHarness();
-    const launch = JSON.parse((await spawn.call('grandparent-root-thread', 'sulla-desktop', {
+    const launch = JSON.parse((await spawn.runHarness('grandparent-root-thread', 'sulla-desktop', {
       tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic' }],
       async: true,
     })).responseString!);
@@ -164,9 +175,15 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
     // The grandparent (the manager's own parent thread) receives exactly one
     // completion for the manager's job — not zero (stranded) and not two
-    // (double-delivered by both the old and new paths).
-    const grandparentCompletions = inbox.takeAgentCompletions('sulla-desktop', 'grandparent-root-thread');
-    expect(grandparentCompletions.map(c => c.jobId)).toEqual([managerJobId]);
+    // (double-delivered by both the old and new paths). completeJob (awaited
+    // above via the status check) and the inbox enqueue are two separate
+    // awaits further down the same executeAll().then() chain, so the enqueue
+    // can still be a few microtask ticks behind the status flip.
+    const grandparentCompletions = await vi.waitFor(() => {
+      const completions = inbox.takeAgentCompletions('sulla-desktop', 'grandparent-root-thread');
+      expect(completions.map(c => c.jobId)).toEqual([managerJobId]);
+      return completions;
+    }, { timeout: 2_000, interval: 10 });
 
     expect(fakeGraph.execute).toHaveBeenCalledTimes(2);
   });

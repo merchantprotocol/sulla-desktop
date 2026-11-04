@@ -47,6 +47,10 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
+  async updateTaskCompletions(jobId: string, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks), JSON.stringify(results)]);
+  }
+
   async jobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL ORDER BY created_at ASC`, [parentThreadId]);
     return rows.map(row => this.map(row));
@@ -98,12 +102,18 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows.map(row => this.map(row));
   }
 
-  async park(jobId: string, tasks: AgentJobTask[], waitingOnChildren: number): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'parked', tasks = $2::jsonb, waiting_on_children = $3 WHERE job_id = $1 AND status = 'running'`, [jobId, JSON.stringify(tasks), waitingOnChildren]);
+  /**
+   * `status` is the job-level rollup the caller computed from every task's
+   * own status (running if any sibling is still running/queued, else
+   * parked) — a second task in the same job can park after the first
+   * without the job row already being 'parked' blocking the write.
+   */
+  async park(jobId: string, tasks: AgentJobTask[], waitingOnChildren: number, status: 'running' | 'parked'): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = $4, tasks = $2::jsonb, waiting_on_children = $3 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), waitingOnChildren, status]);
   }
 
   async resume(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'running', tasks = $2::jsonb, waiting_on_children = 0 WHERE job_id = $1 AND status = 'parked'`, [jobId, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'running', tasks = $2::jsonb, waiting_on_children = 0 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
   async openChildrenForThread(threadId: string): Promise<number> {
@@ -116,7 +126,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async complete(job: AgentJob): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
   }
 
   async markCompletionDelivered(jobId: string): Promise<void> {
@@ -124,7 +134,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async pendingCompletions(): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE status = 'completed' AND completion_delivered_at IS NULL AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY finished_at ASC`);
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE (tasks @? '$[*] ? (@.completion != null)' OR (status = 'completed' AND completion_delivered_at IS NULL)) AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY COALESCE(finished_at, created_at) ASC`);
     return rows.map(row => this.map(row));
   }
 
@@ -142,9 +152,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     if (threadIds.length === 0) return false;
     const row = await this.connection.first(`SELECT EXISTS (
       SELECT 1 FROM agent_jobs child
-      WHERE child.parent_thread_id = ANY($1::text[])
+      WHERE child.parent_thread_id IN (SELECT jsonb_array_elements_text($1::jsonb))
         AND (child.status = 'running' OR child.tasks @? '$[*] ? (@.status == "queued" || @.status == "running")')
-    ) AS present`, [threadIds]);
+    ) AS present`, [JSON.stringify(threadIds)]);
     return row?.present === true || row?.present === 't';
   }
 
