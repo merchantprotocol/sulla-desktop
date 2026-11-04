@@ -38,15 +38,29 @@ describe('AgentHeartbeatPolicy', () => {
     ['NaN', { allowed: true, defaultIntervalMinutes: Number.NaN, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
     ['Infinity', { allowed: true, defaultIntervalMinutes: Number.POSITIVE_INFINITY, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
     ['negative', { allowed: true, defaultIntervalMinutes: -1, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
+    ['zero', { allowed: true, defaultIntervalMinutes: 0, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
     ['huge', { allowed: true, defaultIntervalMinutes: 5, minIntervalMinutes: 1, maxIntervalMinutes: 1441 }],
     ['missing key', { allowed: true, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
     ['min greater than max', { allowed: true, defaultIntervalMinutes: 5, minIntervalMinutes: 8, maxIntervalMinutes: 2 }],
+    ['default outside the configured min/max range', { allowed: true, defaultIntervalMinutes: 15, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
+    ['allowed is a string, not a boolean', { allowed: 'true', defaultIntervalMinutes: 5, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
+    ['allowed missing entirely', { defaultIntervalMinutes: 5, minIntervalMinutes: 1, maxIntervalMinutes: 10 }],
   ])('refuses malformed config.heartbeat: %s', async(_label, heartbeat) => {
     // risk: malformed persisted policy bypasses heartbeat governance
     const policy = new AgentHeartbeatPolicy(new InMemoryDefinitions({ bad: { id: 'bad-id', slug: 'bad', config: { heartbeat } } }));
     await expect(policy.decide('bad')).resolves.toMatchObject({
       allowed: false,
       reason: expect.stringContaining('config.heartbeat'),
+    });
+  });
+
+  it('names the specific out-of-range field in the refusal reason', async () => {
+    // risk: a vague error leaves a human unable to find the bad field in the agent definition
+    const policy = new AgentHeartbeatPolicy(new InMemoryDefinitions({
+      bad: { id: 'bad-id', slug: 'bad', config: { heartbeat: { allowed: true, defaultIntervalMinutes: 15, minIntervalMinutes: 1, maxIntervalMinutes: 10 } } },
+    }));
+    await expect(policy.decide('bad')).resolves.toMatchObject({
+      reason: expect.stringContaining('config.heartbeat.defaultIntervalMinutes'),
     });
   });
 
