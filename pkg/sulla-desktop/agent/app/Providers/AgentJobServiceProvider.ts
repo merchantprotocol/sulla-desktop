@@ -10,6 +10,7 @@ import { AgentJobService } from '../Services/AgentJobService';
 import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
 import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
+import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { postgresClient } from '../../database/PostgresClient';
 
 export class AgentJobServiceProvider {
@@ -24,7 +25,9 @@ export class AgentJobServiceProvider {
     this.messaging = new AgentJobMessagingRepository(connection);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
-    this.service = new AgentJobService(this.jobs, this.runtime, new JobRecoveryService(this.jobs), clock, new JobIdGenerator(clock));
+    const recovery = new JobRecoveryService(this.jobs);
+    const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
+    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator);
   }
 }
 

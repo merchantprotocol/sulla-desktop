@@ -32,7 +32,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         : `Job "${ jobId }" has no task at index ${ taskIndex } (or it has already finished).`,
     };
   }
-  if (targets.some(target => target.jobStatus !== 'running')) {
+  if (targets.some(target => !['running', 'parked'].includes(target.jobStatus))) {
     return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
   }
 
@@ -42,7 +42,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     record: await AgentJobMessagingModel.queueMessage(target, message),
   })));
   let deliveredLive = 0;
-  const { GraphRegistry } = await import('../../services/GraphRegistry');
+  const notWoken: Array<{ taskIndex: number; reason: string }> = [];
 
   for (const { target, record } of queued) {
     if (!target.threadId) continue;
@@ -65,6 +65,32 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       continue;
     }
 
+    if (target.taskStatus === 'parked') {
+      const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+      // The ack is written by dispatchToAgent itself, only once the woken
+      // turn actually consumed this message (graph.execute succeeded) — the
+      // same turnConsumedInput gate used for completion steers. Acking here
+      // would mark it delivered even if the turn never ran (provider not
+      // ready, launch error, abort), losing the message for good.
+      //
+      // wakeParkedAgent throws when the job is no longer parked by the time
+      // it resolves (completed/stopped/failed after targetsForJob read above,
+      // or its agent definition went missing) or is left mid-run and declines
+      // to dispatch. Either way the message stays queued in agent_job_messages
+      // for redelivery — degrade this one target and keep processing the rest.
+      try {
+        // false means the thread is mid-turn right now: wakeParkedAgent
+        // declined to dispatch (so it cannot abort that live run) and the
+        // already-queued message stays pending for the task's next turn.
+        const woken = await getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
+        if (woken) deliveredLive += 1;
+      } catch (err) {
+        console.warn(`[send_job_message] parked wake failed for ${ jobId } task ${ target.taskIndex }:`, (err as Error).message);
+        notWoken.push({ taskIndex: target.taskIndex, reason: (err as Error).message });
+      }
+      continue;
+    }
+    const { GraphRegistry } = await import('../../services/GraphRegistry');
     const running = GraphRegistry.get(target.threadId);
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {
@@ -89,6 +115,12 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       targetedTasks: queued.map(({ target }) => target.taskIndex),
       deliveredLive,
       queuedForNextBoundary: queued.length - deliveredLive,
+      ...(notWoken.length ? {
+        notWoken: notWoken.map(entry => ({
+          taskIndex: entry.taskIndex,
+          reason: `job is no longer parked, or its agent definition is missing (${ entry.reason }); the message stays queued and will be delivered at the task's next turn`,
+        })),
+      } : {}),
     }, null, 2),
   };
 }
