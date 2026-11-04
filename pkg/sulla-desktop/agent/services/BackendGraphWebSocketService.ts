@@ -17,6 +17,7 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { RunActivity } from './RunActivity';
+import { ConversationContainerSettlementService, type ConversationTerminalReader } from './ConversationContainerSettlementService';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -54,7 +55,6 @@ const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
-export interface ConversationTerminalReader { isTerminalDelegatedThread(threadId: string): Promise<boolean>; }
 export interface ConversationIdleTimer {
   set(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
   clear(timer: ReturnType<typeof setTimeout>): void;
@@ -131,14 +131,13 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const current = this.conversationContainers.get(key);
     if (!current) return;
-    this.idleTimers.clear(current.idleTimer);
-    if (await this.terminalThreads.isTerminalDelegatedThread(threadId)) {
-      this.conversationContainers.delete(key);
-      await current.lifecycle.close('agent-job-terminal', 'BackendGraphWebSocketService.settleConversationContainer')
-        .catch(error => console.warn('[BackendGraphWS] Failed to close terminal agent conversation container:', error));
-      return;
-    }
-    current.idleTimer = this.armConversationIdle(key, current.lifecycle);
+    await new ConversationContainerSettlementService(this.terminalThreads).settle(
+      threadId,
+      current,
+      timer => this.idleTimers.clear(timer),
+      () => this.conversationContainers.delete(key),
+      () => this.armConversationIdle(key, current.lifecycle),
+    ).catch(error => console.warn('[BackendGraphWS] Failed to settle conversation container:', error));
   }
 
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */

@@ -3,40 +3,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
-import { BackendGraphWebSocketService, type ConversationIdleTimer } from '@pkg/agent/services/BackendGraphWebSocketService';
+import { ConversationContainerSettlementService } from '@pkg/agent/services/ConversationContainerSettlementService';
 
-class FakeIdleTimer implements ConversationIdleTimer {
-  readonly callbacks: Array<() => void> = [];
-  readonly cleared: unknown[] = [];
-  set(callback: () => void): ReturnType<typeof setTimeout> {
-    this.callbacks.push(callback);
-    return this.callbacks.length as unknown as ReturnType<typeof setTimeout>;
-  }
-  clear(timer: ReturnType<typeof setTimeout>): void { this.cleared.push(timer); }
-}
-
-describe('BackendGraphWebSocketService conversation container lifecycle', () => {
+describe('conversation container settlement', () => {
   it('re-arms the idle close after a finished manager turn', async() => {
     // risk: reusing a conversation clears its only timer and leaks the container forever
-    const timers = new FakeIdleTimer();
-    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => false }, timers, false) as any;
-    const lifecycle = { close: vi.fn().mockResolvedValue(undefined) };
-    service.conversationContainers.set('sulla-desktop|thread-a', { provider: 'openai', agentId: 'manager', lifecycle, idleTimer: 7 });
-    await service.settleConversationContainer('sulla-desktop', 'thread-a');
-    expect(timers.cleared).toEqual([7]);
-    expect(timers.callbacks).toHaveLength(1);
-    expect(lifecycle.close).not.toHaveBeenCalled();
+    const service = new ConversationContainerSettlementService({ isTerminalDelegatedThread: async() => false });
+    const record = { lifecycle: { close: vi.fn() }, idleTimer: 7 as unknown as ReturnType<typeof setTimeout> };
+    const clear = vi.fn();
+    const rearm = vi.fn(() => 9 as unknown as ReturnType<typeof setTimeout>);
+    expect(await service.settle('thread-a', record, clear, vi.fn(), rearm)).toBe('rearmed');
+    expect(clear).toHaveBeenCalledWith(7);
+    expect(record.idleTimer).toBe(9);
+    expect(record.lifecycle.close).not.toHaveBeenCalled();
   });
 
   it('closes and forgets a manager container as soon as its job is terminal', async() => {
     // risk: completed manager session containers remain up beyond their job end
-    const timers = new FakeIdleTimer();
-    const service = new BackendGraphWebSocketService({ isTerminalDelegatedThread: async() => true }, timers, false) as any;
-    const lifecycle = { close: vi.fn().mockResolvedValue(undefined) };
-    service.conversationContainers.set('sulla-desktop|thread-done', { provider: 'openai', agentId: 'manager', lifecycle, idleTimer: 8 });
-    await service.settleConversationContainer('sulla-desktop', 'thread-done');
-    expect(lifecycle.close).toHaveBeenCalledWith('agent-job-terminal', 'BackendGraphWebSocketService.settleConversationContainer');
-    expect(service.conversationContainers.has('sulla-desktop|thread-done')).toBe(false);
-    expect(timers.callbacks).toHaveLength(0);
+    const service = new ConversationContainerSettlementService({ isTerminalDelegatedThread: async() => true });
+    const record = { lifecycle: { close: vi.fn().mockResolvedValue(undefined) }, idleTimer: 8 as unknown as ReturnType<typeof setTimeout> };
+    const remove = vi.fn();
+    expect(await service.settle('thread-done', record, vi.fn(), remove, vi.fn())).toBe('closed');
+    expect(remove).toHaveBeenCalledOnce();
+    expect(record.lifecycle.close).toHaveBeenCalledWith('agent-job-terminal', 'BackendGraphWebSocketService.settleConversationContainer');
   });
 });
