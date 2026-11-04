@@ -25,7 +25,10 @@ describe('AgentHeartbeatPolicy', () => {
   it('denies workers and malformed configuration without throwing', async () => {
     const policy = new AgentHeartbeatPolicy(new InMemoryDefinitions({ worker, bad: { id: 'bad', slug: 'bad', config: { heartbeat: { allowed: true, minIntervalMinutes: 8, maxIntervalMinutes: 2, defaultIntervalMinutes: 5 } } } }));
     await expect(policy.decide('worker')).resolves.toMatchObject({ allowed: false });
+    await expect(policy.decide('worker')).resolves.toMatchObject({ reason: expect.stringContaining('config.heartbeat.allowed') });
     await expect(policy.decide('bad')).resolves.toMatchObject({ allowed: false });
+    const invalid = new AgentHeartbeatPolicy(new InMemoryDefinitions({ invalid: { id: 'invalid-id', slug: 'invalid', config: { heartbeat: { allowed: true, defaultIntervalMinutes: -1, minIntervalMinutes: 1, maxIntervalMinutes: 1440 } } } }));
+    await expect(invalid.decide('invalid')).resolves.toMatchObject({ allowed: false });
   });
 
   it('always allows zero to turn heartbeats off, including for unknown agents', async () => {

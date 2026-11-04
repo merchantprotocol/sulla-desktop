@@ -136,7 +136,7 @@ import { up as up_0141, down as down_0141 } from './0141_first_run_credentials';
 import { up as up_0142, down as down_0142 } from './0142_create_desktop_audit';
 import { up as up_0143, down as down_0143 } from './0143_agent_model_choice';
 import { up as up_0144, down as down_0144 } from './0144_memory_sync_v1';
-import { up as up_0145, down as down_0145 } from './0145_agent_heartbeat_policy';
+import { up as up_0147, down as down_0147 } from './0147_agent_heartbeat_policy';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -269,5 +269,5 @@ export const migrationsRegistry = [
   { name: '0142_create_desktop_audit', up: up_0142, down: down_0142 },
   { name: '0143_agent_model_choice', up: up_0143, down: down_0143 },
   { name: '0144_memory_sync_v1', up: up_0144, down: down_0144 },
-  { name: '0145_agent_heartbeat_policy', up: up_0145, down: down_0145 },
+  { name: '0147_agent_heartbeat_policy', up: up_0147, down: down_0147 },
 ] as const;
