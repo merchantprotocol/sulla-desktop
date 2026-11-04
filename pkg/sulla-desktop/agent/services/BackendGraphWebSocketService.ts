@@ -15,7 +15,10 @@ import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './Conta
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { RunActivity } from './RunActivity';
+import { agentJobLifecycle } from './AgentJobLifecycleService';
+import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -26,6 +29,8 @@ import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -102,46 +107,130 @@ export class BackendGraphWebSocketService {
     return timer;
   }
 
+  /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
+  async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
+    const parked = await parkedAgentRehydrator.resolve(threadId);
+    if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
+    // The manager is blocked inside spawn_agent's own in-process wait for its
+    // children (waitForWake registered for this exact thread in THIS
+    // process). Its own loop owns that turn's lifecycle — inject the message
+    // into its live state and release the waiter instead of dispatching a
+    // disconnected new turn, which would leave this exact Promise (and its
+    // eventual completeJob/deliverJobCompletion once the loop returns)
+    // blocked forever.
+    if (agentJobLifecycle.hasLiveWaiter(threadId)) {
+      const delegated = GraphRegistry.get(threadId);
+      // Should not happen — the waiter and this GraphRegistry entry share the
+      // same spawn_agent call's lifetime — but release the waiter either way
+      // so a contradiction here cannot leak the Promise.
+      if (!delegated) {
+        console.warn(`[BackendGraphWS] Live waiter for thread ${ threadId } has no GraphRegistry state; waking without delivering the message.`);
+        agentJobLifecycle.wake(threadId);
+        return false;
+      }
+      injectSteer(delegated.state, {
+        id:        nextMessageId(),
+        role:      'user',
+        content:   `[Message from orchestrator]\n${ message }`,
+        timestamp: Date.now(),
+        metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
+      } as any);
+      agentJobLifecycle.wake(threadId);
+      return true;
+    }
+    // A turn already in flight for this thread through dispatchToAgent
+    // itself (a prior dormant wake still running). Dispatching here would
+    // abort that live run out from under it. The message was already written
+    // to agent_job_messages by the caller before this call, so it is safe to
+    // leave it queued: the active run's own finally block redelivers any
+    // message still pending once it ends (see dispatchToAgent), or a CLI
+    // sub-agent picks it up at its next model-call boundary if the run keeps
+    // going.
+    if (this.hasActiveRun(channelId, threadId)) {
+      console.warn(`[BackendGraphWS] Deferred orchestrator wake for thread ${ threadId }: a turn is already running; the message stays queued for its next turn.`);
+      return false;
+    }
+    await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+      `[Message from orchestrator]\n${ message }`, threadId, undefined, agentId || parked.agentId, 'system', {
+        source: 'orchestrator_job_message', ...messageMeta,
+      });
+    return true;
+  }
+
   /** True while a turn is in flight for this thread (an idle chat is not running). */
   hasActiveRun(channelId: string, threadId: string): boolean {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
   constructor() {
-    registerCompletionIdleDispatcher((channelId, threadId) => {
-      if (this.hasActiveRun(channelId, threadId)) return;
-      const entries = takeAgentCompletions(channelId, threadId);
-      if (!entries.length) return;
-      const content = formatCompletionBatch(entries);
-      // A parent that is itself a hidden delegated child runs under its
-      // spawn_agent runner, not activeAborts. Starting a second execution on
-      // that state would race the runner, so hand it the batch as one steer.
-      const delegated = GraphRegistry.get(threadId);
-      if ((delegated?.state.metadata as any)?.delegatedRunActive) {
-        injectSteer(delegated!.state, {
+    registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
+    this.initialize();
+  }
+
+  /**
+   * One owner for a settled completion's delivery to the parent thread. A
+   * thread with a live in-process waiter (spawn_agent's own waitForWake for
+   * this exact thread) owns that turn's lifecycle itself: inject the batch
+   * into its live state and release the waiter so its own loop resumes,
+   * completes and delivers to ITS parent. Dispatching a brand-new turn here
+   * instead would run disconnected from that still-blocked Promise, leaving
+   * it (and the job it is waiting to complete) blocked forever.
+   */
+  private handleCompletionWake(channelId: string, threadId: string): void {
+    if (this.hasActiveRun(channelId, threadId)) return;
+    const entries = takeAgentCompletions(channelId, threadId);
+    if (!entries.length) return;
+    const content = formatCompletionBatch(entries);
+    // A parent that is itself a hidden delegated child runs under its
+    // spawn_agent runner, not activeAborts. Starting a second execution on
+    // that state would race the runner, so hand it the batch as one steer.
+    const delegated = GraphRegistry.get(threadId);
+    if (agentJobLifecycle.hasLiveWaiter(threadId)) {
+      if (delegated) {
+        injectSteer(delegated.state, {
           id:        nextMessageId(),
           role:      'user',
           content,
           timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system' },
+          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries },
         } as any);
-        for (const entry of entries) {
-          markCompletionDelivered(entry.jobId).catch(err => console.warn('[BackendGraphWS] Failed to mark completion delivered:', err));
-        }
-        return;
+      } else {
+        // No live graph state to inject into — should not happen alongside
+        // a live waiter, but requeue rather than drop the completion.
+        for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
       }
-      // Same trigger mapping as handleChannelMessage: only heartbeat has its own
-      // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
-      const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
-      // Wake the agent that owns the thread. The trigger default is the typed
-      // sulla-desktop agent, so a voice thread's worker results came back from
-      // the heavy agent instead of as a short spoken reply.
-      const threadAgentId = String((delegated?.state.metadata as any)?.agentId || '').trim() || undefined;
-      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
+      agentJobLifecycle.wake(threadId);
+      return;
+    }
+    if ((delegated?.state.metadata as any)?.delegatedRunActive) {
+      injectSteer(delegated!.state, {
+        id:        nextMessageId(),
+        role:      'user',
+        content,
+        timestamp: Date.now(),
+        metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries },
+      } as any);
+      return;
+    }
+    // Same trigger mapping as handleChannelMessage: only heartbeat has its own
+    // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
+    const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
+    // Wake the agent that owns the thread. The trigger default is the typed
+    // sulla-desktop agent, so a voice thread's worker results came back from
+    // the heavy agent instead of as a short spoken reply.
+    void parkedAgentRehydrator.isTerminalDelegatedThread(threadId).then(async(terminal) => {
+      // A human stop is final. Child results remain readable and durably
+      // undelivered, but must never resurrect the stopped parent thread.
+      if (terminal) return;
+      const parked = await parkedAgentRehydrator.resolve(threadId);
+      const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
+      return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
-      }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
+      });
+    }).catch(err => {
+      for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
+      console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
     });
-    this.initialize();
   }
 
   dispose(): void {
@@ -325,6 +414,21 @@ export class BackendGraphWebSocketService {
     // an empty in-process bus and incorrectly acknowledged as delivered.
     recoverPendingAgentCompletions().catch(err =>
       console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
+    const interruptedRecovery = new InterruptedAgentRecoveryService(
+      agentJobProvider.jobs,
+      async(job, taskIndex) => {
+        const task = job.tasks[taskIndex];
+        const channel = job.parentChannel || 'sulla-desktop';
+        await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+          `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
+          task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
+      },
+      (job, reason) => {
+        if (!job.parentChannel || !job.parentThreadId) return;
+        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, results: [], failureReason: reason });
+      },
+    );
+    interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
   }
 
   /**
@@ -449,14 +553,19 @@ export class BackendGraphWebSocketService {
     // runner. A message typed into that tab steers the live run; starting a
     // second execution on the same state would race the runner.
     const delegated = typeof data?.threadId === 'string' ? GraphRegistry.get(data.threadId) : undefined;
-    if (content && (delegated?.state.metadata as any)?.delegatedRunActive) {
-      injectSteer(delegated!.state, {
+    // A sub-agent parked mid in-process wait for its own children owns that
+    // turn's lifecycle the same way: inject and release its waiter instead of
+    // falling through to a disconnected new dispatchToAgent turn below.
+    const parkedWaiter = typeof data?.threadId === 'string' && agentJobLifecycle.hasLiveWaiter(data.threadId);
+    if (content && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
+      injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
         content,
         timestamp: Date.now(),
         metadata:  { ...data?.metadata, source: data?.metadata?.source || 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
       } as any);
+      if (parkedWaiter) agentJobLifecycle.wake(data.threadId as string);
       console.log(`[BackendGraphWS] Steered delegated run ${ data.threadId }: ${ content.slice(0, 50) }...`);
       return;
     }
@@ -556,8 +665,14 @@ export class BackendGraphWebSocketService {
     }
 
     let state: AgentGraphState | undefined;
+    let turnConsumedInput = false;
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
+    // Set only for a dormant parked job (no live in-process waiter) this turn
+    // is waking. Re-parked in the finally block if the turn ends without the
+    // job completing, so job/task status stays truthful for the turn's whole
+    // duration rather than lying 'parked' while it is actually executing.
+    let wakeTurnToRepark: { jobId: string; taskIndex: number } | undefined;
 
     const isCurrentRun = () => this.activeAborts.get(abortKey) === runAbort;
 
@@ -565,6 +680,8 @@ export class BackendGraphWebSocketService {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
+      const parkedIdentity = await parkedAgentRehydrator.resolve(threadId);
+      if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
 
       if (newRoute) {
         applyThreadAgentRoute(state, newRoute.agent);
@@ -642,13 +759,31 @@ export class BackendGraphWebSocketService {
         });
       }
 
-      // Completion wakes are accumulated instead of superseding the active
-      // parent. Human/new-turn messages still replace the prior turn.
-      if (metadata?.source === 'sub_agent_completion' && this.activeAborts.has(abortKey)) {
-        for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+      // Completion and orchestrator wakes are accumulated instead of
+      // superseding the active parent. Human/new-turn messages still replace
+      // the prior turn. An orchestrator wake (source 'orchestrator_job_message',
+      // from wakeParkedAgent) has nothing to re-enqueue here — its message was
+      // already written to agent_job_messages by the caller before this
+      // dispatch, and the finally block below redelivers anything still
+      // pending once the active run ends.
+      if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message') && this.activeAborts.has(abortKey)) {
+        if (metadata?.source === 'sub_agent_completion') {
+          for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+        }
         return;
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
+
+      // Only a dormant parked TASK — no live in-process waiter held this
+      // abortKey, or this dispatch would have returned just above — is
+      // flipped running for the turn's duration. Re-parked in the finally
+      // block unless the turn completes the job via return_result. Checked
+      // on the task, not the job's rollup status: a sibling task can keep
+      // the job itself 'running' while this one task is individually parked.
+      if (parkedIdentity && parkedIdentity.task.status === 'parked') {
+        await agentJobLifecycle.beginWakeTurn(parkedIdentity.job.jobId, parkedIdentity.taskIndex);
+        wakeTurnToRepark = { jobId: parkedIdentity.job.jobId, taskIndex: parkedIdentity.taskIndex };
+      }
 
       // Abort any prior run still in flight FOR THIS SAME THREAD before
       // starting a new one. Per-thread (not per-channel) so multiple chat
@@ -675,9 +810,6 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
-        await markCompletionDelivered(String(jobId));
-      }
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -776,6 +908,15 @@ export class BackendGraphWebSocketService {
       } else {
         await graph.execute(state, startNode);
       }
+      // Completion steers are acknowledged only after a successful graph turn actually consumed them.
+      for (const message of state.messages as any[]) {
+        const steerMeta = message?.metadata;
+        if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
+        for (const jobId of Array.isArray(steerMeta.completionJobIds) ? steerMeta.completionJobIds : []) await markCompletionDelivered(String(jobId));
+        delete steerMeta.completionJobIds;
+        delete steerMeta.completionEntries;
+      }
+      turnConsumedInput = true;
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
@@ -799,6 +940,30 @@ export class BackendGraphWebSocketService {
       }
     } finally {
       if (isCurrentRun()) {
+        if (turnConsumedInput) {
+          for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
+            await markCompletionDelivered(String(jobId));
+          }
+          // An orchestrator job message (send_job_message waking a parked
+          // manager) is acked only now, after the turn it was handed to
+          // actually ran — not when wakeParkedAgent was first called. A turn
+          // that never reached graph.execute leaves the message pending so
+          // it is redelivered rather than lost.
+          const jobMessageIds = [
+            ...(typeof metadata?.jobMessageId === 'string' ? [metadata.jobMessageId] : []),
+            ...(Array.isArray(metadata?.jobMessageIds) ? metadata.jobMessageIds.filter((id: unknown): id is string => typeof id === 'string') : []),
+          ];
+          const jobMessageThreadId = typeof metadata?.jobMessageThreadId === 'string' ? metadata.jobMessageThreadId : '';
+          if (jobMessageIds.length && jobMessageThreadId) {
+            await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
+          }
+        } else {
+          for (const entry of metadata?.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+        }
+        // Truthful status: a dormant parked job this turn woke is re-parked
+        // now unless the turn itself completed/failed/stopped it (parkTask
+        // only acts while the job is still 'running', so this is a no-op then).
+        if (wakeTurnToRepark) await agentJobLifecycle.endWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
@@ -820,16 +985,35 @@ export class BackendGraphWebSocketService {
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
         const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
         if (leftovers.length || completions.length) {
+          const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
+          const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId) === index);
           const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
           const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
           this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
             ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
-            ...(completions.length ? { source: 'sub_agent_completion', completionJobIds: completions.map(entry => entry.jobId) } : {}),
-            ...(completions.length ? { completionEntries: completions } : {}),
+            ...(allCompletions.length ? { source: 'sub_agent_completion', completionJobIds: allCompletions.map(entry => entry.jobId), completionEntries: allCompletions } : {}),
           })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
+        } else if (!runAbort?.signal.aborted) {
+          // An orchestrator message that arrived while this thread was busy
+          // (wakeParkedAgent or dispatchToAgent's own busy-guard declined to
+          // dispatch for it) is not a steer and would otherwise be stranded
+          // once this run ends with activeAborts clear. Redeliver anything
+          // still pending now that the thread is idle again.
+          const pendingJobMessages = await AgentJobMessagingModel.pendingMessagesForThread(threadId).catch(err => {
+            console.warn('[BackendGraphWS] Failed to check for stranded orchestrator messages:', (err as Error).message);
+            return [];
+          });
+          if (pendingJobMessages.length) {
+            const text = pendingJobMessages.map(entry => entry.message).join('\n\n');
+            console.log(`[BackendGraphWS] ${ pendingJobMessages.length } orchestrator message(s) arrived while thread ${ threadId } was busy — running them as a follow-up turn`);
+            this.dispatchToAgent(channelId, triggerType, `[Message from orchestrator]\n${ text }`, threadId, scopedWorkflowId, overrideAgentId, inputSource, {
+              source: 'orchestrator_job_message', jobMessageIds: pendingJobMessages.map(entry => entry.id), jobMessageThreadId: threadId,
+            })
+              .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up orchestrator message:', err));
+          }
         }
       }
     }
