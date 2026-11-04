@@ -56,7 +56,7 @@ export interface AgentJobTask {
   prompt:     string;
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
-  status:     'queued' | 'running' | 'completed' | 'blocked' | 'error' | 'stopped';
+  status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;
@@ -75,7 +75,7 @@ export interface AgentJobTask {
 
 export interface AgentJob {
   jobId:      string;
-  status:     'running' | 'completed' | 'failed' | 'stopped';
+  status:     'running' | 'parked' | 'completed' | 'failed' | 'stopped';
   createdAt:  number;
   finishedAt: number | null;
   taskCount:  number;
@@ -229,7 +229,7 @@ export function getJobAbortSignal(jobId: string): AbortSignal | undefined {
 export function abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   const job = jobs.get(jobId);
   if (!job) return 'not-found';
-  if (job.status !== 'running') return 'already-finished';
+  if (!['running', 'parked'].includes(job.status)) return 'already-finished';
 
   abortControllers.get(jobId)?.abort();
   job.status = 'stopped';
@@ -284,11 +284,11 @@ export async function getAllJobs(): Promise<AgentJob[]> {
  * Exported so the list contract can be checked without a database fixture.
  */
 export function boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): AgentJob[] {
-  const active = allJobs.filter(job => job.status === 'running');
+  const active = allJobs.filter(job => job.status === 'running' || job.status === 'parked');
   if (!includeFinished) return active.sort((a, b) => b.createdAt - a.createdAt);
 
   const finished = allJobs
-    .filter(job => job.status !== 'running')
+    .filter(job => job.status !== 'running' && job.status !== 'parked')
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
 
@@ -313,10 +313,26 @@ export async function getJobsForList(limit = 25, includeFinished = true): Promis
   // Hot records win, but only active jobs are added outside the DB window.
   const merged = new Map(persisted.map(job => [job.jobId, job]));
   for (const job of jobs.values()) {
-    if (job.status === 'running' || merged.has(job.jobId)) merged.set(job.jobId, job);
+    if (job.status === 'running' || job.status === 'parked' || merged.has(job.jobId)) merged.set(job.jobId, job);
   }
 
   return boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
+}
+
+export async function parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
+  const job = jobs.get(jobId) ?? await getJob(jobId);
+  if (!job || job.status !== 'running' || !job.tasks[taskIndex]) return;
+  job.status = 'parked';
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'parked' };
+  await persist(agentJobProvider.jobs.park(jobId, job.tasks, waitingOnChildren));
+}
+
+export async function resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
+  const job = jobs.get(jobId) ?? await getJob(jobId);
+  if (!job || job.status !== 'parked' || !job.tasks[taskIndex]) return;
+  job.status = 'running';
+  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
+  await persist(agentJobProvider.jobs.resume(jobId, job.tasks));
 }
 
 export async function completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
@@ -447,7 +463,7 @@ export async function recordTaskReturn(jobId: string, taskIndex: number, patch: 
   const task = job?.tasks[taskIndex];
   if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
   if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
-  if (job.status !== 'running') throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
+  if (!['running', 'parked'].includes(job.status)) throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
   job.tasks[taskIndex] = {
     ...task,
     result:     patch.result,

@@ -29,6 +29,7 @@ import {
   resolveAgentDepth,
   updateJobTask,
 } from './jobRegistry';
+import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import {
   delegationSituation,
@@ -552,8 +553,24 @@ export class SpawnAgentWorker extends BaseTool {
           : graph.execute(subState);
         let finalState = await executeGraph();
 
-        // A caller schema means free text is not an answer: remind once.
+        // A hidden manager that owns open children is waiting, not finished.
+        // Keep its runner parked without consuming its one contract reminder;
+        // completion/message delivery wakes this exact thread and the same
+        // graph executes the queued input as its next turn.
         let returned = await returnedTask();
+        while (!returned && activityJobId && jobAbortSignal?.aborted !== true &&
+          await agentJobLifecycle.parkWhenWaiting(activityJobId, index, threadId)) {
+          subState.metadata.delegatedRunActive = false;
+          await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
+          if (jobAbortSignal?.aborted === true) break;
+          await agentJobLifecycle.resume(activityJobId, index);
+          subState.metadata.delegatedRunActive = true;
+          finalState = await executeGraph();
+          returned = await returnedTask();
+        }
+
+        // A caller schema means free text is not an answer: remind once, but
+        // only after the manager has no open child dependency left.
         if (!returned && contract.schema && jobAbortSignal?.aborted !== true) {
           subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
           finalState = await executeGraph();

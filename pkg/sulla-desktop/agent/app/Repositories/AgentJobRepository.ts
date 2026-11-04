@@ -61,9 +61,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
-      SELECT * FROM agent_jobs WHERE status = 'running'
+      SELECT * FROM agent_jobs WHERE status IN ('running', 'parked')
       UNION ALL
-      (SELECT * FROM agent_jobs WHERE status <> 'running' AND $2::boolean ORDER BY created_at DESC LIMIT $1)
+      (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
@@ -73,6 +73,19 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       FROM jsonb_array_elements(selected.tasks) AS task), '[]'::jsonb) AS tasks
       FROM selected ORDER BY created_at DESC`, [limit, includeFinished]);
     return rows.map(row => this.map(row));
+  }
+
+  async park(jobId: string, tasks: AgentJobTask[], waitingOnChildren: number): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = 'parked', tasks = $2::jsonb, waiting_on_children = $3 WHERE job_id = $1 AND status = 'running'`, [jobId, JSON.stringify(tasks), waitingOnChildren]);
+  }
+
+  async resume(jobId: string, tasks: AgentJobTask[]): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = 'running', tasks = $2::jsonb, waiting_on_children = 0 WHERE job_id = $1 AND status = 'parked'`, [jobId, JSON.stringify(tasks)]);
+  }
+
+  async openChildrenForThread(threadId: string): Promise<number> {
+    const row = await this.connection.first(`SELECT count(*)::int AS count FROM agent_jobs WHERE parent_thread_id = $1 AND status IN ('running', 'parked')`, [threadId]);
+    return Number(row?.count) || 0;
   }
 
   async saveStoppedResults(jobId: string, results: AgentJobResult[], tasks: AgentJobTask[]): Promise<void> {
