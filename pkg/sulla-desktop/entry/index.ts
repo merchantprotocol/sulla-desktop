@@ -20,9 +20,9 @@ import store from './store';
 
 import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { initiateWindowContext } from '@pkg/sulla';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import { initiateWindowContext } from '@pkg/sulla';
 await initiateWindowContext();
 
 // This does just the Vuex part of cookie-universal-nuxt, which is all we need.
@@ -40,7 +40,7 @@ const { default: layout } = await import(`../layouts/${ layoutName }.vue`);
 const app = createApp(layout);
 const agentStateClient = new AgentStateClient(ipcRenderer as any, window as any);
 app.provide(AGENT_STATE_CLIENT_KEY, agentStateClient);
-void agentStateClient.start();
+agentStateClient.start().catch(() => undefined);
 
 app.use(store);
 app.use(router);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { readonly, shallowRef, type ShallowRef } from 'vue';
+
 import { AGENT_STATE_CHANGED_EVENT, AGENT_STATE_SNAPSHOT_CHANNEL, type AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 export interface AgentStateTransport {
@@ -19,7 +20,7 @@ const EMPTY: AgentStateSnapshot = { version: -1, generatedAt: new Date(0).toISOS
 
 export class AgentStateClient {
   private readonly state = shallowRef<AgentStateSnapshot>(EMPTY);
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer:     ReturnType<typeof setInterval> | null = null;
   private started = false;
   readonly snapshot: Readonly<ShallowRef<AgentStateSnapshot>> = readonly(this.state) as Readonly<ShallowRef<AgentStateSnapshot>>;
 
@@ -59,6 +60,6 @@ export class AgentStateClient {
   }
 
   private readonly onSnapshot = (_event: unknown, snapshot: AgentStateSnapshot): void => { this.apply(snapshot) };
-  private readonly onReconnect = (): void => { void this.resync() };
-  private readonly onVisibility = (): void => { if (this.host.document.visibilityState === 'visible') void this.resync() };
+  private readonly onReconnect = (): void => { this.resync().catch(() => undefined) };
+  private readonly onVisibility = (): void => { if (this.host.document.visibilityState === 'visible') this.resync().catch(() => undefined); };
 }

@@ -15,7 +15,7 @@ export class AgentTreeBuilder {
 
     for (const node of nodes.values()) {
       const { parentJobId, parentTaskIndex } = node.row;
-      const parentKey = parentJobId === null || parentTaskIndex === null ? null : `${parentJobId}:${parentTaskIndex}`;
+      const parentKey = parentJobId === null || parentTaskIndex === null ? null : `${ parentJobId }:${ parentTaskIndex }`;
       const parent = parentKey ? nodes.get(parentKey) : undefined;
 
       if (parent) parent.children.push(node);
@@ -25,7 +25,7 @@ export class AgentTreeBuilder {
     return roots;
   }
 
-  groups(): Array<{ rootThreadId: string; tree: AgentTreeNode[] }> {
+  groups(): { rootThreadId: string; tree: AgentTreeNode[] }[] {
     const ids = [...new Set(this.rows.map(row => row.rootThreadId).filter((id): id is string => !!id))];
     return ids.map(rootThreadId => ({ rootThreadId, tree: this.forThread(rootThreadId) }))
       .filter(group => group.tree.length > 0)

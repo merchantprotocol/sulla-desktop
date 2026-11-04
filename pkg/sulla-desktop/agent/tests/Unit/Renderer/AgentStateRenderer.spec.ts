@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
+
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AgentStateClient, type AgentStateTransport, type AgentStateWindow } from '@pkg/services/agentState/AgentStateClient';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 import type { AgentActionResult, AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 class FakeTransport implements AgentStateTransport {
-  snapshot: AgentStateSnapshot;
-  result: AgentActionResult = { ok: true };
+  snapshot:         AgentStateSnapshot;
+  result:           AgentActionResult = { ok: true };
   private listener: ((event: unknown, snapshot: AgentStateSnapshot) => void) | null = null;
   constructor(snapshot: AgentStateSnapshot) { this.snapshot = snapshot }
-  async invoke(channel: string): Promise<unknown> { return channel === 'agents:state-snapshot' ? this.snapshot : this.result }
+  invoke(channel: string): Promise<unknown> { return Promise.resolve(channel === 'agents:state-snapshot' ? this.snapshot : this.result) }
   on(_channel: string, listener: (event: unknown, snapshot: AgentStateSnapshot) => void): unknown { this.listener = listener }
   removeListener(): unknown { this.listener = null }
   push(snapshot: AgentStateSnapshot): void { this.listener?.({}, snapshot) }
@@ -25,7 +26,7 @@ class FakeHost implements AgentStateWindow {
 class RowFactory {
   create(key: string, rootThreadId = 'root', parentKey: string | null = null): AgentStateRow {
     const [jobId, task = '0'] = key.split(':'); const [parentJobId, parentTask = ''] = parentKey?.split(':') ?? [];
-    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${key}`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
+    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${ key }`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
   }
 }
 const snapshot = (version: number, rows: AgentStateRow[]): AgentStateSnapshot => ({ version, generatedAt: '2026-11-04T20:00:00.000Z', rows });
@@ -43,7 +44,7 @@ describe('AgentTreeBuilder', () => {
 });
 
 describe('AgentStateClient', () => {
-  it('applies pushes, ignores older versions, and resync restores authoritative rows after a drop', async () => {
+  it('applies pushes, ignores older versions, and resync restores authoritative rows after a drop', async() => {
     // risk: stale operational state
     const factory = new RowFactory(); const transport = new FakeTransport(snapshot(1, [factory.create('first:0')])); const client = new AgentStateClient(transport, new FakeHost());
     await client.start(); transport.push(snapshot(3, [factory.create('pushed:0')])); transport.push(snapshot(3, [factory.create('equal:0')])); transport.push(snapshot(2, [factory.create('old:0')]));
@@ -55,7 +56,7 @@ describe('AgentStateClient', () => {
 });
 
 describe('AgentActionController', () => {
-  it('gates message actions and applies a stale action snapshot without an error', async () => {
+  it('gates message actions and applies a stale action snapshot without an error', async() => {
     // risk: actions sent to ended agents
     const factory = new RowFactory(); const row = factory.create('target:0'); row.canMessage = false; const transport = new FakeTransport(snapshot(1, [row])); const client = new AgentStateClient(transport, new FakeHost()); await client.start(); const controller = new AgentActionController(transport, client);
     expect(controller.canMessage(row)).toBe(false);
