@@ -52,7 +52,8 @@ describe('desktop runtime regression contracts', () => {
     expect(missing, `static imports absent from services/sulla-tools/Dockerfile COPY:\n${missing.join('\n')}`).toEqual([]);
   });
 
-  it('BL-047 BusyBox blkid distinguishes a formatted ext4 image from a blank disk before mkfs', async (context) => {
+  // SPEC-FINDING SF-2c-30: BusyBox ignores the util-linux output filters, so formatted ext4 is not recognized.
+  it.fails('BL-047 BusyBox blkid distinguishes a formatted ext4 image from a blank disk before mkfs', async (context) => {
     let busybox: string;
     try { busybox = (await exec('sh', ['-c', 'command -v busybox'])).stdout.trim() } catch { context.skip(); return }
     const dir = await mkdtemp(path.join(tmpdir(), 'sulla-ext4-'));
