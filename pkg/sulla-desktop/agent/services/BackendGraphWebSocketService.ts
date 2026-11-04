@@ -76,7 +76,10 @@ export class BackendGraphWebSocketService {
       set: (callback, delayMs) => setTimeout(callback, delayMs),
       clear: timer => clearTimeout(timer),
     },
-  ) {}
+  ) {
+    registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
+    this.initialize();
+  }
 
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
@@ -117,7 +120,7 @@ export class BackendGraphWebSocketService {
       lifecycle.close('conversation-idle-timeout', 'BackendGraphWebSocketService.armConversationIdle')
         .catch(error => console.warn('[BackendGraphWS] Failed to reap idle conversation container:', error));
     }, CONVERSATION_CONTAINER_IDLE_MS);
-    timer.unref();
+    timer.unref?.();
     return timer;
   }
 
@@ -190,10 +193,6 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor() {
-    registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
-    this.initialize();
-  }
 
   /**
    * One owner for a settled completion's delivery to the parent thread. A
