@@ -52,14 +52,15 @@
     <div class="sd-agent-list">
       <template v-if="visibleRunning.length">
     <div class="sd-agent-group">
-    <span>Running</span>
+    <span>Active</span>
     <span>{{ visibleRunning.length }}</span>
     </div>
     <button
       v-for="card in visibleRunning"
       :key="cardKey(card)"
       type="button"
-      class="sd-agent-row is-running"
+      class="sd-agent-row"
+      :class="`is-${ card.status }`"
       :aria-current="selectedKey === cardKey(card) || undefined"
       @click="emit('select', card)"
     >
@@ -149,9 +150,9 @@ const filters = [
   { value: 'finished', label: 'Finished' },
 ] as const;
 const filterIndex = computed(() => filters.findIndex(item => item.value === filter.value));
-const runningCount = computed(() => cards.value.filter(card => card.status === 'running').length);
-const visibleRunning = computed(() => filter.value === 'finished' ? [] : cards.value.filter(card => card.status === 'running'));
-const visibleFinished = computed(() => filter.value === 'running' ? [] : cards.value.filter(card => card.status !== 'running'));
+const runningCount = computed(() => cards.value.filter(card => card.status === 'running' || card.status === 'parked').length);
+const visibleRunning = computed(() => filter.value === 'finished' ? [] : cards.value.filter(card => card.status === 'running' || card.status === 'parked'));
+const visibleFinished = computed(() => filter.value === 'running' ? [] : cards.value.filter(card => card.status !== 'running' && card.status !== 'parked'));
 let timer: ReturnType<typeof setInterval> | null = null;
 let request = 0;
 let tick = 0;
@@ -376,6 +377,9 @@ onBeforeUnmount(() => {
 .is-running .sd-status-dot {
   background: var(--accent-primary);
   animation: chat-pulse 1.8s ease infinite;
+}
+.is-parked .sd-status-dot {
+  background: var(--status-warning);
 }
 .is-done .sd-status-dot {
   background: var(--status-success);

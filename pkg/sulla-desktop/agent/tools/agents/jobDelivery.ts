@@ -73,10 +73,11 @@ export async function wakeParentGraph(
   jobId: string,
   results: AgentJobResult[],
   failureReason?: string,
+  taskIndex = 0,
 ): Promise<boolean> {
   if (!parentThreadId) return false;
 
-  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, results, failureReason });
+  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, taskIndex, results, failureReason });
 }
 
 // ─── Proactive completion card ───────────────────────────────────
@@ -135,10 +136,10 @@ export async function deliverJobCompletion(job: {
   jobId:           string;
   parentChannel?:  string;
   parentThreadId?: string;
-}, results: AgentJobResult[]): Promise<boolean> {
+}, results: AgentJobResult[], taskIndex = 0): Promise<boolean> {
   const channel = job.parentChannel || 'sulla-desktop';
   await emitProactiveCompletion(channel, job.jobId, results, undefined, job.parentThreadId);
-  const delivered = await wakeParentGraph(channel, job.parentThreadId, job.jobId, results);
+  const delivered = await wakeParentGraph(channel, job.parentThreadId, job.jobId, results, undefined, taskIndex);
   // The inbox owns acknowledgement: the durable row remains pending until
   // BackendGraphWebSocketService actually dispatches the batch into a turn.
   return delivered;
