@@ -11,6 +11,7 @@ import type { Database } from '../../../../../../services/sulla-vault/src/db';
 import type { SyncBundle, SyncHead, SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
 import { PostgresRewrapHistoryRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresRewrapHistoryRepository';
 import { PostgresVaultBundleRepository, PostgresVaultHeadRepository, PostgresVaultRecordRepository } from '../../../../../../services/sulla-vault/src/repositories/postgresVaultRepositories';
+import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresVaultItemRepositories';
 const { Pool } = pg;
 class EmbeddedClient {
   constructor(private readonly db: PGlite) {}
@@ -60,6 +61,29 @@ describe.sequential('vault Postgres repositories',()=>{
   it('rolls back bundle and head when a record insert fails',async()=>{ // risk: atomicity
     const org='20000000-0000-4000-8000-000000000003'; await database.db.query(`INSERT INTO orgs(id,encrypted_name,created_by) VALUES ($1,'{}'::jsonb,$2)`,[org,fx.user]); const bundles=new PostgresVaultBundleRepository(database.db),vault=await bundles.findVaultId(org),invalid={...fx.record(vault,fx.ids[0]),kind:'invalid'} as unknown as SyncRecord; await expect(bundles.createPersonalVault({userId:fx.user,orgId:org,role:'owner'},vault,{bundle:fx.bundle(vault),head:fx.head(vault,1),records:[invalid]})).rejects.toThrow(); await expect(bundles.find(vault,fx.user)).resolves.toBeNull(); await expect(new PostgresVaultHeadRepository(database.db).find(vault,fx.user)).resolves.toBeNull();
   });
+  it('isolates active items, enforces revision CAS, and records agent audit ownership',async()=>{ // risk: tenant isolation and concurrent data loss
+    const otherUser='10000000-0000-4000-8000-000000000002';
+    await database.seed(otherUser,'20000000-0000-4000-8000-000000000004');
+    const items=new PostgresVaultItemRepository(database.db), audit=new PostgresVaultAuditLogRepository(database.db);
+    const active='40000000-0000-4000-8000-000000000001', deleted='40000000-0000-4000-8000-000000000002', foreign='40000000-0000-4000-8000-000000000003';
+    const policy={mode:'agents',level:'autofill',agents:['agent-one'],sites:[]};
+    await items.insertAgentIntegrationItem([active,fx.user,'apiKey',{ciphertext:'active'},{ciphertext:'key'},policy,'github/main']);
+    await items.insertAgentIntegrationItem([deleted,fx.user,'apiKey',{ciphertext:'deleted'},{ciphertext:'key'},policy,'github/deleted']);
+    await items.insertAgentIntegrationItem([foreign,otherUser,'apiKey',{ciphertext:'foreign'},{ciphertext:'key'},policy,'github/foreign']);
+    await items.softDeleteOwnedIfRevision([deleted,fx.user,1]);
+    const visible=await items.listOwnedActiveForImport<{id:string}>([fx.user]);
+    expect(visible.rows.map(row=>row.id)).toContain(active);
+    expect(visible.rows.map(row=>row.id)).not.toContain(deleted);
+    expect(visible.rows.map(row=>row.id)).not.toContain(foreign);
+    await expect(items.updateOwnedCiphertextIfRevision([{ciphertext:'next'},{ciphertext:'next-key'},active,fx.user,1])).resolves.toMatchObject({rowCount:1});
+    await expect(items.updateOwnedCiphertextIfRevision([{ciphertext:'stale'},{ciphertext:'stale-key'},active,fx.user,1])).resolves.toMatchObject({rowCount:0});
+    await audit.recordAgentCreated([fx.user,active,'pod-one',{agentId:'agent-one'}]);
+    await expect(audit.wasCreatedByAgentForUpdate([active,'agent-one'])).resolves.toMatchObject({rowCount:1});
+    await expect(audit.wasCreatedByAgentForUpdate([active,'agent-two'])).resolves.toMatchObject({rowCount:0});
+    const recorded=await database.db.query<{actor_user_id:string;item_id:string;action:string;pod_id:string;metadata:{agentId:string};blocked:boolean}>('SELECT actor_user_id,item_id,action,pod_id,metadata,blocked FROM audit_log WHERE item_id=$1',[active]);
+    expect(recorded.rows).toEqual([{actor_user_id:fx.user,item_id:active,action:'agent_vault_item_created',pod_id:'pod-one',metadata:{agentId:'agent-one'},blocked:false}]);
+  });
+
   it('preserves the current password wrap with its parameterized reason',async()=>{ // risk: recovery data loss
     const repository=new PostgresRewrapHistoryRepository(database.db);
     await repository.preserveCurrentPasswordWrap(fx.user,'password_change');
