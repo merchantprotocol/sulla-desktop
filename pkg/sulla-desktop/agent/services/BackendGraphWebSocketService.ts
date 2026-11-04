@@ -31,7 +31,7 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
-import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
+import { abortJob, getJobsForParentThread, markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
@@ -178,13 +178,14 @@ export class BackendGraphWebSocketService {
    */
   private handleCompletionWake(channelId: string, threadId: string): void {
     if (this.hasActiveRun(channelId, threadId)) return;
+    const delegated = GraphRegistry.get(threadId);
+    if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
     const entries = takeAgentCompletions(channelId, threadId);
     if (!entries.length) return;
     const content = formatCompletionBatch(entries);
     // A parent that is itself a hidden delegated child runs under its
     // spawn_agent runner, not activeAborts. Starting a second execution on
     // that state would race the runner, so hand it the batch as one steer.
-    const delegated = GraphRegistry.get(threadId);
     if (agentJobLifecycle.hasLiveWaiter(threadId)) {
       if (delegated) {
         injectSteer(delegated.state, {
@@ -192,7 +193,7 @@ export class BackendGraphWebSocketService {
           role:      'user',
           content,
           timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries },
+          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
         } as any);
       } else {
         // No live graph state to inject into — should not happen alongside
@@ -200,16 +201,6 @@ export class BackendGraphWebSocketService {
         for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
       }
       agentJobLifecycle.wake(threadId);
-      return;
-    }
-    if ((delegated?.state.metadata as any)?.delegatedRunActive) {
-      injectSteer(delegated!.state, {
-        id:        nextMessageId(),
-        role:      'user',
-        content,
-        timestamp: Date.now(),
-        metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries },
-      } as any);
       return;
     }
     // Same trigger mapping as handleChannelMessage: only heartbeat has its own
@@ -225,11 +216,12 @@ export class BackendGraphWebSocketService {
       const parked = await parkedAgentRehydrator.resolve(threadId);
       const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
       return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
-        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
+        source: 'sub_agent_completion', completionEntries: entries,
       });
     }).catch(err => {
       for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
       console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
+
     });
   }
 
@@ -425,7 +417,7 @@ export class BackendGraphWebSocketService {
       },
       (job, reason) => {
         if (!job.parentChannel || !job.parentThreadId) return;
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, results: [], failureReason: reason });
+        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
@@ -630,7 +622,7 @@ export class BackendGraphWebSocketService {
         message = `${ message }\n\n${ formatCompletionBatch(pendingCompletions) }`;
         metadata = {
           ...metadata,
-          completionJobIds: pendingCompletions.map(entry => entry.jobId),
+          completionEntries: pendingCompletions,
         };
       }
     }
@@ -810,6 +802,10 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
+      for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
+        await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
+      }
+
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -912,8 +908,7 @@ export class BackendGraphWebSocketService {
       for (const message of state.messages as any[]) {
         const steerMeta = message?.metadata;
         if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
-        for (const jobId of Array.isArray(steerMeta.completionJobIds) ? steerMeta.completionJobIds : []) await markCompletionDelivered(String(jobId));
-        delete steerMeta.completionJobIds;
+        for (const entry of Array.isArray(steerMeta.completionEntries) ? steerMeta.completionEntries : []) await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
         delete steerMeta.completionEntries;
       }
       turnConsumedInput = true;
@@ -941,8 +936,8 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         if (turnConsumedInput) {
-          for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
-            await markCompletionDelivered(String(jobId));
+          for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
+            await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
           }
           // An orchestrator job message (send_job_message waking a parked
           // manager) is acked only now, after the turn it was handed to
@@ -983,17 +978,17 @@ export class BackendGraphWebSocketService {
         // would otherwise sit unread in an idle thread. Run it as a new turn.
         // Skipped when the run was stopped by the user — stop means stop.
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
+        const completions = takeAgentCompletions(channelId, threadId);
         if (leftovers.length || completions.length) {
           const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
-          const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId) === index);
+          const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId && candidate.taskIndex === entry.taskIndex) === index);
           const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
           const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
           this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
             ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
-            ...(allCompletions.length ? { source: 'sub_agent_completion', completionJobIds: allCompletions.map(entry => entry.jobId), completionEntries: allCompletions } : {}),
+            ...(allCompletions.length ? { source: 'sub_agent_completion', completionEntries: allCompletions } : {}),
           })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         } else if (!runAbort?.signal.aborted) {

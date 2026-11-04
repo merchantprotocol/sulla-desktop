@@ -7,42 +7,42 @@ import { buildWakeContent } from '../tools/agents/jobDelivery';
 
 import type { AgentJobResult } from '../tools/agents/jobRegistry';
 
-export const COMPLETION_COALESCE_MS = 2_000;
 export const COMPLETION_RESULT_LIMIT = 8_000;
 
 export interface PendingCompletion {
   jobId: string;
+  taskIndex: number;
   results: AgentJobResult[];
   failureReason?: string;
 }
 
 interface Inbox {
   entries: PendingCompletion[];
-  timer?: ReturnType<typeof setTimeout>;
   stopped: boolean;
 }
 
+/** Per-thread, per-task completion queue with no fixed delivery delay. */
 export class CompletionInboxStore {
   private readonly inboxes = new Map<string, Inbox>();
   private idleDispatcher?: (channel: string, threadId: string) => void;
 
-  private keyFor(channel: string, threadId: string): string { return `${ channel }|${ threadId }`; }
-
-  registerIdleDispatcher(dispatcher: (channel: string, threadId: string) => void): void { this.idleDispatcher = dispatcher; }
+  registerIdleDispatcher(dispatcher: (channel: string, threadId: string) => void): void {
+    this.idleDispatcher = dispatcher;
+  }
 
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
-    if (!inbox.entries.some(entry => entry.jobId === completion.jobId)) inbox.entries.push(completion);
+    const duplicate = inbox.entries.some(entry => entry.jobId === completion.jobId && entry.taskIndex === completion.taskIndex);
+    if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
-    if (!inbox.stopped && !inbox.timer) {
-      inbox.timer = setTimeout(() => {
-        inbox.timer = undefined;
-        if (!inbox.stopped && inbox.entries.length) this.idleDispatcher?.(channel, threadId);
-      }, COMPLETION_COALESCE_MS);
-      inbox.timer.unref();
-    }
-    return true;
+    if (!inbox.stopped && !duplicate) this.idleDispatcher?.(channel, threadId);
+    return !duplicate;
+  }
+
+  notifyReady(channel: string, threadId: string): void {
+    const inbox = this.inboxes.get(this.keyFor(channel, threadId));
+    if (!inbox?.stopped && inbox?.entries.length) this.idleDispatcher?.(channel, threadId);
   }
 
   setStopped(channel: string, threadId: string, stopped: boolean): void {
@@ -54,11 +54,9 @@ export class CompletionInboxStore {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key);
     if (!inbox?.entries.length) return [];
-    if (inbox.timer) clearTimeout(inbox.timer);
     const entries = inbox.entries.splice(0);
-    inbox.timer = undefined;
     inbox.stopped = false;
-    if (!inbox.entries.length) this.inboxes.delete(key);
+    this.inboxes.delete(key);
     return entries;
   }
 
@@ -71,15 +69,20 @@ export class CompletionInboxStore {
   }
 
   clear(): void {
-    for (const inbox of this.inboxes.values()) if (inbox.timer) clearTimeout(inbox.timer);
     this.inboxes.clear();
     this.idleDispatcher = undefined;
   }
+
+  private keyFor(channel: string, threadId: string): string {
+    return `${ channel }|${ threadId }`;
+  }
 }
 
+export { CompletionInboxStore as AgentCompletionInbox };
 export const completionInboxStore = new CompletionInboxStore();
 export const registerCompletionIdleDispatcher = (dispatcher: (channel: string, threadId: string) => void): void => completionInboxStore.registerIdleDispatcher(dispatcher);
 export const enqueueAgentCompletion = (channel: string, threadId: string, completion: PendingCompletion): boolean => completionInboxStore.enqueue(channel, threadId, completion);
+export const notifyAgentCompletionsReady = (channel: string, threadId: string): void => completionInboxStore.notifyReady(channel, threadId);
 export const setCompletionInboxStopped = (channel: string, threadId: string, stopped: boolean): void => completionInboxStore.setStopped(channel, threadId, stopped);
 export const takeAgentCompletions = (channel: string, threadId: string): PendingCompletion[] => completionInboxStore.take(channel, threadId);
 export const formatCompletionBatch = (entries: PendingCompletion[]): string => completionInboxStore.format(entries);
