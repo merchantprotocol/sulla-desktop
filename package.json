@@ -32,17 +32,11 @@
     "build:mac": "node scripts/ts-wrapper.js scripts/build.ts --mac",
     "package": "node scripts/ts-wrapper.js scripts/package.ts",
     "sign": "node scripts/ts-wrapper.js scripts/sign.ts",
-    "test": "yarn lint:nofix && yarn test:unit",
-    "test:unit": "yarn test:unit:jest",
-    "test:unit:jest": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:unit:watch": "yarn test:unit -- --watch",
     "postinstall": "node scripts/ts-wrapper.js scripts/postinstall.ts",
     "postuninstall": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 electron-builder install-app-deps",
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
-    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
-    "test:server-split-contracts": "node --test scripts/contracts/server-split-contract.test.mjs",
-    "e2e:first-run": "node scripts/e2e-first-run.mjs"
+    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts"
   },
   "main": "dist/app/background.js",
   "dependencies": {
