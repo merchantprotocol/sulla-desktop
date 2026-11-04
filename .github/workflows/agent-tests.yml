@@ -16,6 +16,110 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # write access is only exercised by the write-baseline steps below,
+    # which are themselves gated on workflow_dispatch + write_baseline=true.
+    # A pull_request-triggered run never reaches them.
+    permissions:
+      contents: write
+    env:
+      WRITE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.write_baseline && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - name: Install dependencies (no lifecycle scripts, no Electron download)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Restore incremental typecheck state
+        uses: actions/cache@v4
+        with:
+          path: .cache/typescript
+          key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
+      - name: Type-check agent runtime graph
+        if: env.WRITE_BASELINE == 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.agent-runtime-check.json
+          --baseline .github/typecheck-baseline/agent.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+      - name: Type-check main and preload production graphs
+        if: env.WRITE_BASELINE == 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.typecheck.json
+          --baseline .github/typecheck-baseline/main.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+      - name: Type-check renderer production graphs
+        if: env.WRITE_BASELINE == 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.renderer-check.json
+          --baseline .github/typecheck-baseline/renderer.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+      - name: Regenerate agent runtime baseline
+        if: env.WRITE_BASELINE == 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.agent-runtime-check.json
+          --baseline .github/typecheck-baseline/agent.txt
+          --write-baseline
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+      - name: Regenerate main and preload baseline
+        if: env.WRITE_BASELINE == 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.typecheck.json
+          --baseline .github/typecheck-baseline/main.txt
+          --write-baseline
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+      - name: Regenerate renderer baseline
+        if: env.WRITE_BASELINE == 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.renderer-check.json
+          --baseline .github/typecheck-baseline/renderer.txt
+          --write-baseline
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+      - name: Commit regenerated baselines
+        if: env.WRITE_BASELINE == 'true'
+        run: |
+          git config user.name "sulla-ci[bot]"
+          git config user.email "sulla-ci[bot]@users.noreply.github.com"
+          git add .github/typecheck-baseline/agent.txt .github/typecheck-baseline/main.txt .github/typecheck-baseline/renderer.txt
+          if git diff --cached --quiet; then
+            echo "No baseline changes to commit."
+          else
+            git commit -m "ci: regenerate typecheck baselines from $(git rev-parse --short HEAD)"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
   changes:
     runs-on: ubuntu-latest
     outputs:
