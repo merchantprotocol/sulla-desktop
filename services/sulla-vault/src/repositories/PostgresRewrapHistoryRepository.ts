@@ -4,6 +4,7 @@
 import type { Queryable } from '../db.js';
 
 export interface VaultWrapHistoryRecord {
+  id: string;
   user_id: string;
   login_hash_salt: Buffer;
   login_hash_verifier: Buffer;
@@ -30,11 +31,18 @@ export class PostgresRewrapHistoryRepository {
        SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,$2 FROM users WHERE id=$1`, [userId, reason]);
   }
 
-  async preservePasswordWrap(record: Omit<VaultWrapHistoryRecord, 'reason'>, reason: 'cloud_rewrap', connection: Queryable = this.db): Promise<void> {
+  async preservePasswordWrap(record: Omit<VaultWrapHistoryRecord, 'id' | 'reason'>, reason: 'cloud_rewrap', connection: Queryable = this.db): Promise<void> {
     await connection.query(
       `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
        VALUES ($1,$2,$3,$4,$5,$6)`,
       [record.user_id, record.login_hash_salt, record.login_hash_verifier, record.encrypted_user_key, record.kdf, reason]);
+  }
+
+  async listPasswordWraps(userId: string): Promise<VaultWrapHistoryRecord[]> {
+    const history = await this.db.query<VaultWrapHistoryRecord>(
+      `SELECT id,user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason
+       FROM local_vault_wrap_history WHERE user_id=$1 ORDER BY created_at DESC,id DESC`, [userId]);
+    return history.rows;
   }
 
   async preserveCurrentRecoveryWrap(userId: string, reason: 'rotation', connection: Queryable = this.db): Promise<boolean> {
@@ -43,5 +51,12 @@ export class PostgresRewrapHistoryRepository {
        SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key,$2
        FROM local_vault_recovery WHERE user_id=$1 RETURNING *`, [userId, reason]);
     return Boolean(prior.rowCount);
+  }
+
+  async listRecoveryWraps(userId: string): Promise<VaultRecoveryHistoryRecord[]> {
+    const history = await this.db.query<VaultRecoveryHistoryRecord>(
+      `SELECT id,user_id,recovery_salt,recovery_verifier,encrypted_user_key,reason
+       FROM local_vault_recovery_history WHERE user_id=$1 ORDER BY created_at DESC,id DESC`, [userId]);
+    return history.rows;
   }
 }

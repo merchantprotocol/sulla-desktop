@@ -2,6 +2,11 @@
 # yarn lockfile v1
 
 
+"@electric-sql/pglite@0.5.15":
+  version "0.5.15"
+  resolved "https://registry.yarnpkg.com/@electric-sql/pglite/-/pglite-0.5.15.tgz#f2cf2ef90b2667f576070402b92bcc9d8d9d9732"
+  integrity sha512-ERZWgaRTxueGV4cvL1tfpAOzFCWTXoUtbCBqnf2FhHDVs/so9eAKaanvrwWF9Dntx7BYsmFQujVQ0/B4S8Mmiw==
+
 "7zip-bin@~5.2.0":
   version "5.2.0"
   resolved "https://registry.npmjs.org/7zip-bin/-/7zip-bin-5.2.0.tgz"
