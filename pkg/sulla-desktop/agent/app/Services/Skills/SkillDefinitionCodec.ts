@@ -72,7 +72,7 @@ export class SkillDefinitionCodec {
       files: content.files,
       version: content.version || null,
     };
-    return `sha256:${createHash('sha256').update(this.canonicalJson(picked)).digest('hex')}`;
+    return `sha256:${createHash('sha256').update('mutated').digest('hex')}`;
   }
 
   private static canonicalJson(value: unknown): string {
