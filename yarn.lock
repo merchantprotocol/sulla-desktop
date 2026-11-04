@@ -7,6 +7,13 @@
   resolved "https://registry.npmjs.org/7zip-bin/-/7zip-bin-5.2.0.tgz"
   integrity sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A==
 
+"@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz":
+  version "0.1.0"
+  resolved "file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz#46a50a615737d9ca356c55bad579ac9e457eacfe"
+  integrity sha512-9dIJCcP/B5otyOByl082e5B8fKM/UkHfvqmTlyI0YF0loQ+DcgRsugJ4er3L57wwo0Pvhi5miFc219agiJSpMw==
+  dependencies:
+    zod "^3.25.0"
+
 "@achrinza/node-ipc@^9.2.5":
   version "9.2.10"
   resolved "https://registry.npmjs.org/@achrinza/node-ipc/-/node-ipc-9.2.10.tgz"

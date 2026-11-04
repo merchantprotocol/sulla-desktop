@@ -27,7 +27,7 @@
  * so the boot sweep leaves tab jobs alone.
  */
 
-import { postgresClient } from '../../database/PostgresClient';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 import type { AgentContractSpec } from './contract';
 
@@ -113,34 +113,10 @@ let jobCounter = 0;
 
 // ── Persistence (write-through; never blocks the happy path on failure) ──
 
-async function dbWrite(sql: string, params: any[]): Promise<void> {
-  try {
-    await postgresClient.query(sql, params);
-  } catch (err) {
-    // The Map stays authoritative for this process lifetime — a failed
-    // write only costs restart durability, never the running job.
+async function persist(operation: Promise<void>): Promise<void> {
+  try { await operation; } catch (err) {
     console.warn('[jobRegistry] persistence write failed (job continues in-memory):', (err as Error).message);
   }
-}
-
-function rowToJob(r: any): AgentJob {
-  return {
-    jobId:      r.job_id,
-    status:     r.status,
-    createdAt:  new Date(r.created_at).getTime(),
-    finishedAt: r.finished_at ? new Date(r.finished_at).getTime() : null,
-    taskCount:  Number(r.task_count) || 0,
-    results:    Array.isArray(r.results) ? r.results : [],
-    tasks:      Array.isArray(r.tasks) ? r.tasks : [],
-    error:      r.error ?? undefined,
-    parentChannel: r.parent_channel ?? undefined,
-    parentThreadId: r.parent_thread_id ?? undefined,
-    parentAgentId: r.parent_agent_id ?? undefined,
-    visibility: r.visibility === 'tab' ? 'tab' : 'hidden',
-    projectTaskIds: Array.isArray(r.project_task_ids) ? r.project_task_ids : [],
-    completionDeliveredAt: r.completion_delivered_at ? new Date(r.completion_delivered_at).getTime() : null,
-    dismissedAt: r.dismissed_at ? new Date(r.dismissed_at).getTime() : null,
-  };
 }
 
 // One-time sweep after boot: any hidden row still 'running' belonged to a
@@ -148,19 +124,9 @@ function rowToJob(r: any): AgentJob {
 // Tab jobs survive: their child is a saved chat thread that can still return.
 let bootSweepDone: Promise<void> | null = null;
 function ensureBootSweep(): Promise<void> {
-  bootSweepDone ??= (async() => {
-    try {
-      await postgresClient.query(
-        `UPDATE agent_jobs
-            SET status = 'failed', error = 'app restarted mid-job', finished_at = now()
-          WHERE status = 'running' AND visibility <> 'tab'
-          RETURNING job_id`,
-      ) as any[];
-    } catch (err) {
-      console.warn('[jobRegistry] boot sweep failed (will rely on in-memory state):', (err as Error).message);
-    }
-  })();
-
+  bootSweepDone ??= agentJobProvider.jobs.sweepInterruptedJobs().catch((err) => {
+    console.warn('[jobRegistry] boot sweep failed (will rely on in-memory state):', (err as Error).message);
+  });
   return bootSweepDone;
 }
 
@@ -197,12 +163,7 @@ export async function createJob(
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
   abortControllers.set(jobId, new AbortController());
 
-  await dbWrite(
-    `INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility, parent_agent_id)
-     VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb, $7, $8)
-     ON CONFLICT (job_id) DO NOTHING`,
-    [jobId, taskCount, job.createdAt, parentChannel ?? null, parentThreadId ?? null, JSON.stringify(tasks), job.visibility, options.parentAgentId ?? null],
-  );
+  await persist(agentJobProvider.jobs.insertJob(job));
 
   return job;
 }
@@ -215,22 +176,15 @@ export async function updateJobTask(jobId: string, index: number, patch: Partial
     ? { ...patch, status: 'stopped' as const }
     : patch;
   job.tasks[index] = { ...job.tasks[index], ...nextPatch };
-  await dbWrite(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(job.tasks)]);
+  await persist(agentJobProvider.jobs.updateTasks(jobId, job.tasks));
 }
 
 /** Visible jobs for one graph thread. Hot cache wins over persisted rows. */
 export async function getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
   await ensureBootSweep();
   try {
-    const rows = await postgresClient.query<any>(
-      `SELECT * FROM agent_jobs
-       WHERE parent_thread_id = $1 AND dismissed_at IS NULL
-       ORDER BY created_at ASC`,
-      [parentThreadId],
-    );
-    for (const row of rows ?? []) {
-      if (!jobs.has(row.job_id)) jobs.set(row.job_id, rowToJob(row));
-    }
+    const rows = await agentJobProvider.jobs.jobsForParentThread(parentThreadId);
+    for (const job of rows) { if (!jobs.has(job.jobId)) jobs.set(job.jobId, job); }
   } catch (err) {
     console.warn('[jobRegistry] thread job read failed:', (err as Error).message);
   }
@@ -246,13 +200,7 @@ export async function dismissJobTask(jobId: string, parentThreadId: string, task
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], dismissed: true };
   const allDismissed = job.tasks.length > 0 && job.tasks.every(task => task.dismissed);
   if (allDismissed) job.dismissedAt = Date.now();
-  await dbWrite(
-    `UPDATE agent_jobs
-       SET tasks = $3::jsonb,
-           dismissed_at = CASE WHEN $4 THEN now() ELSE dismissed_at END
-     WHERE job_id = $1 AND parent_thread_id = $2`,
-    [jobId, parentThreadId, JSON.stringify(job.tasks), allDismissed],
-  );
+  await persist(agentJobProvider.jobs.dismissTasks(jobId, parentThreadId, job.tasks, allDismissed));
   return true;
 }
 
@@ -291,10 +239,7 @@ export function abortJob(jobId: string): 'stopped' | 'not-found' | 'already-fini
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? Date.now() }
     : task);
 
-  void dbWrite(
-    `UPDATE agent_jobs SET status = 'stopped', finished_at = now(), tasks = $2::jsonb WHERE job_id = $1`,
-    [jobId, JSON.stringify(job.tasks)],
-  );
+  void persist(agentJobProvider.jobs.stop(jobId, job.tasks));
 
   return 'stopped';
 }
@@ -307,11 +252,9 @@ export async function getJob(jobId: string): Promise<AgentJob | undefined> {
   // Cache miss — a pre-restart job may still exist in Postgres (swept to
   // 'failed' by ensureBootSweep, or finished before the restart).
   try {
-    const rows = await postgresClient.query(
-      `SELECT * FROM agent_jobs WHERE job_id = $1`, [jobId],
-    ) as any[];
-    if (rows?.[0]) {
-      const job = rowToJob(rows[0]);
+    const persisted = await agentJobProvider.jobs.job(jobId);
+    if (persisted) {
+      const job = persisted;
       jobs.set(jobId, job);
 
       return job;
@@ -330,10 +273,8 @@ export async function getAllJobs(): Promise<AgentJob[]> {
   // Union: in-memory (authoritative for this process) + persisted rows the
   // Map doesn't know about (pre-restart jobs within TTL).
   try {
-    const rows = await postgresClient.query(`SELECT * FROM agent_jobs`) as any[];
-    for (const r of rows ?? []) {
-      if (!jobs.has(r.job_id)) jobs.set(r.job_id, rowToJob(r));
-    }
+    const rows = await agentJobProvider.jobs.allJobs();
+    for (const job of rows) { if (!jobs.has(job.jobId)) jobs.set(job.jobId, job); }
   } catch (err) {
     console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
   }
@@ -368,34 +309,7 @@ export async function getJobsForList(limit = 25, includeFinished = true): Promis
   const persisted: AgentJob[] = [];
 
   try {
-    const rows = await postgresClient.query<any>(
-      `WITH selected AS (
-         SELECT * FROM agent_jobs WHERE status = 'running'
-         UNION ALL
-         (SELECT * FROM agent_jobs
-           WHERE status <> 'running' AND $2::boolean
-           ORDER BY created_at DESC
-           LIMIT $1)
-       )
-       SELECT job_id, status, created_at, finished_at, task_count, error,
-              parent_channel, parent_thread_id, parent_agent_id, visibility,
-              project_task_ids, completion_delivered_at, dismissed_at,
-              '[]'::jsonb AS results,
-              COALESCE((
-                SELECT jsonb_agg(jsonb_build_object(
-                  'agentId', task->>'agentId', 'label', task->>'label',
-                  'taskId', task->>'taskId', 'status', task->>'status',
-                  'visibility', task->>'visibility', 'startedAt', task->'startedAt',
-                  'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',
-                  'contract', CASE WHEN task ? 'contract' THEN jsonb_build_object('name', task->'contract'->>'name') ELSE NULL END
-                ))
-                FROM jsonb_array_elements(selected.tasks) AS task
-              ), '[]'::jsonb) AS tasks
-         FROM selected
-        ORDER BY created_at DESC`,
-      [safeLimit, includeFinished],
-    );
-    persisted.push(...(rows ?? []).map(rowToJob));
+    persisted.push(...await agentJobProvider.jobs.jobsForList(safeLimit, includeFinished));
   } catch (err) {
     console.warn('[jobRegistry] bounded list read failed:', (err as Error).message);
   }
@@ -421,7 +335,7 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
     job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued'
       ? { ...task, status: 'stopped', finishedAt: Date.now() }
       : task);
-    await dbWrite(`UPDATE agent_jobs SET results = $2::jsonb, tasks = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(results), JSON.stringify(job.tasks)]);
+    await persist(agentJobProvider.jobs.saveStoppedResults(jobId, results, job.tasks));
 
     return;
   }
@@ -439,33 +353,21 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
 
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 
-  await dbWrite(
-    `UPDATE agent_jobs SET status = $2, finished_at = now(), error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,
-    [jobId, job.status, job.error ?? null, JSON.stringify(results), JSON.stringify(job.tasks)],
-  );
+  await persist(agentJobProvider.jobs.complete(job));
 }
 
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 export async function markCompletionDelivered(jobId: string): Promise<void> {
   const job = jobs.get(jobId);
   if (job) job.completionDeliveredAt = Date.now();
-  await dbWrite(
-    `UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND status = 'completed' AND completion_delivered_at IS NULL`,
-    [jobId],
-  );
+  await persist(agentJobProvider.jobs.markCompletionDelivered(jobId));
 }
 
 /** Read completed reports whose graph wake was not durably acknowledged. */
 export async function getPendingCompletions(): Promise<AgentJob[]> {
   await ensureBootSweep();
   try {
-    const rows = await postgresClient.query(
-      `SELECT * FROM agent_jobs
-         WHERE status = 'completed' AND completion_delivered_at IS NULL
-           AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL
-         ORDER BY finished_at ASC`,
-    ) as any[];
-    return (rows ?? []).map(rowToJob);
+    return await agentJobProvider.jobs.pendingCompletions();
   } catch (err) {
     console.warn('[jobRegistry] pending completion read failed:', (err as Error).message);
     return [];
@@ -482,15 +384,9 @@ export async function findTaskByThread(threadId: string): Promise<{ job: AgentJo
   if (cached) return cached;
   await ensureBootSweep();
   try {
-    const rows = await postgresClient.query<any>(
-      `SELECT * FROM agent_jobs
-        WHERE tasks @> jsonb_build_array(jsonb_build_object('threadId', $1::text))
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [threadId],
-    );
-    if (rows?.[0]) {
-      const job = jobs.get(rows[0].job_id) ?? rowToJob(rows[0]);
+    const persisted = await agentJobProvider.jobs.findByTaskThread(threadId);
+    if (persisted) {
+      const job = jobs.get(persisted.jobId) ?? persisted;
       jobs.set(job.jobId, job);
       const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
       if (taskIndex >= 0) return { job, taskIndex };
@@ -565,7 +461,7 @@ export async function recordTaskReturn(jobId: string, taskIndex: number, patch: 
     // finished by this return alone.
     ...(job.visibility === 'tab' ? { status: patch.status, finishedAt: Date.now() } : {}),
   };
-  await dbWrite(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(job.tasks)]);
+  await persist(agentJobProvider.jobs.updateTasks(jobId, job.tasks));
   return job;
 }
 
@@ -574,7 +470,7 @@ export async function markTaskPromoted(jobId: string, taskIndex: number): Promis
   const job = jobs.get(jobId) ?? await getJob(jobId);
   if (!job?.tasks[taskIndex]) return undefined;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], promotedToTab: true };
-  await dbWrite(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(job.tasks)]);
+  await persist(agentJobProvider.jobs.updateTasks(jobId, job.tasks));
   return job.tasks[taskIndex];
 }
 
@@ -593,17 +489,14 @@ export function failJob(jobId: string, error: string): void {
     ? { ...task, status: 'error', finishedAt: Date.now() }
     : task);
 
-  void dbWrite(
-    `UPDATE agent_jobs SET status = 'failed', finished_at = now(), error = $2, tasks = $3::jsonb WHERE job_id = $1`,
-    [jobId, error, JSON.stringify(job.tasks)],
-  );
+  void persist(agentJobProvider.jobs.fail(jobId, error, job.tasks));
 }
 
 
 export function deleteJob(jobId: string): void {
   jobs.delete(jobId);
   abortControllers.delete(jobId);
-  void dbWrite(`DELETE FROM agent_jobs WHERE job_id = $1`, [jobId]);
+  void persist(agentJobProvider.jobs.deleteJob(jobId));
 }
 
 async function pruneStaleJobs(): Promise<void> {
@@ -616,8 +509,5 @@ async function pruneStaleJobs(): Promise<void> {
     }
   }
 
-  await dbWrite(
-    `DELETE FROM agent_jobs WHERE dismissed_at IS NOT NULL AND dismissed_at < now() - interval '1 hour'`,
-    [],
-  );
+  await persist(agentJobProvider.jobs.pruneDismissed());
 }

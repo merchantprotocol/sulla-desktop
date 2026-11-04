@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1143,
+  "entries": 1142,
   "files": {
     "background.ts": {
       "rules": {
@@ -1281,7 +1281,6 @@
       "rules": {
         "long-file": 624,
         "mutable-state": 5,
-        "raw-sql": 19,
         "procedural-module": 23
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
