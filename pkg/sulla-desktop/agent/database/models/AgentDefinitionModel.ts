@@ -2,31 +2,23 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-
 import { randomUUID } from 'node:crypto';
-
 import { postgresClient } from '../PostgresClient';
 import { AgentDefinitionConfigModel } from './AgentDefinitionConfigModel';
 import type { AgentDefinitionConfigPatch, AgentHeartbeatConfig } from './AgentDefinitionConfigModel';
-
 export type { AgentDefinitionConfigPatch, AgentHeartbeatConfig } from './AgentDefinitionConfigModel';
-
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
 export type AgentCostTier = 'low' | 'medium' | 'high';
 export type AgentRunLocation = 'vm' | 'container';
 export type AgentModelSlot = 'primary' | 'secondary' | 'subconscious';
 export const AGENT_MODEL_SLOTS: readonly AgentModelSlot[] = ['primary', 'secondary', 'subconscious'];
-
 export const DEFAULT_AGENT_RUN_LOCATION: AgentRunLocation = 'container';
-
 export const AGENT_COST_TIERS: readonly AgentCostTier[] = ['low', 'medium', 'high'];
-
 export interface ModelPriorityEntry {
   provider: string;
   model:    string;
 }
-
 export interface AgentDefinition {
   id:                      string;
   slug:                    string;
@@ -80,7 +72,6 @@ export interface AgentDefinition {
   created_at:              string;
   updated_at:              string;
 }
-
 export interface AgentDefinitionInput {
   slug:                   string;
   name:                   string;
