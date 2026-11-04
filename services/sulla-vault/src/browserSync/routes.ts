@@ -134,7 +134,7 @@ function browserOnly(request: SyncRequest): BrowserSession {
 }
 
 /** The org vault in the URL must be the caller's own org vault; anything else is 404. */
-async function ownVault(db: Database, request: SyncRequest): Promise<string> {
+async function ownVault(bundles: PostgresVaultBundleRepository, request: SyncRequest): Promise<string> {
   const vaultId = request.params.vaultId;
   const vault = await bundles.findVaultId(member(request).orgId);
   if (!isUuid(vaultId) || vaultId !== vault) throw new SyncError(404, 'not_found');
@@ -367,7 +367,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
   // ── Enrollment and bundle (vault origin only) ───────────────────────
   router.get('/vaults/:vaultId/enrollment', route(async(request, response) => {
     browserOnly(request);
-    const vaultId = await ownVault(db, request);
+    const vaultId = await ownVault(bundles, request);
     const caller = member(request);
     const current = await bundles.find(vaultId, caller.userId);
     const generation = current ? current.bundle_generation + 1 : 1;
@@ -382,7 +382,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
 
   router.put('/vaults/:vaultId', route(async(request, response) => {
     browserOnly(request);
-    const vaultId = await ownVault(db, request);
+    const vaultId = await ownVault(bundles, request);
     const caller = member(request);
     const op = request.query.op;
     if (op === 'create') {
@@ -410,7 +410,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
 
   router.get('/vaults/:vaultId/bundle', route(async(request, response) => {
     const session = browserOnly(request);
-    const vaultId = await ownVault(db, request);
+    const vaultId = await ownVault(bundles, request);
     const caller = member(request);
     // Fresh-auth window: a bundle is only handed out within 12 hours of the console sign-in handoff.
     if (Date.now() - Date.parse(session.createdAt) > SESSION_TTL_MS) throw new SyncError(401, 'session_expired');
@@ -443,7 +443,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
   // ── Ciphertext reads and writes ─────────────────────────────────────
   router.get('/vaults/:vaultId/records', route(async(request, response) => {
     browserOnly(request);
-    const vaultId = await ownVault(db, request);
+    const vaultId = await ownVault(bundles, request);
     const caller = member(request);
     const scope = request.query.scope ?? 'personal';
     const since = Number(request.query.since ?? '0');
@@ -478,7 +478,7 @@ export function createBrowserSyncRouter(db: Database, config: VaultConfig, sync:
 
   router.post('/vaults/:vaultId/commit', rateLimit(120, 60_000), route(async(request, response) => {
     browserOnly(request);
-    const vaultId = await ownVault(db, request);
+    const vaultId = await ownVault(bundles, request);
     const caller = member(request);
     let body;
     try {
