@@ -307,6 +307,18 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
+  lifecycle.registerOnce('workflow-recovery', ['database-manager'],
+    async() => {
+      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
+      await workflowRecoveryService.start();
+      console.log('[Background] Workflow recovery initialized');
+    },
+    async() => {
+      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
+      await workflowRecoveryService.stop();
+    },
+  );
+
   lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();
