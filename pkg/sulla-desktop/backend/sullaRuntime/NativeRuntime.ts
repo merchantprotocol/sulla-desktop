@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ChildProcess, spawn } from 'child_process';
+import type { SpawnOptions } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
@@ -32,6 +33,21 @@ let activeRuntime: NativeRuntime | undefined;
 /** Force down the runtime process Desktop owns before a hard-deadline relaunch. */
 export async function forceStopOwnedSullaRuntime(): Promise<void> {
   await activeRuntime?.forceStop();
+}
+
+export interface RuntimeProcessSpawner {
+  spawn(binary: string, args: string[], options: SpawnOptions): ChildProcess;
+  spawnFile(binary: string, args: string[], options: SpawnOptions): Promise<{ stdout: string }>;
+}
+
+class ChildProcessRuntimeSpawner implements RuntimeProcessSpawner {
+  spawn(binary: string, args: string[], options: SpawnOptions): ChildProcess {
+    return spawn(binary, args, options);
+  }
+
+  spawnFile(binary: string, args: string[], options: SpawnOptions): Promise<{ stdout: string }> {
+    return spawnFile(binary, args, options);
+  }
 }
 
 const KERNEL_ARG_VALUE = /^[A-Za-z0-9._-]+$/;
@@ -91,7 +107,17 @@ export class NativeRuntime {
     if (!this.#stopping) this.#child?.kill('SIGKILL');
   };
 
-  constructor(private readonly artifacts: SullaRuntimeArtifacts) {}
+  constructor(
+    private readonly artifacts: SullaRuntimeArtifacts,
+    private readonly processSpawner: RuntimeProcessSpawner = new ChildProcessRuntimeSpawner(),
+  ) {}
+
+  private runtimeProcessOptions(): SpawnOptions {
+    return {
+      env: { ...process.env, SULLA_RUNTIME_DIR: sullaRuntimeDirectory() },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    };
+  }
 
   get running(): boolean {
     return !!this.#child?.pid && this.#child.exitCode === null && this.#child.signalCode === null;
@@ -124,7 +150,7 @@ export class NativeRuntime {
     }
 
     const spawnedAt = Date.now();
-    const child = spawn(this.artifacts.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = this.processSpawner.spawn(this.artifacts.binary, args, this.runtimeProcessOptions());
 
     this.#child = child;
     activeRuntime = this;
@@ -202,7 +228,7 @@ export class NativeRuntime {
     }
     this.#stopping = true;
     try {
-      await spawnFile(this.artifacts.binary, ['stop'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      await this.processSpawner.spawnFile(this.artifacts.binary, ['stop'], this.runtimeProcessOptions());
     } catch (error) {
       console.warn('[sulla-runtime] stop request failed; terminating the runtime process:', error);
       child.kill('SIGTERM');
@@ -253,7 +279,7 @@ export class NativeRuntime {
   /** The host's own status line, or undefined when no runtime answers. */
   async status(): Promise<{ state: string; hello: boolean; uptimeMs: number } | undefined> {
     try {
-      const { stdout } = await spawnFile(this.artifacts.binary, ['status'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const { stdout } = await this.processSpawner.spawnFile(this.artifacts.binary, ['status'], this.runtimeProcessOptions());
 
       return JSON.parse(stdout);
     } catch {
@@ -270,7 +296,7 @@ export class NativeRuntime {
       return;
     }
     console.warn('[sulla-runtime] a runtime from an earlier session is still running; stopping it');
-    await spawnFile(this.artifacts.binary, ['stop'], { stdio: ['ignore', 'pipe', 'pipe'] }).catch(() => undefined);
+    await this.processSpawner.spawnFile(this.artifacts.binary, ['stop'], this.runtimeProcessOptions()).catch(() => undefined);
     const deadline = Date.now() + STOP_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
