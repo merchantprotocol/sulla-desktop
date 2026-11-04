@@ -188,11 +188,15 @@ export class ChatHeartbeatScheduler {
       else this.schedule(runtime);
     } catch (err) {
       console.warn(`[ChatHeartbeat] delivery failed for thread ${ runtime.threadId }:`, err);
-      runtime.pending = true;
-      this.schedule(runtime, BUSY_RETRY_MS);
+      // Delivery may deliberately unregister a terminal or newly-disallowed
+      // job. Never resurrect its runtime by scheduling the generic retry.
+      if (this.runtimes.has(runtime.threadId)) {
+        runtime.pending = true;
+        this.schedule(runtime, BUSY_RETRY_MS);
+      }
     } finally {
       runtime.delivering = false;
-      this.emitStatus(runtime);
+      if (this.runtimes.has(runtime.threadId)) this.emitStatus(runtime);
     }
   }
 
