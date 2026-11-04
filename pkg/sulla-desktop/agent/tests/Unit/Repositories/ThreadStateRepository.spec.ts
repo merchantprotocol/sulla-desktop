@@ -40,6 +40,22 @@ describe('ThreadStateRepository strategies', () => {
     expect(await second.load('same-id')).toBeNull();
   });
 
+  it('resolves the current Redis client after a reconnect replaces it', async() => {
+    // risk: conversation loss after Redis reconnect
+    const first = redisClient();
+    const second = redisClient();
+    let current = first;
+    const source = { getClient: () => current };
+    const repository = new RedisThreadStateRepository(source as never);
+
+    expect(await repository.available()).toBe(true);
+    current = second;
+    expect(await repository.available()).toBe(true);
+
+    expect(first.ping).toHaveBeenCalledTimes(1);
+    expect(second.ping).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves Redis serialization, TTL, and delete behavior', async() => {
     // risk: thread data integrity
     const client = redisClient();
