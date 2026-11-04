@@ -80,7 +80,7 @@ export const chatToolManifests: ToolManifest[] = [
   },
   {
     name:        'set_heartbeat',
-    description: 'Set the heartbeat for the current chat tab only. Use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered.',
+    description: 'Set the heartbeat for this agent\'s own thread, whether it is a visible chat tab or a hidden background job — governed by this agent\'s config.heartbeat (allowed, default/min/max interval). An out-of-range interval is refused; use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered. Ends automatically when this job ends.',
     category:    'chat',
     schemaDef:   {
       intervalMinutes: { type: 'number', description: 'Minutes between beats. Use 0 to turn this chat heartbeat off.' },

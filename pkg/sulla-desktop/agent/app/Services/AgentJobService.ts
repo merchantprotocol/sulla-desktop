@@ -10,6 +10,8 @@ import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '.
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
+  /** A heartbeat must never outlive the job it belongs to. Dynamic import avoids a static cycle back through jobRegistry's provider. */
+  private disableHeartbeats(tasks: AgentJobTask[]): void { void import('../../services/JobHeartbeatCleanup').then(({ jobHeartbeatCleanup }) => jobHeartbeatCleanup.disableForTasks(tasks)); }
 async createJob(
   taskInput: number | AgentJobTask[],
   parentChannel?: string,
@@ -104,6 +106,7 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
   void this.persist(this.repository.stop(jobId, job.tasks));
+  this.disableHeartbeats(job.tasks);
   return 'stopped';
 }
 async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
@@ -118,6 +121,7 @@ async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-
     if (!job || !['running', 'parked'].includes(job.status)) continue;
     job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
     job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
+    this.disableHeartbeats(job.tasks);
   }
   return 'stopped';
 }
@@ -236,6 +240,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
       ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() }
       : task);
     await this.persist(this.repository.saveStoppedResults(jobId, results, job.tasks));
+    this.disableHeartbeats(job.tasks);
 
     return;
   }
@@ -252,6 +257,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   });
 
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
+  this.disableHeartbeats(job.tasks);
 
   await this.persist(this.repository.complete(job));
 }
@@ -388,6 +394,7 @@ async failJob(jobId: string, error: string): Promise<void> {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
     : task);
+  this.disableHeartbeats(job.tasks);
 
   await this.persist(this.repository.fail(jobId, error, job.tasks));
 }

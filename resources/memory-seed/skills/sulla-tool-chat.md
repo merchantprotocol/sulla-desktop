@@ -35,7 +35,7 @@ scope: [tool-chat]
 - `sulla chat/message_tab '{"message":"<message>"}'`: Alias of agents/send_job_message addressed by contract id or child thread id: send a follow-up to one of this chat's open children. Steers a running child or starts a new turn when idle. Required: message. Optional: contractId, childThreadId.
 - `sulla chat/return_contract '{}'`: Alias of agents/return_result: return your contract to the agent that launched you. Only the child thread that owns the contract may call this; schema mismatches are rejected. Required: none. Optional: contractId, result, status, summary, output.
 - `sulla chat/route_agent '{"agentId":"<agentId>"}'`: Select an enabled agent persona for a chat. Reflex uses this as a training target for first-message routing; it is not executed by the normal mid-chat Reflex action engine. Required: agentId. Optional: none.
-- `sulla chat/set_heartbeat '{"intervalMinutes":1}'`: Set the heartbeat for the current chat tab only. Use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered. Required: intervalMinutes. Optional: message.
+- `sulla chat/set_heartbeat '{"intervalMinutes":1}'`: Set the heartbeat for this agent's own thread, whether it is a visible chat tab or a hidden background job — governed by this agent's config.heartbeat (allowed, default/min/max interval). An out-of-range interval is refused; use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered. Ends automatically when this job ends. Required: intervalMinutes. Optional: message.
 <!-- tools:generated:end -->
 
 **Don't:**

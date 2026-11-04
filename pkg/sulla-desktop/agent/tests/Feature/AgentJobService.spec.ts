@@ -1,8 +1,12 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TestDatabase } from '../Support/TestDatabase';
+
+const { disableForTasks } = vi.hoisted(() => ({ disableForTasks: vi.fn() }));
+vi.mock('@pkg/agent/services/JobHeartbeatCleanup', () => ({ jobHeartbeatCleanup: { disableForTasks } }));
+
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 dbDescribe('AgentJobService state machine with real Postgres', () => {
   const database = new TestDatabase();
@@ -89,5 +93,31 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).not.toContain(parked.jobId);
     expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
     expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
+  });
+
+  it('disables a heartbeat on every task thread the instant a job turns terminal, however it ends', async() => {
+    // risk: a hidden job's heartbeat keeps firing after it returns, is stopped, or fails
+    disableForTasks.mockClear();
+    const completed = await registry.createJob([{ agentId: 'worker', label: 'c', prompt: 'x', status: 'running', threadId: 'thread-complete' }]);
+    await registry.completeJob(completed.jobId, [{ label: 'c', status: 'completed', output: 'done', threadId: 'thread-complete' }]);
+    expect(disableForTasks).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ threadId: 'thread-complete' })]));
+
+    disableForTasks.mockClear();
+    const failed = await registry.createJob([{ agentId: 'worker', label: 'f', prompt: 'x', status: 'running', threadId: 'thread-fail' }]);
+    await registry.failJob(failed.jobId, 'boom');
+    expect(disableForTasks).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ threadId: 'thread-fail' })]));
+
+    disableForTasks.mockClear();
+    const stopped = await registry.createJob([{ agentId: 'worker', label: 's', prompt: 'x', status: 'running', threadId: 'thread-stop' }]);
+    expect(registry.abortJob(stopped.jobId)).toBe('stopped');
+    expect(disableForTasks).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ threadId: 'thread-stop' })]));
+
+    disableForTasks.mockClear();
+    const root = await registry.createJob([{ agentId: 'manager', label: 'r', prompt: 'x', status: 'running', threadId: 'thread-cascade-root' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'ch', prompt: 'x', status: 'running', threadId: 'thread-cascade-child' }], 'manager', 'thread-cascade-root');
+    await registry.stopJobCascade(root.jobId);
+    const cascadeThreads = disableForTasks.mock.calls.flat(2).map((task: { threadId?: string }) => task.threadId);
+    expect(cascadeThreads).toEqual(expect.arrayContaining(['thread-cascade-root', 'thread-cascade-child']));
+    void child;
   });
 });
