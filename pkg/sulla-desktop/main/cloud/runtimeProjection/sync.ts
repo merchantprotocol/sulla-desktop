@@ -3,7 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-let timer:ReturnType<typeof setInterval>|null=null;
 /** Marketplace/installable projections remain implemented, but are not part of personal sync. */
-export async function syncRuntimeProjections(_force=false){ return; }
-export const CloudRuntimeProjectionSync={start(){if(timer)return;timer=setInterval(()=>void syncRuntimeProjections(false),60_000);timer.unref?.()},stop(){if(timer)clearInterval(timer);timer=null},changed(){void syncRuntimeProjections(false)}};
+export async function syncRuntimeProjections(_force = false): Promise<void> { return; }
+
+/** Runtime projection sync is retired from personal cloud sync; this is an honest no-op, not a disguised timer. */
+class DisabledRuntimeProjectionSync {
+  start(): void {}
+  stop(): void {}
+  changed(): void {}
+}
+
+export const CloudRuntimeProjectionSync = new DisabledRuntimeProjectionSync();
