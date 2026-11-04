@@ -5,34 +5,16 @@
 
 import { FilesTool } from './common';
 import { decisionService } from '../../services/DecisionService';
+import { PublishApprovalCoordinator } from './PublishApprovalCoordinator';
+import { toolRuntime } from '../toolRuntime';
 import { filesContainerJson } from '../../files/containerClient';
 import type { ToolResponse } from '../base';
 
-const pending = new Set<string>();
-const notify = new Map<string, (message: string) => Promise<boolean>>();
-
-// Resolution happens in Desktop main after the tool has returned. This keeps an
-// agent run from sitting on a 30-minute DecisionService promise.
-decisionService.subscribe(record => {
-  const payload = record.payload;
-  if (!payload?.filesPublishRequestId || record.kind !== 'approval' || record.status === 'pending' || record.status === 'deferred') return;
-  const key = record.id;
-  if (pending.has(key)) return;
-  pending.add(key);
-  void (async() => {
-    try {
-      // The Files approve/reject call itself runs as the human in
-      // main/sullaApprovalEvents.ts; agent identities cannot publish.
-      const send = notify.get(key);
-      if (send) await send(record.status === 'approved' ? 'File version publish approved.' : `File version publish request ${ record.status }.`);
-    } finally {
-      pending.delete(key);
-      notify.delete(key);
-    }
-  })();
-});
-
 export class FilesRequestPublishWorker extends FilesTool {
+  constructor(private readonly approvalCoordinator: PublishApprovalCoordinator = toolRuntime.publishApprovalCoordinator) {
+    super();
+    this.approvalCoordinator.start();
+  }
   name = '';
   description = '';
 
@@ -66,7 +48,7 @@ export class FilesRequestPublishWorker extends FilesTool {
       channel: metadata.wsChannel || 'sulla-desktop',
       payload: { filesPublishRequestId: requestId, fileId: input.file_id, versionId: input.version_id },
     }, 30 * 60_000);
-    notify.set(record.id, message => this.emitMessage(message, 'file_publish_result'));
+    this.approvalCoordinator.register(record.id, message => this.emitMessage(message, 'file_publish_result'));
     await this.emitMessage(`Publish request ${ record.id } is waiting in Decide.`, 'file_publish_request', { decision: record });
     return { successBoolean: true, responseString: JSON.stringify({ request_id: requestId, decision_id: record.id, status: 'pending' }) };
   }
