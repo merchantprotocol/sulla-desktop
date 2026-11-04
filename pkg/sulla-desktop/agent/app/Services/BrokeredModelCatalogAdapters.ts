@@ -13,14 +13,14 @@ import type { IdGenerator } from '@sulla/foundation';
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export class IntegrationServiceAccountCatalogRepository implements IntegrationAccountCatalogRepository {
-  constructor(private readonly integrations: IntegrationService) {}
+  constructor(private readonly integrations: () => IntegrationService) {}
 
   list(providerId: string) {
-    return this.integrations.getAccounts(providerId);
+    return this.integrations().getAccounts(providerId);
   }
 
   metadata(providerId: string, accountId: string) {
-    return this.integrations.getMetadataValues(providerId, accountId);
+    return this.integrations().getMetadataValues(providerId, accountId);
   }
 }
 

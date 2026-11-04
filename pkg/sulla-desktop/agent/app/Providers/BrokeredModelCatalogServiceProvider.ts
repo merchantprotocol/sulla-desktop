@@ -19,7 +19,7 @@ export class BrokeredModelCatalogServiceProvider {
   readonly catalog: BrokeredModelCatalogService;
 
   constructor() {
-    const accounts = new IntegrationServiceAccountCatalogRepository(getIntegrationService());
+    const accounts = new IntegrationServiceAccountCatalogRepository(getIntegrationService);
     this.catalog = new BrokeredModelCatalogService(
       ProviderCatalogStrategyRegistry.defaults(),
       accounts,
