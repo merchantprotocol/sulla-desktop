@@ -19,6 +19,10 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     // pg also consults PGOPTIONS; this covers environments where a connection
     // URL parser drops libpq's `options` query parameter.
     process.env.PGOPTIONS = `-csearch_path=${ database.schema },public`;
+    process.env.SULLA_DATABASE_POOL_MAX = '1';
+    const { postgresClient } = await import('../../../database/PostgresClient');
+    await postgresClient.initialize();
+    await postgresClient.query(`SET search_path TO "${ database.schema }", public`);
     registry = await import('../../../tools/agents/jobRegistry');
     messaging = await import('../../../database/models/AgentJobMessagingModel');
   }, 60_000);
