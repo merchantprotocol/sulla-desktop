@@ -1,9 +1,5 @@
 {
   "extends": "./tsconfig.agent-check.json",
-  "include": [],
-  "files": [
-    "pkg/sulla-desktop/agent/app/Repositories/AgentJobRepository.ts"
-  ],
   "compilerOptions": {
     "types": [
       "@types/node",

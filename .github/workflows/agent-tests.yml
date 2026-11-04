@@ -16,8 +16,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # `typecheck` semantically type-checks three entry graphs (agent runtime,
+  # main/preload, renderer) with real `tsc` diagnostics, not `--noCheck`
+  # syntax parsing. ubuntu-latest gives this public repo a 16 GB runner, so
+  # each graph gets a 12 GB heap (NODE_OPTIONS=--max-old-space-size=12288).
+  # A graph with pre-existing errors on main is still checked, not skipped:
+  # .github/scripts/typecheck-gate.mjs diffs that step's tsc output against
+  # .github/typecheck-baseline/<graph>.txt and fails only on errors NOT
+  # already in the baseline. To accept new pre-existing errors on purpose
+  # (e.g. widening a graph's include set), regenerate that graph's baseline
+  # with: node .github/scripts/typecheck-gate.mjs --project <tsconfig>
+  # --baseline .github/typecheck-baseline/<graph>.txt --write-baseline --
+  # --incremental --tsBuildInfoFile .cache/typescript/<graph>.tsbuildinfo
+  # then commit the rewritten baseline file. Runs in parallel with
+  # `agent-tests`, which stays the job that actually runs the specs.
   typecheck:
     name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - name: Install dependencies (no lifecycle scripts, no Electron download)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Restore incremental typecheck state
+        uses: actions/cache@v4
+        with:
+          path: .cache/typescript
+          key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
+      - name: Type-check agent runtime graph
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.agent-runtime-check.json
+          --baseline .github/typecheck-baseline/agent.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+      - name: Type-check main and preload production graphs
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.typecheck.json
+          --baseline .github/typecheck-baseline/main.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+      - name: Type-check renderer production graphs
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: >-
+          node .github/scripts/typecheck-gate.mjs
+          --project tsconfig.renderer-check.json
+          --baseline .github/typecheck-baseline/renderer.txt
+          --
+          --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+
+  agent-tests:
+    name: agent-tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -40,29 +103,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: package.json
+          cache: yarn
       - name: Install dependencies (no lifecycle scripts, no Electron download)
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
-      - name: Restore incremental typecheck state
-        uses: actions/cache@v4
-        with:
-          path: .cache/typescript
-          key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
-          restore-keys: |
-            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
-      - name: Type-check agent runtime
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --project tsconfig.agent-runtime-check.json --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
-      - name: Compile main and preload production graphs
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --noCheck --noEmit --project tsconfig.typecheck.json --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
-      - name: Compile renderer production graphs
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: yarn tsc --noCheck --noEmit --project tsconfig.renderer-check.json --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
       - name: Install BusyBox for guest disk characterization
         run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Per-PR agent runtime specs (hard 60-second test budget)
@@ -73,13 +118,3 @@ jobs:
       - name: Full agent runtime specs on main
         if: github.event_name != 'pull_request'
         run: yarn test:agent
-
-
-
-  agent-tests:
-    name: agent-tests
-    needs: typecheck
-    runs-on: ubuntu-latest
-    steps:
-      - name: Confirm agent tests passed
-        run: echo 'Agent tests and production typecheck passed in the dependency-owning typecheck job.'
