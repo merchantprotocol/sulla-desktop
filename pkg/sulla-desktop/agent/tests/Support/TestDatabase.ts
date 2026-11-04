@@ -23,7 +23,7 @@ export class TestDatabase {
   async initialize(): Promise<void> {
     if (!this.url) throw new Error('SULLA_TEST_DATABASE_URL is required for database characterization specs');
     await this.admin.query(`CREATE SCHEMA "${ this.schema }"`);
-    this.pool = new Pool({ connectionString: this.url, options: `-c search_path=${ this.schema },public` });
+    this.pool = new Pool({ connectionString: this.url, options: `-csearch_path=${ this.schema },public` });
     await this.applyMigrations();
   }
 
@@ -55,7 +55,7 @@ export class TestDatabase {
   /** URL used by the real PostgresClient initialize path, isolated to this schema. */
   appUrl(): string {
     const url = new URL(this.url);
-    url.searchParams.set('options', `-c search_path=${ this.schema },public`);
+    url.searchParams.set('options', `-csearch_path=${ this.schema },public`);
     return url.toString();
   }
 
