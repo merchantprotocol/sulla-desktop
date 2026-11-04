@@ -2526,7 +2526,7 @@
     },
     "pkg/sulla-desktop/main/devicesCloudApi.ts": {
       "rules": {
-        "mutable-state": 4
+        "mutable-state": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },

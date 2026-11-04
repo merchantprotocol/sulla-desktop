@@ -18,14 +18,11 @@ import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
 
 import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
+import { DeviceFailureDescriber, DeviceHeartbeatRetrier } from '@pkg/main/deviceHeartbeatPolicy';
 
 const console = Logging.background;
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
-
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let cachedDeviceId: string | null = null;
-
 /** What the cloud last told us about this desktop's standing. */
 export interface CloudDeviceState {
   registered: boolean;
@@ -60,33 +57,64 @@ async function reportedPreferences(): Promise<{ remoteAccess: 'enabled' | 'disab
 // and announce recovery.
 const failCounts = new Map<string, number>();
 
-async function postJson(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: any }> {
+const failureDescriber = new DeviceFailureDescriber();
+
+async function postJson(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: any; transient: boolean }> {
   try {
-    if (!await isCloudSignedIn()) return { ok: false, status: 0, data: null };
+    if (!await isCloudSignedIn()) return { ok: false, status: 0, data: null, transient: false };
     const res = await cloudRequest('POST', path, {
       headers: {
         'Content-Type':  'application/json',
       },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      const transient = res.status >= 500 || res.status === 408 || res.status === 429;
+      const n = (failCounts.get(path) ?? 0) + 1;
+      failCounts.set(path, n);
+      if (n === 1 || n % 40 === 0) console.log(`[DevicesApi] ${ path } failed: code=http_error status=${ res.status } stage=upstream transient=${ transient }`);
+      return { ok: false, status: res.status, data, transient };
+    }
     const n = failCounts.get(path);
 
-    if (n && n > 1) {
+    if (n) {
       console.log(`[DevicesApi] ${ path } recovered after ${ n } consecutive failures`);
     }
     failCounts.delete(path);
     const data = await res.json().catch(() => null);
-    return { ok: res.ok, status: res.status, data };
+    return { ok: true, status: res.status, data, transient: false };
   } catch (err) {
     const n = (failCounts.get(path) ?? 0) + 1;
 
     failCounts.set(path, n);
     if (n === 1 || n % 40 === 0) {
-      console.log(`[DevicesApi] ${ path } failed: ${ err }${ n > 1 ? ` (${ n } consecutive failures, logging every 40th)` : '' }`);
+      const failure = failureDescriber.describe(err);
+      console.log(`[DevicesApi] ${ path } failed: ${ failure.detail } transient=${ failure.transient }${ n > 1 ? ` (${ n } consecutive failures, logging every 40th)` : '' }`);
     }
-    return { ok: false, status: 0, data: null };
+    const failure = failureDescriber.describe(err);
+    return { ok: false, status: failure.status, data: null, transient: failure.transient };
   }
 }
+
+async function sendHeartbeat(): Promise<{ ok: boolean; transient: boolean }> {
+  try {
+    const deviceId = cachedDeviceId ?? (await getDesktopDeviceId());
+    cachedDeviceId = deviceId;
+    const res = await postJson('/devices/heartbeat', { deviceId, ...(await reportedPreferences()) });
+    if (res.ok && typeof res.data?.revoked === 'boolean' && res.data.revoked !== deviceState.revoked) {
+      setDeviceState({ ...deviceState, revoked: res.data.revoked });
+    }
+    return { ok: res.ok, transient: res.transient };
+  } catch {
+    return { ok: false, transient: true };
+  }
+}
+
+const heartbeatRetrier = new DeviceHeartbeatRetrier(
+  { setTimeout: (callback, delayMs) => setTimeout(callback, delayMs), clearTimeout: timer => clearTimeout(timer) },
+  sendHeartbeat,
+);
 
 export const DevicesCloudApi = {
   async register(): Promise<string | null> {
@@ -128,16 +156,7 @@ export const DevicesCloudApi = {
   },
 
   async heartbeat(): Promise<void> {
-    try {
-      const deviceId = cachedDeviceId ?? (await getDesktopDeviceId());
-      cachedDeviceId = deviceId;
-      const res = await postJson('/devices/heartbeat', { deviceId, ...(await reportedPreferences()) });
-      if (res.ok && typeof res.data?.revoked === 'boolean' && res.data.revoked !== deviceState.revoked) {
-        setDeviceState({ ...deviceState, revoked: res.data.revoked });
-      }
-    } catch {
-      // Next tick will retry.
-    }
+    await heartbeatRetrier.run();
   },
 
   /**
@@ -165,6 +184,7 @@ export const DevicesCloudApi = {
   },
 
   stopHeartbeat(): void {
+    heartbeatRetrier.stop();
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
