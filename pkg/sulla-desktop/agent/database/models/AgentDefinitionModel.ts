@@ -2,27 +2,23 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-
 import { randomUUID } from 'node:crypto';
-
 import { postgresClient } from '../PostgresClient';
-
+import { AgentDefinitionConfigModel } from './AgentDefinitionConfigModel';
+import type { AgentDefinitionConfigPatch, AgentHeartbeatConfig } from './AgentDefinitionConfigModel';
+export type { AgentDefinitionConfigPatch, AgentHeartbeatConfig } from './AgentDefinitionConfigModel';
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
 export type AgentCostTier = 'low' | 'medium' | 'high';
 export type AgentRunLocation = 'vm' | 'container';
 export type AgentModelSlot = 'primary' | 'secondary' | 'subconscious';
 export const AGENT_MODEL_SLOTS: readonly AgentModelSlot[] = ['primary', 'secondary', 'subconscious'];
-
 export const DEFAULT_AGENT_RUN_LOCATION: AgentRunLocation = 'container';
-
 export const AGENT_COST_TIERS: readonly AgentCostTier[] = ['low', 'medium', 'high'];
-
 export interface ModelPriorityEntry {
   provider: string;
   model:    string;
 }
-
 export interface AgentDefinition {
   id:                      string;
   slug:                    string;
@@ -76,7 +72,6 @@ export interface AgentDefinition {
   created_at:              string;
   updated_at:              string;
 }
-
 export interface AgentDefinitionInput {
   slug:                   string;
   name:                   string;
@@ -155,7 +150,6 @@ export interface AgentDefinitionPatch {
   builtinHash?:           string | null;
   runLocation?:           AgentRunLocation;
 }
-
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : [];
 }
@@ -306,11 +300,6 @@ export class AgentDefinitionModel {
     return rowToDefinition(row);
   }
 
-  /**
-   * Apply a patch. When expectedUpdatedAt is given the write only lands if the
-   * row has not changed since it was read (compare-and-set on updated_at);
-   * otherwise null is returned and nothing is written.
-   */
   static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -331,7 +320,10 @@ export class AgentDefinitionModel {
     if (patch.enabled !== undefined) add('enabled', patch.enabled);
     if (patch.sourceTemplateSlug !== undefined) add('source_template_slug', patch.sourceTemplateSlug);
     if (patch.contentHash !== undefined) add('content_hash', patch.contentHash);
-    if (patch.config !== undefined) add('config', JSON.stringify(patch.config), '::jsonb');
+    if (patch.config !== undefined) {
+      sets.push(`config = COALESCE(config, '{}'::jsonb) || $${ params.length + 1 }::jsonb`);
+      params.push(JSON.stringify(patch.config));
+    }
     if (patch.promptContent !== undefined) add('prompt_content', patch.promptContent);
     if (patch.goalsContent !== undefined) add('goals_content', patch.goalsContent);
     if (patch.promptFiles !== undefined) add('prompt_files', JSON.stringify(patch.promptFiles), '::jsonb');
@@ -366,6 +358,15 @@ export class AgentDefinitionModel {
     }
     const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
     return row ? rowToDefinition(row) : null;
+  }
+
+  /** Merge config keys without replacing unrelated agent configuration. */
+  static async patchConfig(id: string, patch: AgentDefinitionConfigPatch): Promise<AgentDefinition | null> {
+    return await AgentDefinitionConfigModel.patch(id, patch) ? AgentDefinitionModel.get(id) : null;
+  }
+
+  static async getHeartbeatConfig(id: string): Promise<AgentHeartbeatConfig | null> {
+    return AgentDefinitionConfigModel.heartbeat(id);
   }
 
   /**

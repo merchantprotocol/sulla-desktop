@@ -21,6 +21,7 @@ export class PostgresClient {
   private pool: Pool | null = null;
   private connected = false;
   private shuttingDown = false;
+  private preserveConfiguredSearchPath = false;
   private statementTimeout: AsyncLocalStorage<number> | null = IN_RENDERER ? null : new AsyncLocalStorage<number>();
 
   get isShuttingDown(): boolean {
@@ -32,6 +33,7 @@ export class PostgresClient {
     if (this.pool) return; // Already initialized
 
     const connectionString = process.env.SULLA_DATABASE_URL;
+    this.preserveConfiguredSearchPath = Boolean(connectionString && new URL(connectionString).searchParams.get('options')?.includes('search_path'));
     let password: string | undefined;
     if (!connectionString) {
       // Settings extends BaseModel, which imports this client. Load it only on use.
@@ -72,7 +74,7 @@ export class PostgresClient {
       await client.query('SELECT 1');
 
       // Set search_path once on first connect (matches your psql behavior)
-      await client.query(`SET search_path TO "$user", public`);
+      if (!this.preserveConfiguredSearchPath) await client.query(`SET search_path TO "$user", public`);
 
       client.release();
       this.connected = true;
