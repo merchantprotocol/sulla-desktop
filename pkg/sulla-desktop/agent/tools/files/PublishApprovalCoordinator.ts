@@ -30,7 +30,7 @@ export class PublishApprovalCoordinator {
   private async handle(record: DecisionRecord): Promise<void> {
     const payload = record.payload;
     if (!payload?.filesPublishRequestId || record.kind !== 'approval' || record.status === 'pending' || record.status === 'deferred') return;
-    if (this.pending.has(record.id) || this.delivered.has(record.id)) return;
+    if (this.pending.has(record.id)) return;
     this.pending.add(record.id);
     try {
       const send = this.notify.get(record.id);
