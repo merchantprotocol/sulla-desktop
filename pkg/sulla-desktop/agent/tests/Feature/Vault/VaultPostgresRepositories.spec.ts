@@ -60,7 +60,23 @@ describe.sequential('vault Postgres repositories',()=>{
   it('rolls back bundle and head when a record insert fails',async()=>{ // risk: atomicity
     const org='20000000-0000-4000-8000-000000000003'; await database.db.query(`INSERT INTO orgs(id,encrypted_name,created_by) VALUES ($1,'{}'::jsonb,$2)`,[org,fx.user]); const bundles=new PostgresVaultBundleRepository(database.db),vault=await bundles.findVaultId(org),invalid={...fx.record(vault,fx.ids[0]),kind:'invalid'} as unknown as SyncRecord; await expect(bundles.createPersonalVault({userId:fx.user,orgId:org,role:'owner'},vault,{bundle:fx.bundle(vault),head:fx.head(vault,1),records:[invalid]})).rejects.toThrow(); await expect(bundles.find(vault,fx.user)).resolves.toBeNull(); await expect(new PostgresVaultHeadRepository(database.db).find(vault,fx.user)).resolves.toBeNull();
   });
-  it('inserts and reads password and recovery history',async()=>{ // risk: recovery data loss
-    const repo=new PostgresRewrapHistoryRepository(database.db); await repo.preserveCurrentPasswordWrap(fx.user,'password_change'); await repo.preservePasswordWrap({user_id:fx.user,login_hash_salt:Buffer.from('cloud'),login_hash_verifier:Buffer.from('verify'),encrypted_user_key:{ciphertext:'cloud'},kdf:{alg:'test'}},'cloud_rewrap'); await database.db.query(`INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key) VALUES ($1,'salt','verifier','{"ciphertext":"recovery"}'::jsonb)`,[fx.user]); await expect(repo.preserveCurrentRecoveryWrap(fx.user,'rotation')).resolves.toBe(true); const wraps=await repo.listPasswordWraps(fx.user); expect(wraps).toHaveLength(2); expect(new Set(wraps.map(r=>r.reason))).toEqual(new Set(['password_change','cloud_rewrap'])); await expect(repo.listRecoveryWraps(fx.user)).resolves.toEqual([expect.objectContaining({user_id:fx.user,recovery_salt:'salt',reason:'rotation'})]);
+  it('preserves the current password wrap with its parameterized reason',async()=>{ // risk: recovery data loss
+    const repository=new PostgresRewrapHistoryRepository(database.db);
+    await repository.preserveCurrentPasswordWrap(fx.user,'password_change');
+    await repository.preservePasswordWrap({user_id:fx.user,login_hash_salt:Buffer.from('cloud'),login_hash_verifier:Buffer.from('verify'),encrypted_user_key:{ciphertext:'cloud'},kdf:{alg:'test'}},'cloud_rewrap');
+    const history=await repository.listPasswordWraps(fx.user);
+    expect(history).toHaveLength(2);
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({user_id:fx.user,reason:'password_change',encrypted_user_key:{ciphertext:'key'}}),
+      expect.objectContaining({user_id:fx.user,reason:'cloud_rewrap',encrypted_user_key:{ciphertext:'cloud'}}),
+    ]));
+  });
+  it('preserves the current recovery wrap with its parameterized reason',async()=>{ // risk: recovery data loss
+    const repository=new PostgresRewrapHistoryRepository(database.db);
+    await database.db.query(`INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key) VALUES ($1,'salt','verifier','{"ciphertext":"recovery"}'::jsonb)`,[fx.user]);
+    await expect(repository.preserveCurrentRecoveryWrap(fx.user,'rotation')).resolves.toBe(true);
+    await expect(repository.listRecoveryWraps(fx.user)).resolves.toEqual([
+      expect.objectContaining({user_id:fx.user,recovery_salt:'salt',recovery_verifier:'verifier',reason:'rotation'}),
+    ]);
   });
 });
