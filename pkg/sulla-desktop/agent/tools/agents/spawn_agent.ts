@@ -564,7 +564,7 @@ export class SpawnAgentWorker extends BaseTool {
           await agentJobLifecycle.parkWhenWaiting(activityJobId, index, threadId)) {
           subState.metadata.delegatedRunActive = false;
           await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
-          if (jobAbortSignal?.aborted === true) break;
+          if (jobAbortSignal?.aborted) break;
           returned = await returnedTask();
           if (returned) break;
           await agentJobLifecycle.resume(activityJobId, index);

@@ -60,14 +60,14 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   afterEach(() => { inbox.clearCompletionInboxes(); vi.restoreAllMocks() });
 
   class SpawnHarness extends SpawnAgentWorker {
-    call(threadId: string, wsChannel: string, input: unknown) {
+    invoke(threadId: string, wsChannel: string, input: unknown) {
       this.setState({ metadata: { threadId, wsChannel } } as any);
       return this.runValidated(input as any);
     }
   }
 
   class ReturnResultHarness extends ReturnResultWorker {
-    call(threadId: string, input: unknown) {
+    invoke(threadId: string, input: unknown) {
       this.setState({ metadata: { threadId } } as any);
       return this._validatedCall(input);
     }
@@ -118,21 +118,21 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
         // its own messages: it returns its OWN contract, the exact call a
         // real manager makes once it has what it was waiting for.
         const rr = new ReturnResultHarness();
-        const result = await rr.call(managerThreadId, { result: { ok: true }, summary: 'epic done' });
+        const result = await rr.invoke(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
         return fakeState;
       }),
     };
-    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation(async(_channel: string, threadId: string) => {
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation((async(_channel: string, threadId: string) => {
       managerThreadId = threadId;
       fakeState.metadata.threadId = threadId;
       return { graph: fakeGraph, state: fakeState };
-    });
+    }) as any);
     vi.spyOn(GraphRegistry, 'get').mockImplementation((threadId: string) =>
       (threadId === managerThreadId ? { graph: fakeGraph, state: fakeState } as any : null));
 
     const spawn = new SpawnHarness();
-    const launch = JSON.parse((await spawn.call('grandparent-root-thread', 'sulla-desktop', {
+    const launch = JSON.parse((await spawn.invoke('grandparent-root-thread', 'sulla-desktop', {
       tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic' }],
       async: true,
     })).responseString!);
