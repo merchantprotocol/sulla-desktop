@@ -27,6 +27,8 @@ const STALE_RECHECK_MS = 30_000;
 export class WorkflowRecoveryService extends Service {
   private pending: SuspendedExecution[] = [];
   private readonly notified = new Set<string>();
+  private readonly activationScheduled = new Set<string>();
+  private recoveryInFlight: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private state: WorkflowRecoveryStatus = 'stopped';
 
@@ -57,6 +59,17 @@ export class WorkflowRecoveryService extends Service {
   async gracefulShutdown(): Promise<void> { await this.executions.suspendAllRunning(); }
 
   async recover(): Promise<void> {
+    if (this.recoveryInFlight) return this.recoveryInFlight;
+
+    this.recoveryInFlight = this.runRecovery();
+    try {
+      await this.recoveryInFlight;
+    } finally {
+      this.recoveryInFlight = null;
+    }
+  }
+
+  private async runRecovery(): Promise<void> {
     try {
       const recovered: SuspendedExecution[] = [];
       for (const candidate of await this.executions.findStaleExecutions()) {
@@ -65,10 +78,13 @@ export class WorkflowRecoveryService extends Service {
       }
       const suspended = (await this.executions.findSuspended()).map(row => this.map(row.attributes));
       const all = [...recovered, ...suspended];
-      const automatic = all.filter(entry => entry.autoRestart);
+      const automatic = all.filter(entry => entry.autoRestart && !this.activationScheduled.has(entry.executionId));
       const manual = all.filter(entry => !entry.autoRestart);
       this.pending = manual;
-      if (automatic.length) this.clock.defer(() => { void this.activate(automatic); });
+      if (automatic.length) {
+        for (const execution of automatic) this.activationScheduled.add(execution.executionId);
+        this.clock.defer(() => { void this.activate(automatic); });
+      }
       for (const execution of manual) {
         if (this.notified.has(execution.executionId)) continue;
         this.notified.add(execution.executionId);
@@ -96,7 +112,10 @@ export class WorkflowRecoveryService extends Service {
   private async activate(executions: SuspendedExecution[]): Promise<void> {
     for (const execution of executions) {
       try { await this.registry.activate(execution); }
-      catch (error) { console.error(`[WorkflowRecovery] Auto-restart error for "${ execution.executionId }":`, error); }
+      catch (error) {
+        this.activationScheduled.delete(execution.executionId);
+        console.error(`[WorkflowRecovery] Auto-restart error for "${ execution.executionId }":`, error);
+      }
     }
   }
 
