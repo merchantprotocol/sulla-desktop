@@ -8,11 +8,17 @@ import { TestDatabase } from '../../Support/TestDatabase';
 import { ReportProgressWorker } from '../../../tools/agents/report_progress';
 import { sendJobMessage } from '../../../tools/agents/send_job_message';
 import { ReturnResultWorker } from '../../../tools/agents/return_result';
+import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
+import { buildSubagentDirectoryContext } from '../../../services/SubagentDirectory';
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
   getBackendGraphWebSocketService: () => ({ wakeParkedAgent }),
 }));
+
+class CheckAgentJobsHarness extends CheckAgentJobsWorker {
+  runHarness(input: unknown) { return this._validatedCall(input); }
+}
 
 class ReturnResultHarness extends ReturnResultWorker {
   runHarness(threadId: string, input: unknown) {
@@ -442,6 +448,44 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await agentJobProvider.jobs.job(manager.jobId))?.orphanedChildNotices).toEqual([
       expect.objectContaining({ childJobId: child.jobId, managerStatus: 'completed', results }),
     ]);
+  });
+
+  it('l) exposes parked status and child count in both parent inspection surfaces', async() => {
+    // risk: a healthy parked manager looks completed or dead to its parent,
+    // causing an unnecessary relaunch and duplicate ownership of the epic.
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'view-l-manager-thread', depth: 1 }],
+      'sulla-desktop', 'view-l-root-thread',
+    );
+    await registry.parkJobTask(manager.jobId, 0, 2);
+
+    const check = new CheckAgentJobsHarness();
+    const detail = JSON.parse((await check.runHarness({ jobId: manager.jobId })).responseString!);
+    expect(detail).toMatchObject({ status: 'parked', waitingOnChildren: 2, tasks: [{ status: 'parked' }] });
+    expect(await buildSubagentDirectoryContext('view-l-root-thread')).toContain('parked, waiting on 2 children');
+  });
+
+  it('m) wakes a parked manager with a failed child contract instead of silently dropping it', async() => {
+    // risk: only successful child contracts wake the manager, leaving failed
+    // work invisible and the fleet parked forever.
+    const managerThreadId = 'failure-m-manager-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'failure-m-root-thread',
+    );
+    await registry.parkJobTask(manager.jobId, 0, 1);
+    const child = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'failed worker', prompt: 'build', status: 'running', threadId: 'failure-m-child-thread', depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    );
+    const results = [{ label: 'failed worker', status: 'error' as const, output: 'provider failed', threadId: 'failure-m-child-thread' }];
+    await registry.completeJob(child.jobId, results);
+
+    expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
+    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([
+      expect.objectContaining({ jobId: child.jobId, results, failureReason: undefined }),
+    ]);
+    expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
   });
 
 });
