@@ -148,7 +148,7 @@ export class AgentStateService {
   }
 
   async transitionIfActivityUnchanged(jobId: string, taskIndex: number, observedActivity: number | null, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob>): Promise<boolean> {
-    const changed = await this.mutateJob(jobId, current => current.tasks[taskIndex]
+    const changed = await this.mutateJob(jobId, current => current.tasks[taskIndex] && ['queued', 'running', 'blocked'].includes(current.tasks[taskIndex].status)
       ? { ...current, ...jobPatch, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) }
       : undefined, next => this.store.replaceStateIfActivityUnchanged(next, taskIndex, observedActivity));
     return Boolean(changed);

@@ -214,19 +214,20 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(durable?.tasks[1].status).toBe('running');
   });
 
-  it('preserves completion when liveness reconciliation pauses at its guarded write', async() => {
-    // risk: data accuracy — a stale reconciler must not erase a real completion
+  it('prevents stale liveness reconciliation from overwriting completion', async() => {
+    // risk: data accuracy — a reconciler queued behind real completion must not mark it lost
     const startedAt = Date.now() - 1_200_000;
     const job = await registry.createJob([{ agentId: 'race-lost', label: 'race', prompt: 'x', status: 'running', startedAt }]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    const original = agentJobProvider.jobs.replaceStateIfActivityUnchanged.bind(agentJobProvider.jobs);
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
     let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
     let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
-    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceStateIfActivityUnchanged').mockImplementationOnce(async(...args) => { entered(); await paused; return original(...args) });
-    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
-    const reconciling = reconciler.reconcile(); await didEnter;
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
     const completing = registry.recordTaskCompletion(job.jobId, 0, { label: 'race', status: 'completed', output: 'real completion', threadId: '' });
-    release(); await Promise.all([reconciling, completing]); gate.mockRestore();
+    await didEnter;
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    const reconciling = reconciler.reconcile(); release();
+    await Promise.all([reconciling, completing]); gate.mockRestore();
     const durable = await agentJobProvider.jobs.job(job.jobId);
     expect(durable?.tasks[0].status).toBe('completed');
     expect(durable?.tasks[0].completion?.output).toBe('real completion');
