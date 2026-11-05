@@ -11,7 +11,8 @@ const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? descri
 dbDescribe('AgentTaskWaitRepository with real Postgres', () => {
   const database = new TestDatabase();
   let registry: typeof import('../../tools/agents/jobRegistry');
-  let repository: typeof import('../../services/AgentWaitServices').agentWaitProvider.repository;
+  let provider: typeof import('../../services/AgentWaitServices').agentWaitProvider;
+  let repository: typeof provider.repository;
 
   beforeAll(async() => {
     await database.initialize();
@@ -23,16 +24,18 @@ dbDescribe('AgentTaskWaitRepository with real Postgres', () => {
     await postgresClient.query(`SET search_path TO "${ database.schema }", public`);
     await database.applyMigrations();
     registry = await import('../../tools/agents/jobRegistry');
-    repository = (await import('../../services/AgentWaitServices')).agentWaitProvider.repository;
+    provider = (await import('../../services/AgentWaitServices')).agentWaitProvider;
+    repository = provider.repository;
   }, 60_000);
 
   afterAll(async() => database.dispose());
 
   const schedule = async(wait: AgentTaskWait): Promise<boolean> => {
     try {
-      return await repository.scheduleAndPark(wait);
+      await provider.parking.park(wait.jobId, wait.taskIndex, { wakeAt: wait.wakeAt, reason: wait.reason } as any); return true;
     } catch (error) {
-      throw new Error(`scheduleAndPark threw: ${ (error as Error).message }`, { cause: error });
+      if ((error as Error).message.includes('no longer running')) return false;
+      throw new Error(`schedule threw: ${ (error as Error).message }`, { cause: error });
     }
   };
 

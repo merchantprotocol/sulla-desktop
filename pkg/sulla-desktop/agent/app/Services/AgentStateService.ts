@@ -9,7 +9,7 @@ export interface AgentStateStore {
   allJobs(): Promise<AgentJob[]>;
   insertJob(job: AgentJob): Promise<void>;
   replaceState(job: AgentJob): Promise<void>;
-  stopCascade(jobId: string): Promise<string[]>;
+  cascadeJobs(jobId: string): Promise<AgentJob[]>;
   replaceStateIfActivityUnchanged(job: AgentJob, taskIndex: number, observedActivity: number | null): Promise<boolean>;
 }
 export interface AgentStateCache { jobs: Map<string, AgentJob>; }
@@ -38,7 +38,7 @@ export class AgentJobMutationQueue {
 export class AgentStateService {
   private versionValue: number;
   private readonly changes = new EventEmitter();
-  private readiness: Promise<void> = Promise.resolve();
+  private readiness: () => Promise<void> = async() => undefined;
   private readonly pendingTerminalWrites = new Set<string>();
   private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
@@ -48,12 +48,12 @@ export class AgentStateService {
   }
 
   get version(): number { return this.versionValue; }
-  setReadiness(readiness: Promise<unknown>): void {
-    // Reads fail closed until boot reconciliation succeeds. Serving stale rows
-    // after a failed durable reconciliation would advertise dead work as live.
-    this.readiness = readiness.then(() => undefined);
+  setReadiness(readiness: Promise<unknown> | (() => Promise<unknown>)): void {
+    // A provider allows transient startup failures to recover without leaving a
+    // rejected promise installed for the lifetime of the process.
+    this.readiness = async() => { await (typeof readiness === 'function' ? readiness() : readiness) };
   }
-  async ready(): Promise<void> { await this.readiness; }
+  async ready(): Promise<void> { await this.readiness(); }
   onChange(listener: AgentStateChangeListener): () => void {
     this.changes.on('change', listener);
     return () => this.changes.off('change', listener);
@@ -63,14 +63,12 @@ export class AgentStateService {
     const durable = await this.store.allJobs();
     const durableIds = new Set(durable.map(job => job.jobId));
     for (const cachedId of this.cache.jobs.keys()) if (!durableIds.has(cachedId)) this.cache.jobs.delete(cachedId);
-    const jobs: AgentJob[] = [];
     for (const persisted of durable) {
-      const job = this.withDerivedStatus(persisted);
-      if (job.status !== persisted.status) await this.store.replaceState(job);
-      this.cache.jobs.set(job.jobId, job);
-      jobs.push(job);
+      const derived = this.withDerivedStatus(persisted);
+      if (derived.status !== persisted.status) await this.mutateJob(persisted.jobId, current => this.withDerivedStatus(current));
+      else this.cache.jobs.set(persisted.jobId, persisted);
     }
-    return jobs;
+    return Array.from(this.cache.jobs.values()).filter(job => durableIds.has(job.jobId));
   }
 
   /** Reconciliation-only read, used to establish the readiness gate itself. */
@@ -120,13 +118,41 @@ export class AgentStateService {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); return next;
   }
 
-  async update(jobId: string, mutate: (current: AgentJob) => AgentJob, deriveStatus = true): Promise<AgentJob | undefined> {
+  async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
+    const resumable: AgentJob[] = []; const exhausted: AgentJob[] = [];
+    const candidates = (await this.store.allJobs()).filter(job => job.status === 'running' && job.visibility !== 'tab')
+      .sort((left, right) => left.createdAt - right.createdAt || left.jobId.localeCompare(right.jobId));
+    for (const candidate of candidates) {
+      const exhaustedLimit = (candidate.restartResumeCount ?? 0) >= maxResumes;
+      const changed = await this.mutateJob(candidate.jobId, current => current.status !== 'running' || current.visibility === 'tab' ? undefined
+        : exhaustedLimit ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
+          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 }, undefined, false);
+      if (changed) (exhaustedLimit ? exhausted : resumable).push(changed);
+    }
+    return { resumable, exhausted };
+  }
+
+  /** The only whole-row mutation boundary: latest durable read, mutation, write, cache, and publish share one per-job queue. */
+  async mutateJob(jobId: string, mutate: (current: AgentJob) => AgentJob | undefined,
+    persist?: (next: AgentJob) => Promise<boolean>, deriveStatus = true): Promise<AgentJob | undefined> {
     return this.mutations.run(jobId, async() => {
-      const current = await this.jobForWrite(jobId); if (!current) return undefined;
-      const mutated = mutate(structuredClone(current));
-      const next = deriveStatus ? this.withDerivedStatus(mutated) : mutated;
-      await this.commitUnsafe(next, deriveStatus); return next;
+      const current = (await this.store.allJobs()).find(job => job.jobId === jobId);
+      if (!current) return undefined;
+      const candidate = mutate(structuredClone(current));
+      if (!candidate) return undefined;
+      const next = deriveStatus ? this.withDerivedStatus(candidate) : candidate;
+      if (persist && !await persist(next)) return undefined;
+      if (!persist) await this.store.replaceState(next);
+      this.cache.jobs.set(next.jobId, next);
+      this.emitChange();
+      this.pendingTerminalWrites.delete(next.jobId);
+      return next;
     });
+  }
+
+  /** Compatibility name for task-level callers; all writes still enter mutateJob. */
+  async update(jobId: string, mutate: (current: AgentJob) => AgentJob): Promise<AgentJob | undefined> {
+    return this.mutateJob(jobId, mutate);
   }
 
   async transition(jobId: string, taskIndex: number, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob> = {}): Promise<AgentJob | undefined> {
@@ -134,35 +160,37 @@ export class AgentStateService {
   }
 
   async transitionIfActivityUnchanged(jobId: string, taskIndex: number, observedActivity: number | null, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob>): Promise<boolean> {
-    const current = (await this.jobsBeforeReady()).find(job => job.jobId === jobId); if (!current?.tasks[taskIndex]) return false;
-    const next = this.withDerivedStatus({ ...current, ...jobPatch, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) });
-    if (!await this.store.replaceStateIfActivityUnchanged(next, taskIndex, observedActivity)) return false;
-    this.cache.jobs.set(next.jobId, next); this.emitChange(); return true;
+    const changed = await this.mutateJob(jobId, current => current.tasks[taskIndex] && ['queued', 'running', 'blocked'].includes(current.tasks[taskIndex].status)
+      ? { ...current, ...jobPatch, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) }
+      : undefined, next => this.store.replaceStateIfActivityUnchanged(next, taskIndex, observedActivity));
+    return Boolean(changed);
   }
 
-  async stopCascade(jobId: string): Promise<string[]> {
-    const stoppedIds = await this.store.stopCascade(jobId); if (stoppedIds.length === 0) return [];
-    const durable = await this.store.allJobs();
-    for (const job of durable) if (stoppedIds.includes(job.jobId)) this.cache.jobs.set(job.jobId, this.withDerivedStatus(job));
-    this.emitChange(); return stoppedIds;
+  async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped'): Promise<string[]> {
+    const jobs = await this.store.cascadeJobs(jobId);
+    const finishedAt = Date.now(); const stoppedIds: string[] = [];
+    for (const job of jobs) {
+      const stopped = await this.mutateJob(job.jobId, current => {
+        if (!['running', 'parked', 'failed'].includes(current.status)) return undefined;
+        return { ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, completionDeliveredAt: finishedAt,
+          stoppedBy, stopReason: reason, tasks: current.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status)
+            ? { ...task, status: 'stopped', finishedAt } : task) };
+      }, undefined, false);
+      if (stopped) stoppedIds.push(job.jobId);
+    }
+    return stoppedIds;
   }
 
   touch(): void { this.emitChange(); }
   async commit(job: AgentJob): Promise<void> {
-    await this.mutations.run(job.jobId, () => this.commitUnsafe(job));
+    await this.mutateJob(job.jobId, () => job);
   }
 
-  private async commitUnsafe(job: AgentJob, deriveStatus = true): Promise<void> {
-    const next = deriveStatus ? this.withDerivedStatus(job) : job;
-    try { await this.store.replaceState(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); }
-    finally { this.pendingTerminalWrites.delete(next.jobId); }
-  }
 
   private withDerivedStatus(job: AgentJob): AgentJob {
-    if (job.tasks.length === 0) return job;
-    if (['completed', 'failed', 'stopped'].includes(job.status)) return job;
+    if (job.status === 'stopped' || job.tasks.length === 0) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
-    if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
+    if (statuses.some(value => value === 'error')) status = 'failed';
     else if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
     else if (statuses.some(value => value === 'parked')) status = 'parked';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';

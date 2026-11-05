@@ -12,12 +12,15 @@ const DEFAULT_CONFIG: AgentLivenessConfig = { quietAfterMs: 5 * 60_000, lostAfte
 export class AgentLivenessReconciler {
   private timer?: ReturnType<typeof setInterval>;
   private readonly config: AgentLivenessConfig;
+  private readinessRecovery?: { isReady(): boolean; retryNow(): Promise<void> };
   constructor(private readonly states: AgentStateService, private readonly probe: AgentLivenessProbe,
     private readonly clock: () => number = Date.now, config: Partial<AgentLivenessConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     if (this.config.lostAfterMs <= this.config.quietAfterMs) throw new Error('lostAfterMs must be greater than quietAfterMs');
   }
+  setReadinessRecovery(recovery: { isReady(): boolean; retryNow(): Promise<void> }): void { this.readinessRecovery = recovery; }
   async reconcile(): Promise<number> {
+    if (this.readinessRecovery && !this.readinessRecovery.isReady()) void this.readinessRecovery.retryNow();
     let lost = 0;
     const jobs = await this.states.jobsBeforeReady();
     for (const job of jobs) for (const [taskIndex, task] of job.tasks.entries()) {

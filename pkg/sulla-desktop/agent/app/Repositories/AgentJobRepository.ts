@@ -31,15 +31,6 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     };
   }
 
-  /** Claim non-terminal hidden jobs for bounded restart recovery; never blanket-fail live work. */
-  async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
-    const exhaustedRows = await this.connection.select(`UPDATE agent_jobs SET status = 'failed', error = 'runtime restart recovery limit exceeded', finished_at = now(), waiting_on_children = 0
-      WHERE status = 'running' AND visibility <> 'tab' AND restart_resume_count >= $1 RETURNING *`, [maxResumes]);
-    const resumableRows = await this.connection.select(`UPDATE agent_jobs SET restart_resume_count = restart_resume_count + 1
-      WHERE status = 'running' AND visibility <> 'tab' AND restart_resume_count < $1 RETURNING *`, [maxResumes]);
-    return { resumable: resumableRows.map(row => this.map(row)), exhausted: exhaustedRows.map(row => this.map(row)) };
-  }
-
   async sweepInterruptedJobs(): Promise<void> { /* recovery is driven by claimInterruptedJobs after channels subscribe */ }
 
 
@@ -49,14 +40,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async replaceState(job: AgentJob): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = $2, tasks = $3::jsonb, results = $4::jsonb,
+    await this.connection.run(`UPDATE agent_jobs SET status = CASE WHEN status = 'stopped' THEN status ELSE $2 END, tasks = $3::jsonb, results = $4::jsonb,
       error = $5, finished_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE to_timestamp($6 / 1000.0) END,
       waiting_on_children = $7,
       completion_delivered_at = CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END,
-      dismissed_at = CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END
+      dismissed_at = CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END,
+      restart_resume_count = $10, stopped_by = $11::jsonb, stop_reason = $12
       WHERE job_id = $1`, [job.jobId, job.status, JSON.stringify(job.tasks),
       JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0,
-      job.completionDeliveredAt ?? null, job.dismissedAt ?? null]);
+      job.completionDeliveredAt ?? null, job.dismissedAt ?? null, job.restartResumeCount ?? 0,
+      job.stoppedBy ? JSON.stringify(job.stoppedBy) : null, job.stopReason ?? null]);
   }
 
   async replaceStateIfActivityUnchanged(job: AgentJob, taskIndex: number, observedActivity: number | null): Promise<boolean> {
@@ -100,17 +93,15 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked', 'failed')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
   }
 
-  async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'] = { system: 'legacy' }, reason = 'stop requested'): Promise<string[]> {
+  /** Read-only deterministic tree discovery. State transitions are owned by AgentStateService.mutateJob. */
+  async cascadeJobs(jobId: string): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH RECURSIVE descendants AS (
-      SELECT job_id, tasks FROM agent_jobs WHERE job_id = $1
+      SELECT * FROM agent_jobs WHERE job_id = $1
       UNION ALL
-      SELECT child.job_id, child.tasks FROM agent_jobs child
+      SELECT child.* FROM agent_jobs child
       JOIN descendants parent ON child.parent_thread_id IN (SELECT value->>'threadId' FROM jsonb_array_elements(parent.tasks) value)
-    )
-    UPDATE agent_jobs target SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(),
-      stopped_by = $2::jsonb, stop_reason = $3, tasks = (SELECT COALESCE(jsonb_agg(CASE WHEN value->>'status' IN ('queued','running','parked') THEN value || jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint) ELSE value END), '[]'::jsonb) FROM jsonb_array_elements(target.tasks) value)
-    FROM descendants WHERE target.job_id = descendants.job_id AND target.status IN ('running','parked') RETURNING target.job_id` , [jobId, JSON.stringify(stoppedBy), reason]);
-    return rows.map(row => String(row.job_id));
+    ) SELECT * FROM descendants ORDER BY created_at, job_id`, [jobId]);
+    return rows.map(row => this.map(row));
   }
 
   async job(jobId: string): Promise<AgentJob | undefined> {
@@ -180,7 +171,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
-        AND (status = 'completed' OR tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))')
+        AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
         AND parent_channel IS NOT NULL
         AND parent_thread_id IS NOT NULL
       ORDER BY COALESCE(finished_at, created_at) ASC`);

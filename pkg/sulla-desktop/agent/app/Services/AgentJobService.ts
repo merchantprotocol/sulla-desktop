@@ -7,13 +7,14 @@ import type { AgentStateService } from './AgentStateService';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
-import { JobAbortScope } from './JobAbortScope';
 import { JobTaskLocator } from './JobTaskLocator';
+import { JobAbortScope } from './JobAbortScope';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
+import { JobWrapUpService } from './JobWrapUpService';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService) { super(); this.runtime.start(); }
 async createJob(
   taskInput: number | AgentJobTask[],
   parentChannel?: string,
@@ -46,16 +47,25 @@ async createJob(
 }
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
-  await this.states.update(jobId, job => {
+  await this.states.mutateJob(jobId, job => {
     if (!job.tasks[index]) return job;
-    const nextPatch = job.status === 'stopped' && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    const protectedPatch = (job.status === 'stopped' || job.tasks[index].status === 'stopped') && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    // Runner bookkeeping precedes recordTaskCompletion; don't expose a terminal rollup before its diagnostics exist.
+    const { status: pendingStatus, ...nonStatusPatch } = protectedPatch;
+    const nextPatch = pendingStatus === 'completed' || pendingStatus === 'error' ? nonStatusPatch : protectedPatch;
     return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
-  }, patch.finishedAt === undefined);
+  }, undefined, false);
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
   return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt).sort((a, b) => a.createdAt - b.createdAt);
 }
+/** Count direct open child tasks while treating a queued hard stop as closed immediately. */
+async openChildrenForThread(parentThreadId: string): Promise<number> {
+  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
+    .reduce((count, job) => count + (['running','parked'].includes(job.status) ? job.tasks.filter(task => ['queued','running','parked'].includes(task.status)).length : 0), 0);
+}
+
 async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> {
   const job = await this.states.jobForWrite(jobId);
   if (job?.parentThreadId !== parentThreadId || !job.tasks[taskIndex]) return false;
@@ -76,36 +86,13 @@ releaseJobWatcher(jobId: string): void {
 }
 /** The task-specific abort signal wired into exactly one delegated runner. */
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
-/** Compatibility accessor for single-task jobs. */
-getJobAbortSignal(jobId: string): AbortSignal | undefined { return this.getTaskAbortSignal(jobId, 0); }
-abortJob(jobId: string, principal?: StopPrincipalValue, reason = 'stop requested'): 'stopped' | 'not-found' | 'already-finished' {
-  if (principal) return this.stops.abortJob(jobId, principal, reason);
-  const job = this.runtime.jobs.get(jobId);
-  if (!job) return 'not-found';
-  if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
-  this.runtime.abortScopes.get(jobId)?.abortJob();
-  const finishedAt = this.clock.now().getTime();
-  const next = { ...job, status: 'stopped' as const, finishedAt, waitingOnChildren: 0,
-    tasks: job.tasks.map(task => ['running', 'queued', 'parked'].includes(task.status) ? { ...task, status: 'stopped' as const, finishedAt } : task) };
-  void this.states.commitPendingTerminal(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
-  return 'stopped';
-}
+abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }
-async stopJobCascade(jobId: string, principal?: StopPrincipalValue, reason = 'stop requested'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
-  if (principal) return this.stops.stopCascade(jobId, principal, reason);
-  const root = await this.states.jobForWrite(jobId);
-  if (!root) return 'not-found';
-  if (!['running', 'parked'].includes(root.status)) return 'already-finished';
-  const stoppedIds = await this.states.stopCascade(jobId);
-  for (const stoppedId of stoppedIds) this.runtime.abortScopes.get(stoppedId)?.abortJob();
-  return stoppedIds.length > 0 ? 'stopped' : 'already-finished';
-}
+async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
 async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
-  const job = await this.getJob(jobId); const task = job?.tasks[taskIndex];
-  if (task?.status !== 'stopped') return undefined;
-  const attribution = task.stoppedBy ?? job?.stoppedBy;
-  const stoppedBy = attribution === 'human' ? 'human' : attribution && 'agentId' in attribution ? attribution.agentId : attribution?.system ?? 'unknown';
+  const job = await this.getJob(jobId); const task = job?.tasks[taskIndex]; if (task?.status !== 'stopped') return undefined;
+  const attribution = task.stoppedBy ?? job?.stoppedBy; const stoppedBy = attribution === 'human' ? 'human' : attribution && 'agentId' in attribution ? attribution.agentId : attribution?.system ?? 'unknown';
   return { label, status: 'stopped', output: `stopped by ${ stoppedBy }: ${ task.stopReason ?? job?.stopReason ?? 'no reason recorded' }`, threadId: threadId || task.threadId || '', contract: task.contract?.name ?? 'result' };
 }
 
@@ -144,53 +131,36 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> { 
  * this one task parks (AgentJobRepository.claimInterruptedJobs filters on
  * job-level status).
  */
-async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
-  const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'running') return;
-  await this.states.transition(jobId, taskIndex, { status: 'parked' }, { waitingOnChildren });
+async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<boolean> {
+  return Boolean(await this.states.mutateJob(jobId, current => current.tasks[taskIndex]?.status === 'running'
+    ? { ...current, waitingOnChildren, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, status: 'parked' } : task) }
+    : undefined));
 }
+
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
   const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
   await this.states.transition(jobId, taskIndex, { status: 'running' }, { waitingOnChildren: 0, finishedAt: null });
 }
 
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
-  await this.states.awaitPendingTerminalWrite(jobId);
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  if (!job) return;
-  this.runtime.abortScopes.delete(jobId);
-
-  // Terminal verdicts are immutable. A stopped job may still settle its
-  // in-flight promise afterwards, but only its partial result payload changes.
-  if (job.status === 'completed' || (job.status === 'failed' && job.finishedAt !== null)) return;
-  if (job.status === 'stopped') {
-    job.results = results;
-    job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
-      ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() }
-      : task);
-    await this.states.commit(job);
-
-    return;
-  }
-
-  const failed = results.find(result => result.status === 'error');
-  job.status = failed ? 'failed' : 'completed';
-  job.finishedAt = this.clock.now().getTime();
-  job.results = results;
-  job.error = failed?.output;
-  job.tasks = job.tasks.map((task, index) => {
-    const result = results[index];
-    if (!result) return task;
-    return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() };
+  this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
+  const job = await this.states.mutateJob(jobId, current => {
+    if (current.status === 'completed') return undefined;
+    if (current.status === 'failed') return { ...current, results, error: current.error ?? results.find(result => result.status === 'error')?.output, tasks: current.tasks.map((task, index) => {
+      const result = results[index]; return !result ? task : { ...task, status: 'error', threadId: result.threadId || task.threadId,
+        finishedAt: task.finishedAt ?? this.clock.now().getTime(), completion: task.completion ?? result };
+    }) };
+    if (current.status === 'stopped') return { ...current, results, tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() } : task) };
+    const failed = results.find(result => result.status === 'error');
+    return { ...current, status: failed ? 'failed' : 'completed', finishedAt: this.clock.now().getTime(), results, error: failed?.output,
+      tasks: current.tasks.map((task, index) => { const result = results[index]; return !result || task.status === 'stopped' ? task : { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() }; }) };
   });
-
-  void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
-
-  await this.states.commit(job);
+  if (job) void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 }
 /** Persist one settled task before its siblings finish. */
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
-  await this.states.update(jobId, job => {
+  this.wrapUp.taskSettled(jobId, taskIndex);
+  await this.states.mutateJob(jobId, job => {
     if (!job.tasks[taskIndex]) return job;
     job.results[taskIndex] = result;
     job.tasks[taskIndex] = { ...job.tasks[taskIndex],
@@ -199,7 +169,7 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
-  }, false);
+  });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
@@ -235,13 +205,6 @@ async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: nu
   return this.taskLocator.findTaskByThread(threadId);
 }
 
-async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
-  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
-  const refreshed = await this.repository.job(jobId);
-  if (refreshed) { this.runtime.jobs.set(jobId, refreshed); this.states.touch(); }
-  return recorded;
-}
-
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
 async delegationDepthForThread(threadId: string | undefined): Promise<number> {
   return this.taskLocator.delegationDepthForThread(threadId);
@@ -268,60 +231,38 @@ async countOpenTabJobs(parentThreadId: string): Promise<number> {
  * task returns once; a second call is refused so the parent never gets two
  * different answers for one brief.
  */
-async recordTaskReturn(jobId: string, taskIndex: number, patch: {
-  result:  unknown;
-  summary?: string;
-  status:  AgentJobTask['status'];
-}): Promise<AgentJob> {
-  await this.states.awaitPendingTerminalWrite(jobId);
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  const task = job?.tasks[taskIndex];
-  if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
-  if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
-  if (!['running', 'parked'].includes(job.status)) throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
-  job.tasks[taskIndex] = {
-    ...task,
-    result:     patch.result,
-    summary:    patch.summary,
-    returnedAt: this.clock.now().getTime(),
-    // Hidden runners settle the status when their graph returns; a tab is
-    // finished by this return alone.
-    ...(job.visibility === 'tab' ? { status: patch.status, finishedAt: this.clock.now().getTime() } : {}),
-  };
-  await this.states.commit(job);
-  return job;
+async recordTaskReturn(jobId: string, taskIndex: number, patch: { result: unknown; summary?: string; status: AgentJobTask['status']; }): Promise<AgentJob> {
+  let validationError: Error | undefined;
+  const job = await this.states.mutateJob(jobId, current => {
+    const task = current.tasks[taskIndex];
+    if (!task) { validationError = new Error(`Job "${ jobId }" has no task ${ taskIndex }.`); return undefined; }
+    if (task.returnedAt) { validationError = new Error(`Job "${ jobId }" already returned its contract.`); return undefined; }
+    if (!['running', 'parked'].includes(current.status)) { validationError = new Error(`Job "${ jobId }" is ${ current.status }; it no longer accepts a return.`); return undefined; }
+    const tasks = [...current.tasks]; tasks[taskIndex] = { ...task, result: patch.result, summary: patch.summary, returnedAt: this.clock.now().getTime(), ...(current.visibility === 'tab' ? { status: patch.status, finishedAt: this.clock.now().getTime() } : {}) };
+    return { ...current, tasks };
+  });
+  if (validationError) throw validationError; if (!job) throw new Error(`Job "${ jobId }" was not found.`); this.wrapUp.taskSettled(jobId, taskIndex); return job;
 }
 
 /** Mark a hidden child as opened in a chat tab (rail shows the tab pill). */
 async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask | undefined> {
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  if (!job?.tasks[taskIndex]) return undefined;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], promotedToTab: true };
-  await this.states.commit(job);
-  return job.tasks[taskIndex];
+  const job = await this.states.mutateJob(jobId, current => current.tasks[taskIndex] ? { ...current, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, promotedToTab: true } : task) } : undefined);
+  return job?.tasks[taskIndex];
 }
 
 async failJob(jobId: string, error: string): Promise<void> {
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  if (!job) return;
-  this.runtime.abortScopes.delete(jobId);
+  if (this.states.hasPendingTerminalWrite(jobId)) return;
+  this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
+  await this.states.mutateJob(jobId, current => ['completed','stopped'].includes(current.status) ? undefined : { ...current, status: 'failed', finishedAt: current.finishedAt ?? this.clock.now().getTime(), error,
+    tasks: current.tasks.map(task => ['running','queued','parked','error'].includes(task.status) ? { ...task, status: 'error', finishedAt: this.clock.now().getTime(),
+      completion: task.completion ?? { label: task.label ?? task.agentId, status: 'error', output: error, threadId: task.threadId ?? '', contract: task.contract?.name ?? 'result' } } : task) });
+}
 
-  // Terminal verdicts are immutable; late promise rejection cannot clobber them.
-  if (!['running', 'parked'].includes(job.status)) return;
-
-  job.status = 'failed';
-  job.finishedAt = this.clock.now().getTime();
-  job.error = error;
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
-    ? { ...task, status: 'error', finishedAt: this.clock.now().getTime(), completion: {
-      label: task.label, status: 'error' as const, output: error, threadId: task.threadId ?? '', contract: task.contract?.name ?? 'result',
-    } }
-    : task);
-
-  await this.states.commit(job);
+/** Persist and mirror one deduplicated late-child notice on its terminal owner. */
+async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
+  if (recorded) await this.states.refresh();
+  return recorded;
 }
 
 }
