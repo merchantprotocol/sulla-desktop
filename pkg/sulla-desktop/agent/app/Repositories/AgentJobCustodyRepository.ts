@@ -39,15 +39,7 @@ export class AgentJobCustodyRepository {
 
       const nextVersion = current.version + 1;
       const scope = input.taskIndex ?? null;
-      const saved = await client.query<any>(`INSERT INTO agent_job_custody
-        (job_id,task_index,owner_channel,owner_thread_id,owner_agent_id,version,changed_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT (job_id,task_index) WHERE task_index IS NOT NULL DO UPDATE SET
-          owner_channel=EXCLUDED.owner_channel,owner_thread_id=EXCLUDED.owner_thread_id,owner_agent_id=EXCLUDED.owner_agent_id,
-          version=EXCLUDED.version,changed_at=EXCLUDED.changed_at
-        WHERE agent_job_custody.version=$8 RETURNING *`,
-      [input.jobId,scope,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt,current.version]);
-      let row = saved.rows[0];
+      let row:any;
       if (scope === null) {
         const updated = await client.query<any>(`UPDATE agent_job_custody SET owner_channel=$2,owner_thread_id=$3,owner_agent_id=$4,version=$5,changed_at=$6
           WHERE job_id=$1 AND task_index IS NULL AND version=$7 RETURNING *`, [input.jobId,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt,current.version]);
@@ -55,6 +47,15 @@ export class AgentJobCustodyRepository {
         if (!row && current.version === 0) row = (await client.query<any>(`INSERT INTO agent_job_custody
           (job_id,task_index,owner_channel,owner_thread_id,owner_agent_id,version,changed_at) VALUES($1,NULL,$2,$3,$4,$5,$6) RETURNING *`,
         [input.jobId,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt])).rows[0];
+      } else {
+        row = (await client.query<any>(`INSERT INTO agent_job_custody
+          (job_id,task_index,owner_channel,owner_thread_id,owner_agent_id,version,changed_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT (job_id,task_index) WHERE task_index IS NOT NULL DO UPDATE SET
+            owner_channel=EXCLUDED.owner_channel,owner_thread_id=EXCLUDED.owner_thread_id,owner_agent_id=EXCLUDED.owner_agent_id,
+            version=EXCLUDED.version,changed_at=EXCLUDED.changed_at
+          WHERE agent_job_custody.version=$8 RETURNING *`,
+        [input.jobId,scope,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt,current.version])).rows[0];
       }
       if (!row) return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
 
