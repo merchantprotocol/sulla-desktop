@@ -5,7 +5,9 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
-import { AgentExecDockerPolicy } from '../docker/AgentExecDockerPolicy';
+import { AgentExecDockerPolicy, type AgentExecDockerResult } from '../docker/AgentExecDockerPolicy';
+import { JobMessagingCheckinWriter } from '../docker/JobMessagingCheckinWriter';
+import { PersistentContainerAuditor } from '../docker/PersistentContainerAuditor';
 
 /**
  * Exec Tool - Worker class for execution
@@ -17,6 +19,13 @@ import { AgentExecDockerPolicy } from '../docker/AgentExecDockerPolicy';
 export class ExecWorker extends BaseTool {
   name = '';
   description = '';
+
+  constructor(
+    private readonly dockerPolicy = new AgentExecDockerPolicy(),
+    private readonly persistenceAuditor = new PersistentContainerAuditor(new JobMessagingCheckinWriter()),
+  ) {
+    super();
+  }
 
   schemaDef = {
     command:     { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
@@ -41,13 +50,18 @@ export class ExecWorker extends BaseTool {
     }
 
     const metadata = this.state?.metadata ?? {};
+    let docker: AgentExecDockerResult;
     try {
-      command = new AgentExecDockerPolicy().apply(command, input, {
+      docker = this.dockerPolicy.apply(command, input, {
         jobId: String(metadata.jobId ?? metadata.threadId ?? 'unknown'),
         agentId: String(metadata.agentId ?? metadata.wsChannel ?? 'unknown'),
       });
     } catch (error) {
       return { successBoolean: false, responseString: (error as Error).message };
+    }
+    command = docker.command;
+    if (input.persistent === true && /\bdocker\b/.test(command)) {
+      await this.persistenceAuditor.record(metadata.threadId, 'exec', String(input.reason).trim(), docker.labels ?? {});
     }
     const cwd = input.cwd ? String(input.cwd).trim() : undefined;
     const timeoutMs = input.timeout ? Number(input.timeout) : 120_000;
