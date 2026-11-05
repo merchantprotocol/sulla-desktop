@@ -2,7 +2,12 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { tmpdir } from 'node:os';
+
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
+vi.mock('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send: vi.fn() }) }));
 
 import { Graph } from '../../../nodes/Graph';
 import { DelegatedTurnPreparer } from '../../../services/DelegatedTurnPreparer';
