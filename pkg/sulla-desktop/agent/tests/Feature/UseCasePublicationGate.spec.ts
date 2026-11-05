@@ -102,6 +102,7 @@ class UseCasePublicationFixture {
     const collectionId=randomUUID(), fileId=randomUUID();
     await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)',[collectionId]);
     await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Documents/cardinality.md')",[fileId,collectionId]);
+    // Two thousand ordinary rows exceed the planner's small-table threshold while staying inside the PR test budget.
     await this.pool.query(`INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,publication_status,published_at,published_by)
       SELECT gen_random_uuid(),$1,'user','load','published',NOW(),'load' FROM generate_series(1,2000)`,[fileId]);
     await this.pool.query('ANALYZE file_versions');
