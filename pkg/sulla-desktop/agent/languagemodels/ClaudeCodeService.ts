@@ -91,7 +91,7 @@ const perf = Logging.perf;
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 
-// Native-tool policy (disallowedToolsFor: base + observer/worker denylists)
+// Native-tool policy (disallowedToolsFor: base + observer/delegated denylists)
 // lives in claudeToolPolicy.ts so tests can assert it without importing this
 // service's full dependency graph. Includes the zj21 sub-agent spawn lockdown:
 // Task/Agent are disallowed on every spawn — delegation goes through
@@ -307,7 +307,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     /**
      * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
      * observers lose the native actor toolset (Read/Write/Edit/Bash/…),
-     * worker sub-agents lose detached-work tools (Monitor/ScheduleWakeup/…).
+     * delegated workers/managers lose detached-work and direct-human tools
+     * (Monitor/ScheduleWakeup/SendMessage/Workflow/…). Bash remains available
+     * synchronously; run_in_background cannot be denied independently by name.
      */
     disallowedTools:   string;
     /**

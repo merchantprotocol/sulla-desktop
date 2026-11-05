@@ -25,6 +25,14 @@ import { resolveModelSlot } from './modelSlotRouting';
 export const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate TaskList TaskGet TodoWrite TodoRead Task Agent';
 
 /**
+ * Native detached-work and direct-human controls are not available to any
+ * delegated worker or manager. Delegated agents must use Sulla's graph-bound
+ * tools; Bash remains available for synchronous commands, but Claude's
+ * run_in_background mode cannot be denied independently by tool name.
+ */
+export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger SendMessage Workflow mcp__sulla-native__ask_user_question';
+
+/**
  * Additional native tools disabled for SUBCONSCIOUS (observer) spawns only.
  *
  * Subconscious agents (observation/identity writers + recalls, summarizer,
@@ -52,7 +60,14 @@ export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit Note
  */
 export function disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {
   if (isObserverSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`;
+  if (isDelegatedSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ DELEGATED_NATIVE_TOOL_DENYLIST }`;
   return BASE_DISALLOWED_TOOLS;
+}
+
+
+/** Delegated workers and delegated managers share the Sulla-only controls. */
+export function isDelegatedSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
+  return metadata?.isSubAgent === true;
 }
 
 /**
