@@ -38,7 +38,7 @@ const task=(label:string,threadId:string,status='running')=>({agentId:'codex-sol
 suite('agents/replace_lead registered production path',()=>{
  let registry:any;
  beforeAll(async()=>{
-  await database.initialize();process.env.SULLA_DATABASE_URL=database.appUrl();process.env.PGOPTIONS=`-csearch_path=${database.schema},public`;process.env.SULLA_DATABASE_POOL_MAX='1';
+  await database.initialize();process.env.SULLA_DATABASE_URL=database.appUrl();process.env.PGOPTIONS=`-csearch_path=${database.schema},public`;process.env.SULLA_DATABASE_POOL_MAX='4';
   const {postgresClient}=await import('../../../database/PostgresClient');await postgresClient.initialize();await postgresClient.query(`SET search_path TO "${database.schema}", public`);
   const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>manifest.name==='replace_lead'));
   runtimeEntries.set(owner.threadId,{state:{metadata:{wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}}});
