@@ -16,7 +16,7 @@ import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
 import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { JobStopService } from '../Services/JobStopService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
-import { JobCompletionDelivery } from '../Services/JobCompletionDelivery';
+import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { postgresClient } from '../../database/PostgresClient';
