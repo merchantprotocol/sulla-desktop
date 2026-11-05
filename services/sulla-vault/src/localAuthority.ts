@@ -89,7 +89,7 @@ import type {
   VaultEnrollmentWrapRequest, VaultEnrollmentAdoptRequest,
 } from './contracts.js';
 import { transportWrap } from './filesCloudEscrow.js';
-import { transportWrapBytes, transportUnwrapBytes, type TransportEnvelope } from '../../sulla-files/src/cloudSync/envelope.js';
+import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
 import { createSyncEnvelope, loadSodium, type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
@@ -585,6 +585,7 @@ function applyJsonPath(root: unknown, path: string, value: string): unknown {
 }
 
 export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
+  private readonly filesTransport = new FilesTransportEnvelopeService();
   private keys: UnlockedKeys | null = null;
   private generation = 0;
   private readonly inFlight = new Set<ReturnType<typeof https.request>>();
@@ -1449,7 +1450,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     env.verifyBundle(bundle,keys.userKey);
     if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
     const payload=Buffer.from(JSON.stringify({userKey:Buffer.from(keys.userKey).toString('base64url'),bundle,head,...(input.records===undefined?{}:{records:input.records})}));
-    try{return{wrappedUserKey:await transportWrapBytes(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch)}}finally{payload.fill(0)}
+    try{return{wrappedUserKey:await this.filesTransport.wrap(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch)}}finally{payload.fill(0)}
   }
 
   async adoptVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}> {
@@ -1461,7 +1462,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     try{
       const e=input.wrappedUserKey as TransportEnvelope;
       const recipient=await globalThis.crypto.subtle.importKey('jwk',input.privateKeyJwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
-      plain=await transportUnwrapBytes(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
+      plain=await this.filesTransport.unwrap(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
       const payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain)) as {userKey:string;bundle:SyncBundle;head:SyncHead};
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
       const env=createSyncEnvelope(await loadSodium()); env.verifyBundle(payload.bundle,userKey);
