@@ -85,14 +85,15 @@ dbDescribe('registered custody transfer tools',()=>{
     GraphRegistry.delete(`${owner}-thread`);
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const dispatch=new CompletionDispatchCapture();completionInboxStore.registerIdleDispatcher(dispatch.record.bind(dispatch));
+    GraphRegistry.delete(`${adopter}-thread`); // keep the durable completion queued instead of letting the live graph consume it
+    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.registerIdleDispatcher(()=>{});
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
     // Hidden runners call this same delivery service after the registered return tool ends their turn.
     const recorded=await registry.getJob(lead.jobId);const {returnedJobResult}=await import('../../../tools/agents/jobDelivery');
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');await agentJobProvider.delivery.deliver(recorded,[returnedJobResult(recorded.tasks[0],'L',recorded.tasks[0].threadId)],0);
-    expect(dispatch.targets.filter(target=>target.threadId===`${adopter}-thread`)).toHaveLength(1);
-    expect(dispatch.targets.filter(target=>target.threadId===`${owner}-thread`)).toHaveLength(0);
+    const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
+    expect(takeAgentCompletions(adopter,`${adopter}-thread`)).toHaveLength(1);expect(takeAgentCompletions(owner,`${owner}-thread`)).toHaveLength(0);
     GraphRegistry.delete(`${adopter}-thread`);
   });
 
