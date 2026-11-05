@@ -31,7 +31,10 @@ class VueSfcTestPlugin implements Plugin {
 export default defineConfig({
   plugins: [new VueSfcTestPlugin()],
   resolve: {
-    alias: [{ find: /^@pkg\/(.*)$/, replacement: path.join(root, 'pkg/sulla-desktop/$1') }],
+    alias: [
+      { find: /^@pkg\/(.*)$/, replacement: path.join(root, 'pkg/sulla-desktop/$1') },
+      { find: '@sulla/vault-crypto', replacement: path.join(root, 'packages/vault-crypto/src/index.ts') },
+    ],
   },
   test: {
     include:     ['pkg/sulla-desktop/agent/tests/**/*.spec.ts'],
