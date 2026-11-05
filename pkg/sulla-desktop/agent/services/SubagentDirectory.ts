@@ -17,6 +17,7 @@
 import { AgentJobMessagingModel, type AgentJobTaskTelemetry } from '../database/models/AgentJobMessagingModel';
 import { getJobsForParentThread, type AgentJob, type AgentJobTask } from '../tools/agents/jobRegistry';
 import { RunActivity } from './RunActivity';
+import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
 
 /** An open child silent this long is flagged as stalled. */
 export const SUBAGENT_STALL_MS = 15 * 60_000;
@@ -53,7 +54,7 @@ interface ChildRow {
   undelivered: boolean;
 }
 
-function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetry: AgentJobTaskTelemetry | undefined, now: number): ChildRow | null {
+function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetry: AgentJobTaskTelemetry | undefined, now: number, policy: AgentJobLivenessPolicy): ChildRow | null {
   if (task.dismissed) return null;
   const finishedAt = task.finishedAt ?? job.finishedAt ?? undefined;
   const open = isOpen(job, task);
@@ -68,7 +69,7 @@ function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetr
     checkin?.createdAt ?? 0,
     startedAt,
   );
-  const stalled = open && now - lastActivity >= SUBAGENT_STALL_MS;
+  const stalled = open && policy.isStalled({ createdAt: job.createdAt, startedAt, lastActivityAt: lastActivity, hasCheckin: !!checkin, now });
   const ref = job.tasks.length > 1 ? `${ job.jobId }#${ taskIndex }` : job.jobId;
 
   const parts = [
@@ -93,7 +94,7 @@ function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetr
 }
 
 /** The block body for a parent thread, or '' when it has no listed children. */
-export async function buildSubagentDirectoryContext(parentThreadId: string | undefined, now = Date.now()): Promise<string> {
+export async function buildSubagentDirectoryContext(parentThreadId: string | undefined, now = Date.now(), policy = new AgentJobLivenessPolicy()): Promise<string> {
   if (!parentThreadId) return '';
   const jobs = await getJobsForParentThread(parentThreadId);
   if (jobs.length === 0) return '';
@@ -103,7 +104,7 @@ export async function buildSubagentDirectoryContext(parentThreadId: string | und
   for (const job of jobs) {
     const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId).catch(() => ({} as Record<number, AgentJobTaskTelemetry>));
     job.tasks.forEach((task, index) => {
-      const row = describe(job, task, index, telemetry[index], now);
+      const row = describe(job, task, index, telemetry[index], now, policy);
       if (!row) return;
       rows.push(row);
       if (row.undelivered) pending.push(`- ${ task.label || task.agentId } (job ${ job.jobId }): ${ quote(job.results[index]?.output ?? task.summary ?? '', 160) }`);

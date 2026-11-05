@@ -58,6 +58,8 @@ export interface AgentsListResponse {
     parentThreadId?: string;
     parentAgentId?: string;
     parentTitle?:   string;
+    stoppedBy?: { agentId?: string; threadId?: string } | 'human';
+    stopReason?: string;
     tasks: {
       taskIndex:      number;
       agentId:        string;
@@ -614,6 +616,8 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         finishedAt: job.finishedAt,
         taskCount: job.taskCount,
         error: job.error,
+        stoppedBy: job.stoppedBy,
+        stopReason: job.stopReason,
         parentChannel: job.parentChannel,
         parentThreadId: job.parentThreadId,
         parentAgentId: job.parentAgentId,

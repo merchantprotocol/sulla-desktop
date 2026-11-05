@@ -101,6 +101,8 @@ export interface AgentJob {
   waitingOnChildren?: number;
   restartResumeCount?: number;
   dismissedAt?: number | null;
+  stoppedBy?: { agentId?: string; threadId?: string } | 'human';
+  stopReason?: string;
 }
 
 export interface CreateJobOptions {

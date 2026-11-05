@@ -117,6 +117,7 @@ export const agentToolManifests: ToolManifest[] = [
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
+      reason: { type: 'string', optional: true, description: 'Why the job is being stopped; recorded in the job audit trail.' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./stop_agent_job'),

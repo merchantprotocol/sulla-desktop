@@ -7,6 +7,7 @@ import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
+import type { AgentJob as AgentJobType } from '../../tools/agents/jobRegistry';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
@@ -107,21 +108,25 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   void this.persist(this.repository.stop(jobId, job.tasks));
   return 'stopped';
 }
-async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
+async stopJobCascade(jobId: string, caller?: { agentId?: string; threadId?: string }, reason = 'unspecified'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
   const root = await this.getJob(jobId);
   if (!root) return 'not-found';
   if (!['running', 'parked'].includes(root.status)) return 'already-finished';
-  const stoppedIds = await this.repository.stopCascade(jobId);
+  if (caller && !(caller.threadId ? await this.taskLocator.isAncestorThread(root, caller.threadId) : caller.agentId === root.parentAgentId)) return 'forbidden';
+  const stoppedBy: AgentJobType['stoppedBy'] = caller ? { agentId: caller.agentId, threadId: caller.threadId } : 'human';
+  const stoppedIds = await this.repository.stopCascade(jobId, stoppedBy, reason);
   const stoppedAt = this.clock.now().getTime();
   for (const stoppedId of stoppedIds) {
     this.runtime.abortControllers.get(stoppedId)?.abort();
     const job = this.runtime.jobs.get(stoppedId);
     if (!job || !['running', 'parked'].includes(job.status)) continue;
-    job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
+    job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0; job.stoppedBy = stoppedBy; job.stopReason = reason;
     job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
   }
   return 'stopped';
 }
+
+
 
 async getJob(jobId: string): Promise<AgentJob | undefined> {
   await this.recovery.ensureHydrated();
