@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import {describe,expect,it} from 'vitest';
-import {JobCustodyAuthorityPolicy,type CustodyLineagePort,type CustodyOwnerLiveness,type CustodyOwnerLivenessPort} from '../../../app/Services/JobCustodyAuthorityPolicy';
+import {JobCustodyAuthorityPolicy,TopLevelHumanSessionAuthorityRule,type CustodyLineagePort,type CustodyOwnerLiveness,type CustodyOwnerLivenessPort} from '../../../app/Services/JobCustodyAuthorityPolicy';
 import type {CustodyActor,CustodyOwner,CustodyRecord} from '../../../app/Services/JobCustodyTypes';
 
 class FakeLiveness implements CustodyOwnerLivenessPort { constructor(private readonly states:Record<string,CustodyOwnerLiveness>){} async status(owner:CustodyOwner){return this.states[owner.threadId]??'unknown';} }
@@ -17,6 +17,13 @@ describe('JobCustodyAuthorityPolicy',()=>{
  it('allows the current owner',async()=>expect(await policy({'new-thread':'alive'}).authorize(input({kind:'agent',channel:'owner-channel',threadId:'owner-thread',agentId:'owner-agent'}))).toBeUndefined()); // risk: authority
  it('allows an ancestor',async()=>expect(await policy({'new-thread':'alive'},new FakeLineage(['parent>owner-thread'])).authorize(input(actor('parent')))).toBeUndefined()); // risk: authority
  it('allows the human',async()=>expect(await policy({'new-thread':'alive'}).authorize(input({kind:'human'}))).toBeUndefined()); // risk: human recovery
+
+ it('allows custody transfer between top-level human-facing chat sessions',async()=>{ // risk: H8 cross-session recovery
+   const rule=new TopLevelHumanSessionAuthorityRule(async()=>false);const configured=new JobCustodyAuthorityPolicy(new FakeLiveness({'new-thread':'alive','owner-thread':'alive'}),new FakeLineage(),rule);expect(await configured.authorize(input(actor('peer')))).toBeUndefined();
+ });
+ it('does not grant the top-level exception to delegated agent job threads',async()=>{ // risk: peer custody theft
+   const rule=new TopLevelHumanSessionAuthorityRule(async threadId=>threadId==='peer');const configured=new JobCustodyAuthorityPolicy(new FakeLiveness({'new-thread':'alive','owner-thread':'alive'}),new FakeLineage(),rule);expect(await configured.authorize(input(actor('peer')))).toMatchObject({ok:false,code:'forbidden'});
+ });
  it('refuses a peer while owner is alive and names the owner',async()=>{const result=await policy({'new-thread':'alive','owner-thread':'alive'}).authorize(input(actor('peer')));expect(result).toMatchObject({ok:false,code:'forbidden',current:{agentId:'owner-agent',channel:'owner-channel',threadId:'owner-thread'}});expect((result as any)?.message).toContain('owner-agent');}); // risk: unauthorized handoff
  for(const state of ['terminal','lost','stranded'] as const) it(`allows a peer when owner is ${state}`,async()=>expect(await policy({'new-thread':'alive','owner-thread':state}).authorize(input(actor('peer')))).toBeUndefined()); // risk: recovery
  it('treats parked as alive and unknown as alive',async()=>{for(const state of ['parked','unknown'] as const)expect((await policy({'new-thread':'alive','owner-thread':state}).authorize(input(actor('peer'))))?.ok).toBe(false);}); // risk: stealing parked work
