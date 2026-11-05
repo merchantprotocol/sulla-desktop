@@ -37,7 +37,7 @@ describe('HTML viewer path and focus business logic', () => {
     const root = { classList: new FakeClassList() };
     const first = new FakeControl();
     const second = new FakeControl();
-    const controller = new Controller({ root, controls: [first, second], toast: () => {}, redraw: () => {}, schedule: callback => callback() });
+    const controller = new Controller({ root, controls: [first, second], toast: () => {}, redraw: () => {}, schedule: (callback: () => void) => callback() });
     controller.toggle();
     expect(root.classList.contains('focus')).toBe(true);
     expect(first.classList.contains('on')).toBe(true);
