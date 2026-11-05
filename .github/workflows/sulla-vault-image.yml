@@ -10,6 +10,7 @@ on:
     paths:
       - 'services/sulla-vault/**'
       - 'packages/vault-crypto/**'
+      - 'vendor/sulla-core/**'
       - 'contracts/server-split/**'
       - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-vault-image.yml'

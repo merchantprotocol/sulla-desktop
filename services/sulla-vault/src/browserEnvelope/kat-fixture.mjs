@@ -5,14 +5,14 @@
 
 // Regenerates vault-sync-v3-kat.json, the cross-implementation fixture for
 // Passwords sync v3. The "desktop" half is produced by this service's
-// envelope.ts with @sulla/vault-crypto (exactly what the container uploads);
+// VaultSyncEnvelope (VaultSyncRuntime) with @sulla/vault-crypto (exactly what the container uploads);
 // the "browser" half by www-sulladesktop js/cloud/passwords/sync-envelope.js
 // (exactly what the Passwords crypto worker commits). Each side's test must
 // verify and decrypt the other side's half. Synthetic data only.
 //
 //   node kat-fixture.mjs <path-to-www>/js/cloud/passwords/sync-envelope.js <out.json>
 //
-// Needs esbuild and libsodium-wrappers-sumo resolvable from the cwd.
+// Needs esbuild, libsodium-wrappers-sumo and @sulla/domain resolvable from the cwd.
 import { build } from 'esbuild';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -24,7 +24,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const bundled = await build({
   stdin: {
     contents: `
-      export * as desktop from ${ JSON.stringify(path.join(here, 'envelope.ts')) };
+      export * as desktop from ${ JSON.stringify(path.join(here, 'VaultSyncRuntime.ts')) };
       export * as browser from ${ JSON.stringify(path.resolve(browserModule)) };
       export * as vc from '@sulla/vault-crypto';
       export { default as sodium } from 'libsodium-wrappers-sumo';
@@ -32,7 +32,8 @@ const bundled = await build({
     resolveDir: process.cwd(), loader: 'ts',
   },
   alias: { '@sulla/vault-crypto': path.join(here, '../../../../packages/vault-crypto/src/index.ts') },
-  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', external: ['libsodium-wrappers-sumo'],
+  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
+  external: ['libsodium-wrappers-sumo', '@sulla/domain', '@sulla/foundation'],
 });
 const tmp = path.join(path.dirname(path.resolve(out)), `.kat-${ process.pid }.mjs`);
 writeFileSync(tmp, bundled.outputFiles[0].text);
@@ -45,7 +46,7 @@ const PARAMS = { memoryBytes: 64 * 1024 * 1024, operations: 2 };
 const VAULT_USER = '9a1c3f00-0000-4000-8000-00000000c0de';
 
 async function half(kind) {
-  const env = kind === 'desktop' ? desktop.createSyncEnvelope(sodium) : browser.createSyncEnvelope(sodium);
+  const env = kind === 'desktop' ? new desktop.VaultSyncRuntime(sodium).envelope : browser.createSyncEnvelope(sodium);
   const master = await vc.deriveMasterKey(PASSWORD, undefined, PARAMS);
   const { userKey, encryptedUserKey } = await vc.createUserKey(master.key);
   const pair = await vc.createUserKeyPair(userKey);

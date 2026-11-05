@@ -8,7 +8,7 @@ import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
-import type { SyncBundle, SyncHead, SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
+import type { SyncBundle, SyncHead, SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/VaultSyncContracts';
 import { SYNC_SCHEMA_SQL } from '../../../../../../services/sulla-vault/src/browserEnvelope/schema';
 import { PostgresRewrapHistoryRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresRewrapHistoryRepository';
 import { PostgresVaultBundleRepository, PostgresVaultHeadRepository, PostgresVaultRecordRepository } from '../../../../../../services/sulla-vault/src/repositories/postgresVaultRepositories';

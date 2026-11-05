@@ -3,7 +3,7 @@
 
 import { LIMITS, type CommitBody, type CreateBody } from '../browserSync/validator.js';
 import type { Member, ScopeRef } from '../browserSync/store.js';
-import type { SyncBundle, SyncHead, SyncRecord } from '../browserEnvelope/envelope.js';
+import type { SyncBundle, SyncHead, SyncRecord } from '../browserEnvelope/VaultSyncContracts.js';
 import type { Database, Queryable } from '../db.js';
 
 export interface VaultBundleRecord { epoch: number; bundle_generation: number; bundle: SyncBundle; updated_at: string }

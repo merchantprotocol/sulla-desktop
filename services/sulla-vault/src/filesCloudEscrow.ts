@@ -10,7 +10,7 @@ import type { Database } from './db.js';
 import type { CloudSyncAuthority } from './browserEnvelope/syncRunner.js';
 import { ensureSyncSchema } from './browserEnvelope/schema.js';
 import type { FilesAuditEmitter } from './filesAudit.js';
-import { createSyncEnvelope, loadSodium } from './browserEnvelope/envelope.js';
+import { VaultSyncRuntime } from './browserEnvelope/VaultSyncRuntime.js';
 import { unwrapMemorySyncKey, wrapMemorySyncKey } from './memorySyncKeyWrap.js';
 
 const subtle=webcrypto.subtle, enc=new TextEncoder();
@@ -86,7 +86,7 @@ export class FilesCloudEscrowService {
     if(fetched.status!==200)throw new FilesCloudEscrowError('cloud_bundle_unavailable',fetched.status||502);
     const body=typeof fetched.body==='string'?JSON.parse(fetched.body):fetched.body as any;
     const bundle=body?.bundle??body;
-    const envelope=createSyncEnvelope(await loadSodium());
+    const { envelope }=await VaultSyncRuntime.create();
     let userKey:Uint8Array;
     try { userKey=envelope.unlockBundle(bundle,password) }
     catch { throw new FilesCloudEscrowError('wrong_password',401,'That Cloud vault password was not accepted.'); }

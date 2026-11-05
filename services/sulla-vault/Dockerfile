@@ -7,6 +7,7 @@ COPY packages/vault-crypto/tsconfig.json ./packages/vault-crypto/tsconfig.json
 COPY packages/vault-crypto/src ./packages/vault-crypto/src
 RUN cd packages/vault-crypto && npm run build
 
+COPY vendor/sulla-core ./vendor/sulla-core
 COPY services/sulla-vault/package.json ./services/sulla-vault/package.json
 RUN cd services/sulla-vault && npm install --ignore-scripts
 COPY services/sulla-vault/tsconfig.json ./services/sulla-vault/tsconfig.json
