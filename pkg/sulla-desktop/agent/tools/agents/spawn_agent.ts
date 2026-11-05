@@ -602,8 +602,10 @@ export class SpawnAgentWorker extends BaseTool {
           const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries)
             ? wakeInput.metadata.completionEntries
             : [];
-          await Promise.all(completionEntries.map((entry: any) =>
-            markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex))));
+          await Promise.all(completionEntries.map((entry: any) => {
+            const taskIndex = Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0;
+            return markTaskCompletionDelivered(String(entry.jobId), taskIndex);
+          }));
         }
 
         // A caller schema means free text is not an answer: remind once, but
