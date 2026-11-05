@@ -159,7 +159,7 @@
             :style="{ paddingLeft: `${14 + node.depth * 20}px` }"
             @click="selectRow(node.row)"
           >
-            <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small></div><span
+            <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small><small v-if="stopAttribution(node.row)">{{ stopAttribution(node.row) }}</small></div><span
               class="st"
               :class="statusClass(node.row.state)"
               :title="node.row.stateReason || undefined"
@@ -267,6 +267,9 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import StudioTopbar from './StudioTopbar.vue';
 
+import { StopAttributionFormatter } from '../../agent/app/Formatters/StopAttributionFormatter';
+import { AgentStateRowPresenter } from '@pkg/services/agentState/AgentStateRowPresenter';
+
 import type { AgentConversationDetail } from '@pkg/main/agentsIpc';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
@@ -278,6 +281,7 @@ import { LiveAgentsKillController } from './LiveAgentsKillController';
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
+const rowPresenter = new AgentStateRowPresenter(new StopAttributionFormatter());
 const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const detail = ref<AgentConversationDetail | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
 const builder = computed(() => new AgentTreeBuilder(client.snapshot.value.rows));
 const groups = computed(() => builder.value.groups());
@@ -302,7 +306,8 @@ async function openRow(row: AgentStateRow): Promise<void> {
   if (row.canOpen && parentThreadId) await ipcRenderer.invoke('agents:open-job-in-tab' as any, row.jobId, parentThreadId, row.taskIndex);
 }
 function statusClass(state: AgentRowState): string { return ['working', 'queued', 'parked', 'done'].includes(state) ? 'run' : ['failed', 'blocked', 'lost'].includes(state) ? 'bad' : 'warn' }
-function statusLabel(row: AgentStateRow): string { if (row.state === 'parked') return `Parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet') return `Quiet · ${ age(row.lastCheckinAt) }`; return row.state.charAt(0).toUpperCase() + row.state.slice(1) }
+function stopAttribution(row: AgentStateRow): string { return rowPresenter.stopAttribution(row) }
+function statusLabel(row: AgentStateRow): string { const label = rowPresenter.statusLabel(row); if (label === 'Killed by human') return label; if (row.state === 'parked') return `Parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet') return `Quiet · ${ age(row.lastCheckinAt) }`; return row.state.charAt(0).toUpperCase() + row.state.slice(1) }
 function elapsed(value: string | null): string { if (!value) return 'not started'; const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); if (seconds < 60) return `${ seconds }s`; if (seconds < 3600) return `${ Math.floor(seconds / 60) } min`; return `${ Math.floor(seconds / 3600) }h ${ Math.floor(seconds % 3600 / 60) }m` }
 function age(value: string | null): string { return value ? `${ elapsed(value) } ago` : 'not recorded' } function when(value: string | null): string { return value ? new Date(value).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : 'not recorded' } function clock(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) } function entryWho(entry: AgentConversationDetail['entries'][number]): string { if (entry.kind === 'user') return 'You'; if (entry.kind === 'tool') return entry.toolName || 'Tool'; if (entry.kind === 'event') return 'Run'; return selected.value?.label || 'Agent' }
 watch(() => selected.value?.threadId, () => loadDetail().catch(() => undefined));

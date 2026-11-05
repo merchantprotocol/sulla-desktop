@@ -210,8 +210,12 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const updating = registry.updateJobTask(job.jobId, 0, { summary: 'late update', status: 'running' });
     release(); await Promise.all([stopping, updating]); gate.mockRestore();
     const durable = await agentJobProvider.jobs.job(job.jobId);
-    expect(durable?.tasks[0]).toMatchObject({ status: 'stopped', summary: 'late update', stopReason: 'race stop' });
+    expect(durable?.tasks[0]).toMatchObject({ status: 'stopped', summary: 'late update', stoppedBy: 'human', stopReason: 'race stop' });
     expect(durable?.tasks[1].status).toBe('running');
+    const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
+    expect(snapshot.rows.find(row => row.jobId === job.jobId && row.taskIndex === 0)).toMatchObject({
+      state: 'stopped', stoppedBy: 'human', stopReason: 'race stop', killedByHuman: true,
+    });
   });
 
   it('prevents stale liveness reconciliation from overwriting completion', async() => {

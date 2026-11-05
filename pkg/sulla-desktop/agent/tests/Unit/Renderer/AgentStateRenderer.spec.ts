@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AgentStateClient, type AgentStateTransport, type AgentStateWindow } from '@pkg/services/agentState/AgentStateClient';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import { AgentStateRowPresenter } from '@pkg/services/agentState/AgentStateRowPresenter';
+import { StopAttributionFormatter } from '@pkg/agent/app/Formatters/StopAttributionFormatter';
 import type { AgentActionResult, AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 class FakeTransport implements AgentStateTransport {
@@ -26,7 +28,7 @@ class FakeHost implements AgentStateWindow {
 class RowFactory {
   create(key: string, rootThreadId = 'root', parentKey: string | null = null): AgentStateRow {
     const [jobId, task = '0'] = key.split(':'); const [parentJobId, parentTask = ''] = parentKey?.split(':') ?? [];
-    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${ key }`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
+    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${ key }`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, killedByHuman: false, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
   }
 }
 const snapshot = (version: number, rows: AgentStateRow[]): AgentStateSnapshot => ({ version, generatedAt: '2026-11-04T20:00:00.000Z', rows });
@@ -77,5 +79,17 @@ describe('AgentActionController', () => {
     expect(result.stale).toBe(true); expect(result.error).toBeUndefined(); expect(client.snapshot.value.rows).toEqual([]);
     expect(client.snapshot.value.rows.some(current => current.canMessage)).toBe(false);
     client.stop();
+  });
+});
+
+
+describe('AgentStateRowPresenter', () => {
+  it('renders a human-killed row with its durable attribution', () => {
+    // risk: stop attribution disappears when renderer rows switch to state snapshots
+    const row = new RowFactory().create('killed:0');
+    Object.assign(row, { state: 'stopped', stoppedBy: 'human', stopReason: 'operator requested', killedByHuman: true });
+    const presenter = new AgentStateRowPresenter(new StopAttributionFormatter());
+    expect(presenter.statusLabel(row)).toBe('Killed by human');
+    expect(presenter.stopAttribution(row)).toBe('Killed by human — operator requested');
   });
 });
