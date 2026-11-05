@@ -83,7 +83,7 @@ export const KDF_BOUNDS = Object.freeze({
 export const LIMITS = Object.freeze({ recordBytes: 64 * 1024 });
 
 const KDF_CONTEXT = 'SVsync01';
-const MAC_SUBKEY_ID = 1;
+const MAC_SUBKEY_ID = 2;
 const KEY_BYTES = 32;
 const B64 = /^[A-Za-z0-9_-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
