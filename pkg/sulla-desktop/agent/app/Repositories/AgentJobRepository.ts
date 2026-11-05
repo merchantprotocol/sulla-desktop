@@ -97,7 +97,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async stop(jobId: string, tasks: AgentJobTask[], stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked', 'failed')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
   }
 
   async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'] = { system: 'legacy' }, reason = 'stop requested'): Promise<string[]> {

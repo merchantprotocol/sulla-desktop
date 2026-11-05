@@ -316,7 +316,9 @@ async failJob(jobId: string, error: string): Promise<void> {
   job.finishedAt = this.clock.now().getTime();
   job.error = error;
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
-    ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
+    ? { ...task, status: 'error', finishedAt: this.clock.now().getTime(), completion: {
+      label: task.label, status: 'error' as const, output: error, threadId: task.threadId ?? '', contract: task.contract?.name ?? 'result',
+    } }
     : task);
 
   await this.states.commit(job);
