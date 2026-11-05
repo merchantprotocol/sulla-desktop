@@ -37,30 +37,33 @@ export class AgentJobServiceProvider {
   readonly custody: JobCustodyService;
   readonly custodyActors: CustodyActorResolver;
   readonly custodyDestinations: CustodyDestinationResolver;
+  readonly custodyLineage: JobTaskCustodyLineage;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
-    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
+
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const graphPresence = { has: (_threadId: string) => false };
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => !['queued', 'running', 'parked'].includes(status) }, graphPresence);
-    const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, new JobTaskCustodyLineage(this.jobs, taskLocator));
+    this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator);
+    const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage);
     this.custodyActors = new CustodyActorResolver();
     const receivers = new DurableAgentInboxReceiverResolver(this.jobs, () => undefined);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receivers);
     const custodyNotifier = new CustodyChangeNotificationService(this.jobs, this.messaging, completionInboxStore);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
+    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore, this.custody);
+    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
-    this.delivery = new JobCompletionDelivery(this.service);
+    this.delivery = new JobCompletionDelivery(this.service, this.custody);
   }
 }
 

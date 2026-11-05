@@ -6,6 +6,7 @@ import { Service } from '@sulla/foundation';
 
 import type { AgentJobMessagingRepository } from '../app/Repositories/AgentJobMessagingRepository';
 import type { AgentJobCheckinReceipt } from '../database/models/AgentJobMessagingModel';
+import type { JobCustodyPort } from '../app/Services/JobCustodyTypes';
 
 export interface ParentNoticeInbox {
   enqueue(channel: string, threadId: string, notice: {
@@ -22,6 +23,7 @@ export class BlockerEscalationService extends Service {
   constructor(
     private readonly messaging: AgentJobMessagingRepository,
     private readonly inbox: ParentNoticeInbox,
+    private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'>,
   ) { super(); }
 
   async record(threadId: string, input: {
@@ -35,10 +37,11 @@ export class BlockerEscalationService extends Service {
     if (!receipt?.blockersChanged || receipt.checkin.blockers.length === 0) return receipt;
 
     const { target, checkin } = receipt;
-    if (!target.parentThreadId) return receipt;
+    const owner=await this.custody?.resolveOwner(target.jobId,target.taskIndex) ?? (target.parentThreadId?{channel:target.parentChannel??'sulla-desktop',threadId:target.parentThreadId}:undefined);
+    if (!owner) return receipt;
     const blockers = checkin.blockers.join('; ');
     const label = target.label ?? `task ${ target.taskIndex }`;
-    this.inbox.enqueue(target.parentChannel ?? 'sulla-desktop', target.parentThreadId, {
+    this.inbox.enqueue(owner.channel, owner.threadId, {
       jobId: target.jobId,
       taskIndex: target.taskIndex,
       results: [],

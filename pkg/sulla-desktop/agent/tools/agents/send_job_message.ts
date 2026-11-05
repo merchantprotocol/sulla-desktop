@@ -7,6 +7,7 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob } from './jobRegistry';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 /**
  * Persist a message for one or all open tasks of a job and deliver it.
@@ -14,13 +15,24 @@ import { getJob } from './jobRegistry';
  * child is a desktop chat: the message steers its live turn, or starts a turn
  * when it is idle, through the same inject path the old message_tab used.
  */
-export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string }): Promise<ToolResponse> {
+export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string }, metadata?: Record<string,any>): Promise<ToolResponse> {
   const { jobId, taskIndex, message } = input;
   if (!jobId || !message) {
     return { successBoolean: false, responseString: 'jobId and a non-empty message are required.' };
   }
   if (taskIndex !== undefined && (!Number.isInteger(taskIndex) || taskIndex < 0)) {
     return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
+  }
+
+  if(metadata){
+    const caller=agentJobProvider.custodyActors.resolve(metadata);
+    const owner=await agentJobProvider.custody.resolveOwner(jobId,taskIndex);
+    if(!owner)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
+    if(caller.actor.kind==='agent'){
+      const same=caller.actor.threadId===owner.threadId;
+      const ancestor=await agentJobProvider.custodyLineage.isAncestor(caller.actor.threadId,owner.threadId);
+      if(!same&&!ancestor)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${owner.agentId} (${owner.channel}/${owner.threadId}).`};
+    }
   }
 
   const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
@@ -138,6 +150,6 @@ export class SendJobMessageWorker extends BaseTool {
       jobId:     String(input.jobId ?? '').trim(),
       message:   String(input.message ?? '').trim(),
       taskIndex: input.taskIndex === undefined ? undefined : Number(input.taskIndex),
-    });
+    }, (this.state as any)?.metadata);
   }
 }

@@ -6,12 +6,14 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
+import type { JobCustodyPort } from './JobCustodyTypes';
+import type { CustodyLineagePort } from './JobCustodyAuthorityPolicy';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
 
 /** Applies authorization, attribution, persistence, and aborts for job stops. */
 export class JobStopService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator) { super(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator, private readonly custody?: Pick<JobCustodyPort,'resolveOwner'>, private readonly custodyLineage?: Pick<CustodyLineagePort,'isAncestor'>) { super(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[JobStopService] persistence write failed:', (error as Error).message); } }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
@@ -33,7 +35,7 @@ export class JobStopService extends Service {
     const task = job?.tasks[taskIndex];
     if (!job || !task) return 'not-found';
     if (!['running', 'parked'].includes(job.status) || !['queued', 'running', 'parked'].includes(task.status)) return 'already-finished';
-    if (principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(job, principal.threadId)) return 'forbidden';
+    if (principal.kind === 'agent' && !await this.authorizedOwner(jobId,taskIndex,principal.threadId,job)) return 'forbidden';
     const stoppedAt = this.clock.now().getTime();
     job.tasks[taskIndex] = { ...task, status: 'stopped', finishedAt: stoppedAt, stoppedBy: StopPrincipal.attribution(principal), stopReason: reason };
     const settlesJob = job.tasks.every(item => !['queued', 'running', 'parked'].includes(item.status));
@@ -48,14 +50,21 @@ export class JobStopService extends Service {
   async authorize(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {
     const job = this.runtime.jobs.get(jobId) ?? await this.repository.job(jobId);
     if (!job) return 'not-found';
-    return principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(job, principal.threadId) ? 'forbidden' : 'allowed';
+    return principal.kind === 'agent' && !await this.authorizedOwner(jobId,undefined,principal.threadId,job) ? 'forbidden' : 'allowed';
+  }
+
+  private async authorizedOwner(jobId:string,taskIndex:number|undefined,callerThreadId:string,job:any):Promise<boolean>{
+    const owner=await this.custody?.resolveOwner(jobId,taskIndex);
+    if(!owner)return this.taskLocator.isAncestorThread(job,callerThreadId);
+    if(owner.threadId===callerThreadId)return true;
+    return this.custodyLineage?.isAncestor(callerThreadId,owner.threadId)??false;
   }
 
   async stopCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<StopOutcome> {
     const root = this.runtime.jobs.get(jobId) ?? await this.repository.job(jobId);
     if (!root) return 'not-found';
     if (!['running', 'parked'].includes(root.status)) return 'already-finished';
-    if (principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(root, principal.threadId)) return 'forbidden';
+    if (principal.kind === 'agent' && !await this.authorizedOwner(jobId,undefined,principal.threadId,root)) return 'forbidden';
     const stoppedBy = StopPrincipal.attribution(principal);
     const stoppedIds = await this.repository.stopCascade(jobId, stoppedBy, reason);
     const stoppedAt = this.clock.now().getTime();
