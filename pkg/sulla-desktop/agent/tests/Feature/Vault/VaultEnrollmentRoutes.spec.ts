@@ -50,6 +50,20 @@ class EnrollmentRouteFixture {
     return `http://127.0.0.1:${ address.port }`;
   }
 
+  async request(baseUrl: string, headers: Record<string, string>): Promise<{ status: number; body: unknown }> {
+    const url = new URL('/v1/broker/sulla-cloud/enrollment-commit', baseUrl);
+    return await new Promise((resolve, reject) => {
+      const request = http.request(url, { method: 'POST', headers }, response => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => { body += chunk; });
+        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: JSON.parse(body) }));
+      });
+      request.on('error', reject);
+      request.end('{}');
+    });
+  }
+
   async stop(): Promise<void> {
     if (!this.server) return;
     await new Promise<void>((resolve, reject) => this.server!.close(error => error ? reject(error) : resolve()));
@@ -66,14 +80,10 @@ describe('Vault enrollment routes', () => {
     fixture = new EnrollmentRouteFixture();
     const baseUrl = await fixture.start();
 
-    const response = await fetch(`${ baseUrl }/v1/broker/sulla-cloud/enrollment-commit`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-    });
+    const response = await fixture.request(baseUrl, { 'content-type': 'application/json' });
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_service_identity' });
+    expect(response.body).toMatchObject({ error: 'invalid_service_identity' });
     expect(fixture.commitCalls).toEqual([]);
   });
 
@@ -82,18 +92,14 @@ describe('Vault enrollment routes', () => {
     fixture = new EnrollmentRouteFixture();
     const baseUrl = await fixture.start();
 
-    const response = await fetch(`${ baseUrl }/v1/broker/sulla-cloud/enrollment-commit`, {
-      method: 'POST',
-      headers: {
-        'authorization': `Bearer ${ fixture.approvalServiceToken }`,
-        'content-type': 'application/json',
-        'x-sulla-service-id': fixture.approvalServiceId,
-      },
-      body: '{}',
+    const response = await fixture.request(baseUrl, {
+      'authorization': `Bearer ${ fixture.approvalServiceToken }`,
+      'content-type': 'application/json',
+      'x-sulla-service-id': fixture.approvalServiceId,
     });
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: 'requestId is required' });
+    expect(response.body).toEqual({ error: 'requestId is required' });
     expect(fixture.commitCalls).toEqual([]);
   });
 });
