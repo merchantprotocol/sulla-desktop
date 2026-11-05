@@ -153,7 +153,7 @@
             :key="node.row.key"
             class="agent-row click"
             :class="{ 'is-done': node.row.state === 'done' }"
-            :style="{ paddingLeft: `${14 + node.row.depth * 20}px` }"
+            :style="{ paddingLeft: `${14 + node.depth * 20}px` }"
             @click="selectRow(node.row)"
           >
             <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small></div><span
@@ -291,7 +291,14 @@ function statusClass(state: AgentRowState): string { return ['working', 'queued'
 function statusLabel(row: AgentStateRow): string { if (row.state === 'parked') return `Parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet') return `Quiet · ${ age(row.lastCheckinAt) }`; return row.state.charAt(0).toUpperCase() + row.state.slice(1) }
 function elapsed(value: string | null): string { if (!value) return 'not started'; const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); if (seconds < 60) return `${ seconds }s`; if (seconds < 3600) return `${ Math.floor(seconds / 60) } min`; return `${ Math.floor(seconds / 3600) }h ${ Math.floor(seconds % 3600 / 60) }m` }
 function age(value: string | null): string { return value ? `${ elapsed(value) } ago` : 'not recorded' } function when(value: string | null): string { return value ? new Date(value).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : 'not recorded' } function clock(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) } function entryWho(entry: AgentConversationDetail['entries'][number]): string { if (entry.kind === 'user') return 'You'; if (entry.kind === 'tool') return entry.toolName || 'Tool'; if (entry.kind === 'event') return 'Run'; return selected.value?.label || 'Agent' }
-watch(() => selected.value?.threadId, () => loadDetail().catch(() => undefined)); onMounted(() => { clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); });
+watch(() => selected.value?.threadId, () => loadDetail().catch(() => undefined));
+watch(() => client.snapshot.value, snapshot => {
+  const current = new Map(snapshot.rows.map(row => [row.key, row]));
+  if (selected.value) selected.value = current.get(selected.value.key) ?? null;
+  if (messageTarget.value) messageTarget.value = current.get(messageTarget.value.key) ?? null;
+  if (stopTarget.value) stopTarget.value = current.get(stopTarget.value.key) ?? null;
+});
+onMounted(() => { clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); });
 </script>
 
 <style scoped lang="scss">

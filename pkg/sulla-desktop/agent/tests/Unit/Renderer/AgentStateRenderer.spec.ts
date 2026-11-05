@@ -39,7 +39,19 @@ describe('AgentTreeBuilder', () => {
     expect(tree.map(node => node.row.key)).toEqual(['manager:0', 'orphan:0']);
     expect(tree[0].children[0].row.key).toBe('worker:0');
     expect(tree[0].children[0].children[0].row.key).toBe('grand:0');
+    expect(tree[0].children[0].depth).toBe(1);
+    expect(tree[0].children[0].children[0].depth).toBe(2);
     expect(new AgentTreeBuilder([grand, other, orphan, worker, manager]).flatten(tree).some(node => node.row.key === other.key)).toBe(false);
+  });
+
+  it('keeps malformed cycles visible once without recursing forever', () => {
+    // risk: orchestrator visibility
+    const factory = new RowFactory();
+    const first = factory.create('first:0', 'root', 'second:0');
+    const second = factory.create('second:0', 'root', 'first:0');
+    const builder = new AgentTreeBuilder([first, second]);
+    const flattened = builder.flatten(builder.forThread('root'));
+    expect(flattened.map(node => node.row.key).sort()).toEqual(['first:0', 'second:0']);
   });
 });
 
@@ -63,6 +75,7 @@ describe('AgentActionController', () => {
     transport.result = { ok: false, stale: true, snapshot: snapshot(2, []) };
     const result = await controller.message({ ...row, canMessage: true }, 'continue');
     expect(result.stale).toBe(true); expect(result.error).toBeUndefined(); expect(client.snapshot.value.rows).toEqual([]);
+    expect(client.snapshot.value.rows.some(current => current.canMessage)).toBe(false);
     client.stop();
   });
 });

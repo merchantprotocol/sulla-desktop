@@ -41,6 +41,7 @@ const app = createApp(layout);
 const agentStateClient = new AgentStateClient(ipcRenderer as any, window as any);
 app.provide(AGENT_STATE_CLIENT_KEY, agentStateClient);
 agentStateClient.start().catch(() => undefined);
+window.addEventListener('beforeunload', () => agentStateClient.stop(), { once: true });
 
 app.use(store);
 app.use(router);

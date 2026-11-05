@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
-export interface AgentTreeNode { row: AgentStateRow; children: AgentTreeNode[] }
+export interface AgentTreeNode { row: AgentStateRow; children: AgentTreeNode[]; depth: number }
 
 const LIVE_STATES = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
 
@@ -10,7 +10,7 @@ export class AgentTreeBuilder {
 
   forThread(rootThreadId: string): AgentTreeNode[] {
     const included = this.rows.filter(row => row.rootThreadId === rootThreadId);
-    const nodes = new Map(included.map(row => [row.key, { row, children: [] as AgentTreeNode[] }]));
+    const nodes = new Map(included.map(row => [row.key, { row, children: [] as AgentTreeNode[], depth: 0 }]));
     const roots: AgentTreeNode[] = [];
 
     for (const node of nodes.values()) {
@@ -18,9 +18,10 @@ export class AgentTreeBuilder {
       const parentKey = parentJobId === null || parentTaskIndex === null ? null : `${ parentJobId }:${ parentTaskIndex }`;
       const parent = parentKey ? nodes.get(parentKey) : undefined;
 
-      if (parent) parent.children.push(node);
-      else roots.push(node); // Orphans stay visible when their parent has already aged out.
+      if (parent && !this.createsCycle(node, parent, nodes)) parent.children.push(node);
+      else roots.push(node); // Orphans and malformed cycles remain visible as roots.
     }
+    this.assignDepths(roots, 0);
     this.sort(roots);
     return roots;
   }
@@ -33,7 +34,34 @@ export class AgentTreeBuilder {
   }
 
   flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] {
-    return tree.flatMap(node => [node, ...this.flatten(node.children)]);
+    const flattened: AgentTreeNode[] = [];
+    const visited = new Set<string>();
+    const visit = (nodes: readonly AgentTreeNode[]): void => {
+      for (const node of nodes) {
+        if (visited.has(node.row.key)) continue;
+        visited.add(node.row.key);
+        flattened.push(node);
+        visit(node.children);
+      }
+    };
+    visit(tree);
+    return flattened;
+  }
+
+  private createsCycle(node: AgentTreeNode, parent: AgentTreeNode, nodes: ReadonlyMap<string, AgentTreeNode>): boolean {
+    const visited = new Set<string>([node.row.key]);
+    let candidate: AgentTreeNode | undefined = parent;
+    while (candidate) {
+      if (visited.has(candidate.row.key)) return true;
+      visited.add(candidate.row.key);
+      const { parentJobId, parentTaskIndex } = candidate.row;
+      candidate = parentJobId === null || parentTaskIndex === null ? undefined : nodes.get(`${ parentJobId }:${ parentTaskIndex }`);
+    }
+    return false;
+  }
+
+  private assignDepths(nodes: readonly AgentTreeNode[], depth: number): void {
+    for (const node of nodes) { node.depth = depth; this.assignDepths(node.children, depth + 1) }
   }
 
   private sort(nodes: AgentTreeNode[]): void {

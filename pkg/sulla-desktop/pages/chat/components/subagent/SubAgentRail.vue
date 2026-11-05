@@ -52,12 +52,12 @@
         type="button"
         class="sd-agent-row"
         :class="[`is-${node.row.state}`, { 'is-done': node.row.state === 'done' }]"
-        :style="{ paddingLeft: `${10 + node.row.depth * 14}px` }"
+        :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
         :aria-current="selectedKey === legacyKey(node.row) || undefined"
         @click="emit('select', legacyCard(node.row))"
       >
         <i class="sd-status-dot" /><strong>{{ node.row.label }}</strong><time>{{ elapsed(node.row) }}</time>
-        <span><b>{{ agentName(node.row.agentId) }}</b> · {{ node.row.lastCheckinSummary || node.row.stateReason || stateLabel(node.row) }}</span>
+        <span><b>{{ agentName(node.row.agentId) }}</b> · {{ node.row.lastCheckinSummary || node.row.stateReason || stateLabel(node.row) }}<template v-if="contractLabel(node.row)"> · {{ contractLabel(node.row) }}</template></span>
         <em
           class="sd-state-chip"
           :title="node.row.stateReason || undefined"
@@ -99,32 +99,49 @@ import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ parentThreadId?: string; collapsed?: boolean; selectedKey?: string }>();
 const emit = defineEmits<{ select: [card: ThreadAgentCard]; visibility: [visible: boolean]; 'toggle-collapse': [] }>();
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const now = ref(Date.now());
+const dismissed = ref(new Set<string>());
+const legacyCards = ref(new Map<string, ThreadAgentCard>());
 const filter = ref<'all' | 'running' | 'finished'>('all');
 const filters = [{ value: 'all', label: 'All' }, { value: 'running', label: 'Live' }, { value: 'finished', label: 'Finished' }] as const;
 const liveStates = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
 const tree = computed(() => props.parentThreadId ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(props.parentThreadId) : []);
-const rows = computed(() => new AgentTreeBuilder(client.snapshot.value.rows).flatten(tree.value));
+const rows = computed(() => new AgentTreeBuilder(client.snapshot.value.rows).flatten(tree.value).filter(node => !dismissed.value.has(node.row.key)));
 const visibleRows = computed(() => rows.value.filter(node => filter.value === 'all' || (filter.value === 'running') === liveStates.has(node.row.state)));
 const liveCount = computed(() => rows.value.filter(node => liveStates.has(node.row.state)).length);
 const filterIndex = computed(() => filters.findIndex(item => item.value === filter.value));
 let timer: ReturnType<typeof setInterval> | null = null;
+let metadataTick = 0;
 
 function stateLabel(row: AgentStateRow): string { if (row.state === 'parked') return `parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet' && row.lastCheckinAt) return `quiet · ${ age(row.lastCheckinAt) }`; return row.state }
 function age(value: string): string { const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m` }
 function elapsed(row: AgentStateRow): string { const start = row.startedAt ? Date.parse(row.startedAt) : now.value; const end = row.endedAt ? Date.parse(row.endedAt) : now.value; const seconds = Math.max(0, Math.floor((end - start) / 1000)); return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m` }
 function agentName(id: string | null): string { return (id || 'Agent').split('-').map(part => ({ codex: 'Codex', sol: 'Sol', luna: 'Luna' }[part] || part.charAt(0).toUpperCase() + part.slice(1))).join(' ') }
+function contractLabel(row: AgentStateRow): string { const contract = legacyCards.value.get(row.key)?.contract; return contract && contract !== 'result' ? contract : '' }
 function legacyKey(row: AgentStateRow): string { return `${ row.visibility === 'tab' ? 'tab' : 'job' }:${ row.jobId }:${ row.taskIndex }` }
-function legacyCard(row: AgentStateRow): ThreadAgentCard { const status = row.state === 'working' || row.state === 'queued' || row.state === 'quiet' || row.state === 'blocked' || row.state === 'lost' ? 'running' : row.state; return { jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId || 'agent', label: row.label, status, createdAt: row.startedAt ? Date.parse(row.startedAt) : now.value, finishedAt: row.endedAt ? Date.parse(row.endedAt) : null, conversationId: row.threadId || undefined, lastActivity: row.lastCheckinSummary || row.stateReason || row.state, lastActivityAt: row.lastCheckinAt ? Date.parse(row.lastCheckinAt) : now.value, kind: row.visibility === 'tab' ? 'tab' : 'job', contract: 'result', agentTab: row.visibility === 'tab' && row.threadId ? { contractId: row.key, threadId: row.threadId, agentName: row.label, parentAgentId: 'orchestrator', depth: row.depth } : undefined } }
-function dismiss(_card: ThreadAgentCard): void { /* Done rows age out from the source of truth after 60 seconds. */ }
+function legacyCard(row: AgentStateRow): ThreadAgentCard { const existing = legacyCards.value.get(row.key); const status = ['working', 'queued', 'quiet', 'blocked'].includes(row.state) ? 'running' : row.state; return { jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId || 'agent', label: row.label, status, createdAt: row.startedAt ? Date.parse(row.startedAt) : now.value, finishedAt: row.endedAt ? Date.parse(row.endedAt) : null, conversationId: row.threadId || undefined, lastActivity: row.lastCheckinSummary || row.stateReason || row.state, lastActivityAt: row.lastCheckinAt ? Date.parse(row.lastCheckinAt) : now.value, kind: row.visibility === 'tab' ? 'tab' : 'job', contract: existing?.contract || 'result', agentTab: row.visibility === 'tab' && row.threadId ? { contractId: row.key, threadId: row.threadId, agentName: row.label, parentAgentId: 'orchestrator', depth: row.depth } : undefined } }
+async function refreshMetadata(): Promise<void> {
+  if (!props.parentThreadId) { legacyCards.value = new Map(); return }
+  try {
+    const cards = await ipcRenderer.invoke('agents:thread-jobs' as any, props.parentThreadId) as ThreadAgentCard[];
+    legacyCards.value = new Map(cards.map(card => [`${ card.jobId }:${ card.taskIndex }`, card]));
+  } catch { /* Snapshot rows remain authoritative when optional display metadata is unavailable. */ }
+}
+async function dismiss(card: ThreadAgentCard): Promise<void> {
+  if (!props.parentThreadId) return;
+  const hidden = new Set(dismissed.value); hidden.add(`${ card.jobId }:${ card.taskIndex }`); dismissed.value = hidden;
+  try { await ipcRenderer.invoke('agents:dismiss-thread-job' as any, card.jobId, props.parentThreadId, card.taskIndex) } catch { /* Local dismissal still preserves the approved interaction. */ }
+}
 defineExpose({ dismiss });
 watch(() => rows.value.length > 0, visible => emit('visibility', visible), { immediate: true });
-onMounted(() => { timer = setInterval(() => { now.value = Date.now() }, 1000) });
+watch(() => props.parentThreadId, () => { dismissed.value = new Set(); void refreshMetadata() }, { immediate: true });
+onMounted(() => { timer = setInterval(() => { now.value = Date.now(); metadataTick += 1; if (metadataTick % 3 === 0) void refreshMetadata() }, 1000) });
 onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 <style scoped>
