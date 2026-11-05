@@ -158,6 +158,7 @@ export class AgentStateService {
 
   private withDerivedStatus(job: AgentJob): AgentJob {
     if (job.tasks.length === 0) return job;
+    if (['completed', 'failed', 'stopped'].includes(job.status)) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
     if (statuses.some(value => value === 'error')) status = 'failed';
     else if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
