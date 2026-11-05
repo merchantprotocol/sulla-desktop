@@ -24,11 +24,11 @@ suite('AgentJobCustodyRepository',()=>{
  it('allows exactly one of two concurrent adopts and writes one audit row',async()=>{ // risk: concurrent ownership split
    const id=`custody-concurrent-${Date.now()}`;await createJob(id);const [a,b]=await Promise.all([move(service(),id),move(service(),id)]);expect([a.ok,b.ok].filter(Boolean)).toHaveLength(1);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
  });
- it('moves a committed contract inbox row exactly once to the new owner',async()=>{ // risk: lost or duplicate contract
+ it('documents that a producer bypassing withOwner can commit a stale receiver',async()=>{ // risk: lost or duplicate contract
    const id=`custody-return-${Date.now()}`;await createJob(id);const messageId=`contract-${Date.now()}`;const returning=await pool.connect();await returning.query('BEGIN');
    await returning.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,'old-channel','old-thread','old-agent','worker','contract','done',$2::jsonb)`,[messageId,JSON.stringify({messageId,jobId:id,taskIndex:0})]);
    const moving=move(service(),id);await new Promise(resolve=>setTimeout(resolve,20));await returning.query('COMMIT');returning.release();expect((await moving).ok).toBe(true);
-   const rows=await database.query<any>(`SELECT * FROM agent_inbox_messages WHERE message_id=$1`,[messageId]);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({receiver_channel:'new-channel',receiver_thread_id:'new-thread',receiver_agent_id:'new-agent'});
+   const rows=await database.query<any>(`SELECT * FROM agent_inbox_messages WHERE message_id=$1`,[messageId]);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({receiver_channel:'old-channel',receiver_thread_id:'old-thread',receiver_agent_id:'old-agent'}); // This is the hazard PR B removes by routing every producer through withOwner.
  });
 
  it('keeps task-overridden inbox rows with their effective owner during a whole-job move',async()=>{ // risk: cross-scope custody theft
@@ -42,6 +42,16 @@ suite('AgentJobCustodyRepository',()=>{
    const id=`custody-producer-${Date.now()}`;await createJob(id);const instance=service();const stale=await instance.resolveOwner(id);expect(stale?.threadId).toBe('old-thread');expect((await move(instance,id)).ok).toBe(true);const messageId=`locked-producer-${Date.now()}`;
    await instance.withOwner(id,0,async(client,owner)=>{await client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','done',$5::jsonb)`,[messageId,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:0})]);});
    const rows=await database.query<any>(`SELECT * FROM agent_inbox_messages WHERE message_id=$1`,[messageId]);expect(rows).toHaveLength(1);expect(rows[0].receiver_thread_id).toBe(target.threadId);
+ });
+ it('routes a manager worker result and manager contract exactly once during adoption',async()=>{ // risk: cross-scope result loss during H8 adoption
+   const id=`custody-adoption-race-${Date.now()}`;await createJob(id,2);const instance=service();const manager:CustodyOwner={channel:'manager-channel',threadId:'manager-thread',agentId:'manager-agent'};
+   expect((await instance.move({jobId:id,taskIndex:1,to:manager,actor:{kind:'human'},reason:'manager owns worker'})).ok).toBe(true);
+   const workerResult=`worker-result-${Date.now()}`;const managerContract=`manager-contract-${Date.now()}`;
+   const adoption=move(instance,id);
+   const workerReturn=instance.withOwner(id,1,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','worker done',$5::jsonb)`,[workerResult,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:1})]));
+   const managerReturn=instance.withOwner(id,undefined,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'manager','contract','manager done',$5::jsonb)`,[managerContract,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id})]));
+   expect((await adoption).ok).toBe(true);await Promise.all([workerReturn,managerReturn]);
+   const rows=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id=ANY($1)`,[[workerResult,managerContract]]);expect(rows).toHaveLength(2);expect(rows.filter(row=>row.message_id===workerResult)).toEqual([{message_id:workerResult,receiver_thread_id:manager.threadId}]);expect(rows.filter(row=>row.message_id===managerContract)).toEqual([{message_id:managerContract,receiver_thread_id:target.threadId}]);
  });
  it('survives new repository instances and never re-addresses an acknowledged row',async()=>{ // risk: restart replay
    const id=`custody-restart-${Date.now()}`;await createJob(id);const delivered=`delivered-${Date.now()}`;await database.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,delivered_at) VALUES($1,'old-channel','old-thread','old-agent','worker','contract','done',$2::jsonb,now())`,[delivered,JSON.stringify({messageId:delivered,jobId:id})]);await move(service(),id);const restarted=service();expect(await restarted.resolveOwner(id)).toMatchObject(target);expect(await restarted.history(id)).toHaveLength(1);expect((await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id=$1`,[delivered]))[0].receiver_thread_id).toBe('old-thread');

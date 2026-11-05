@@ -66,7 +66,7 @@ export class AgentJobCustodyRepository {
 
   private inboxScopeSql(taskIndex?: number): string {
     const taskFilter = taskIndex === undefined
-      ? `AND (m.ids->>'taskIndex' IS NULL OR NOT EXISTS (SELECT 1 FROM agent_job_custody override WHERE override.job_id=$1 AND override.task_index=(m.ids->>'taskIndex')::int))`
+      ? `AND $2::int IS NULL AND (m.ids->>'taskIndex' IS NULL OR NOT EXISTS (SELECT 1 FROM agent_job_custody override WHERE override.job_id=$1 AND override.task_index=(m.ids->>'taskIndex')::int))`
       : `AND m.ids->>'taskIndex'=$2::text`;
     return `SELECT m.message_id,m.lease_owner,m.lease_expires_at FROM agent_inbox_messages m
       WHERE m.ids->>'jobId'=$1 ${taskFilter} AND m.delivered_at IS NULL`;
