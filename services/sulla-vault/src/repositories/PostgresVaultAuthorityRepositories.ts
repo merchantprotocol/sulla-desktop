@@ -15,7 +15,7 @@ export class PostgresVaultUserRepository {
   constructor(private readonly db: Database) {}
 
   findActive<T extends QueryResultRow = QueryResultRow>(client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>('SELECT id,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key FROM users LIMIT 1');
+    return client.query<T>('SELECT id,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key FROM users WHERE disabled_at IS NULL LIMIT 1');
   }
 
   findActiveKdf<T extends QueryResultRow = QueryResultRow>(client: Queryable = this.db): Promise<QueryResult<T>> {
@@ -80,7 +80,7 @@ export class PostgresVaultRecoveryRepository {
   }
 
   findForUser<T extends QueryResultRow = QueryResultRow>(userId: string, client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>('SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key FROM local_vault_recovery', [userId]);
+    return client.query<T>('SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [userId]);
   }
 
   upsertForRotation(values: RecoveryValues, client: Queryable = this.db): Promise<QueryResult> {
