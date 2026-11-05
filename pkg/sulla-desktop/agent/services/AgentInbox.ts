@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { randomUUID } from 'node:crypto';
+import { ReceiverRunGuard } from './ReceiverRunGuard';
 
 export type AgentMessageKind = 'human' | 'parent' | 'child' | 'peer' | 'contract' | 'blocker';
 export type AgentInboxDeliveryReceipt = 'accepted' | 'deferred' | 'failed';
@@ -13,6 +14,7 @@ export interface AgentInboxClaim { owner: string; target: AgentInboxTarget; entr
 export interface AgentInboxRepository {
   enqueue(entry: AgentInboxEntry): Promise<boolean>;
   claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim>;
+  renew(claim: AgentInboxClaim): Promise<void>;
   acknowledge(claim: AgentInboxClaim): Promise<void>;
   release(claim: AgentInboxClaim): Promise<void>;
   pendingTargets(): Promise<AgentInboxTarget[]>;
@@ -24,7 +26,13 @@ export interface AgentInboxDeliveryPolicy {
 
 /** Durable, leased, deduplicated mailbox. It never interrupts an active receiver. */
 export class AgentInbox {
-  constructor(private readonly repository: AgentInboxRepository, private readonly delivery: AgentInboxDeliveryPolicy, private readonly maxDrainTurns = 8) {}
+  constructor(
+    private readonly repository: AgentInboxRepository,
+    private readonly delivery: AgentInboxDeliveryPolicy,
+    private readonly runGuard = new ReceiverRunGuard(),
+    private readonly maxDrainTurns = 8,
+    private readonly leaseRenewIntervalMs = 30_000,
+  ) {}
 
   async receive(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
     const inserted = await this.repository.enqueue(entry);
@@ -35,24 +43,44 @@ export class AgentInbox {
 
   /** Claims across processes and rechecks after each accepted turn so late arrivals cannot strand. */
   async flush(target: AgentInboxTarget): Promise<number> {
+    // This synchronous reservation closes the gap before the first repository
+    // await: replay, recovery and live arrivals cannot start competing turns.
+    const reservation = this.runGuard.tryReserve(target);
+    if (!reservation) return 0;
     let delivered = 0;
-    for (let turn = 0; turn < this.maxDrainTurns && !this.delivery.isRunning(target); turn++) {
-      const claim = await this.repository.claim(target, randomUUID());
-      if (!claim.entries.length) break;
-      let receipt: AgentInboxDeliveryReceipt = 'failed';
-      try {
-        receipt = await this.delivery.wake(target, this.render(claim.entries), claim.entries);
-        if (receipt === 'accepted') {
-          await this.repository.acknowledge(claim);
-          delivered += claim.entries.length;
-        } else await this.repository.release(claim);
-      } catch (error) {
-        await this.repository.release(claim);
-        throw error;
+    try {
+      for (let turn = 0; turn < this.maxDrainTurns; turn++) {
+        const claim = await this.repository.claim(target, randomUUID());
+        if (!claim.entries.length) break;
+        let receipt: AgentInboxDeliveryReceipt = 'failed';
+        let renewalFailure: unknown;
+        let renewal = Promise.resolve();
+        const renew = () => {
+          renewal = renewal.then(() => this.repository.renew(claim)).catch(error => { renewalFailure ??= error; });
+        };
+        const renewalTimer = setInterval(renew, this.leaseRenewIntervalMs);
+        renewalTimer.unref?.();
+        try {
+          receipt = await this.delivery.wake(target, this.render(claim.entries), claim.entries);
+          clearInterval(renewalTimer);
+          await renewal;
+          if (renewalFailure) throw renewalFailure;
+          if (receipt === 'accepted') {
+            await this.repository.acknowledge(claim);
+            delivered += claim.entries.length;
+          } else await this.repository.release(claim);
+        } catch (error) {
+          clearInterval(renewalTimer);
+          await renewal.catch(() => undefined);
+          await this.repository.release(claim);
+          throw error;
+        }
+        if (receipt !== 'accepted') break;
       }
-      if (receipt !== 'accepted' || this.delivery.isRunning(target)) break;
+      return delivered;
+    } finally {
+      reservation.release();
     }
-    return delivered;
   }
 
   async replayPending(): Promise<number> {

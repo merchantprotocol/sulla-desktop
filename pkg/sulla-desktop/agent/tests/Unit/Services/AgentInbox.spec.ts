@@ -6,17 +6,20 @@ import { describe, expect, it } from 'vitest';
 import { AgentInbox, type AgentInboxClaim, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from '../../../services/AgentInbox';
 
 class MemoryInboxRepository implements AgentInboxRepository {
-  readonly rows = new Map<string, { entry: AgentInboxEntry; delivered: boolean; owner?: string }>();
+  readonly rows = new Map<string, { entry: AgentInboxEntry; delivered: boolean; owner?: string; leaseExpiresAt?: number }>();
+  renewals=0;
+  constructor(private readonly leaseMs=120_000){}
   async enqueue(entry: AgentInboxEntry): Promise<boolean> { const id=entry.envelope.ids.messageId; if(this.rows.has(id)) return false; this.rows.set(id,{entry,delivered:false}); return true; }
-  async claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim> { const entries=[...this.rows.values()].filter(row => !row.delivered && !row.owner && row.entry.target.channel===target.channel && (!target.threadId || !row.entry.target.threadId || row.entry.target.threadId===target.threadId)).map(row => { row.owner=owner; return row.entry; }); return {owner,target,entries}; }
+  async claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim> { const now=Date.now();const entries=[...this.rows.values()].filter(row => !row.delivered && (!row.owner||(row.leaseExpiresAt??0)<now) && row.entry.target.channel===target.channel && (!target.threadId || !row.entry.target.threadId || row.entry.target.threadId===target.threadId)).map(row => { row.owner=owner;row.leaseExpiresAt=now+this.leaseMs;return row.entry; }); return {owner,target,entries}; }
+  async renew(claim: AgentInboxClaim): Promise<void> { this.renewals++;for(const entry of claim.entries){const row=this.rows.get(entry.envelope.ids.messageId);if(row?.owner===claim.owner)row.leaseExpiresAt=Date.now()+this.leaseMs;} }
   async acknowledge(claim: AgentInboxClaim): Promise<void> { for(const entry of claim.entries){ const row=this.rows.get(entry.envelope.ids.messageId); if(row?.owner===claim.owner) row.delivered=true; } }
   async release(claim: AgentInboxClaim): Promise<void> { for(const entry of claim.entries){ const row=this.rows.get(entry.envelope.ids.messageId); if(row?.owner===claim.owner) delete row.owner; } }
   async pendingTargets(): Promise<AgentInboxTarget[]> { return [...this.rows.values()].filter(r=>!r.delivered&&!r.owner).map(r=>r.entry.target).filter((v,i,a)=>a.findIndex(x=>x.channel===v.channel&&x.threadId===v.threadId)===i); }
 }
 class RecordingDelivery {
-  running=false; batches:string[]=[]; receipt:AgentInboxDeliveryReceipt='accepted'; onWake?:()=>void;
+  running=false; batches:string[]=[]; receipt:AgentInboxDeliveryReceipt='accepted'; onWake?:()=>void|Promise<void>;
   isRunning():boolean{return this.running;}
-  async wake(_target:AgentInboxTarget,batch:string):Promise<AgentInboxDeliveryReceipt>{this.batches.push(batch);this.onWake?.();return this.receipt;}
+  async wake(_target:AgentInboxTarget,batch:string):Promise<AgentInboxDeliveryReceipt>{this.batches.push(batch);await this.onWake?.();return this.receipt;}
 }
 const entry=(id:string,body=id):AgentInboxEntry=>({target:{channel:'sulla-desktop',threadId:'receiver-thread',agentId:'sulla-desktop'},envelope:{from:'mobile-relay',kind:'peer',body,ids:{messageId:id,threadId:'sender-thread'}}});
 
@@ -45,6 +48,18 @@ describe('AgentInbox',()=>{
   it('rechecks for a same-target message arriving while a flush wake is accepted',async()=>{ // risk: late-arrival stranding
     const repository=new MemoryInboxRepository();await repository.enqueue(entry('first'));const delivery=new RecordingDelivery();delivery.onWake=()=>{delivery.onWake=undefined;void repository.enqueue(entry('late'));};
     const inbox=new AgentInbox(repository,delivery);expect(await inbox.flush(entry('first').target)).toBe(2);expect(delivery.batches).toHaveLength(2);
+  });
+  it('renews a claim throughout a turn so an expired original lease cannot be reclaimed',async()=>{ // risk: duplicate agent turns
+    const repository=new MemoryInboxRepository(25);const delivery=new RecordingDelivery();let finish!:()=>void;const gate=new Promise<void>(resolve=>{finish=resolve;});delivery.onWake=()=>gate;
+    const inbox=new AgentInbox(repository,delivery,undefined,8,5);const receiving=inbox.receive(entry('long-turn'));await new Promise(resolve=>setTimeout(resolve,45));
+    expect((await repository.claim(entry('long-turn').target,'competing-consumer')).entries).toHaveLength(0);expect(repository.renewals).toBeGreaterThan(0);finish();expect(await receiving).toBe('delivered');
+  });
+  it('reserves before awaiting registration and drains a late arrival without concurrent turns',async()=>{ // risk: duplicate and out-of-order agent turns
+    const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();let finishFirst!:()=>void;const firstGate=new Promise<void>(resolve=>{finishFirst=resolve;});let active=0;let maxActive=0;
+    delivery.onWake=async()=>{active++;maxActive=Math.max(maxActive,active);if(delivery.batches.length===1)await firstGate;active--;};
+    const inbox=new AgentInbox(repository,delivery);const first=inbox.receive(entry('first','first batch'));await new Promise(resolve=>setImmediate(resolve));
+    expect(await inbox.receive(entry('late','late batch'))).toBe('queued');expect(delivery.batches).toHaveLength(1);finishFirst();expect(await first).toBe('delivered');
+    expect(maxActive).toBe(1);expect(delivery.batches).toEqual(['[Peer message from mobile-relay]\nfirst batch','[Peer message from mobile-relay]\nlate batch']);
   });
   it('deduplicates a repeated messageId',async()=>{ // risk: idempotency
     const delivery=new RecordingDelivery();delivery.running=true;const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);expect(await inbox.receive(entry('same'))).toBe('queued');expect(await inbox.receive(entry('same'))).toBe('duplicate');

@@ -43,6 +43,7 @@ import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
+import { ReceiverRunGuard } from './ReceiverRunGuard';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -82,6 +83,7 @@ export class BackendGraphWebSocketService {
   private suspendedRuns = new Set<string>();
   private readonly agentInbox: AgentInbox;
   private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
+  private readonly inboxRunGuard: ReceiverRunGuard;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
   private prepareFreshTurn(state: AgentGraphState): void {
@@ -190,16 +192,17 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor(private readonly turnPreparer = new DelegatedTurnPreparer(), dependencies: { inboxRepository?: AgentInboxRepository; inboxReceiverResolver?: AgentInboxReceiverResolver } = {}) {
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer(), dependencies: { inboxRepository?: AgentInboxRepository; inboxReceiverResolver?: AgentInboxReceiverResolver; inboxRunGuard?: ReceiverRunGuard } = {}) {
     const repository = dependencies.inboxRepository ?? new PostgresAgentInboxRepository(new DesktopPostgresConnection(postgresClient));
+    this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();
     this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
       agentJobProvider.jobs,
       channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
     );
     this.agentInbox = new AgentInbox(repository, {
-      isRunning: target => this.inboxThread(target) !== undefined,
+      isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
-    });
+    }, this.inboxRunGuard);
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
   }

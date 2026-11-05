@@ -26,6 +26,7 @@
 
 import * as crypto from 'crypto';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 
 import type { Extractor, StreamContext } from './Extractor';
 import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
@@ -125,7 +126,7 @@ export class ChannelTagExtractor implements Extractor {
   private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string): void {
     try {
       const senderChannel = ctx.channel || (ctx.state as any)?.metadata?.wsChannel || 'unknown';
-      const senderId = senderChannel;
+      const senderId = resolveAgentIdentity((ctx.state as any)?.metadata) || senderChannel;
       const isWake = /\bwake\b/i.test(attrs);
       const isInterrupt = /\binterrupt\b/i.test(attrs);
 

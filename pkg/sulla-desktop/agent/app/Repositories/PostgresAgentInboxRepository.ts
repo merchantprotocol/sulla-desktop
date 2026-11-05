@@ -29,6 +29,10 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
     await this.connection.run(`UPDATE agent_inbox_messages SET delivered_at=now(),lease_owner=NULL,lease_expires_at=NULL
       WHERE message_id=ANY($1::text[]) AND lease_owner=$2 AND delivered_at IS NULL`, [claim.entries.map(e => e.envelope.ids.messageId) as unknown as string, claim.owner]);
   }
+  async renew(claim: AgentInboxClaim): Promise<void> {
+    await this.connection.run(`UPDATE agent_inbox_messages SET lease_expires_at=now()+($3*interval '1 second')
+      WHERE message_id=ANY($1::text[]) AND lease_owner=$2 AND delivered_at IS NULL`, [claim.entries.map(e => e.envelope.ids.messageId) as unknown as string, claim.owner, LEASE_SECONDS]);
+  }
   async release(claim: AgentInboxClaim): Promise<void> {
     await this.connection.run(`UPDATE agent_inbox_messages SET lease_owner=NULL,lease_expires_at=NULL
       WHERE message_id=ANY($1::text[]) AND lease_owner=$2 AND delivered_at IS NULL`, [claim.entries.map(e => e.envelope.ids.messageId) as unknown as string, claim.owner]);
