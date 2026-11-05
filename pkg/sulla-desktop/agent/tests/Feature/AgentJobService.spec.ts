@@ -171,6 +171,67 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.jobs.get(created.jobId)?.results.map(result => result.output)).toEqual(['result-0', 'result-1']);
   });
 
+  it('preserves settlement when whole-job completion pauses mid-flight', async() => {
+    // risk: data accuracy — a stale whole-row completion must not erase a sibling settlement
+    const job = await registry.createJob([
+      { agentId: 'one', label: 'one', prompt: 'x', status: 'running' },
+      { agentId: 'two', label: 'two', prompt: 'x', status: 'running' },
+    ]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const completing = registry.completeJob(job.jobId, [
+      { label: 'one', status: 'completed', output: 'whole-one', threadId: '' },
+      { label: 'two', status: 'completed', output: 'whole-two', threadId: '' },
+    ]);
+    await didEnter;
+    const settling = registry.recordTaskCompletion(job.jobId, 1, { label: 'two', status: 'completed', output: 'settled-two', threadId: '' });
+    release(); await Promise.all([completing, settling]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.status).toBe('completed');
+    expect(durable?.results[1]?.output).toBe('settled-two');
+  });
+
+  it('preserves a targeted stop when a parallel task update is queued', async() => {
+    // risk: irreversible side effects — a late update must not resurrect intentionally stopped work
+    const job = await registry.createJob([
+      { agentId: 'one', label: 'one', prompt: 'x', status: 'running' },
+      { agentId: 'two', label: 'two', prompt: 'x', status: 'running' },
+    ]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const stopping = registry.stopJobTask(job.jobId, 0, StopPrincipal.human(), 'race stop');
+    await didEnter;
+    const updating = registry.updateJobTask(job.jobId, 0, { summary: 'late update', status: 'running' });
+    release(); await Promise.all([stopping, updating]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.tasks[0]).toMatchObject({ status: 'stopped', summary: 'late update', stopReason: 'race stop' });
+    expect(durable?.tasks[1].status).toBe('running');
+  });
+
+  it('preserves completion when liveness reconciliation pauses at its guarded write', async() => {
+    // risk: data accuracy — a stale reconciler must not erase a real completion
+    const startedAt = Date.now() - 1_200_000;
+    const job = await registry.createJob([{ agentId: 'race-lost', label: 'race', prompt: 'x', status: 'running', startedAt }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceStateIfActivityUnchanged.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceStateIfActivityUnchanged').mockImplementationOnce(async(...args) => { entered(); await paused; return original(...args) });
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    const reconciling = reconciler.reconcile(); await didEnter;
+    const completing = registry.recordTaskCompletion(job.jobId, 0, { label: 'race', status: 'completed', output: 'real completion', threadId: '' });
+    release(); await Promise.all([reconciling, completing]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.status).toBe('completed');
+    expect(durable?.tasks[0].completion?.output).toBe('real completion');
+  });
+
   it('refuses a lost transition when a check-in arrives after liveness observation', async() => {
     // risk: a worker check-in races the reconciler and live work is durably killed
     const jobId = `checkin-race-${ Date.now() }`;
