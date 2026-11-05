@@ -15,6 +15,8 @@ import type { LocalVaultAuthority } from '../../../../../../services/sulla-vault
 class EnrollmentRouteFixture {
   private server: http.Server | null = null;
   readonly commitCalls: unknown[] = [];
+  readonly approvalServiceId = 'sulla-desktop-approval';
+  readonly approvalServiceToken = 'approval_' + 'c'.repeat(64);
 
   async start(): Promise<string> {
     const database = { query: async() => ({ rows: [], rowCount: 0 }) } as unknown as Database;
@@ -34,8 +36,8 @@ class EnrollmentRouteFixture {
       bootstrapServiceToken: 'bootstrap_' + 'a'.repeat(64),
       controlServiceId: 'sulla-desktop-control',
       controlServiceToken: 'control_' + 'b'.repeat(64),
-      approvalServiceId: 'sulla-desktop-approval',
-      approvalServiceToken: 'approval_' + 'c'.repeat(64),
+      approvalServiceId: this.approvalServiceId,
+      approvalServiceToken: this.approvalServiceToken,
       brokerServiceId: 'sulla-tools',
       brokerServiceToken: 'broker_' + 'd'.repeat(64),
       filesServiceId: 'sulla-files',
@@ -59,14 +61,34 @@ describe('Vault enrollment routes', () => {
   let fixture: EnrollmentRouteFixture | undefined;
   afterEach(async() => fixture?.stop());
 
-  it('rejects an empty enrollment commit body without invoking authority logic', async() => {
-    // risk: malformed enrollment input must not become an internal error or mutate encrypted state
+  it('rejects unauthenticated enrollment commits with 401', async() => {
+    // risk: unauthenticated enrollment requests must not reach vault mutation logic
     fixture = new EnrollmentRouteFixture();
     const baseUrl = await fixture.start();
 
     const response = await fetch(`${ baseUrl }/v1/broker/sulla-cloud/enrollment-commit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_service_identity' });
+    expect(fixture.commitCalls).toEqual([]);
+  });
+
+  it('rejects an authenticated empty enrollment commit body with 400', async() => {
+    // risk: malformed enrollment input must not become an internal error or mutate encrypted state
+    fixture = new EnrollmentRouteFixture();
+    const baseUrl = await fixture.start();
+
+    const response = await fetch(`${ baseUrl }/v1/broker/sulla-cloud/enrollment-commit`, {
+      method: 'POST',
+      headers: {
+        'authorization': `Bearer ${ fixture.approvalServiceToken }`,
+        'content-type': 'application/json',
+        'x-sulla-service-id': fixture.approvalServiceId,
+      },
       body: '{}',
     });
 
