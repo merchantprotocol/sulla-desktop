@@ -41,6 +41,8 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
   failingListLabels = new Set<string>();
   inspectErrorIds = new Set<string>();
   removeErrorIds = new Set<string>();
+  onInspect?: (id: string, call: number) => void;
+  private inspectCalls = 0;
   /** When true, `list()` ignores the label filter — simulates a driver whose `ps --filter` can't be trusted. */
   ignoreListFilter = false;
 
@@ -60,6 +62,8 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
   }
 
   async inspect(id: string): Promise<any> {
+    this.inspectCalls += 1;
+    this.onInspect?.(id, this.inspectCalls);
     if (this.inspectErrorIds.has(id)) throw new Error(`inspect failed for ${ id }`);
     const container = this.containers.get(id);
     if (!container) throw new Error(`no such container: ${ id }`);
@@ -364,22 +368,61 @@ describe('ContainerRetentionPolicy', () => {
 
     expect(runtime.removeForceFlags).toEqual([false]);
   });
-  it('reaps expired and terminal-owner agent containers while preserving persistent running and unlabeled containers', async() => {
-    // risk: temporary containers outlive their job, while core services are accidentally reaped
+  it('reaps expired terminal agent containers while preserving live, parked, young unknown, persistent, and unrelated containers', async() => {
+    // risk: expiry kills a live worker or parked manager, or an unknown young owner is mistaken for an orphan
     const clock = new FakeClock(20_000_000);
     const runtime = new FakeContainerRuntimeDriver();
     const expires = Math.floor(clock.current / 1_000);
-    runtime.add(agentContainer({ id: 'expired', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'live', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
-    runtime.add(agentContainer({ id: 'terminal', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires + 1000), 'com.sulla.persistent': 'false' } }));
+    const old = new Date(clock.current - 25 * HOUR_MS).toISOString();
+    runtime.add(agentContainer({ id: 'expired-live', createdAt: old, labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'live', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'expired-parked', createdAt: old, labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'parked', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'expired-unknown-young', createdAt: new Date(clock.current - HOUR_MS).toISOString(), labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'missing', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'expired-terminal', createdAt: old, labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'terminal', createdAt: old, labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires + 1000), 'com.sulla.persistent': 'false' } }));
     runtime.add(agentContainer({ id: 'persistent', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires + 1000), 'com.sulla.persistent': 'true' } }));
     runtime.add(agentContainer({ id: 'postgres', labels: {}, status: 'running' }));
     const policy = new ContainerRetentionPolicy(runtime, new FakeDiskSpaceProbe([100 * 1024 ** 3]), clock, new FakeActiveContainerGuard(), new RetentionConfig(), {
-      status: async(jobId: string) => jobId === 'done' ? 'completed' : 'running',
+      status: async(jobId: string) => ({ done: 'completed', live: 'running', parked: 'parked' } as Record<string, string>)[jobId],
     });
     const report = await policy.enforce();
-    expect(report.removed.map(entry => [entry.id, entry.reason])).toEqual([['expired', 'expired'], ['terminal', 'terminal-owner']]);
+    expect(report.removed.map(entry => [entry.id, entry.reason])).toEqual([['expired-terminal', 'expired'], ['terminal', 'terminal-owner']]);
+    expect(runtime.get('expired-live')).toBeDefined();
+    expect(runtime.get('expired-parked')).toBeDefined();
+    expect(runtime.get('expired-unknown-young')).toBeDefined();
     expect(runtime.get('persistent')).toBeDefined();
     expect(runtime.get('postgres')).toBeDefined();
+  });
+
+  it('does not pressure-reap a live owner and rechecks a job that starts after inspection', async() => {
+    // risk: disk pressure or an inspect/remove race kills a live agent
+    const clock = new FakeClock(30 * HOUR_MS);
+    const runtime = new FakeContainerRuntimeDriver();
+    const labels = { 'com.sulla.owner': 'agent', 'com.sulla.expires-at': String(clock.current / 1_000 + 1000), 'com.sulla.persistent': 'false' };
+    runtime.add(agentContainer({ id: 'pressure-live', createdAt: new Date(0).toISOString(), labels: { ...labels, 'com.sulla.job-id': 'live' } }));
+    runtime.add(agentContainer({ id: 'race', createdAt: new Date(0).toISOString(), labels: { ...labels, 'com.sulla.job-id': 'race' } }));
+    let raceReads = 0;
+    const policy = new ContainerRetentionPolicy(runtime, new FakeDiskSpaceProbe([0, 0, 100 * 1024 ** 3]), clock, new FakeActiveContainerGuard(), new RetentionConfig(), {
+      status: async jobId => jobId === 'live' ? 'running' : (++raceReads === 1 ? 'completed' : 'running'),
+    });
+
+    const report = await policy.enforce();
+
+    expect(report.removed).toEqual([]);
+    expect(runtime.get('pressure-live')).toBeDefined();
+    expect(runtime.get('race')).toBeDefined();
+  });
+
+  it('keeps an expired container registered as an active launch', async() => {
+    // risk: a job record can lag while the launch registry already knows the container is active
+    const clock = new FakeClock(30 * HOUR_MS);
+    const runtime = new FakeContainerRuntimeDriver();
+    runtime.add(agentContainer({ id: 'launching', createdAt: new Date(0).toISOString(), labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': '1', 'com.sulla.persistent': 'false' } }));
+    const guard = new FakeActiveContainerGuard();
+    guard.activeIds.add('launching');
+    const policy = new ContainerRetentionPolicy(runtime, new FakeDiskSpaceProbe([100 * 1024 ** 3]), clock, guard, new RetentionConfig(), { status: async() => 'completed' });
+
+    expect((await policy.enforce()).removed).toEqual([]);
+    expect(runtime.get('launching')).toBeDefined();
   });
 
   it('still enforces failed-container retention when the agent-owner listing fails', async() => {
