@@ -3,158 +3,130 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * SleepPreventionService — shared, reference-counted sleep prevention for macOS.
- *
- * Uses `caffeinate -i -s` to prevent idle + system sleep and `pmset schedule wake`
- * to wake the Mac before a scheduled event.  Multiple callers (training, heartbeat,
- * etc.) can hold the lock simultaneously; the caffeinate process is only spawned once
- * and killed when the last holder releases.
- */
-
 import type { ChildProcess } from 'child_process';
 
-// ── State ──
+export type PowerSaveBlockerAdapter = Pick<import('electron').PowerSaveBlocker, 'start' | 'stop' | 'isStarted'>;
 
-let caffeinateProcess: ChildProcess | null = null;
-const activeHolders = new Set<string>();
-const chatActivityHolders = new Set<string>();
-let appSuspensionBlockerId: number | null = null;
+/** Owns each macOS sleep assertion so independent callers cannot release one another. */
+export class SleepPreventionService {
+  private caffeinateProcess: ChildProcess | null = null;
+  private readonly activeHolders = new Set<string>();
+  private readonly chatActivityHolders = new Set<string>();
+  private readonly relayHolders = new Set<string>();
+  private appSuspensionBlockerId: number | null = null;
 
-type PowerSaveBlocker = Pick<import('electron').PowerSaveBlocker, 'start' | 'stop' | 'isStarted'>;
-let powerSaveBlockerOverride: PowerSaveBlocker | null = null;
+  constructor(
+    private readonly powerSaveBlocker: PowerSaveBlockerAdapter,
+    private readonly platform = process.platform,
+    private readonly spawnProcess: typeof import('child_process').spawn = require('child_process').spawn,
+  ) {}
 
-/** Electron's blocker, loaded lazily so this module imports fine outside Electron. */
-function getPowerSaveBlocker(): PowerSaveBlocker {
-  if (powerSaveBlockerOverride) return powerSaveBlockerOverride;
-  return (require('electron') as typeof import('electron')).powerSaveBlocker;
-}
-
-/** Test seam: swap in a fake powerSaveBlocker (pass null to restore). */
-export function setPowerSaveBlockerForTests(blocker: PowerSaveBlocker | null): void {
-  powerSaveBlockerOverride = blocker;
-}
-
-// ── Caffeinate (sleep prevention) ──
-
-/**
- * Acquire sleep prevention for the given label.
- * Spawns `caffeinate -i -s` on the first call; subsequent calls just add the label.
- */
-export function startCaffeinate(label: string): void {
-  if (process.platform !== 'darwin') return;
-  activeHolders.add(label);
-
-  if (caffeinateProcess) {
-    console.log(`[SleepPrevention] +${ label } (holders: ${ [...activeHolders].join(', ') }) — caffeinate already running`);
-
-    return;
+  startCaffeinate(label: string): void {
+    if (this.platform !== 'darwin') return;
+    this.activeHolders.add(label);
+    if (this.caffeinateProcess) return;
+    try {
+      const proc = this.spawnProcess('caffeinate', ['-i', '-s'], { stdio: 'ignore', detached: true });
+      proc.unref();
+      this.caffeinateProcess = proc;
+      console.log(`[SleepPrevention] caffeinate started (PID ${ proc.pid }) — holder: ${ label }`);
+    } catch (err) {
+      console.error('[SleepPrevention] Failed to start caffeinate:', err);
+    }
   }
 
-  try {
-    const { spawn } = require('child_process') as typeof import('child_process');
-    const proc = spawn('caffeinate', ['-i', '-s'], {
-      stdio:    'ignore',
-      detached: true,
-    });
-
-    proc.unref();
-    caffeinateProcess = proc;
-    console.log(`[SleepPrevention] caffeinate started (PID ${ proc.pid }) — holder: ${ label }`);
-  } catch (err) {
-    console.error('[SleepPrevention] Failed to start caffeinate:', err);
-  }
-}
-
-/**
- * Release sleep prevention for the given label.
- * Kills the caffeinate process only when the last holder releases.
- */
-export function stopCaffeinate(label: string): void {
-  activeHolders.delete(label);
-
-  if (activeHolders.size > 0) {
-    console.log(`[SleepPrevention] -${ label } (remaining: ${ [...activeHolders].join(', ') }) — caffeinate stays`);
-
-    return;
+  stopCaffeinate(label: string): void {
+    this.activeHolders.delete(label);
+    if (this.activeHolders.size > 0 || !this.caffeinateProcess) return;
+    try { this.caffeinateProcess.kill(); } catch { /* already dead */ }
+    this.caffeinateProcess = null;
   }
 
-  if (!caffeinateProcess) return;
-  try {
-    caffeinateProcess.kill();
-    console.log(`[SleepPrevention] caffeinate stopped — last holder (${ label }) released`);
-  } catch { /* already dead */ }
-  caffeinateProcess = null;
-}
-
-/** Returns the set of labels currently holding sleep prevention. */
-export function getActiveHolders(): ReadonlySet<string> {
-  return activeHolders;
-}
-
-/**
- * Keep both macOS and Electron awake while chat work can still make progress.
- * Callers use stable, per-activity keys; duplicate acquire/release calls are
- * harmless and the two underlying assertions exist only while the set is non-empty.
- */
-export function acquireChatActivity(key: string): void {
-  if (!key || chatActivityHolders.has(key)) return;
-  chatActivityHolders.add(key);
-  if (chatActivityHolders.size > 1) {
-    console.log(`[SleepPrevention] +chat:${ key } (chat holders: ${ chatActivityHolders.size })`);
-    return;
+  acquireChatActivity(key: string): void {
+    if (!key || this.chatActivityHolders.has(key)) return;
+    this.chatActivityHolders.add(key);
+    if (this.chatActivityHolders.size === 1) this.startCaffeinate('chat-activity');
+    this.syncAppSuspensionBlocker(`chat:${ key } acquired`);
   }
 
-  startCaffeinate('chat-activity');
-  try {
-    appSuspensionBlockerId = getPowerSaveBlocker().start('prevent-app-suspension');
-    console.log(`[SleepPrevention] prevent-app-suspension started (ID ${ appSuspensionBlockerId }) — chat:${ key }`);
-  } catch (err) {
-    console.error('[SleepPrevention] Failed to start prevent-app-suspension:', err);
+  releaseChatActivity(key: string): void {
+    if (!this.chatActivityHolders.delete(key)) return;
+    if (this.chatActivityHolders.size === 0) this.stopCaffeinate('chat-activity');
+    this.syncAppSuspensionBlocker(`chat:${ key } released`);
+  }
+
+  /** Keep the Electron main loop live for an authenticated connected relay. */
+  acquireRelay(key: string): void {
+    if (!key || this.relayHolders.has(key)) return;
+    this.relayHolders.add(key);
+    this.syncAppSuspensionBlocker(`relay:${ key } acquired`);
+  }
+
+  releaseRelay(key: string): void {
+    if (!this.relayHolders.delete(key)) return;
+    this.syncAppSuspensionBlocker(`relay:${ key } released`);
+  }
+
+  releaseAll(): void {
+    for (const key of [...this.chatActivityHolders]) this.releaseChatActivity(key);
+    for (const key of [...this.relayHolders]) this.releaseRelay(key);
+  }
+
+  getActiveHolders(): ReadonlySet<string> { return this.activeHolders; }
+  getChatActivityHolders(): ReadonlySet<string> { return this.chatActivityHolders; }
+  getRelayHolders(): ReadonlySet<string> { return this.relayHolders; }
+
+  private syncAppSuspensionBlocker(reason: string): void {
+    if (this.platform !== 'darwin') return;
+    const holderCount = this.chatActivityHolders.size + this.relayHolders.size;
+    if (holderCount > 0 && this.appSuspensionBlockerId === null) {
+      try {
+        this.appSuspensionBlockerId = this.powerSaveBlocker.start('prevent-app-suspension');
+        console.log(`[SleepPrevention] prevent-app-suspension started (ID ${ this.appSuspensionBlockerId }) — ${ reason }`);
+      } catch (err) {
+        console.error('[SleepPrevention] Failed to start prevent-app-suspension:', err);
+      }
+      return;
+    }
+    if (holderCount > 0 || this.appSuspensionBlockerId === null) return;
+    const blockerId = this.appSuspensionBlockerId;
+    this.appSuspensionBlockerId = null;
+    try {
+      if (this.powerSaveBlocker.isStarted(blockerId)) this.powerSaveBlocker.stop(blockerId);
+      console.log(`[SleepPrevention] prevent-app-suspension stopped (ID ${ blockerId }) — ${ reason }`);
+    } catch (err) {
+      console.error('[SleepPrevention] Failed to stop prevent-app-suspension:', err);
+    }
   }
 }
 
-export function releaseChatActivity(key: string): void {
-  if (!chatActivityHolders.delete(key)) return;
-  if (chatActivityHolders.size > 0) {
-    console.log(`[SleepPrevention] -chat:${ key } (chat holders: ${ chatActivityHolders.size })`);
-    return;
+class ElectronPowerSaveBlockerAdapter implements PowerSaveBlockerAdapter {
+  start(type: 'prevent-app-suspension' | 'prevent-display-sleep'): number {
+    return (require('electron') as typeof import('electron')).powerSaveBlocker.start(type);
   }
-
-  stopCaffeinate('chat-activity');
-  if (appSuspensionBlockerId === null) return;
-  try {
-    const powerSaveBlocker = getPowerSaveBlocker();
-    if (powerSaveBlocker.isStarted(appSuspensionBlockerId)) powerSaveBlocker.stop(appSuspensionBlockerId);
-    console.log(`[SleepPrevention] prevent-app-suspension stopped (ID ${ appSuspensionBlockerId }) — last chat holder released`);
-  } catch (err) {
-    console.error('[SleepPrevention] Failed to stop prevent-app-suspension:', err);
+  stop(id: number): void {
+    (require('electron') as typeof import('electron')).powerSaveBlocker.stop(id);
   }
-  appSuspensionBlockerId = null;
+  isStarted(id: number): boolean {
+    return (require('electron') as typeof import('electron')).powerSaveBlocker.isStarted(id);
+  }
 }
 
-/** Release every chat assertion during app/service teardown. */
-export function releaseAllChatActivity(): void {
-  for (const key of [...chatActivityHolders]) releaseChatActivity(key);
-}
+const service = new SleepPreventionService(new ElectronPowerSaveBlockerAdapter());
 
-export function getChatActivityHolders(): ReadonlySet<string> {
-  return chatActivityHolders;
-}
+export const startCaffeinate = (label: string): void => service.startCaffeinate(label);
+export const stopCaffeinate = (label: string): void => service.stopCaffeinate(label);
+export const getActiveHolders = (): ReadonlySet<string> => service.getActiveHolders();
+export const acquireChatActivity = (key: string): void => service.acquireChatActivity(key);
+export const releaseChatActivity = (key: string): void => service.releaseChatActivity(key);
+export const releaseAllChatActivity = (): void => {
+  for (const key of [...service.getChatActivityHolders()]) service.releaseChatActivity(key);
+};
+export const getChatActivityHolders = (): ReadonlySet<string> => service.getChatActivityHolders();
+export const acquireRelayLiveness = (key: string): void => service.acquireRelay(key);
+export const releaseRelayLiveness = (key: string): void => service.releaseRelay(key);
+export const releaseAllSleepPrevention = (): void => service.releaseAll();
 
-// ── Wake scheduling (pmset) ──
-
-/**
- * Schedule a macOS wake event.
- * `pmset schedule wake` requires root privileges which we don't have, so this
- * stays a no-op. The actual "keep the operator standing" guarantee comes from
- * HeartbeatService holding a CONTINUOUS caffeinate -i -s for the whole enabled
- * lifetime (label 'heartbeat-standing'), which prevents the inter-cycle idle
- * sleep that this wake was meant to recover from. Remaining gap (needs root):
- * caffeinate -s only asserts on AC power and does not defeat clamshell sleep.
- *
- * This is a no-op — kept for API compatibility with callers.
- */
 export function scheduleWake(_targetDate: Date): void {
-  // No-op — pmset requires root, caffeinate handles sleep prevention
+  // No-op — pmset requires root, caffeinate handles sleep prevention.
 }
