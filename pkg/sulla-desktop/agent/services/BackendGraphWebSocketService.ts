@@ -207,6 +207,10 @@ export class BackendGraphWebSocketService {
     this.initialize();
   }
 
+  receiveAgentInbox(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
+    return this.agentInbox.receive(entry);
+  }
+
   private inboxThread(target: AgentInboxTarget): string | undefined {
     if (target.threadId && this.hasActiveRun(target.channel, target.threadId)) return target.threadId;
     const prefix = `${ target.channel }|`;

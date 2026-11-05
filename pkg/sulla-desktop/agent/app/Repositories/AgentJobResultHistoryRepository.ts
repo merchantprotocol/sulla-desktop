@@ -24,10 +24,7 @@ export class AgentJobResultHistoryRepository extends Repository<AgentJobModel> {
     await this.connection.run(`INSERT INTO agent_job_result_history
       (job_id, task_index, generation, task_status, result, completion, summary)
       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
-      ON CONFLICT (job_id, task_index, generation) DO UPDATE SET
-        task_status = EXCLUDED.task_status, result = EXCLUDED.result,
-        completion = EXCLUDED.completion, summary = EXCLUDED.summary,
-        recorded_at = now()`, [record.jobId, record.taskIndex, record.generation, record.taskStatus,
+      ON CONFLICT (job_id, task_index, generation) DO NOTHING`, [record.jobId, record.taskIndex, record.generation, record.taskStatus,
       JSON.stringify(record.result ?? null), JSON.stringify(record.completion ?? null), record.summary ?? null]);
   }
 

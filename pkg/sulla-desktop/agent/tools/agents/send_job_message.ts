@@ -7,6 +7,42 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob } from './jobRegistry';
+import { completeJob, recordTaskCompletion } from './jobRegistry';
+import { deliverJobCompletion } from './jobDelivery';
+import { AgentTaskReopenService, type AgentTaskReopenSettlement } from '../../app/Services/AgentTaskReopenService';
+import { AgentJobResultHistoryRepository } from '../../app/Repositories/AgentJobResultHistoryRepository';
+import { DesktopPostgresConnection } from '../../app/Database/DesktopPostgresConnection';
+import { postgresClient } from '../../database/PostgresClient';
+import { SystemClock } from '@sulla/foundation';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { hiddenAgentTaskRunnerRegistry } from '../../services/HiddenAgentTaskRunner';
+import type { AgentJobResult } from './jobRegistry';
+
+class ReopenedTaskSettlement implements AgentTaskReopenSettlement {
+  async settle(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
+    await recordTaskCompletion(jobId, taskIndex, result);
+    const job = await getJob(jobId);
+    if (!job) return;
+    await completeJob(jobId, job.tasks.map((task, index) => index === taskIndex ? result : task.completion).filter(Boolean) as AgentJobResult[]);
+    const settled = await getJob(jobId);
+    if (settled) await deliverJobCompletion(settled, [result], taskIndex, result.status === 'error' ? result.output : undefined);
+  }
+
+  async fail(jobId: string, taskIndex: number, error: Error): Promise<void> {
+    await this.settle(jobId, taskIndex, { label: `task-${ taskIndex }`, status: 'error', output: `Reopen failed: ${ error.message }`, threadId: '' });
+  }
+}
+
+const refusalText: Record<string, string> = {
+  stopped: 'stopped tasks cannot be reopened; launch a new task',
+  failed: 'failed tasks cannot be reopened because replay could duplicate side effects',
+  limit_reached: 'this task reached the maximum of 5 reopens',
+  active_lease: 'this task is already reopening',
+  already_reopening: 'another message already reopened this task; your message was queued for that generation',
+  missing_runner: 'the original runtime session is unavailable; launch a new task',
+  not_finished: 'the task is not finished',
+  not_found: 'the task does not exist',
+};
 
 /**
  * Persist a message for one or all open tasks of a job and deliver it.
@@ -25,6 +61,24 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
 
   const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
   if (targets.length === 0) {
+    if (taskIndex !== undefined) {
+      const job = await getJob(jobId);
+      const task = job?.tasks[taskIndex];
+      if (job && task) {
+        const backend = (await import('../../services/BackendGraphWebSocketService')).getBackendGraphWebSocketService();
+        const reopen = new AgentTaskReopenService(
+          agentJobProvider.jobs,
+          new AgentJobResultHistoryRepository(new DesktopPostgresConnection(postgresClient)),
+          { receive: entry => backend.receiveAgentInbox(entry) },
+          hiddenAgentTaskRunnerRegistry,
+          new SystemClock(),
+          new ReopenedTaskSettlement(),
+        );
+        const outcome = await reopen.reopen(jobId, taskIndex, message, job.parentAgentId ?? job.parentChannel ?? 'manager');
+        if (outcome.reopened) return { successBoolean: true, responseString: JSON.stringify({ jobId, targetedTasks: [taskIndex], reopenedGeneration: outcome.generation }, null, 2) };
+        return { successBoolean: false, responseString: refusalText[outcome.reason] ?? `Task cannot be reopened (${ outcome.reason }).` };
+      }
+    }
     return {
       successBoolean: false,
       responseString: taskIndex === undefined

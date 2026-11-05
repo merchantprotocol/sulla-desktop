@@ -23,6 +23,7 @@ export interface PendingCompletion {
   terminal?: AgentTerminalNotice;
   notice?: string;
   dedupeKey?: string;
+  generation?: number;
 }
 
 interface Inbox {
@@ -42,8 +43,8 @@ export class CompletionInboxStore {
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
-    const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
-    const duplicate = inbox.entries.some(entry => (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
+    const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }:${ completion.generation ?? 1 }`;
+    const duplicate = inbox.entries.some(entry => (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }:${ entry.generation ?? 1 }`) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
     if (!inbox.stopped && !duplicate) this.idleDispatcher?.(channel, threadId);

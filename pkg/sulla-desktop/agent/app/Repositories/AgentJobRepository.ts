@@ -73,10 +73,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END,
         CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END,
         CASE WHEN $10::bigint IS NULL THEN NULL ELSE to_timestamp($10 / 1000.0) END)
-      ON CONFLICT (job_id, task_index, generation) DO UPDATE SET
-        task_status = EXCLUDED.task_status, result = EXCLUDED.result, completion = EXCLUDED.completion,
-        summary = EXCLUDED.summary, returned_at = EXCLUDED.returned_at, finished_at = EXCLUDED.finished_at,
-        completion_delivered_at = EXCLUDED.completion_delivered_at, recorded_at = now()
+      ON CONFLICT (job_id, task_index, generation) DO NOTHING
     ) UPDATE agent_jobs SET tasks = $11::jsonb, results = $12::jsonb WHERE job_id = $1`,
     [jobId, taskIndex, generation, task?.status ?? 'error', JSON.stringify(task?.result ?? null),
       JSON.stringify(task?.completion ?? results[taskIndex] ?? null), task?.summary ?? null, task?.returnedAt ?? null,
@@ -121,6 +118,13 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         jsonb_build_object('status', 'running', 'generation', claimed.generation, 'reopenCount', claimed.reopen_count, 'reopenLeaseId', claimed.lease_id), false)
       FROM claimed WHERE j.job_id = $1 RETURNING claimed.generation, claimed.lease_id`, [jobId, taskIndex, expectedGeneration, leaseId]);
     return rows[0] ? { generation: Number(rows[0].generation), leaseId: String(rows[0].lease_id) } : undefined;
+  }
+
+  async releaseReopenLease(jobId: string, taskIndex: number, generation: number, leaseId: string): Promise<boolean> {
+    const row = await this.connection.first(`UPDATE agent_job_task_reopens SET lease_id = NULL, lease_acquired_at = NULL, updated_at = now()
+      WHERE job_id = $1 AND task_index = $2 AND generation = $3 AND lease_id = $4 RETURNING job_id`,
+    [jobId, taskIndex, generation, leaseId]);
+    return Boolean(row);
   }
 
   async recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined> {

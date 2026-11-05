@@ -55,7 +55,7 @@ import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
-import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { HiddenAgentTaskRunner, hiddenAgentTaskRunnerRegistry } from '../../services/HiddenAgentTaskRunner';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -538,6 +538,7 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.workflowParentChannel = parentChannel;
         subState.metadata.delegatedJobId = activityJobId;
         subState.metadata.delegatedTaskIndex = index;
+        subState.metadata.delegatedGeneration = input.generation;
         subState.metadata.managerAgentId = parentAgentId || parentChannel;
         subState.metadata.managerThreadId = parentThreadId;
         // While this runner drives the graph, a human typing into the thread
@@ -851,6 +852,7 @@ export class SpawnAgentWorker extends BaseTool {
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       activityJobId = job.jobId;
+      for (let index = 0; index < tasks.length; index++) hiddenAgentTaskRunnerRegistry.register(job.jobId, index, taskRunner);
       for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(job.jobId, index)!;
 
       // A job whose whole agent tree goes silent is dead: stop it (which hands

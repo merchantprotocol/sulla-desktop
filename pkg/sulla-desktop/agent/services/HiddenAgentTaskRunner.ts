@@ -29,3 +29,14 @@ export class HiddenAgentTaskRunner implements ReopenableTaskRunner {
     return this.execution.execute(input);
   }
 }
+
+/** Process-local custody of the reusable executor for a persisted hidden task. */
+export class HiddenAgentTaskRunnerRegistry {
+  private readonly runners = new Map<string, ReopenableTaskRunner>();
+
+  register(jobId: string, taskIndex: number, runner: ReopenableTaskRunner): void { this.runners.set(this.key(jobId, taskIndex), runner); }
+  find(jobId: string, taskIndex: number): ReopenableTaskRunner | undefined { return this.runners.get(this.key(jobId, taskIndex)); }
+  private key(jobId: string, taskIndex: number): string { return `${ jobId }:${ taskIndex }`; }
+}
+
+export const hiddenAgentTaskRunnerRegistry = new HiddenAgentTaskRunnerRegistry();

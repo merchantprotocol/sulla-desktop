@@ -40,6 +40,9 @@ export class ReturnResultWorker extends BaseTool {
       return { successBoolean: false, responseString: `Only the child thread that owns contract "${ requested }" can return it.` };
     }
     const task = job.tasks[taskIndex];
+    const callerGeneration = Number(this.state?.metadata?.delegatedGeneration ?? task.generation ?? 1);
+    const currentGeneration = task.generation ?? 1;
+    if (callerGeneration !== currentGeneration) return { successBoolean: false, responseString: `Stale generation ${ callerGeneration } cannot return into generation ${ currentGeneration }.` };
     if (task.returnedAt) return { successBoolean: false, responseString: `Job ${ job.jobId } already returned its contract.` };
     if (!['running', 'parked'].includes(job.status)) return { successBoolean: false, responseString: `Job ${ job.jobId } is ${ job.status }; it no longer accepts a return.` };
 

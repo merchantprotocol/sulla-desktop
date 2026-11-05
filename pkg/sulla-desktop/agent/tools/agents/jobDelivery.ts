@@ -87,10 +87,11 @@ export async function wakeParentGraph(
   failureReason?: string,
   taskIndex = 0,
   terminal?: AgentTerminalNotice,
+  generation = 1,
 ): Promise<boolean> {
   if (!parentThreadId) return false;
 
-  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, taskIndex, results, failureReason, terminal });
+  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, taskIndex, results, failureReason, terminal, generation });
 }
 
 // ─── Proactive completion card ───────────────────────────────────
@@ -188,7 +189,7 @@ export class JobCompletionDelivery {
     }
     const channel = job.parentChannel || 'sulla-desktop';
     await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal);
-    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex, terminal);
+    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex, terminal, job.tasks[taskIndex]?.generation ?? 1);
   }
 }
 
