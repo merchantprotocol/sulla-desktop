@@ -526,4 +526,33 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     ]);
   });
 
+  it('o) preserves simultaneous child results and an orchestrator message for one parked-manager turn', async() => {
+    // risk: same-boundary inputs overwrite each other or schedule duplicate
+    // turns, making a manager miss either worker output or new direction.
+    const managerThreadId = 'boundary-o-manager-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'boundary-o-root-thread',
+    );
+    await registry.parkJobTask(manager.jobId, 0, 2);
+    const children = await Promise.all(['a', 'b'].map(suffix => registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: `worker-${ suffix }`, prompt: 'build', status: 'running', threadId: `boundary-o-child-${ suffix }`, depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    )));
+    const results = children.map((child, index) => [{ label: `worker-${ index }`, status: 'completed' as const, output: `result-${ index }`, threadId: child.tasks[0].threadId! }]);
+    await Promise.all(children.map((child, index) => registry.completeJob(child.jobId, results[index])));
+
+    const [, , message] = await Promise.all([
+      jobDelivery.deliverJobCompletion(await registry.getJob(children[0].jobId) as any, results[0]),
+      jobDelivery.deliverJobCompletion(await registry.getJob(children[1].jobId) as any, results[1]),
+      sendJobMessage({ jobId: manager.jobId, message: 'also include the release note' }),
+    ]);
+
+    expect(message.successBoolean).toBe(true);
+    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId).map(entry => entry.jobId).sort())
+      .toEqual(children.map(child => child.jobId).sort());
+    expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread(managerThreadId)).toHaveLength(1);
+    expect(wakeParkedAgent).toHaveBeenCalledTimes(1);
+  });
+
 });
