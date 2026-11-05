@@ -32,6 +32,7 @@ describe('SpawnDedupeGuard', () => {
     expect(creates).toBe(1); // risk: duplicate worker execution
     expect(first.value.id).toBe(second.value.id);
     expect(second.deduplicated).toBe(true);
+    expect(guard.activeKeyCount).toBe(0);
   });
 
   it('does not reuse an absent label, a different key, or a job older than 30 seconds', async() => {
@@ -45,7 +46,17 @@ describe('SpawnDedupeGuard', () => {
     await guard.run('other-parent\\0worker', find, create);
     expect(creates).toBe(2); // risk: parent/label isolation
 
-    expect(guard.isEligible({ createdAt: clock.nowMs - 30_001, status: 'running' })).toBe(false); // risk: stale retry
+    expect(guard.isEligible({ createdAt: clock.nowMs - 29_999, status: 'running' })).toBe(true); // risk: retry boundary
+    expect(guard.isEligible({ createdAt: clock.nowMs - 30_000, status: 'running' })).toBe(false);
     expect(guard.isEligible({ createdAt: clock.nowMs, status: 'stopped' })).toBe(false); // risk: stopped job resurrection
+    expect(guard.activeKeyCount).toBe(0);
+  });
+
+  it('cleans mutex keys after reuse and failure', async() => {
+    const guard = new SpawnDedupeGuard(new TestClock(100_000) as any);
+    await guard.run('reuse', async() => ({ id: 1 }), async() => ({ id: 2 }));
+    expect(guard.activeKeyCount).toBe(0); // risk: unbounded process memory
+    await expect(guard.run('failure', async() => undefined, async() => { throw new Error('boom') })).rejects.toThrow('boom');
+    expect(guard.activeKeyCount).toBe(0);
   });
 });

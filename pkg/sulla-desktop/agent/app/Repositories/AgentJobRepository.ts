@@ -70,7 +70,8 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       WHERE (($1::text IS NOT NULL AND parent_thread_id = $1) OR ($1::text IS NULL AND parent_thread_id IS NULL AND parent_agent_id = $2))
         AND created_at >= to_timestamp($3 / 1000.0)
         AND status <> 'stopped'
-        AND tasks @> jsonb_build_array(jsonb_build_object('label', $4::text))
+        AND jsonb_array_length(tasks) = 1
+        AND tasks -> 0 ->> 'label' = $4
       ORDER BY created_at DESC LIMIT 1`, [parentThreadId ?? null, parentAgentId ?? null, since, label]);
     return rows[0] ? this.map(rows[0]) : undefined;
   }

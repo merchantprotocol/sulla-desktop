@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { Clock } from '@sulla/foundation';
-import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { JobAbortScope } from './JobAbortScope';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
@@ -11,9 +10,14 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import type { AgentJob, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 
+export interface SpawnJobRepository {
+  recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined>;
+  insertJob(job: AgentJob): Promise<void>;
+}
+
 /** Creates durable jobs and serializes labeled spawn retries. */
 export class SpawnJobCreator {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly ids: JobIdGenerator, private readonly dedupe: SpawnDedupeGuard) {}
+  constructor(private readonly repository: SpawnJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly ids: JobIdGenerator, private readonly dedupe: SpawnDedupeGuard) {}
 
   async create(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
     await this.recovery.ensureHydrated();
@@ -29,7 +33,9 @@ export class SpawnJobCreator {
     if (!label) return undefined;
     const since = this.clock.now().getTime() - SpawnDedupeGuard.WINDOW_MS;
     const cached = Array.from(this.runtime.jobs.values()).find(job => job.tasks.length === 1 && job.parentThreadId === parentThreadId && (parentThreadId || job.parentAgentId === parentAgentId) && job.tasks[0].label === label && this.dedupe.isEligible(job));
-    return cached ?? this.repository.recentSpawnJob(parentThreadId, parentAgentId, label, since);
+    if (cached) return cached;
+    const persisted = await this.repository.recentSpawnJob(parentThreadId, parentAgentId, label, since);
+    return persisted && this.dedupe.isEligible(persisted) ? persisted : undefined;
   }
 
   private async insert(tasks: AgentJobTask[], parentChannel: string | undefined, parentThreadId: string | undefined, options: CreateJobOptions): Promise<AgentJob> {
