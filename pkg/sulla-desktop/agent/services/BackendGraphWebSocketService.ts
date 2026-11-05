@@ -32,6 +32,10 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
+import { AgentInbox, type AgentInboxEntry, type AgentInboxTarget } from './AgentInbox';
+import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
+import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
+import { postgresClient } from '../database/PostgresClient';
 import { markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -75,6 +79,7 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+  private readonly agentInbox: AgentInbox;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
   private prepareFreshTurn(state: AgentGraphState): void {
@@ -184,8 +189,33 @@ export class BackendGraphWebSocketService {
   }
 
   constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
+    const repository = new PostgresAgentInboxRepository(new DesktopPostgresConnection(postgresClient));
+    this.agentInbox = new AgentInbox(repository, {
+      isRunning: target => this.inboxThread(target) !== undefined,
+      wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
+    });
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
+  }
+
+  private inboxThread(target: AgentInboxTarget): string | undefined {
+    if (target.threadId && this.hasActiveRun(target.channel, target.threadId)) return target.threadId;
+    const prefix = `${ target.channel }|`;
+    return [...this.activeAborts.keys()].find(key => key.startsWith(prefix))?.slice(prefix.length);
+  }
+
+  private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<void> {
+    const threadId = target.threadId || this.inboxThread(target);
+    await this.dispatchToAgent(
+      target.channel,
+      target.channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+      batch,
+      threadId,
+      undefined,
+      undefined,
+      'system',
+      { source: 'agent_inbox', inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId) },
+    );
   }
 
   /**
@@ -495,6 +525,18 @@ export class BackendGraphWebSocketService {
       }
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       setCompletionInboxStopped(channelId, stopThreadId, true);
+      return;
+    }
+
+    if (msg.type === 'agent_inbox_message') {
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const envelope = data?.envelope;
+      if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
+      const runningThread = this.inboxThread({ channel: channelId });
+      await this.agentInbox.receive({
+        envelope,
+        target: { channel: channelId, threadId: runningThread },
+      });
       return;
     }
 
@@ -975,6 +1017,10 @@ export class BackendGraphWebSocketService {
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
+
+        // Error, abort and success all release queued peer messages as one follow-up batch.
+        void this.agentInbox.flush({ channel: channelId, threadId })
+          .catch(err => console.error('[BackendGraphWS] Failed to flush agent inbox:', err));
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this
