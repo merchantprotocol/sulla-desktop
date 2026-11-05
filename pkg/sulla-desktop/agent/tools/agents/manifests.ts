@@ -123,6 +123,31 @@ export const agentToolManifests: ToolManifest[] = [
     loader:         () => import('./report_progress'),
   },
   {
+    name:        'reassign_job',
+    description: 'Transfer custody of a running agent job or one task to yourself, a live agent channel, or a live delegated thread. Results, blockers, authority, and undelivered inbox items follow the new owner.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to transfer.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      to: { type: 'string', description: '"me", a live agent channel, or a delegated thread id.' },
+      reason: { type: 'string', description: 'Audit reason for the custody change.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./reassign_job'),
+  },
+  {
+    name:        'adopt_job',
+    description: 'Adopt custody of a job or task into the calling agent/thread. Allowed for the current owner, its ancestors, the human, or when the old owner is dead or stranded.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to adopt.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      reason: { type: 'string', description: 'Audit reason for the adoption.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./adopt_job'),
+  },
+  {
     name:        'stop_agent_job',
     description: 'Stop one task or a whole delegated job. Pass taskIndex to target one task; omit it to stop every running task in the job. mode "hard" aborts cooperatively after the current LLM/tool call, while mode "wrap_up" first asks the target for a partial contract and hard-stops it after the grace period. Use for misfired, duplicate, stalled, or obsolete work; check_agent_jobs confirms settlement as \'stopped\'.',
     category:    'agents',
