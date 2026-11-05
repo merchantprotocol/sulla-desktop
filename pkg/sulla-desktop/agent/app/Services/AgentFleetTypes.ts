@@ -31,6 +31,7 @@ export interface FleetTaskView {
   latestCheckin: FleetCheckinView | null;
   wakeAt?: string | null;
   stranded?: { stateKey: string; detectedAt: number; reason: string; alertedAt: number } | null;
+  promotedToTab?: boolean;
   result?: unknown;
   completion?: unknown;
 }
@@ -47,6 +48,7 @@ export interface FleetJobView {
   parentTaskIndex: number | null;
   rootThreadId: string | null;
   tasks: FleetTaskView[];
+  waitingOnChildren?: number;
   results?: Array<{ status?: string; output?: unknown; result?: unknown }>;
   error?: string;
 }

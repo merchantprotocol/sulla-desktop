@@ -112,6 +112,7 @@ export class AgentFleetProjectionService {
   private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false): FleetTaskView {
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
+    // TODO(#1991): include authoritative model/tool RunActivity in the state projection.
     const lastActivityAt = Math.max(startedAt, latestCheckin?.createdAt ?? 0, task.finishedAt ?? 0, task.returnedAt ?? 0);
     return {
       taskIndex,
@@ -120,6 +121,7 @@ export class AgentFleetProjectionService {
       taskId: task.taskId,
       status: task.status,
       visibility: task.visibility ?? job.visibility ?? 'hidden',
+      promotedToTab: task.promotedToTab === true,
       contract: task.contract?.name ?? 'result',
       returned: !!task.returnedAt,
       startedAt: new Date(startedAt).toISOString(),

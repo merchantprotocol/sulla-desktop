@@ -24,14 +24,30 @@ export class AgentFleetTreeFormatter {
   constructor(private readonly prs: PullRequestReferenceExtractor, private readonly now: () => number = Date.now) {}
 
   format(jobs: FleetJobView[]): { count: number; tasks: FleetTreeLine[] } {
-    const byId = new Map(jobs.map(job => [job.jobId, job]));
-    const depth = (job: FleetJobView): number => {
-      let value = 0; let cursor: FleetJobView | undefined = job; const seen = new Set<string>();
-      while (cursor?.parentJobId && !seen.has(cursor.jobId)) { seen.add(cursor.jobId); value++; cursor = byId.get(cursor.parentJobId); }
-      return value;
-    };
     const ordered = [...jobs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.jobId.localeCompare(b.jobId));
-    const tasks = ordered.flatMap(job => job.tasks.map(task => this.line(job, task, depth(job))));
+    const byId = new Map(ordered.map(job => [job.jobId, job]));
+    const children = new Map<string, FleetJobView[]>();
+    for (const job of ordered) {
+      if (!job.parentJobId || job.parentTaskIndex === null || !byId.has(job.parentJobId)) continue;
+      const key = `${ job.parentJobId }#${ job.parentTaskIndex }`;
+      children.set(key, [...(children.get(key) ?? []), job]);
+    }
+    const tasks: FleetTreeLine[] = [];
+    const emitted = new Set<string>();
+    const active = new Set<string>();
+    const visit = (job: FleetJobView, depth: number): void => {
+      if (emitted.has(job.jobId) || active.has(job.jobId)) return;
+      active.add(job.jobId);
+      for (const task of [...job.tasks].sort((a, b) => a.taskIndex - b.taskIndex)) {
+        tasks.push(this.line(job, task, depth));
+        for (const child of children.get(`${ job.jobId }#${ task.taskIndex }`) ?? []) visit(child, depth + 1);
+      }
+      active.delete(job.jobId);
+      emitted.add(job.jobId);
+    };
+    for (const root of ordered.filter(job => !job.parentJobId || !byId.has(job.parentJobId))) visit(root, 0);
+    // Cycles have no root. Emit each remaining component once, at root depth.
+    for (const orphanOrCycle of ordered) visit(orphanOrCycle, 0);
     return { count: tasks.length, tasks };
   }
 
