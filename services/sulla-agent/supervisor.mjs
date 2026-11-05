@@ -4,11 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { spawn } from 'node:child_process';
-
-import { CodexHomePolicy } from './codex-home-policy.mjs';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
+
+import { CodexHomePolicy } from './codex-home-policy.mjs';
 
 const provider = process.env.SULLA_AGENT_PROVIDER || '';
 const model = process.env.SULLA_AGENT_MODEL || '';
@@ -164,7 +164,7 @@ function commonCodexArgs(resume = false) {
 }
 
 function launchCodex(prompt, resume = false) {
-  codexHomePolicy.configure();
+  try { codexHomePolicy.configure(); } catch (error) { process.stderr.write(`codex plugin config: ${ error.message }\n`); }
   child = spawn('codex', commonCodexArgs(resume), { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdout.on('data', emit);
   child.stderr.on('data', data => process.stderr.write(data));

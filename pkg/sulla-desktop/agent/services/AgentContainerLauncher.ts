@@ -998,8 +998,8 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
   private async configureCodexHome(): Promise<void> {
     await guestExec([
       'docker', 'exec', this.options.containerName, '/bin/sh', '-c',
-      'set -eu; codex features disable plugins >/dev/null; codex features disable remote_plugin >/dev/null',
-    ]);
+      'codex features disable plugins >/dev/null; codex features disable remote_plugin >/dev/null',
+    ]).catch(error => log.warn(`[AgentContainer] Codex plugin config failed: ${ (error as Error)?.message ?? error }`));
   }
 
   private cleanupCodexPluginTemp(): void {
