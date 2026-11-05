@@ -91,7 +91,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     await expect(registry.recordTaskReturn(job.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('already returned');
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stop', prompt: 'work', status: 'running' }]);
     expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
-    expect(registry.getJobAbortSignal(stopped.jobId)?.aborted).toBe(true);
+    expect(registry.getTaskAbortSignal(stopped.jobId, 0)?.aborted).toBe(true);
     expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
     expect(registry.abortJob('missing', StopPrincipal.human(), 'test stop')).toBe('not-found');
     await expect(registry.recordTaskReturn(stopped.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('no longer accepts');

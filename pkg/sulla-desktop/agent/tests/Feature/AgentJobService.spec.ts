@@ -72,6 +72,22 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect((await registry.getJob(grandchild.jobId))?.stopReason).toBe('test stop');
     expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
   });
+  it('stops one task without aborting its sibling and settles the job only after all tasks stop', async() => {
+    // risk: lifecycle isolation — a targeted stop must not kill unrelated sibling work.
+    const job = await registry.createJob([
+      { agentId: 'worker', label: 'first', prompt: 'x', status: 'running', threadId: 'first-thread' },
+      { agentId: 'worker', label: 'second', prompt: 'x', status: 'running', threadId: 'second-thread' },
+    ]);
+    const firstSignal = registry.getTaskAbortSignal(job.jobId, 0)!;
+    const secondSignal = registry.getTaskAbortSignal(job.jobId, 1)!;
+    expect(await registry.stopJobTask(job.jobId, 0, StopPrincipal.human(), 'targeted stop')).toBe('stopped');
+    expect(firstSignal.aborted).toBe(true);
+    expect(secondSignal.aborted).toBe(false);
+    expect((await registry.getJob(job.jobId))?.status).toBe('running');
+    expect((await registry.getJob(job.jobId))?.tasks.map(task => task.status)).toEqual(['stopped', 'running']);
+    expect(await registry.stopJobTask(job.jobId, 1, StopPrincipal.human(), 'targeted stop')).toBe('stopped');
+    expect((await registry.getJob(job.jobId))?.status).toBe('stopped');
+  });
   it('acknowledges completion delivery once even when retried', async() => {
     // risk: duplicate irreversible side effect
     const job = await registry.createJob(0, 'parent', 'parent-thread');

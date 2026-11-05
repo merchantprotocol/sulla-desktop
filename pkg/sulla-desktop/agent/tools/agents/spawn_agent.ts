@@ -22,7 +22,7 @@ import {
   createJob,
   failJob,
   getJob,
-  getJobAbortSignal,
+  getTaskAbortSignal,
   markCompletionDelivered,
   markTaskCompletionDelivered,
   recordTaskCompletion,
@@ -426,7 +426,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // Abort signal for THIS job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
-    let jobAbortSignal: AbortSignal | undefined;
+    const taskAbortSignals: AbortSignal[] = [];
     // Set once a job exists; its id is the dead-run activity key for the job.
     let activityJobId: string | undefined;
     // Delegation-log row per task index, so delivery can be recorded later.
@@ -438,6 +438,7 @@ export class SpawnAgentWorker extends BaseTool {
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
+      const taskAbortSignal = taskAbortSignals[index];
       const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
       delegationIds[index] = delegationId;
@@ -524,7 +525,7 @@ export class SpawnAgentWorker extends BaseTool {
         // Fire-and-forget children outlive a superseded parent turn. Their
         // durable job abort is fired by stop_agent_job and by an explicit
         // stop_run on the parent thread. Synchronous children remain coupled.
-        const combined = childAbortForJob(async_, parentAbort, jobAbortSignal);
+        const combined = childAbortForJob(async_, parentAbort, taskAbortSignal);
 
         if (combined) {
           subState.metadata.options ??= {};
@@ -558,7 +559,7 @@ export class SpawnAgentWorker extends BaseTool {
             model: subState.metadata.agent?.model,
             workspacePath: task.workspacePath,
             state: subState,
-            signal: combined?.signal ?? jobAbortSignal,
+            signal: combined?.signal ?? taskAbortSignal,
           });
         }
 
@@ -573,11 +574,11 @@ export class SpawnAgentWorker extends BaseTool {
         // completion/message delivery wakes this exact thread and the same
         // graph executes the queued input as its next turn.
         let returned = await returnedTask();
-        while (!returned && activityJobId && jobAbortSignal?.aborted !== true &&
+        while (!returned && activityJobId && taskAbortSignal?.aborted !== true &&
           await agentJobLifecycle.parkWhenWaiting(activityJobId, index, threadId)) {
           subState.metadata.delegatedRunActive = false;
-          await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
-          if (jobAbortSignal?.aborted) break;
+          await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
+          if (taskAbortSignal?.aborted) break;
           returned = await returnedTask();
           if (returned) break;
           await agentJobLifecycle.resume(activityJobId, index);
@@ -615,7 +616,7 @@ export class SpawnAgentWorker extends BaseTool {
 
         // A caller schema means free text is not an answer: remind once, but
         // only after the manager has no open child dependency left.
-        if (!returned && contract.schema && jobAbortSignal?.aborted !== true) {
+        if (!returned && contract.schema && taskAbortSignal?.aborted !== true) {
           subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
           finalState = await executeGraph();
           returned = await returnedTask();
@@ -663,7 +664,7 @@ export class SpawnAgentWorker extends BaseTool {
           return taskResult;
         }
         const output = `Error: ${ (err as Error).message }`;
-        const stopped = jobAbortSignal?.aborted === true;
+        const stopped = taskAbortSignal?.aborted === true;
         await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `${ stopped ? 'stopped' : 'error' }: ${ output }` });
         if (activityJobId) {
           await updateJobTask(activityJobId, index, { status: stopped ? 'stopped' : 'error', threadId, finishedAt: Date.now() });
@@ -754,8 +755,8 @@ export class SpawnAgentWorker extends BaseTool {
       const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
-      jobAbortSignal = getJobAbortSignal(job.jobId);
       activityJobId = job.jobId;
+      for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(job.jobId, index)!;
 
       // A job whose whole agent tree goes silent is dead: stop it (which hands
       // back any task it owns) and tell the parent, instead of waiting forever
@@ -806,8 +807,8 @@ export class SpawnAgentWorker extends BaseTool {
     const syncJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
     let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
-    jobAbortSignal = getJobAbortSignal(jobId);
     activityJobId = jobId;
+    for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(jobId, index)!;
     // Stopping a dead job hands its tasks back even if the hung call never returns.
     stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
       if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);

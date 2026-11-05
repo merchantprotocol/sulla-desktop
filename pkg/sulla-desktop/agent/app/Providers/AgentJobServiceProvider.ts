@@ -11,6 +11,8 @@ import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
 import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
 import { JobTaskLocator } from '../Services/JobTaskLocator';
+import { JobStopService } from '../Services/JobStopService';
+import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 
@@ -20,6 +22,7 @@ export class AgentJobServiceProvider {
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
   readonly delivery: JobCompletionDelivery;
+  readonly wrapUp: JobWrapUpService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -29,7 +32,10 @@ export class AgentJobServiceProvider {
     this.runtime = new JobRuntimeRegistry();
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator);
+    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
+    const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
+    this.wrapUp = new JobWrapUpService(stops, messages);
+    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
     this.delivery = new JobCompletionDelivery(this.service);
   }
 }
