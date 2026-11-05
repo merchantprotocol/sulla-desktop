@@ -15,11 +15,15 @@
 //   record  sulla-vault-sync-record v1   one item/folder (or tombstone), MAC binds generation
 //   head    sulla-vault-sync-head   v1   per-scope seq + hash of every record, MAC'd
 //
+// TEMP until @sulla/domain v0.2.1 sealRecord/sealHead/code-unit stateHash; delete then.
 // Every MAC uses a subkey derived from the scope key with crypto_kdf
 // (context "SVsync01"), never the scope key itself. Every MAC input carries
 // its format tag, so a record MAC can never verify as a head MAC.
 
 import { createRequire } from 'node:module';
+import { CanonicalJson, CryptoError, type VaultBundle, type VaultRecord } from '@sulla/domain';
+
+import { VaultSyncRuntime } from './VaultSyncRuntime.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Sodium = any;
@@ -94,20 +98,12 @@ export class EnvelopeError extends Error {
 // Our objects only hold strings, safe integers, booleans, null, arrays and
 // plain objects, so the number rule reduces to "integers only".
 export function jcs(value: unknown): string {
-  if (value === null) return 'null';
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value)) throw new EnvelopeError('non_integer', 'Canonical JSON only carries safe integers');
-    return String(value);
+  try {
+    return new CanonicalJson().stringify(value);
+  } catch (error) {
+    if (error instanceof CryptoError) throw new EnvelopeError(error.code);
+    throw error;
   }
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(jcs).join(',')}]`;
-  if (typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort(compareUtf16);
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${jcs(obj[k])}`).join(',')}}`;
-  }
-  throw new EnvelopeError('bad_type', `Canonical JSON cannot carry ${typeof value}`);
 }
 
 function compareUtf16(a: string, b: string): number {
@@ -209,11 +205,22 @@ export function checkHeadShape(head: any): asserts head is SyncHead {
 }
 
 // ── Crypto (sodium injected) ────────────────────────────────────────────
+function throwDomainError(error: unknown): never {
+  if (error instanceof CryptoError) {
+    const code = error.code === 'recovery_unavailable' ? 'recovery_missing'
+      : error.code === 'wrong_recovery_code' ? 'wrong_recovery_key'
+        : error.code;
+    throw new EnvelopeError(code);
+  }
+  throw error;
+}
+
 export function createSyncEnvelope(sodium: Sodium) {
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   const b64 = (bytes: Uint8Array): string => sodium.to_base64(bytes, sodium.base64_variants.URLSAFE_NO_PADDING);
   const unb64 = (value: string): Uint8Array => sodium.from_base64(value, sodium.base64_variants.URLSAFE_NO_PADDING);
+  const runtime = new VaultSyncRuntime((length) => sodium.randombytes_buf(length));
 
   function assertKey(key: unknown): asserts key is Uint8Array {
     if (!(key instanceof Uint8Array) || key.byteLength !== KEY_BYTES) throw new EnvelopeError('bad_key', 'Key must be 32 bytes');
@@ -279,24 +286,20 @@ export function createSyncEnvelope(sodium: Sodium) {
   }
 
   function buildBundle(fields: BundleFields, userKey: Uint8Array): SyncBundle {
-    const macKey = deriveMacKey(userKey);
-    try {
-      const body = { format: FORMAT.bundle, v: fields.recovery ? 2 as const : 1 as const, ...fields };
-      const bundle = { ...body, mac: mac(macKey, body) };
-      checkBundleShape(bundle);
-      return bundle;
-    } finally {
-      macKey.fill(0);
-    }
+    assertKey(userKey);
+    const body = { format: FORMAT.bundle, v: fields.recovery ? 2 as const : 1 as const, ...fields };
+    const bundle = runtime.codec.sealBundle(body as Omit<VaultBundle, 'mac'>, userKey) as SyncBundle;
+    checkBundleShape(bundle);
+    return bundle;
   }
 
   function verifyBundle(bundle: unknown, userKey: Uint8Array): void {
     checkBundleShape(bundle);
-    const macKey = deriveMacKey(userKey);
+    assertKey(userKey);
     try {
-      if (!macEquals(mac(macKey, bundleMacFields(bundle)), bundle.mac)) throw new EnvelopeError('bundle_mac', 'Vault bundle failed its integrity check');
-    } finally {
-      macKey.fill(0);
+      runtime.codec.verifyBundle(bundle as VaultBundle, userKey);
+    } catch (error) {
+      throwDomainError(error);
     }
   }
 
@@ -307,22 +310,11 @@ export function createSyncEnvelope(sodium: Sodium) {
    */
   function unlockBundle(bundle: unknown, password: string): Uint8Array {
     checkBundleShape(bundle);
-    const masterKey = deriveMasterKey(password, bundle.kdf);
-    let userKey: Uint8Array;
     try {
-      userKey = open(bundle.encryptedUserKey, masterKey, 'sulla:user-key:v1');
-    } catch {
-      throw new EnvelopeError('wrong_password', 'Wrong master password');
-    } finally {
-      masterKey.fill(0);
-    }
-    try {
-      verifyBundle(bundle, userKey);
+      return runtime.codec.unlockBundle(bundle as VaultBundle, password);
     } catch (error) {
-      userKey.fill(0);
-      throw error;
+      throwDomainError(error);
     }
-    return userKey;
   }
 
   /** Open the bundle-v2 recovery wrap. The recovery key and user key never leave the caller. */
@@ -375,13 +367,11 @@ export function createSyncEnvelope(sodium: Sodium) {
   /** Verify one record against the expected vault/scope. Throws on any mismatch. */
   function verifyRecord(record: unknown, scopeKey: Uint8Array, expect: { vaultId: string; scope: string; id?: string }): void {
     checkRecordShape(record);
-    if (record.vaultId !== expect.vaultId || record.scope !== expect.scope) throw new EnvelopeError('record_moved', 'Record belongs to another vault or scope');
-    if (expect.id !== undefined && record.id !== expect.id) throw new EnvelopeError('record_moved', 'Record id does not match');
-    const macKey = deriveMacKey(scopeKey);
+    assertKey(scopeKey);
     try {
-      if (!macEquals(mac(macKey, recordMacFields(record)), record.mac)) throw new EnvelopeError('record_mac', 'Record failed its integrity check');
-    } finally {
-      macKey.fill(0);
+      runtime.codec.verifyRecord(record as VaultRecord, scopeKey, expect);
+    } catch (error) {
+      throwDomainError(error);
     }
   }
 
@@ -452,11 +442,11 @@ export function createSyncEnvelope(sodium: Sodium) {
 
   function decryptItem(item: unknown, ownerKey: Uint8Array, ownerId: string, itemId: string): string {
     if (!isEncryptedItem(item)) throw new EnvelopeError('envelope_shape', 'Item envelope is malformed');
-    const itemKey = open(item.encryptedItemKey, ownerKey, itemAad('key', ownerId, itemId));
+    assertKey(ownerKey);
     try {
-      return dec.decode(open(item.ciphertext, itemKey, itemAad('ciphertext', ownerId, itemId)));
-    } finally {
-      itemKey.fill(0);
+      return runtime.codec.decryptItem(item, ownerKey, ownerId, itemId);
+    } catch (error) {
+      throwDomainError(error);
     }
   }
 
