@@ -6,7 +6,7 @@ import type { CustodyOwner } from './JobCustodyTypes';
 
 export interface LeadReplacementLaunchInput {
   oldJobId: string; oldTaskIndex: number; agentId: string; model?: string; provider?: string;
-  prompt: string; owner: CustodyOwner;
+  prompt: string; owner: CustodyOwner; launchKey: string;
 }
 export interface LeadReplacementLaunch { jobId: string; taskIndex: number; threadId: string }
 export interface LeadTaskExecutionPort { launchReplacement(input: LeadReplacementLaunchInput): Promise<LeadReplacementLaunch> }

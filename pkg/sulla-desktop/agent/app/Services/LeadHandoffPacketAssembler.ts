@@ -9,6 +9,10 @@ export class LeadHandoffPacketAssembler {
   recordReplacementAudit(jobId:string,taskIndex:number,summary:string):Promise<void>{return this.repository.recordReplacementAudit(jobId,taskIndex,summary);}
   operation(...args:Parameters<LeadHandoffRepository['operation']>){return this.repository.operation(...args);}
   saveOperation(...args:Parameters<LeadHandoffRepository['saveOperation']>){return this.repository.saveOperation(...args);}
+  listDirectChildren(...args:Parameters<LeadHandoffRepository['listDirectChildren']>){return this.repository.listDirectChildren(...args);}
+  claimAudit(...args:Parameters<LeadHandoffRepository['claimAudit']>){return this.repository.claimAudit(...args);}
+  claimWrapUp(...args:Parameters<LeadHandoffRepository['claimWrapUp']>){return this.repository.claimWrapUp(...args);}
+  finishWrapUp(...args:Parameters<LeadHandoffRepository['finishWrapUp']>){return this.repository.finishWrapUp(...args);}
   async assemble(jobId:string,taskIndex:number,note?:string):Promise<{prompt:string;snapshot:LeadHandoffSnapshot}|undefined>{
     const snapshot=await this.repository.snapshot(jobId,taskIndex); if(!snapshot)return undefined;
     const task=snapshot.lead.tasks[taskIndex];

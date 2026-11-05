@@ -10,7 +10,7 @@ import type { CustodyAuditRecord,CustodyChangeNotifier,CustodyMoveInput,CustodyM
 
 export class JobCustodyService implements JobCustodyPort {
   constructor(private readonly repository:AgentJobCustodyRepository,private readonly policy:JobCustodyAuthorityPolicy,private readonly notifier:CustodyChangeNotifier,private readonly clock:Clock){}
-  authorizeReplacement(current:CustodyRecord,actor:import('./JobCustodyTypes').CustodyActor):Promise<CustodyMoveResult|undefined>{return this.policy.authorizeReplacement(current,actor);}
+  authorizeReplacement(current:CustodyRecord,actor:VerifiedCustodyActor):Promise<CustodyMoveResult|undefined>{return this.policy.authorizeReplacement(current,actor);}
   async move(input:CustodyMoveInput):Promise<CustodyMoveResult>{
     input.actor.assertVerified();
     const changedAt=this.clock.now();

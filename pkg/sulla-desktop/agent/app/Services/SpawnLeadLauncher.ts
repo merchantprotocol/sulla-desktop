@@ -9,8 +9,12 @@ import type { LeadReplacementLaunch,LeadReplacementLaunchInput,LeadTaskExecution
 export class SpawnLeadLauncher implements LeadTaskExecutionPort {
   constructor(private readonly jobs:AgentJobRepository,private readonly workerFactory:()=>SpawnAgentWorker=()=>new SpawnAgentWorker()){}
   async launchReplacement(input:LeadReplacementLaunchInput):Promise<LeadReplacementLaunch>{
+    const label=`Replacement ${input.launchKey}`;
+    const existing=await this.jobs.findByParentAndLabel(input.owner.threadId,label);
+    const existingThread=existing?.tasks[0]?.threadId;
+    if(existing&&existingThread)return {jobId:existing.jobId,taskIndex:0,threadId:existingThread};
     const worker=this.workerFactory();
-    const response=await worker.runValidated({tasks:[{agentId:input.agentId,model:input.model,provider:input.provider,prompt:input.prompt,label:`Replacement for ${input.oldJobId}:${input.oldTaskIndex}`,visibility:'hidden'}],parallel:true,async:true},{metadata:{wsChannel:input.owner.channel,threadId:input.owner.threadId,routedAgentId:input.owner.agentId,agentId:input.owner.agentId}});
+    const response=await worker.runValidated({tasks:[{agentId:input.agentId,model:input.model,provider:input.provider,prompt:input.prompt,label,visibility:'hidden'}],parallel:true,async:true},{metadata:{wsChannel:input.owner.channel,threadId:input.owner.threadId,routedAgentId:input.owner.agentId,agentId:input.owner.agentId}});
     if(!response.successBoolean) throw new Error(response.responseString);
     const jobId=String((response.result as any)?.jobId??'');
     const job=jobId?await this.jobs.job(jobId):undefined; const threadId=job?.tasks[0]?.threadId;

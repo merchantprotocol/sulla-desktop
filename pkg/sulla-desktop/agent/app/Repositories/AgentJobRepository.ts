@@ -45,6 +45,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async sweepInterruptedJobs(): Promise<void> { /* recovery is driven by claimInterruptedJobs after channels subscribe */ }
 
 
+  async findByParentAndLabel(parentThreadId:string,label:string):Promise<AgentJob|undefined>{
+    const rows=await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id=$1 AND tasks -> 0 ->> 'label'=$2 ORDER BY created_at LIMIT 1`,[parentThreadId,label]);
+    return rows[0]?this.map(rows[0]):undefined;
+  }
+
   async insertJob(job: AgentJob): Promise<void> {
     await this.connection.run(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility, parent_agent_id) VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb, $7, $8) ON CONFLICT (job_id) DO NOTHING`,
       [job.jobId, job.taskCount, job.createdAt, job.parentChannel ?? null, job.parentThreadId ?? null, JSON.stringify(job.tasks), job.visibility ?? 'hidden', job.parentAgentId ?? null]);
