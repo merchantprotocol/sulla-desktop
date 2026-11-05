@@ -136,6 +136,7 @@ export interface ToolQuestionAnswerItem {
 }
 export interface ToolQuestionMessage extends MessageBase {
   resolutionError?: string;
+  resolutionNote?: string;
   kind:        'tool_question';
   questions:   readonly ToolQuestionItem[];
   status:      'pending' | 'answered' | 'timed_out';
