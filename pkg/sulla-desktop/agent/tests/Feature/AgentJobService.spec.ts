@@ -105,15 +105,31 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       graph: () => false,
       container: async() => false,
       lastCheckin: async() => null,
-    });
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
 
     await reconciler.reconcile();
 
     const [durable] = await database.query<{ status: string; tasks: Array<{ status: string }> }>(
       'SELECT status, tasks FROM agent_jobs WHERE job_id = $1', [jobId]);
-    expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
-    expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+    expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'lost' }] });
+    expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'lost' }] });
     const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
     expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
+  });
+
+  it('repairs a contradictory job rollup from its task state in Postgres and cache', async() => {
+    // risk: job=running/task=error renders as active in one reader and failed in another
+    const jobId = `contradictory-state-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now(), $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
+      agentId: 'worker', label: 'Failed worker', prompt: 'work', status: 'error', finishedAt: Date.now(),
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const derived = await agentJobProvider.states.job(jobId);
+    const [durable] = await database.query<{ status: string }>('SELECT status FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(derived?.status).toBe('failed');
+    expect(durable.status).toBe('failed');
+    const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
+    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'failed', canMessage: false, canStop: false });
   });
 });

@@ -8,11 +8,14 @@ import type { AgentStateService } from './AgentStateService';
 
 export interface AgentTaskCheckin { createdAt: number; summary: string; blockers: string[]; }
 export interface AgentStateTelemetry { latest(jobId: string, taskIndex: number): Promise<AgentTaskCheckin | null>; }
+export interface AgentProjectionConfig { quietAfterMs: number; terminalTtlMs: number; }
+const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, terminalTtlMs: 2 * 60_000 };
 
 /** Pure projection of the authoritative job graph into the renderer contract. */
 export class AgentStateProjector {
+  private readonly config: AgentProjectionConfig;
   constructor(private readonly states: AgentStateService, private readonly telemetry: AgentStateTelemetry,
-    private readonly clock: () => number = Date.now, private readonly quietAfterMs = 300_000, private readonly terminalTtlMs = 120_000) {}
+    private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {}) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
   async snapshot(): Promise<AgentStateSnapshot> {
     const jobs = await this.states.jobs();
@@ -26,7 +29,7 @@ export class AgentStateProjector {
     const rows: AgentStateRow[] = [];
     for (const job of ordered) for (const [taskIndex, task] of job.tasks.entries()) {
       const endedAt = task.finishedAt ?? job.finishedAt;
-      if (endedAt && now - endedAt > this.terminalTtlMs) continue;
+      if (endedAt && now - endedAt > this.config.terminalTtlMs) continue;
       const parent = job.parentThreadId ? taskOwner.get(job.parentThreadId) : undefined;
       const checkin = await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
@@ -47,12 +50,14 @@ export class AgentStateProjector {
 
   private resolveState(job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null, now: number): AgentRowState {
     if (job.status === 'stopped' || task.status === 'stopped') return 'stopped';
+    if (task.status === 'lost') return 'lost';
     if (job.status === 'failed' || task.status === 'error') return job.error?.startsWith('lost:') ? 'lost' : 'failed';
     if (task.status === 'completed') return 'done';
     if (task.status === 'parked') return 'parked';
     if (task.status === 'queued') return 'queued';
     if (checkin?.blockers?.length || task.status === 'blocked') return 'blocked';
-    if (checkin && now - checkin.createdAt > this.quietAfterMs) return 'quiet';
+    const lastActivityAt = checkin?.createdAt ?? task.startedAt ?? job.createdAt;
+    if (now - lastActivityAt > this.config.quietAfterMs) return 'quiet';
     return 'working';
   }
   private reason(state: AgentRowState, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {

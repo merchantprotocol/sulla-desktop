@@ -5,7 +5,7 @@
 
 import { AgentJobMessagingModel, type AgentJobCheckin, type AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import { BaseTool, ToolResponse } from '../base';
-import { getJob, getJobsForList } from './jobRegistry';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -111,7 +111,7 @@ export class CheckAgentJobsWorker extends BaseTool {
     const limit = Math.min(100, Math.max(1, Math.trunc(Number(input.limit)) || 25));
 
     if (jobId) {
-      const job = await getJob(jobId);
+      const job = await agentJobProvider.states.job(jobId);
       if (!job) {
         return {
           successBoolean: false,
@@ -126,7 +126,7 @@ export class CheckAgentJobsWorker extends BaseTool {
       };
     }
 
-    const allJobs = await getJobsForList(limit, includeFinished !== false);
+    const allJobs = await agentJobProvider.states.list(limit, includeFinished !== false);
     if (allJobs.length === 0) {
       return {
         successBoolean: true,

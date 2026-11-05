@@ -15,7 +15,8 @@
  */
 
 import { AgentJobMessagingModel, type AgentJobTaskTelemetry } from '../database/models/AgentJobMessagingModel';
-import { getJobsForParentThread, type AgentJob, type AgentJobTask } from '../tools/agents/jobRegistry';
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
 import { RunActivity } from './RunActivity';
 
 /** An open child silent this long is flagged as stalled. */
@@ -95,7 +96,7 @@ function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetr
 /** The block body for a parent thread, or '' when it has no listed children. */
 export async function buildSubagentDirectoryContext(parentThreadId: string | undefined, now = Date.now()): Promise<string> {
   if (!parentThreadId) return '';
-  const jobs = await getJobsForParentThread(parentThreadId);
+  const jobs = await agentJobProvider.states.descendants(parentThreadId);
   if (jobs.length === 0) return '';
 
   const rows: ChildRow[] = [];
@@ -113,7 +114,7 @@ export async function buildSubagentDirectoryContext(parentThreadId: string | und
 
   const out = [
     '## Your subagents',
-    'Children launched from this conversation (hidden and tab). Control them with agents/check_agent_jobs, agents/send_job_message, agents/stop_agent_job.',
+    'All descendants launched from this conversation (hidden and tab). Control them with agents/check_agent_jobs, agents/send_job_message, agents/stop_agent_job.',
   ];
   let size = out.join('\n').length;
   for (const [index, row] of rows.entries()) {

@@ -27,10 +27,10 @@ describe('authoritative live agent state', () => {
   it('reconciles a stale running task to lost in durable and memory state and disables actions', async() => {
     // risk: stale job remains actionable after a desktop restart
     const { store, cache, states } = harness([job('stale', [task()])], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000);
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     expect(await reconciler.reconcile()).toBe(1);
     expect(cache.jobs.get('stale')?.status).toBe('failed');
-    expect(store.durable.get('stale')?.tasks[0].status).toBe('error');
+    expect(store.durable.get('stale')?.tasks[0].status).toBe('lost');
     const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot();
     expect(snapshot.rows[0]).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });
@@ -53,6 +53,34 @@ describe('authoritative live agent state', () => {
     expect((await projector.snapshot()).rows.find(row => row.jobId === 'manager')?.state).toBe('working');
     await states.transition('manager', 0, { status: 'parked' }, { status: 'parked', waitingOnChildren: 1 });
     expect((await projector.snapshot()).rows.find(row => row.jobId === 'manager')).toMatchObject({ state: 'parked', waitingOnChildren: 1 });
+  });
+
+
+  it('derives a failed job summary from an error task and repairs the durable rollup', async() => {
+    // risk: job and task status contradictions lie in every fleet view
+    const contradictory = job('contradiction', [task({ status: 'error', summary: 'failed child' })]);
+    const { store, states } = harness([contradictory]);
+    const [derived] = await states.jobs();
+    expect(derived.status).toBe('failed');
+    expect(store.durable.get('contradiction')?.status).toBe('failed');
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'failed', canMessage: false, canStop: false });
+  });
+
+  it('shows an inactive task as quiet before the longer lost threshold', async() => {
+    // risk: an hour-silent task is presented as actively working
+    const { states } = harness([job('quiet', [task({ startedAt: 1_000 })])]);
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true });
+  });
+
+  it('returns the complete descendant set for a root chat', async() => {
+    // risk: the prompt directory and drawer omit grandchildren
+    const manager = job('manager-tree', [task({ threadId: 'manager-tree-thread' })], { parentThreadId: 'root-tree' });
+    const worker = job('worker-tree', [task({ threadId: 'worker-tree-thread' })], { parentThreadId: 'manager-tree-thread' });
+    const outsider = job('outsider', [task({ threadId: 'outside-thread' })], { parentThreadId: 'another-root' });
+    const { states } = harness([manager, worker, outsider]);
+    expect((await states.descendants('root-tree')).map(candidate => candidate.jobId)).toEqual(['manager-tree', 'worker-tree']);
   });
 
   it('writes every scripted transition to task and job together and emits increasing versions', async() => {
