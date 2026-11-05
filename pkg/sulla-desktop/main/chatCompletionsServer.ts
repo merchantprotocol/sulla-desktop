@@ -1324,7 +1324,7 @@ export class ChatCompletionsServer {
         if (canonicalCategory === 'vault' && ['request', 'list_api_keys'].includes(endpoint)) {
           if (!executionContext) return res.status(403).json({ success: false, error: 'Vault item tools require a verified execution context' });
           if (endpoint === 'request') {
-            try { executionContext = await scopeItemExecutionContext(executionContext, params.item); }
+            try { executionContext = await scopeItemExecutionContext(executionContext, params.item as string); }
             catch (error) { return res.status(403).json({ success: false, error: (error as Error).message }); }
           }
         }
