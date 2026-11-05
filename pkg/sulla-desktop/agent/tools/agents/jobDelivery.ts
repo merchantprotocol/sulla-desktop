@@ -12,9 +12,13 @@
 
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { enqueueAgentCompletion } from '../../services/AgentCompletionInbox';
+import { OrphanedChildResultService } from '../../services/OrphanedChildResultService';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
 
-import type { AgentJobResult, AgentJobTask } from './jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
+
+const orphanedChildResults = new OrphanedChildResultService(agentJobProvider.jobs);
 
 /** A returned contract as the job result the parent reads. */
 export function returnedJobResult(task: AgentJobTask, label: string, threadId: string): AgentJobResult {
@@ -132,11 +136,13 @@ export async function emitProactiveCompletion(
  * whether the wake went out; a false return leaves the completion pending
  * for the recovery pass.
  */
-export async function deliverJobCompletion(job: {
-  jobId:           string;
-  parentChannel?:  string;
-  parentThreadId?: string;
-}, results: AgentJobResult[], taskIndex = 0): Promise<boolean> {
+export async function deliverJobCompletion(job: Pick<AgentJob, 'jobId' | 'parentChannel' | 'parentThreadId'>, results: AgentJobResult[], taskIndex = 0): Promise<boolean> {
+  const orphan = await orphanedChildResults.capture(job as AgentJob, results, taskIndex);
+  if (orphan) {
+    if (!orphan.route) return true;
+    const failureReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
+    return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, failureReason, taskIndex);
+  }
   const channel = job.parentChannel || 'sulla-desktop';
   await emitProactiveCompletion(channel, job.jobId, results, undefined, job.parentThreadId);
   const delivered = await wakeParentGraph(channel, job.parentThreadId, job.jobId, results, undefined, taskIndex);

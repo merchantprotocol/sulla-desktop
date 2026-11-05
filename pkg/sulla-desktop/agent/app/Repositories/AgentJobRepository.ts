@@ -5,7 +5,7 @@
 import { Repository } from '@sulla/foundation';
 
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
-import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 
 export class AgentJobRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
@@ -23,6 +23,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       waitingOnChildren: Number(row.waiting_on_children) || 0,
       restartResumeCount: Number(row.restart_resume_count) || 0,
       dismissedAt: row.dismissed_at ? new Date(row.dismissed_at).getTime() : null,
+      orphanedChildNotices: Array.isArray(row.orphaned_child_notices) ? row.orphaned_child_notices : [],
     };
   }
 
@@ -156,6 +157,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         AND (child.status = 'running' OR child.tasks @? '$[*] ? (@.status == "queued" || @.status == "running")')
     ) AS present`, [JSON.stringify(threadIds)]);
     return row?.present === true || row?.present === 't';
+  }
+
+  async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET orphaned_child_notices = orphaned_child_notices || $2::jsonb
+      WHERE job_id = $1 AND NOT orphaned_child_notices @> $3::jsonb`, [jobId, JSON.stringify([notice]), JSON.stringify([{ childJobId: notice.childJobId, taskIndex: notice.taskIndex }])]);
   }
 
   async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }

@@ -387,4 +387,61 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect(accepted.successBoolean).toBe(true);
   });
 
+  it('j) redirects a late child result to the finished manager parent without resurrecting the manager', async() => {
+    // risk: a child settling after its manager finished either silently drops
+    // its result or wakes the terminal manager and duplicates its final turn.
+    const managerThreadId = 'orphan-j-manager-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'orphan-j-root-thread',
+    );
+    const child = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'late worker', prompt: 'build', status: 'running', threadId: 'orphan-j-child-thread', depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    );
+    await registry.completeJob(manager.jobId, [{ label: 'manager', status: 'completed', output: 'finished early', threadId: managerThreadId }]);
+
+    const results = [{ label: 'late worker', status: 'completed' as const, output: 'late result', threadId: 'orphan-j-child-thread' }];
+    await registry.completeJob(child.jobId, results);
+    expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
+
+    expect((await registry.getJob(manager.jobId))?.status).toBe('completed');
+    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([]);
+    const rootNotices = inbox.takeAgentCompletions('sulla-desktop', 'orphan-j-root-thread');
+    expect(rootNotices).toHaveLength(1);
+    expect(rootNotices[0]).toMatchObject({ jobId: child.jobId, failureReason: expect.stringContaining('orphaned child result') });
+    const durableManager = await agentJobProvider.jobs.job(manager.jobId);
+    expect(durableManager?.orphanedChildNotices).toEqual([
+      expect.objectContaining({ childJobId: child.jobId, taskIndex: 0, managerStatus: 'completed', results }),
+    ]);
+
+    // Recovery/retry is idempotent: no duplicate durable notice and no second
+    // manager turn is ever eligible for rehydration.
+    await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results);
+    expect((await agentJobProvider.jobs.job(manager.jobId))?.orphanedChildNotices).toHaveLength(1);
+  });
+
+  it('k) records a late child result durably when the finished manager is a top-level chat', async() => {
+    // risk: there is no higher parent to notify, so a late result disappears
+    // unless check_agent_jobs can surface a durable notice on the manager job.
+    const managerThreadId = 'orphan-k-top-level-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'top manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', undefined,
+    );
+    const child = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'late worker', prompt: 'build', status: 'running', threadId: 'orphan-k-child-thread', depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    );
+    await registry.completeJob(manager.jobId, [{ label: 'top manager', status: 'completed', output: 'done', threadId: managerThreadId }]);
+    const results = [{ label: 'late worker', status: 'error' as const, output: 'failed late', threadId: 'orphan-k-child-thread' }];
+    await registry.completeJob(child.jobId, results);
+
+    expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
+    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([]);
+    expect((await agentJobProvider.jobs.job(manager.jobId))?.orphanedChildNotices).toEqual([
+      expect.objectContaining({ childJobId: child.jobId, managerStatus: 'completed', results }),
+    ]);
+  });
+
 });
