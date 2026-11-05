@@ -28,7 +28,7 @@ export class AgentJobCustodyRepository {
   async move(input: CustodyMoveInput, authorize: CustodyTransactionContext['authorize'], changedAt: Date): Promise<CustodyMoveResult> {
     // Resolve liveness/lineage before opening the writer transaction. Those readers
     // use their own repositories; doing them while holding the sole pooled client
-    // deadlocks one-connection runtimes. The locked snapshot below must still match
+    // deadlocks one-connection runtimes; preflight plus locked CAS preserves one-winner semantics. The locked snapshot below must still match
     // this exact version and owner, otherwise the caller retries against fresh state.
     const preflight=await this.resolveOwner(input.jobId,input.taskIndex);
     if(!preflight)return {ok:false,code:'not-found',message:`Job ${input.jobId} was not found.`};
