@@ -6,9 +6,11 @@
 import { BaseTool, ToolResponse } from '../base';
 import { emitSubAgentExchange } from './jobExchange';
 import { getJob, releaseJobWatcher, stopJobCascade } from './jobRegistry';
+import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
+import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
 
-export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
+export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'agent request (no reason given)'): Promise<ToolResponse> {
   if (!jobId) {
     return {
       successBoolean: false,
@@ -16,8 +18,9 @@ export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
     };
   }
 
+  if (!principal) return { successBoolean: false, responseString: 'Cannot stop job: cannot verify caller.' };
   const job = await getJob(jobId);
-  const outcome = await stopJobCascade(jobId);
+  const outcome = await stopJobCascade(jobId, principal, reason);
 
   switch (outcome) {
   case 'stopped':
@@ -49,6 +52,8 @@ export async function stopAgentJob(jobId: string): Promise<ToolResponse> {
       successBoolean: true,
       responseString: `Stop requested for job "${ jobId }". Its sub-agents will unwind at their next step (cooperative — an in-flight LLM/tool call finishes first). Poll check_agent_jobs("${ jobId }") to confirm it settled as 'stopped'.`,
     };
+  case 'forbidden':
+    return { successBoolean: false, responseString: `Cannot stop job "${ jobId }": it is owned by ${ job?.parentAgentId ?? job?.parentChannel ?? 'another agent' }. Only its owner, an ancestor, or the human can stop it.` };
   case 'already-finished':
     return {
       successBoolean: false,
@@ -79,6 +84,8 @@ export class StopAgentJobWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '');
+    const metadata = this.state?.metadata;
+    const caller = StopPrincipal.agent(metadata && (resolveAgentIdentity(metadata) || metadata.routedAgentId), metadata?.threadId);
+    return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '', caller, typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim() : 'agent request (no reason given)');
   }
 }

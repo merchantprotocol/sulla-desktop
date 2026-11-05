@@ -68,7 +68,7 @@
     <strong>{{ card.label }}</strong>
     <time>{{ elapsed(card) }}</time>
     <span>
-    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template>
+    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template><template v-if="card.stopAttribution"><br>{{ card.stopAttribution }}</template>
     </span>
     </button>
     </template>
@@ -94,7 +94,7 @@
     <strong>{{ card.label }}</strong>
     <time>{{ elapsed(card) }}</time>
     <span>
-    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template>
+    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template><template v-if="card.stopAttribution"><br>{{ card.stopAttribution }}</template>
     </span>
     </button>
     </template>

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
+
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import {
@@ -11,7 +13,7 @@ import {
   normalizeContract,
   type AgentContractSpec,
 } from './contract';
-import { emitProactiveCompletion, returnedJobResult, wakeParentGraph } from './jobDelivery';
+import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
 import { threadSlug } from './threadSlug';
 import {
@@ -22,6 +24,7 @@ import {
   getJob,
   getJobAbortSignal,
   markCompletionDelivered,
+  markTaskCompletionDelivered,
   recordTaskCompletion,
   MAX_SUBAGENT_DEPTH,
   registerJobWatcher,
@@ -31,6 +34,7 @@ import {
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
+import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
   delegationSituation,
   delegationTaskId,
@@ -46,6 +50,7 @@ import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
+import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -120,6 +125,10 @@ export class SpawnAgentWorker extends BaseTool {
 
   /** Code-only switch for visible tabs. Agents can't set it: tool input never reaches it. */
   allowVisibleTabs = false;
+
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
+    super();
+  }
 
   /** Reuse the canonical spawn path from compatibility wrappers. */
   public runValidated(input: any, state?: any): Promise<ToolResponse> {
@@ -334,18 +343,17 @@ export class SpawnAgentWorker extends BaseTool {
     // A tab waiting on its human is idle, not dead: only a turn in flight that
     // has gone silent counts as a dead run.
     const stopWatch = watchForDeadRun(job.jobId, async(reason) => {
-      if (abortJob(job.jobId) !== 'stopped') return;
+      if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
       releaseJobWatcher(job.jobId);
       const message = `dead run: ${ reason }; tab job stopped`;
       console.warn(`[spawn_agent] Tab job ${ job.jobId } ${ message }`);
       await stopAgentTab(childThreadId, `No agent activity while working (${ reason }). The parent was told and can relaunch.`);
       await safeFinishDelegationByRef(job.jobId, { outcome: 'failed', detail: message });
-      await emitProactiveCompletion(parentChannel, job.jobId, [], message, parentThreadId);
-      await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message, -1);
+      await deliverJobCompletion(job, [], -1, message);
     }, async() => {
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
       return !getBackendGraphWebSocketService().hasActiveRun(SULLA_DESKTOP_CHANNEL_ID, childThreadId);
-    });
+    }, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
     registerJobWatcher(job.jobId, stopWatch);
 
     try {
@@ -571,8 +579,35 @@ export class SpawnAgentWorker extends BaseTool {
           if (returned) break;
           await agentJobLifecycle.resume(activityJobId, index);
           subState.metadata.delegatedRunActive = true;
+          const wakeInput = subState.messages[subState.messages.length - 1];
+          const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
+          this.turnPreparer.prepare(subState);
           finalState = await executeGraph();
           returned = await returnedTask();
+          if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
+            // A released parked runner must consume its injected input. Retry
+            // once after an explicit fresh-turn preparation before surfacing
+            // an internal lifecycle failure (never a misleading provider error).
+            this.turnPreparer.prepare(subState);
+            finalState = await executeGraph();
+            returned = await returnedTask();
+            if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
+              const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
+              const completionIds = Array.isArray(wakeInput?.metadata?.completionEntries)
+                ? wakeInput.metadata.completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',')
+                : 'none';
+              const error = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
+              console.error(`[spawn_agent] ${ error }`);
+              throw new Error(error);
+            }
+          }
+          const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries)
+            ? wakeInput.metadata.completionEntries
+            : [];
+          await Promise.all(completionEntries.map((entry: any) => {
+            const taskIndex = Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0;
+            return markTaskCompletionDelivered(String(entry.jobId), taskIndex);
+          }));
         }
 
         // A caller schema means free text is not an answer: remind once, but
@@ -696,8 +731,8 @@ export class SpawnAgentWorker extends BaseTool {
       if (activityJobId) {
         await recordTaskCompletion(activityJobId, index, result);
         const failureReason = result.status === 'error' ? result.output : undefined;
-        await emitProactiveCompletion(parentChannel, activityJobId, [result], failureReason, parentThreadId);
-        await wakeParentGraph(parentChannel, parentThreadId, activityJobId, [result], failureReason, index);
+        const settledJob = await getJob(activityJobId);
+        if (settledJob) await deliverJobCompletion(settledJob, [result], index, failureReason);
       }
       return result;
     };
@@ -724,13 +759,13 @@ export class SpawnAgentWorker extends BaseTool {
       // on a provider call that will never return.
       let stoppedAsDead = false;
       const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason) => {
-        if (abortJob(job.jobId) !== 'stopped') return;
+        if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
         stoppedAsDead = true;
         const message = `dead run: ${ reason }; job stopped`;
         console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
-        await emitProactiveCompletion(parentChannel, job.jobId, [], message, parentThreadId);
-        await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message, -1);
-      });
+        const stoppedJob = await getJob(job.jobId);
+        if (stoppedJob) await deliverJobCompletion(stoppedJob, [], -1, message);
+      }, async() => false, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
 
       // Launch in background — do not await
       executeAll()
@@ -745,8 +780,8 @@ export class SpawnAgentWorker extends BaseTool {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
           if (stoppedAsDead) return;
-          await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message, parentThreadId);
-          wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message, -1);
+          const failedJob = await getJob(job.jobId);
+          if (failedJob) await deliverJobCompletion(failedJob, [], -1, (err as Error).message);
         })
         .finally(async() => { stopDeadRunWatch(); });
 
@@ -772,8 +807,8 @@ export class SpawnAgentWorker extends BaseTool {
     activityJobId = jobId;
     // Stopping a dead job hands its tasks back even if the hung call never returns.
     stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
-      if (abortJob(jobId) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
-    });
+      if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
+    }, async() => false, { createdAt: syncJob.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(jobId)).some(item => item.latestCheckin !== null) });
     let results: AgentJobResult[];
     try {
       results = await executeAll();
