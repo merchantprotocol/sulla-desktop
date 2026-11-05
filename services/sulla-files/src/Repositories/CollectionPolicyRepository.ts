@@ -7,7 +7,7 @@ import type pg from 'pg';
 export interface CollectionPublicationPolicy { system_area:string|null }
 
 export class CollectionPolicyRepository {
-  async findPublicationPolicy(client:pg.PoolClient, collectionId:string):Promise<CollectionPublicationPolicy|null> {
+  async findPublicationPolicy(client:pg.Pool | pg.PoolClient, collectionId:string):Promise<CollectionPublicationPolicy|null> {
     return (await client.query('SELECT system_area FROM collections WHERE id=$1', [collectionId])).rows[0] ?? null;
   }
 }

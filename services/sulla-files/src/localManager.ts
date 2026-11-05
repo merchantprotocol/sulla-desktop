@@ -1435,11 +1435,10 @@ export class LocalFilesManager {
     const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
     for (const entry of entries) {
       const entryCollectionId=String(entry?.file?.collection_id??'');
-      const localCollection=(await this.db.query('SELECT id FROM collections WHERE id=$1',[entryCollectionId])).rows[0];
+      const localCollection=await this.collectionPolicyRepository.findPublicationPolicy(this.db,entryCollectionId);
       if (!localCollection) {
         console.warn(`[SullaFiles] quarantined sync journal entry ${ String(entry?.seq??'unknown') } (file ${ String(entry?.file?.id??'unknown') }) for missing local collection ${ entryCollectionId||'unknown' }`);
-      } else await this.pull(entry);
-      await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
+      } else await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
     }
     cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     if (canPush) {
