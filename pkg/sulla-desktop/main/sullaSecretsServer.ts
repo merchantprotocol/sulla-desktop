@@ -32,7 +32,6 @@ import { FunctionBrowserCapabilityError } from '@pkg/agent/services/FunctionBrow
 const DEFAULT_PORT = hostPort(30121);
 const BIND_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 4 * 1024;
-const browserRequestHandler = new FunctionBrowserRequestHandler(functionBrowserCompositionRoot.capabilities);
 
 let server: http.Server | null = null;
 
@@ -206,6 +205,8 @@ class FunctionBrowserRequestHandler {
     }
   }
 }
+
+const browserRequestHandler = new FunctionBrowserRequestHandler(functionBrowserCompositionRoot.capabilities);
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
