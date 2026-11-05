@@ -50,6 +50,17 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0]);
   }
 
+  async replaceStateIfActivityUnchanged(job: AgentJob, taskIndex: number, observedActivity: number | null): Promise<boolean> {
+    const rows = await this.connection.select(`UPDATE agent_jobs SET status = $2, tasks = $3::jsonb, results = $4::jsonb,
+      error = $5, finished_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE to_timestamp($6 / 1000.0) END,
+      waiting_on_children = $7 WHERE job_id = $1 AND COALESCE(
+        (SELECT (extract(epoch from max(created_at))*1000)::bigint FROM agent_job_checkins WHERE job_id = $1 AND task_index = $8),
+        (tasks->$8->>'startedAt')::bigint, (extract(epoch from created_at)*1000)::bigint) = $9 RETURNING job_id`,
+    [job.jobId, job.status, JSON.stringify(job.tasks), JSON.stringify(job.results), job.error ?? null, job.finishedAt,
+      job.waitingOnChildren ?? 0, taskIndex, observedActivity ?? job.createdAt]);
+    return rows.length === 1;
+  }
+
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }

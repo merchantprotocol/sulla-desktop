@@ -60,9 +60,17 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'manager-thread' }]);
     const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'worker-thread' }], 'manager', 'manager-thread');
     const grandchild = await registry.createJob([{ agentId: 'sub', label: 'sub', prompt: 'x', status: 'running', threadId: 'sub-thread' }], 'worker', 'worker-thread');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const versions: number[] = []; const unsubscribe = agentJobProvider.states.onChange(version => versions.push(version));
+    expect((await agentJobProvider.states.descendants('manager-thread')).map(job => job.jobId)).toEqual([child.jobId, grandchild.jobId]);
     expect(await registry.stopJobCascade(root.jobId)).toBe('stopped');
-    expect((await registry.getJob(child.jobId))?.status).toBe('stopped');
-    expect((await registry.getJob(grandchild.jobId))?.status).toBe('stopped');
+    unsubscribe();
+    expect(versions).toHaveLength(1);
+    for (const candidate of [root, child, grandchild]) {
+      expect(agentJobProvider.runtime.jobs.get(candidate.jobId)?.status).toBe('stopped');
+      const [durable] = await database.query<{ status: string }>('SELECT status FROM agent_jobs WHERE job_id = $1', [candidate.jobId]);
+      expect(durable.status).toBe('stopped');
+    }
     expect(await registry.stopJobCascade(root.jobId)).toBe('already-finished');
   });
   it('acknowledges completion delivery once even when retried', async() => {
@@ -115,6 +123,23 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
     const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
     expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
+  });
+
+  it('does not mark a live container task lost while runtime rebind is pending', async() => {
+    // risk: Desktop restart falsely kills a still-running container agent
+    const jobId = `rebind-race-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now() - interval '20 minutes', $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
+      agentId: 'worker', status: 'running', threadId: 'rebind-thread', startedAt: Date.now() - 1_200_000,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    let rebound = false;
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: () => false, container: async() => rebound, lastCheckin: async() => null,
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    rebound = true;
+    expect(await reconciler.reconcile()).toBe(0);
+    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
   });
 
   it('repairs a contradictory job rollup from its task state in Postgres and cache', async() => {

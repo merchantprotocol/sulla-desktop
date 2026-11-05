@@ -11,7 +11,10 @@ class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
+  async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
+  async stopCascade(jobId: string): Promise<string[]> { const job = this.durable.get(jobId); if (!job) return []; this.durable.set(jobId, { ...job, status: 'stopped', tasks: job.tasks.map(task => ({ ...task, status: 'stopped' })) }); return [jobId]; }
+  async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { this.durable.set(job.jobId, structuredClone(job)); return true; }
 }
 class EmptyTelemetry { async latest(): Promise<null> { return null; } }
 const task = (overrides: Partial<AgentJobTask> = {}): AgentJobTask => ({ agentId: 'worker', label: 'Worker', prompt: 'work', status: 'running', startedAt: 1_000, ...overrides });
@@ -81,6 +84,24 @@ describe('authoritative live agent state', () => {
     const outsider = job('outsider', [task({ threadId: 'outside-thread' })], { parentThreadId: 'another-root' });
     const { states } = harness([manager, worker, outsider]);
     expect((await states.descendants('root-tree')).map(candidate => candidate.jobId)).toEqual(['manager-tree', 'worker-tree']);
+  });
+
+
+  it('leaves cache unchanged and emits nothing when the durable write fails', async() => {
+    // risk: a failed Postgres write is advertised as live state
+    const { store, cache, states } = harness([job('write-failure', [task()])]);
+    await states.jobs(); const before = structuredClone(cache.jobs.get('write-failure')); const listener = vi.fn(); states.onChange(listener);
+    vi.spyOn(store, 'replaceState').mockRejectedValueOnce(new Error('postgres unavailable'));
+    await expect(states.transition('write-failure', 0, { status: 'stopped' })).rejects.toThrow('postgres unavailable');
+    expect(cache.jobs.get('write-failure')).toEqual(before); expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('coalesces cascade stop into one committed state event', async() => {
+    // risk: stop pushes duplicate or stale renderer snapshots
+    const { states, cache } = harness([job('cascade', [task()])]); await states.jobs(); const listener = vi.fn(); states.onChange(listener);
+    expect(await states.stopCascade('cascade')).toEqual(['cascade']);
+    expect(cache.jobs.get('cascade')).toMatchObject({ status: 'stopped', tasks: [{ status: 'stopped' }] });
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('writes every scripted transition to task and job together and emits increasing versions', async() => {

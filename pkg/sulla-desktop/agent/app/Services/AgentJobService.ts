@@ -11,7 +11,6 @@ import { JobTaskLocator } from './JobTaskLocator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService) { super(); this.runtime.start(); }
-  private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } finally { this.states.touch(); } }
 async createJob(
   taskInput: number | AgentJobTask[],
   parentChannel?: string,
@@ -37,42 +36,30 @@ async createJob(
     completionDeliveredAt: null,
     dismissedAt: null,
   };
-  this.runtime.jobs.set(jobId, job);
+  await this.states.create(job);
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
   this.runtime.abortControllers.set(jobId, new AbortController());
-  await this.persist(this.repository.insertJob(job));
   return job;
 }
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
-  const job = this.runtime.jobs.get(jobId);
-  if (!job?.tasks[index]) return;
-  const nextPatch = job.status === 'stopped' && patch.status && patch.status !== 'stopped'
-    ? { ...patch, status: 'stopped' as const }
-    : patch;
-  job.tasks[index] = { ...job.tasks[index], ...nextPatch };
-  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  await this.states.update(jobId, job => {
+    if (!job.tasks[index]) return job;
+    const nextPatch = job.status === 'stopped' && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
+  });
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
-  await this.recovery.ensureHydrated();
-  try {
-    const rows = await this.repository.jobsForParentThread(parentThreadId);
-    for (const job of rows) { if (!this.runtime.jobs.has(job.jobId)) this.runtime.jobs.set(job.jobId, job); }
-  } catch (err) {
-    console.warn('[jobRegistry] thread job read failed:', (err as Error).message);
-  }
-  return Array.from(this.runtime.jobs.values())
-    .filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt)
-    .sort((a, b) => a.createdAt - b.createdAt);
+  return (await this.states.descendants(parentThreadId)).filter(job => !job.dismissedAt);
 }
 async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> {
-  const job = await this.getJob(jobId);
+  const job = await this.states.job(jobId);
   if (job?.parentThreadId !== parentThreadId || !job.tasks[taskIndex]) return false;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], dismissed: true };
-  const allDismissed = job.tasks.length > 0 && job.tasks.every(task => task.dismissed);
-  if (allDismissed) job.dismissedAt = this.clock.now().getTime();
-  await this.persist(this.repository.dismissTasks(jobId, parentThreadId, job.tasks, allDismissed));
+  await this.states.update(jobId, current => {
+    const tasks = current.tasks.map((task, index) => index === taskIndex ? { ...task, dismissed: true } : task);
+    return { ...current, tasks, ...(tasks.length > 0 && tasks.every(task => task.dismissed) ? { dismissedAt: this.clock.now().getTime() } : {}) };
+  });
   return true;
 }
 /** Keep a job's dead-run watcher until releaseJobWatcher (tab this.runtime.jobs). */
@@ -100,68 +87,27 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   if (!job) return 'not-found';
   if (!['running', 'parked'].includes(job.status)) return 'already-finished';
   this.runtime.abortControllers.get(jobId)?.abort();
-  job.status = 'stopped';
-  job.finishedAt = this.clock.now().getTime();
-  job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
-    ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
-    : task);
-  void this.persist(this.repository.stop(jobId, job.tasks));
+  const finishedAt = this.clock.now().getTime();
+  const next = { ...job, status: 'stopped' as const, finishedAt, waitingOnChildren: 0,
+    tasks: job.tasks.map(task => ['running', 'queued', 'parked'].includes(task.status)
+      ? { ...task, status: 'stopped' as const, finishedAt }
+      : task) };
+  // Compatibility path is synchronous; state remains unchanged until the durable write succeeds.
+  void this.states.commit(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
   return 'stopped';
 }
 async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
-  const root = await this.getJob(jobId);
+  const root = await this.states.job(jobId);
   if (!root) return 'not-found';
   if (!['running', 'parked'].includes(root.status)) return 'already-finished';
-  const stoppedIds = await this.repository.stopCascade(jobId);
-  const stoppedAt = this.clock.now().getTime();
-  for (const stoppedId of stoppedIds) {
-    this.runtime.abortControllers.get(stoppedId)?.abort();
-    const job = this.runtime.jobs.get(stoppedId);
-    if (!job || !['running', 'parked'].includes(job.status)) continue;
-    job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0;
-    job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
-  }
-  return 'stopped';
+  const stoppedIds = await this.states.stopCascade(jobId);
+  for (const stoppedId of stoppedIds) this.runtime.abortControllers.get(stoppedId)?.abort();
+  return stoppedIds.length > 0 ? 'stopped' : 'already-finished';
 }
 
-async getJob(jobId: string): Promise<AgentJob | undefined> {
-  await this.recovery.ensureHydrated();
-  const cached = this.runtime.jobs.get(jobId);
-  if (cached) return cached;
+async getJob(jobId: string): Promise<AgentJob | undefined> { return this.states.job(jobId); }
 
-  // Cache miss — a pre-restart job may still exist in Postgres (swept to
-  // 'failed' by ensureBootSweep, or finished before the restart).
-  try {
-    const persisted = await this.repository.job(jobId);
-    if (persisted) {
-      const job = persisted;
-      this.runtime.jobs.set(jobId, job);
-
-      return job;
-    }
-  } catch (err) {
-    console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
-  }
-
-  return undefined;
-}
-
-async getAllJobs(): Promise<AgentJob[]> {
-  await this.recovery.ensureHydrated();
-
-  // Union: in-memory (authoritative for this process) + persisted rows the
-  // Map doesn't know about (pre-restart this.runtime.jobs within TTL).
-  try {
-    const rows = await this.repository.allJobs();
-    for (const job of rows) { if (!this.runtime.jobs.has(job.jobId)) this.runtime.jobs.set(job.jobId, job); }
-  } catch (err) {
-    console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
-  }
-
-  this.runtime.evictSettledTerminalJobs();
-
-  return Array.from(this.runtime.jobs.values());
-}
+async getAllJobs(): Promise<AgentJob[]> { return this.states.jobs(); }
 
 /**
  * Keep every live job, plus only the newest bounded slice of terminal this.runtime.jobs.
@@ -184,27 +130,7 @@ boundJobList(allJobs: AgentJob[], limit: number, includeFinished: boolean): Agen
  * Lightweight list read. Unlike getAllJobs(), this never loads the unbounded
  * durable history (including prompts and result payloads) into memory.
  */
-async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
-  await this.recovery.ensureHydrated();
-  const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
-  const persisted: AgentJob[] = [];
-
-  try {
-    persisted.push(...await this.repository.jobsForList(safeLimit, includeFinished));
-  } catch (err) {
-    console.warn('[jobRegistry] bounded list read failed:', (err as Error).message);
-  }
-
-  // Hot records win, but only active this.runtime.jobs are added outside the DB window.
-  const merged = new Map(persisted.map(job => [job.jobId, job]));
-  for (const job of this.runtime.jobs.values()) {
-    if (!job.dismissedAt && (job.status === 'running' || job.status === 'parked' || merged.has(job.jobId))) merged.set(job.jobId, job);
-  }
-
-  this.runtime.evictSettledTerminalJobs();
-
-  return this.boundJobList(Array.from(merged.values()), safeLimit, includeFinished);
-}
+async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> { return this.states.list(limit, includeFinished); }
 
 /**
  * Task status is the source of truth; job.status is a rollup of its
@@ -215,25 +141,17 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> {
  * job-level status).
  */
 async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.tasks[taskIndex]?.status !== 'running') return;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'parked' };
-  job.status = job.tasks.some(task => task.status === 'running' || task.status === 'queued') ? 'running' : 'parked';
-  job.waitingOnChildren = waitingOnChildren;
-  await this.persist(this.repository.park(jobId, job.tasks, waitingOnChildren, job.status as 'running' | 'parked'));
+  const job = await this.states.job(jobId); if (!job || job.tasks[taskIndex]?.status !== 'running') return;
+  await this.states.transition(jobId, taskIndex, { status: 'parked' }, { waitingOnChildren });
 }
-
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
-  if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], status: 'running' };
-  job.status = 'running';
-  job.waitingOnChildren = 0;
-  await this.persist(this.repository.resume(jobId, job.tasks));
+  const job = await this.states.job(jobId); if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
+  await this.states.transition(jobId, taskIndex, { status: 'running' }, { waitingOnChildren: 0, finishedAt: null });
 }
 
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   if (!job) return;
   this.runtime.abortControllers.delete(jobId);
 
@@ -245,7 +163,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
       ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() }
       : task);
-    await this.persist(this.repository.saveStoppedResults(jobId, results, job.tasks));
+    await this.states.commit(job);
 
     return;
   }
@@ -263,11 +181,12 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 
   void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 
-  await this.persist(this.repository.complete(job));
+  await this.states.commit(job);
 }
 /** Persist one settled task before its siblings finish. */
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex]) return;
   job.results[taskIndex] = result;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex],
@@ -275,23 +194,23 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
     threadId: result.threadId || job.tasks[taskIndex].threadId,
     finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
     completion: result };
-  await this.persist(this.repository.updateTaskCompletions(jobId, job.tasks, job.results));
+  await this.states.commit(job);
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
   if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
-  await this.persist(this.repository.updateTasks(jobId, job.tasks));
-  if (job.completionDeliveredAt) await this.persist(this.repository.markCompletionDelivered(jobId));
+  await this.states.commit(job);
+
 }
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
-  const job = this.runtime.jobs.get(jobId);
-  if (job?.completionDeliveredAt) return;
-  if (job) job.completionDeliveredAt = this.clock.now().getTime();
-  await this.persist(this.repository.markCompletionDelivered(jobId));
+  const source = await this.states.job(jobId);
+  if (!source || source.completionDeliveredAt) return;
+  await this.states.commit({ ...source, completionDeliveredAt: this.clock.now().getTime() });
 }
 
 /** Read completed reports whose graph wake was not durably acknowledged. */
@@ -344,7 +263,8 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
   summary?: string;
   status:  AgentJobTask['status'];
 }): Promise<AgentJob> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   const task = job?.tasks[taskIndex];
   if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
   if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
@@ -358,21 +278,23 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
     // finished by this return alone.
     ...(job.visibility === 'tab' ? { status: patch.status, finishedAt: this.clock.now().getTime() } : {}),
   };
-  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  await this.states.commit(job);
   return job;
 }
 
 /** Mark a hidden child as opened in a chat tab (rail shows the tab pill). */
 async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask | undefined> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex]) return undefined;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], promotedToTab: true };
-  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  await this.states.commit(job);
   return job.tasks[taskIndex];
 }
 
 async failJob(jobId: string, error: string): Promise<void> {
-  const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
+  const source = await this.states.job(jobId);
+  const job = source ? structuredClone(source) : undefined;
   if (!job) return;
   this.runtime.abortControllers.delete(jobId);
 
@@ -386,7 +308,7 @@ async failJob(jobId: string, error: string): Promise<void> {
     ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() }
     : task);
 
-  await this.persist(this.repository.fail(jobId, error, job.tasks));
+  await this.states.commit(job);
 }
 
 }
