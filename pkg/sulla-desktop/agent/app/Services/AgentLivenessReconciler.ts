@@ -19,7 +19,7 @@ export class AgentLivenessReconciler {
   }
   async reconcile(): Promise<number> {
     let lost = 0;
-    const jobs = await this.states.jobs();
+    const jobs = await this.states.jobsBeforeReady();
     for (const job of jobs) for (const [taskIndex, task] of job.tasks.entries()) {
       if (!['queued', 'running', 'parked', 'blocked'].includes(task.status)) continue;
       const hasLiveChildren = task.status === 'parked' && task.threadId
@@ -31,9 +31,8 @@ export class AgentLivenessReconciler {
       const reason = `lost: no live graph or container and no activity for ${ this.config.lostAfterMs }ms`;
       const finishedAt = this.clock();
       // TODO(F-1): switch to persisted 'lost' once F-1 merges.
-      await this.states.transition(job.jobId, taskIndex, { status: 'error', summary: reason, finishedAt },
-        { error: reason, finishedAt, waitingOnChildren: 0 });
-      lost++;
+      if (await this.states.transitionIfActivityUnchanged(job.jobId, taskIndex, lastActivityAt,
+        { status: 'error', summary: reason, finishedAt }, { error: reason, finishedAt, waitingOnChildren: 0 })) lost++;
     }
     return lost;
   }

@@ -12,7 +12,7 @@ export class AgentStatePublisher {
   private unsubscribe?: () => void;
   constructor(private readonly states: AgentStateService, private readonly projector: AgentStateProjector, private readonly delayMs = 250) {}
   register(): void {
-    ipcMain.handle(AGENT_STATE_SNAPSHOT_CHANNEL, () => this.projector.snapshot());
+    ipcMain.handle(AGENT_STATE_SNAPSHOT_CHANNEL, async() => { await this.states.ready(); return this.projector.snapshot(); });
     this.unsubscribe = this.states.onChange(() => this.schedule());
   }
   private schedule(): void { if (this.timer) return; this.timer = setTimeout(() => void this.publish(), this.delayMs); }

@@ -20,7 +20,7 @@ import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvid
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
-import { hasAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { awaitAgentContainerRuntimeRehydration, hasAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
@@ -212,8 +212,9 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 
 export function initAgentsIpc(): void {
-  const bootReconciliation = agentLivenessReconciler.reconcile();
-  agentLivenessReconciler.start();
+  const bootReconciliation = awaitAgentContainerRuntimeRehydration().then(() => agentLivenessReconciler.reconcile());
+  agentJobProvider.states.setReadiness(bootReconciliation);
+  void bootReconciliation.then(() => agentLivenessReconciler.start());
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
@@ -391,12 +392,15 @@ export function initAgentsIpc(): void {
 
   ipcMain.handle('agents:thread-jobs', async(_event, parentThreadId: string): Promise<ThreadAgentCard[]> => {
     if (!parentThreadId || typeof parentThreadId !== 'string') return [];
+    await agentJobProvider.states.ready();
     return fetchThreadAgentCards(parentThreadId);
   });
 
   // "Open in tab": show a running hidden child's thread as a chat tab.
   ipcMain.handle('agents:open-job-in-tab', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
     if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
+    const job = await agentJobProvider.states.job(jobId);
+    if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return false;
     const [{ promoteJobTaskToTab }, { markTaskPromoted }] = await Promise.all([
       import('@pkg/agent/services/AgentTabOpener'),
       import('@pkg/agent/tools/agents/jobRegistry'),
@@ -414,13 +418,12 @@ export function initAgentsIpc(): void {
 }
 
 export async function fetchThreadAgentCards(parentThreadId: string): Promise<ThreadAgentCard[]> {
-  const [{ getJobsForParentThread }, { ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
-    import('@pkg/agent/tools/agents/jobRegistry'),
+  const [{ ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
     import('@pkg/agent/database/models/ConversationHistoryModel'),
     import('@pkg/agent/utils/sullaPaths'),
     import('@pkg/agent/services/RunActivity'),
   ]);
-  const jobs = await getJobsForParentThread(parentThreadId);
+  const jobs = await agentJobProvider.states.descendants(parentThreadId);
   const logsDir = resolveSullaLogsDir();
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
