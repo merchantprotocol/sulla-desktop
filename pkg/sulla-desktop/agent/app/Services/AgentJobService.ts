@@ -57,6 +57,12 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
   return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt).sort((a, b) => a.createdAt - b.createdAt);
 }
+/** Count direct open child tasks while treating a queued hard stop as closed immediately. */
+async openChildrenForThread(parentThreadId: string): Promise<number> {
+  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
+    .reduce((count, job) => count + (['running','parked'].includes(job.status) ? job.tasks.filter(task => ['queued','running','parked'].includes(task.status)).length : 0), 0);
+}
+
 async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> {
   const job = await this.states.jobForWrite(jobId);
   if (job?.parentThreadId !== parentThreadId || !job.tasks[taskIndex]) return false;
@@ -236,6 +242,7 @@ async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask |
 }
 
 async failJob(jobId: string, error: string): Promise<void> {
+  if (this.states.hasPendingTerminalWrite(jobId)) return;
   this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
   await this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : { ...current, status: 'failed', finishedAt: this.clock.now().getTime(), error,
     tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() } : task) });
