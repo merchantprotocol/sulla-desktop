@@ -56,12 +56,12 @@ export class LeadHandoffRepository extends Repository<AgentJobModel> {
     ]);
     return {lead,taskIndex,children,checkins:telemetry[taskIndex]?.checkins??[],messages:messageRows,inbox:inboxRows,completions:completionRows};
   }
-  async listDirectChildren(ownerThread:string):Promise<LeadChildTask[]>{
-    const rows=await this.connection.select(`SELECT j.job_id,(task.ordinality-1)::int AS task_index FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
+  async listDirectChildren(ownerThread:string,client?:CustodyTransactionClient):Promise<LeadChildTask[]>{
+    const sql=`SELECT j.*,(task.ordinality-1)::int AS resolved_task_index FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
       LEFT JOIN agent_job_custody task_c ON task_c.job_id=j.job_id AND task_c.task_index=(task.ordinality-1)
       LEFT JOIN agent_job_custody job_c ON job_c.job_id=j.job_id AND job_c.task_index IS NULL
-      WHERE COALESCE(task_c.owner_thread_id,job_c.owner_thread_id,j.parent_thread_id)=$1 ORDER BY j.job_id,task.ordinality`,[ownerThread]);
-    const children=await Promise.all(rows.map(async row=>({job:await this.jobs.job(String(row.job_id)),taskIndex:Number(row.task_index)})));
-    return children.filter((child):child is LeadChildTask=>Boolean(child.job));
+      WHERE COALESCE(task_c.owner_thread_id,job_c.owner_thread_id,j.parent_thread_id)=$1 ORDER BY j.job_id,task.ordinality`;
+    const rows=client?(await client.query<any>(sql,[ownerThread])).rows:await this.connection.select(sql,[ownerThread]);
+    return rows.map(row=>({job:this.jobs.map(row),taskIndex:Number(row.resolved_task_index)}));
   }
 }

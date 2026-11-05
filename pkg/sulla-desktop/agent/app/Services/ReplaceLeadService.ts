@@ -35,7 +35,7 @@ export class ReplaceLeadService {
    await moveChildren(packet.snapshot.children);
    // Re-enumerate under the old lead's custody lock. Children adopted during the first pass
    // must move before wrap-up can be claimed.
-   await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async client=>{await moveChildren(await this.packets.listDirectChildren(owner.threadId));await this.packets.saveOperation(client,operation);});
+   await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async client=>{await moveChildren(await this.packets.listDirectChildren(owner.threadId,client));await this.packets.saveOperation(client,operation);});
    const actor=input.actor.agentId; const audit=`replaced by ${launched.jobId} by ${actor}${input.note?.trim()?`: ${input.note.trim()}`:''}`;
    if(failed.length===0){
      const claimedAudit=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.claimAudit(client,operation,audit));

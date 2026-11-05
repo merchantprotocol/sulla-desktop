@@ -6,7 +6,7 @@ import '../../Support/TestHomeEnv';
 import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 
-vi.setConfig({testTimeout:40_000,hookTimeout:30_000});
+vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 import {TestDatabase} from '../../Support/TestDatabase';
 
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
@@ -15,20 +15,15 @@ const runtimeEntries=new Map<string,any>();
 vi.mock('../../../services/GraphRegistry',()=>({GraphRegistry:{get:(threadId:string)=>runtimeEntries.get(threadId)??null}}));
 
 let failAfterPersist=false;
-let boundaryStage='not-called';
 vi.mock('../../../tools/agents/spawn_agent',async()=>{
  class ProcessBoundarySpawnAgentWorker {
   async runValidated(input:any,state:any){
-   boundaryStage='called';
    if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
    const {postgresClient}=await import('../../../database/PostgresClient');
    const jobId=`replacement-${String(input.tasks[0].label).split(':').slice(-2).join('-')}`;
-   boundaryStage='querying';
    const existing=await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE job_id=$1',[jobId]);
    if(!existing.length)await postgresClient.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,'running',1,$2,$3,$4,$5::jsonb)`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:'coding-manager-sol',label:input.tasks[0].label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}])]);
-   boundaryStage='persisted';
    if(failAfterPersist)throw new Error('simulated process disconnect after persist');
-   boundaryStage='returned';
    return {successBoolean:true,responseString:'ok',result:{jobId}};
   }
  }
@@ -57,7 +52,7 @@ suite('agents/replace_lead registered production path',()=>{
   for(let index=0;index<children;index++)await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,'running',1,$2,$3,'coding-manager-sol',$4::jsonb)`,[`child-${suffix}-${index}`,owner.channel,leadThread,JSON.stringify([task(`Worker ${index+1}`,`worker-${suffix}-${index}`)])]);
   return {leadId,leadThread};
  }
- async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return Promise.race([tool.call(input),new Promise<never>((_,reject)=>setTimeout(async()=>{const [operation,custody,audit]=await Promise.all([database.query<any>('SELECT replacement_job_id,child_progress,audit_done,wrap_up_done FROM agent_lead_replacements WHERE old_job_id=$1',[input.jobId]),database.query<any>("SELECT job_id,owner_thread_id FROM agent_job_custody WHERE job_id LIKE 'child-%'"),database.query<any>("SELECT step FROM agent_job_checkins WHERE job_id=$1",[input.jobId])]);reject(new Error(`replace_lead deadline for ${input.jobId} at ${boundaryStage}: ${JSON.stringify({operation,custody,audit})}`));},5_000))]);}
+ async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
 
  it('covers handoff, retry idempotency, caller authorization, missing tasks, and disabled agents',async()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
