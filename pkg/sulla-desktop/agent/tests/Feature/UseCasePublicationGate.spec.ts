@@ -13,7 +13,6 @@ import { Pool } from 'pg';
 import { issueCapabilityToken } from '../../../../../services/sulla-files/src/auth.js';
 import { migrate } from '../../../../../services/sulla-files/src/db.js';
 import { LocalFilesManager } from '../../../../../services/sulla-files/src/localManager.js';
-import { PublicationLifecyclePolicy } from '../../../../../services/sulla-files/src/publicationLifecyclePolicy.js';
 
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client:class {}, PutObjectCommand:class {}, GetObjectCommand:class {}, HeadObjectCommand:class {}, DeleteObjectCommand:class {}, ListObjectsV2Command:class {} }));
 vi.mock('@sulla/vault-crypto', () => ({}));
@@ -321,8 +320,7 @@ describeWithDatabase('Use Case publication production paths',()=>{
   },120_000);
   it('sanitizes replication with local old-peer policy and is idempotent',async()=>{
     // risk: replication integrity — local logs policy must survive absent peer metadata while canonical malformed publications remain gated.
-    const bypass=vi.spyOn(PublicationLifecyclePolicy.prototype,'sanitizeReplication').mockImplementation(input=>input.lifecycle);
-    const result=await withFixture(fixture=>fixture.replicationCases()).finally(()=>bypass.mockRestore());
+    const result=await withFixture(fixture=>fixture.replicationCases());
     expect(result.oldPeer).toMatchObject({publication_status:'published'}); expect(result.oldPeer.published_version_id).toBeTruthy();
     expect(result.malformed).toMatchObject({publication_status:'draft',published_version_id:null}); expect(result.malformed.draft_version_id).toBeTruthy();
     expect(result.approved).toMatchObject({publication_status:'published',published_by:'human-reviewer'}); expect(result.approved.published_at).toBeTruthy();
