@@ -102,6 +102,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
       'taskId', task->>'taskId', 'status', task->>'status', 'visibility', task->>'visibility',
       'startedAt', task->'startedAt', 'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',
+      'waitReason', task->>'waitReason', 'wakeAt', task->'wakeAt',
       'contract', CASE WHEN task ? 'contract' THEN jsonb_build_object('name', task->'contract'->>'name') ELSE NULL END))
       FROM jsonb_array_elements(selected.tasks) AS task), '[]'::jsonb) AS tasks
       FROM selected ORDER BY created_at DESC`, [limit, includeFinished]);

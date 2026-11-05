@@ -74,6 +74,17 @@ export const agentToolManifests: ToolManifest[] = [
     loader:         () => import('./return_result'),
   },
   {
+    name:        'wait',
+    description: 'Park this delegated worker durably until a timer expires or its manager sends a message, whichever happens first. End your turn immediately after it succeeds.',
+    category:    'agents',
+    schemaDef:   {
+      seconds: { type: 'number', description: 'Whole seconds to wait (10 through 14400).' },
+      reason:  { type: 'string', description: 'Why the worker is waiting; shown in job status.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./wait'),
+  },
+  {
     name:        'check_agent_jobs',
     description: 'Inspect delegated jobs. A jobId returns full detail; the bounded list returns every active job plus recent compact summaries.',
     category:    'agents',

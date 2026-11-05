@@ -86,6 +86,9 @@ export interface AgentJobTask {
   promotedToTab?: boolean;
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
+  /** Durable leaf-worker wait details while status is parked. */
+  waitReason?: string;
+  wakeAt?: number;
 }
 
 export interface OrphanedChildNotice {

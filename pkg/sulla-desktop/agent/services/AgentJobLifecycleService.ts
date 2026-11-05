@@ -21,8 +21,12 @@ export class AgentJobLifecycleService {
     private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<void>,
   ) {}
 
+  openChildren(threadId: string): Promise<number> {
+    return this.children.openChildrenForThread(threadId);
+  }
+
   async parkWhenWaiting(jobId: string, taskIndex: number, threadId: string): Promise<boolean> {
-    const openChildren = await this.children.openChildrenForThread(threadId);
+    const openChildren = await this.openChildren(threadId);
     if (openChildren === 0) return false;
     await this.parkTask(jobId, taskIndex, openChildren);
     return true;

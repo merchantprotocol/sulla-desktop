@@ -16,6 +16,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
+import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
@@ -124,8 +125,8 @@ export class BackendGraphWebSocketService {
     // disconnected new turn, which would leave this exact Promise (and its
     // eventual completeJob/deliverJobCompletion once the loop returns)
     // blocked forever.
+    const delegated = GraphRegistry.get(threadId);
     if (agentJobLifecycle.hasLiveWaiter(threadId)) {
-      const delegated = GraphRegistry.get(threadId);
       // Should not happen — the waiter and this GraphRegistry entry share the
       // same spawn_agent call's lifetime — but release the waiter either way
       // so a contradiction here cannot leak the Promise.
@@ -134,6 +135,20 @@ export class BackendGraphWebSocketService {
         agentJobLifecycle.wake(threadId);
         return false;
       }
+      injectSteer(delegated.state, {
+        id:        nextMessageId(),
+        role:      'user',
+        content:   `[Message from orchestrator]\n${ message }`,
+        timestamp: Date.now(),
+        metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
+      } as any);
+      agentJobLifecycle.wake(threadId);
+      return true;
+    }
+    // The worker can persist its wait just before spawn_agent registers the
+    // in-process waiter. Keep this wake on the same graph: inject now and
+    // latch the wake for waitForWake() to consume once settlement begins.
+    if (delegated && (delegated.state.metadata as any)?.delegatedRunActive) {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
@@ -427,6 +442,7 @@ export class BackendGraphWebSocketService {
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
+    agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
   }
 
   /**
