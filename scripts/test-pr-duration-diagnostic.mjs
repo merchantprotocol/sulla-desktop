@@ -12,7 +12,11 @@ class RelatedSpecDurationDiagnostic {
   }
   run() {
     const output = '/tmp/vitest-related-timings.json'; const files = this.changedFiles();
-    execFileSync('yarn', ['vitest', 'related', ...files, '--run', '--config', 'vitest.agent.config.mts', '--reporter=json', `--outputFile=${ output }`], { stdio: 'inherit' });
+    try {
+      execFileSync('yarn', ['vitest', 'related', ...files, '--run', '--config', 'vitest.agent.config.mts', '--reporter=json', `--outputFile=${ output }`], { stdio: 'inherit' });
+    } catch (error) {
+      console.log('::warning title=Vitest diagnostic::Diagnostic selection reported failures; durations follow and the hard-budget gate remains authoritative.');
+    }
     const report = JSON.parse(readFileSync(output, 'utf8'));
     const timings = (report.testResults ?? []).map(result => ({ name: result.name, duration: Math.max(0, (result.endTime ?? 0) - (result.startTime ?? 0)) })).sort((a, b) => b.duration - a.duration).slice(0, 15);
     for (const timing of timings) console.log(`::warning title=Vitest spec duration::${ timing.duration }ms ${ timing.name }`);
