@@ -6,6 +6,8 @@
 import { BaseTool, ToolResponse } from '../base';
 import { runDockerCommand } from './runDockerCommand';
 import { AgentDockerRunPolicy } from './AgentDockerRunPolicy';
+import { JobMessagingCheckinWriter } from './JobMessagingCheckinWriter';
+import { PersistentContainerAuditor } from './PersistentContainerAuditor';
 
 /**
  * Docker Run Tool - Worker class for execution
@@ -13,6 +15,14 @@ import { AgentDockerRunPolicy } from './AgentDockerRunPolicy';
 export class DockerRunWorker extends BaseTool {
   name = '';
   description = '';
+
+  constructor(
+    private readonly policy = new AgentDockerRunPolicy(),
+    private readonly auditor = new PersistentContainerAuditor(new JobMessagingCheckinWriter()),
+  ) {
+    super();
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { image, name, command } = input;
     const metadata = this.state?.metadata ?? {};
@@ -22,7 +32,7 @@ export class DockerRunWorker extends BaseTool {
     };
     let policyResult;
     try {
-      policyResult = new AgentDockerRunPolicy().apply(input, identity);
+      policyResult = this.policy.apply(input, identity);
     } catch (error) {
       return { successBoolean: false, responseString: (error as Error).message };
     }
@@ -47,6 +57,9 @@ export class DockerRunWorker extends BaseTool {
       }
 
       const containerId = res.stdout.trim();
+      if (input.persistent === true) {
+        await this.auditor.record(metadata.threadId, 'docker_run', String(input.reason).trim(), policyResult.labels);
+      }
       return {
         successBoolean: true,
         responseString: `Container started successfully. Image: ${ image }, Container ID: ${ containerId }, Labels: ${ JSON.stringify(policyResult.labels) }`,
