@@ -294,30 +294,35 @@ class ProductionFilesFixture {
 }
 
 describeWithDatabase('Use Case publication production paths',()=>{
-  const fixture=new ProductionFilesFixture(databaseUrl); beforeAll(()=>fixture.initialize(),120_000); afterAll(()=>fixture.dispose(),30_000);
-  let buffered:any; let streamed:any;
+  const withFixture=async<T>(operation:(fixture:ProductionFilesFixture)=>Promise<T>):Promise<T>=>{
+    const fixture=new ProductionFilesFixture(databaseUrl); await fixture.initialize();
+    try { return await operation(fixture) } finally { await fixture.dispose() }
+  };
   it('buffers an agent mount write as a draft through the FUSE route',async()=>{
     // risk: permissions — removing app.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
-    buffered=await fixture.bufferedDraft(); expect(buffered.publication_status).toBe('draft'); expect(buffered.draft_version_id).toBe(buffered.current_version_id); expect(buffered.published_version_id).toBeNull();
-  });
+    const buffered=await withFixture(fixture=>fixture.bufferedDraft());
+    expect(buffered.publication_status).toBe('draft'); expect(buffered.draft_version_id).toBe(buffered.current_version_id); expect(buffered.published_version_id).toBeNull();
+  },120_000);
   it('streams an agent mount write as a draft through insertStreamingUpload',async()=>{
     // risk: permissions — removing streamingUpload.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
-    streamed=await fixture.streamingDraft(buffered); expect(streamed.publication_status).toBe('draft'); expect(streamed.draft_version_id).toBe(streamed.current_version_id); expect(streamed.published_version_id).toBeNull();
-  });
+    const streamed=await withFixture(async fixture=>fixture.streamingDraft(await fixture.bufferedDraft()));
+    expect(streamed.publication_status).toBe('draft'); expect(streamed.draft_version_id).toBe(streamed.current_version_id); expect(streamed.published_version_id).toBeNull();
+  },120_000);
   it('requests and approves publication through the real lifecycle routes',async()=>{
     // risk: authorization — only the human approval path may activate an agent draft.
-    const approved=await fixture.approve(streamed); expect(approved).toMatchObject({publication_status:'published',published_by:'publication-test-user'}); expect(approved.published_at).toBeTruthy(); expect(approved.published_version_id).toBe(streamed.current_version_id);
-  });
+    const {approved,streamed}=await withFixture(async fixture=>{const streamed=await fixture.streamingDraft(await fixture.bufferedDraft());return {streamed,approved:await fixture.approve(streamed)}});
+    expect(approved).toMatchObject({publication_status:'published',published_by:'publication-test-user'}); expect(approved.published_at).toBeTruthy(); expect(approved.published_version_id).toBe(streamed.current_version_id);
+  },120_000);
   it('quarantines a missing-collection sync entry without pinning the cursor',async()=>{
     // risk: data availability — one malformed peer entry must not block later entries or replay them repeatedly.
-    const result=await fixture.syncQuarantinesMissingCollection();
+    const result=await withFixture(fixture=>fixture.syncQuarantinesMissingCollection());
     expect(result.cursor.last_seq).toBe('2'); expect(result.valid?.current_version_id).toBeTruthy(); expect(result.versionCount).toBe(1);
-  });
+  },120_000);
   it('sanitizes replication with local old-peer policy and is idempotent',async()=>{
     // risk: replication integrity — local logs policy must survive absent peer metadata while canonical malformed publications remain gated.
-    const result=await fixture.replicationCases();
+    const result=await withFixture(fixture=>fixture.replicationCases());
     expect(result.oldPeer).toMatchObject({publication_status:'published'}); expect(result.oldPeer.published_version_id).toBeTruthy();
     expect(result.malformed).toMatchObject({publication_status:'draft',published_version_id:null}); expect(result.malformed.draft_version_id).toBeTruthy();
     expect(result.approved).toMatchObject({publication_status:'published',published_by:'human-reviewer'}); expect(result.approved.published_at).toBeTruthy();
-  });
+  },120_000);
 });

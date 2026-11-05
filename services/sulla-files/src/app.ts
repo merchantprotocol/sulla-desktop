@@ -389,7 +389,7 @@ export function createApp(
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4,$11) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.jobId || input.actor.deviceId || 'server-web', publicationStatus])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
     if (version.publication_status === 'draft') await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'draft-write',$6)`, [agentWrite?'agent-or-device':'user',createdById,input.actor.deviceId||null,file.id,version.id,{path:input.path,message:input.message}]);
-    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime };
+    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
   }
 
   async function saveAutomergeVersion(client:pg.PoolClient,fileId:string,versionId:string,document:Automerge.Doc<TextDocument>):Promise<void> {
@@ -816,7 +816,7 @@ export function createApp(
       const file = await insertVersion(client, { collectionId, path: filePath,
         mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor,
         createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
-      await client.query('COMMIT'); await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:'draft'}); response.status(201).json(file);
+      await client.query('COMMIT'); await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
     } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
   });
   app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
@@ -902,7 +902,7 @@ export function createApp(
       await client.query('COMMIT');
       await completeUploadIntent(db,uploadId).catch(()=>undefined);
       const hash=result.source_hash;
-      await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:'draft'});
+      await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status});
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
     } catch(error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
@@ -928,7 +928,7 @@ export function createApp(
         message:'Updated through the Files mount',baseVersionId:file.current_version_id});
       if(saved.document) await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document);
       await client.query('COMMIT'); if(saved.document)adoptLive(request,file.id,saved.document); const nextHash=createHash('sha256').update(saved.bytes).digest('hex');
-      await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:'draft'});
+      await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
       if(saved.merged) response.setHeader('X-Sulla-Merged','1');
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
