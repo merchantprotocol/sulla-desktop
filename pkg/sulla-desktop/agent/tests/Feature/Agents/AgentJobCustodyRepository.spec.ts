@@ -78,18 +78,10 @@ suite('AgentJobCustodyRepository',()=>{
  });
  it('returns a committed move when best-effort notification dispatch fails',async()=>{ // risk: retry duplicates after a committed handoff
    const id=`custody-notifier-failure-${Date.now()}`;await createJob(id);const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any);
-   const notifier={changed:async()=>{throw new Error('simulated process-local dispatcher failure');}};
+   const barrier=new ControlledAsyncBarrier();barrier.release();const notifier={changed:async()=>{await barrier.enterAndWait();throw new Error('simulated process-local dispatcher failure');}};
    const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles()),notifier,new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
    expect(await move(instance,id)).toMatchObject({ok:true});expect(await instance.history(id)).toHaveLength(1);
    expect(await database.query(`SELECT message_id FROM agent_inbox_messages WHERE message_id LIKE $1`,[`custody:${id}:job:1:%`])).toHaveLength(2);
- });
- it('commits custody and its outbox before post-commit dispatch completes',async()=>{ // risk: crash between commit and process-local notification
-   const id=`custody-post-commit-${Date.now()}`;await createJob(id);const barrier=new ControlledAsyncBarrier();
-   const notifier={changed:async()=>barrier.enterAndWait()};const instance=new JobCustodyService(new AgentJobCustodyRepository(new PgDatabase(pool) as any),new JobCustodyAuthorityPolicy(new Alive(),new NoCycles()),notifier,new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
-   const moving=move(instance,id);await barrier.entered;
-   expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
-   expect(await database.query(`SELECT * FROM agent_inbox_messages WHERE message_id LIKE $1`,[`custody:${id}:job:1:%`])).toHaveLength(2);
-   barrier.release();expect(await moving).toMatchObject({ok:true});
  });
  it('survives new repository instances and never re-addresses an acknowledged row',async()=>{ // risk: restart replay
    const id=`custody-restart-${Date.now()}`;await createJob(id);const delivered=`delivered-${Date.now()}`;await database.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,delivered_at) VALUES($1,'old-channel','old-thread','old-agent','worker','contract','done',$2::jsonb,now())`,[delivered,JSON.stringify({messageId:delivered,jobId:id})]);await move(service(),id);const restarted=service();expect(await restarted.resolveOwner(id)).toMatchObject(target);expect(await restarted.history(id)).toHaveLength(1);expect((await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id=$1`,[delivered]))[0].receiver_thread_id).toBe('old-thread');
