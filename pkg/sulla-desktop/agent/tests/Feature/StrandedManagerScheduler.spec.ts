@@ -55,7 +55,7 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
   const persistManager = async(id: string): Promise<void> => {
     await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility)
       VALUES ($1, 'parked', 1, 'sulla-desktop', 'grandparent-thread', now() - interval '1 hour', $2::jsonb, 'hidden') ON CONFLICT DO NOTHING`,
-    [id, JSON.stringify([{ agentId: 'manager', label: 'Manager', prompt: 'work', status: 'parked', threadId: 'manager-thread', startedAt: now - 60 * 60_000 })]);
+    [id, JSON.stringify([{ agentId: 'manager', label: 'Manager', prompt: 'work', status: 'parked', threadId: 'manager-thread', startedAt: now - 60 * 60_000 }])]);
   };
 
   it('lets two schedulers enqueue one notice and persists delivery outside agent_jobs JSON', async() => {
