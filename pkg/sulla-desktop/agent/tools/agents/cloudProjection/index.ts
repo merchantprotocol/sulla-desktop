@@ -7,6 +7,7 @@ import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
 import { sendJobMessage } from '../send_job_message';
 import { stopAgentJob } from '../stop_agent_job';
+import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 
 export interface CloudAgentProjection {
@@ -38,7 +39,7 @@ export class CloudAgentStateProjection {
       ? !Number.isInteger(taskIndex) || !job.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])
       : !job.tasks.some(task => agentJobProvider.states.isLive(job, task)))) return { ok: false, error: 'agent_not_found' };
     if (body.type === 'agent.stop') {
-      const result = await stopAgentJob(jobId);
+      const result = await stopAgentJob(jobId, StopPrincipal.system('CloudAgentStateProjection'), 'Stopped from cloud command');
       return { ok: result.successBoolean, message: result.responseString };
     }
     if (body.type === 'agent.message') {

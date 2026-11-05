@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
+import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
 import { AgentContainerRuntimeRegistry, type AgentContainerRuntimeBinding } from '../../services/AgentContainerRuntimeRegistry';
 import { TestDatabase } from '../Support/TestDatabase';
@@ -33,10 +34,10 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     await registry.completeJob(failed.jobId, []);
     expect((await registry.getJob(failed.jobId))?.status).toBe('failed');
     const stopped = await registry.createJob(0);
-    expect(registry.abortJob(stopped.jobId)).toBe('stopped');
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
     await registry.completeJob(stopped.jobId, []);
     expect((await registry.getJob(stopped.jobId))?.status).toBe('stopped');
-    expect(registry.abortJob(stopped.jobId)).toBe('already-finished');
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
   });
   it('claims an interrupted hidden job for bounded restart recovery without failing parked managers', async() => {
     // risk: restart silently kills delegated work or creates an infinite boot loop
@@ -64,7 +65,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
     const versions: number[] = []; const unsubscribe = agentJobProvider.states.onChange(version => versions.push(version));
     expect((await agentJobProvider.states.descendants('manager-thread')).map(job => job.jobId)).toEqual([child.jobId, grandchild.jobId]);
-    expect(await registry.stopJobCascade(root.jobId)).toBe('stopped');
+    expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
     unsubscribe();
     expect(versions).toHaveLength(1);
     for (const candidate of [root, child, grandchild]) {
@@ -72,7 +73,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       const [durable] = await database.query<{ status: string }>('SELECT status FROM agent_jobs WHERE job_id = $1', [candidate.jobId]);
       expect(durable.status).toBe('stopped');
     }
-    expect(await registry.stopJobCascade(root.jobId)).toBe('already-finished');
+    expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
   });
   it('acknowledges completion delivery once even when retried', async() => {
     // risk: duplicate irreversible side effect
@@ -228,7 +229,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     await registry.failJob(failed.jobId, 'expected');
     await assertEqual(failed.jobId);
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running' }]);
-    await registry.stopJobCascade(stopped.jobId);
+    await registry.stopJobCascade(stopped.jobId, StopPrincipal.human(), 'test stop');
     await assertEqual(stopped.jobId);
   });
 

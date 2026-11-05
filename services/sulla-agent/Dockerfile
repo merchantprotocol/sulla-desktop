@@ -20,6 +20,7 @@ COPY --chmod=0755 resources/darwin/bin/sulla /usr/local/libexec/sulla-remote
 COPY --chmod=0755 services/sulla-agent/sulla-wrapper.sh /usr/local/bin/sulla
 COPY --chmod=0755 services/sulla-agent/entrypoint.sh /usr/local/bin/sulla-agent-entrypoint
 COPY --chown=sulla:sulla services/sulla-agent/supervisor.mjs /usr/local/libexec/sulla-agent-supervisor.mjs
+COPY --chown=sulla:sulla services/sulla-agent/codex-home-policy.mjs /usr/local/libexec/codex-home-policy.mjs
 
 ENV HOME=/home/sulla \
     CODEX_HOME=/home/sulla/.codex \

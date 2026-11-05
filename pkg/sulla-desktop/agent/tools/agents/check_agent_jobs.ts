@@ -48,6 +48,7 @@ export function jobTaskViews(job: AgentJob, telemetry: Record<number, AgentJobTa
       returned: !!task.returnedAt,
       elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
       threadId: task.threadId,
+      ...(task.status === 'parked' && task.wakeAt ? { waitReason: task.waitReason, wakeAt: new Date(task.wakeAt).toISOString() } : {}),
       latestCheckin: serializeCheckin(activity.latestCheckin),
       undeliveredOrchestratorMessages: activity.undeliveredMessages,
       checkins: activity.checkins.map(serializeCheckin),
@@ -63,10 +64,14 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
     status: job.status,
     waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
+    orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     error: job.error,
+    stoppedBy: job.stoppedBy,
+    stopReason: job.stopReason,
     tasks: jobTaskViews(job, telemetry),
     results: job.results,
+    orphanedChildNotices: job.orphanedChildNotices ?? [],
   };
 }
 
@@ -85,7 +90,10 @@ function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobT
     status: job.status,
     waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
+    orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
+    stoppedBy: job.stoppedBy,
+    stopReason: job.stopReason,
     tasks: job.tasks.map((task, taskIndex) => ({
       taskIndex,
       agentId: task.agentId,
@@ -96,6 +104,7 @@ function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobT
       contract: task.contract?.name ?? 'result',
       returned: !!task.returnedAt,
       elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
+      ...(task.status === 'parked' && task.wakeAt ? { waitReason: task.waitReason, wakeAt: new Date(task.wakeAt).toISOString() } : {}),
       latestCheckin: compactCheckin(telemetry[taskIndex]?.latestCheckin ?? null),
       undeliveredOrchestratorMessages: telemetry[taskIndex]?.undeliveredMessages ?? 0,
     })),
@@ -121,7 +130,7 @@ export class CheckAgentJobsWorker extends BaseTool {
 
       const result = await serializeJob(job);
       return {
-        successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
+        successBoolean: true,
         responseString: JSON.stringify(result, null, 2),
       };
     }
