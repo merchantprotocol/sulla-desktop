@@ -26,10 +26,12 @@ class UseCasePublicationFixture {
         checked_out_by_user_id TEXT,checked_out_by_device_id TEXT,record_lock_type TEXT NOT NULL DEFAULT 'none',
         retention_mode TEXT NOT NULL DEFAULT 'none',retain_until TIMESTAMPTZ,retention_event_at TIMESTAMPTZ,
         retention_duration_days INTEGER,disposal_extended_until TIMESTAMPTZ,major_minor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-        current_version_id UUID,draft_version_id UUID,published_version_id UUID,lifecycle_generation BIGINT NOT NULL DEFAULT 0);
+        current_version_id UUID,draft_version_id UUID,published_version_id UUID,lifecycle_generation BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
       CREATE TABLE file_versions(id UUID PRIMARY KEY,file_id UUID NOT NULL REFERENCES files(id),deleted BOOLEAN NOT NULL DEFAULT FALSE,
         created_by_type TEXT NOT NULL,created_by_id TEXT NOT NULL,device_id TEXT,major_version INTEGER,minor_version INTEGER,
-        version_kind TEXT,publication_status TEXT,published_at TIMESTAMPTZ,published_by TEXT,version_comment TEXT);
+        version_kind TEXT,publication_status TEXT,published_at TIMESTAMPTZ,published_by TEXT,version_comment TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
       CREATE TABLE files_publish_requests(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),file_id UUID NOT NULL REFERENCES files(id),
         version_id UUID NOT NULL REFERENCES file_versions(id),requested_by TEXT NOT NULL,reason TEXT,status TEXT NOT NULL DEFAULT 'pending',
         decided_by TEXT,decided_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
@@ -40,7 +42,7 @@ class UseCasePublicationFixture {
         ELSE UPDATE files SET draft_version_id=NEW.id WHERE id=NEW.file_id; END IF; RETURN NEW; END $$;
       CREATE TRIGGER file_versions_advance_lifecycle AFTER INSERT ON file_versions FOR EACH ROW EXECUTE FUNCTION files_advance_version_lifecycle();
     `);
-    const migration = await readFile(resolve(process.cwd(), 'services/sulla-files/migrations/059_agent_identity_versions_are_drafts.sql'), 'utf8');
+    const migration = await readFile(resolve(process.cwd(), 'services/sulla-files/migrations/060_repair_agent_mount_publication.sql'), 'utf8');
     await this.pool.query(migration);
     await this.pool.query('CREATE TRIGGER file_versions_prepare_lifecycle BEFORE INSERT ON file_versions FOR EACH ROW EXECUTE FUNCTION files_prepare_version_lifecycle()');
   }
@@ -77,6 +79,24 @@ class UseCasePublicationFixture {
     return { versionStatus, draftVersionId: before.draft_version_id, publishedVersionId: before.published_version_id, requests, publishedCount };
   }
 
+  async exerciseRepair():Promise<{ malformedStatus:string; draftVersionId:string|null; publishedVersionId:string|null; approvedStatus:string; approvedPublishedBy:string|null }> {
+    if (!this.pool) throw new Error('fixture not initialized');
+    const collectionId=randomUUID(), fileId=randomUUID(), approvedId=randomUUID(), malformedId=randomUUID();
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)',[collectionId]);
+    await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Use Cases/functions/repair/function.yaml')",[fileId,collectionId]);
+    await this.pool.query("INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,publication_status,published_at,published_by) VALUES($1,$2,'user','jonathon','published',NOW()-INTERVAL '1 hour','jonathon')",[approvedId,fileId]);
+    await this.pool.query("UPDATE file_versions SET publication_status='superseded' WHERE id=$1",[approvedId]);
+    await this.pool.query("INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,publication_status) VALUES($1,$2,'agent','worker','published')",[malformedId,fileId]);
+    await this.pool.query('UPDATE files SET current_version_id=$2,published_version_id=$2,draft_version_id=NULL WHERE id=$1',[fileId,malformedId]);
+    const migration=await readFile(resolve(process.cwd(),'services/sulla-files/migrations/060_repair_agent_mount_publication.sql'),'utf8');
+    await this.pool.query(migration);
+    await this.pool.query(migration); // idempotency guard
+    const file=(await this.pool.query('SELECT draft_version_id,published_version_id FROM files WHERE id=$1',[fileId])).rows[0];
+    const malformed=(await this.pool.query('SELECT publication_status FROM file_versions WHERE id=$1',[malformedId])).rows[0];
+    const approved=(await this.pool.query('SELECT publication_status,published_by FROM file_versions WHERE id=$1',[approvedId])).rows[0];
+    return {malformedStatus:malformed.publication_status,draftVersionId:file.draft_version_id,publishedVersionId:file.published_version_id,approvedStatus:approved.publication_status,approvedPublishedBy:approved.published_by};
+  }
+
   async dispose(): Promise<void> { await this.pool?.end(); await this.admin.query(`DROP SCHEMA IF EXISTS "${ this.schema }" CASCADE`); await this.admin.end() }
 }
 
@@ -93,6 +113,22 @@ describeWithDatabase('Use Case publication gate', () => {
     const result = await fixture.exercise();
     expect(result).toMatchObject({ versionStatus:'draft', publishedVersionId:null, requests:1, publishedCount:1 });
     expect(result.draftVersionId).toBeTruthy();
+  });
+
+  it('publishes a human-authored Use Case immediately', async() => {
+    // risk: data availability — repairing the agent gate must not change Jonathon's own edit lifecycle.
+    const result=await fixture.createVersion('Use Cases/functions/human/function.yaml','user');
+    expect(result).toMatchObject({versionStatus:'published',draftVersionId:null});
+    expect(result.publishedVersionId).toBeTruthy();
+  });
+
+  it('repairs only malformed agent publications and restores the last approved pointer idempotently',async()=>{
+    // risk: data integrity — a repair must preserve genuine approvals and their activation pointer.
+    const result=await fixture.exerciseRepair();
+    expect(result).toMatchObject({malformedStatus:'draft',approvedStatus:'superseded',approvedPublishedBy:'jonathon'});
+    expect(result.draftVersionId).toBeTruthy();
+    expect(result.publishedVersionId).toBeTruthy();
+    expect(result.draftVersionId).not.toBe(result.publishedVersionId);
   });
 
   it.each(['Projects/p/TASKS.md', 'Documents/x.md'])('publishes an agent-created home-collection file at %s', async(path) => {
