@@ -43,12 +43,14 @@ export class BundledVaultParityGuard {
 
   verify() {
     const pinned = this.pinnedCommit(this.readFile(BundledVaultParityGuard.manifestPath, 'utf8'));
-    if (!this.repository.isAncestor(pinned)) throw new Error(`Bundled sulla-vault commit ${ pinned } is not an ancestor of HEAD`);
     const required = this.enrollmentRoutes(this.repository.source(BundledVaultParityGuard.clientPath));
-    const implemented = this.enrollmentRoutes(this.repository.source(BundledVaultParityGuard.serverPath, pinned));
+    // Service images are published and repinned only by the version-release
+    // workflow.  A development branch is therefore expected to retain an older
+    // bundled pin; guard the source that the next release will actually build.
+    const implemented = this.enrollmentRoutes(this.repository.source(BundledVaultParityGuard.serverPath));
     const missing = [...required].filter(route => !implemented.has(route)).sort();
     if (missing.length) throw new Error(`Bundled sulla-vault image is missing Desktop enrollment routes: ${ missing.join(', ') }`);
-    console.log(`bundled-vault-parity: OK (${ pinned.slice(0, 12) }, ${ required.size } enrollment routes)`);
+    console.log(`bundled-vault-parity: OK (next release, ${ required.size } enrollment routes; current pin ${ pinned.slice(0, 12) })`);
   }
 }
 

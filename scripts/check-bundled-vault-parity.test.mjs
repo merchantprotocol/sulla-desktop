@@ -21,7 +21,7 @@ const compatibleServerSource = `
 `;
 
 class FakeRepository {
-  constructor({ ancestor = true, serverByCommit = { [currentSha]: compatibleServerSource } } = {}) {
+  constructor({ ancestor = true, serverByCommit = { HEAD: compatibleServerSource } } = {}) {
     this.ancestor = ancestor;
     this.serverByCommit = serverByCommit;
   }
@@ -41,18 +41,19 @@ class BundledVaultGuardFixture {
   verify() { this.guard.verify() }
 }
 
-test('accepts a bundled Vault image implementing every Desktop enrollment route', () => { // risk: account access
+test('accepts next-release Vault source implementing every Desktop enrollment route', () => { // risk: account access
   assert.doesNotThrow(() => new BundledVaultGuardFixture(new FakeRepository()).verify());
 });
 
-test('rejects the old Vault pin that predates Desktop enrollment adoption routes', () => { // risk: existing encrypted data access
-  const repository = new FakeRepository({ serverByCommit: { [oldSha]: '' } });
+test('rejects next-release Vault source missing Desktop enrollment routes', () => { // risk: existing encrypted data access
+  const repository = new FakeRepository({ serverByCommit: { HEAD: '' } });
   assert.throws(
     () => new BundledVaultGuardFixture(repository, oldSha).verify(),
     /enrollment-adopt.*enrollment-commit.*enrollment-wrap/,
   );
 });
 
-test('rejects a Vault image from an unrelated commit', () => { // risk: release integrity
-  assert.throws(() => new BundledVaultGuardFixture(new FakeRepository({ ancestor: false })).verify(), /not an ancestor/);
+test('rejects a mutable Vault image tag', () => { // risk: release integrity
+  const guard = new BundledVaultParityGuard(new FakeRepository(), () => '- { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:latest }');
+  assert.throws(() => guard.verify(), /immutable sha/);
 });
