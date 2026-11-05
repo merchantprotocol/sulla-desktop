@@ -46,7 +46,7 @@ function quote(text: string, max = 80): string {
   return `"${ flat.length > max ? `${ flat.slice(0, max) }…` : flat }"`;
 }
 
-function isOpen(job: AgentJob, task: AgentJobTask): boolean {
+export function isOpenAgentJobTask(job: AgentJob, task: AgentJobTask): boolean {
   return (job.status === 'running' || job.status === 'parked') && taskStatuses.isOpen(task.status);
 }
 
@@ -59,7 +59,7 @@ interface ChildRow {
 function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetry: AgentJobTaskTelemetry | undefined, now: number): ChildRow | null {
   if (task.dismissed) return null;
   const finishedAt = task.finishedAt ?? job.finishedAt ?? undefined;
-  const open = isOpen(job, task);
+  const open = isOpenAgentJobTask(job, task);
   // Delivered and finished an hour ago: the parent already has it.
   if (!open && job.completionDeliveredAt && finishedAt && now - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
 
