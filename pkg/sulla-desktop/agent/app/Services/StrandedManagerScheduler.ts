@@ -13,6 +13,7 @@ export class StrandedManagerScheduler {
   constructor(private readonly fleet: AgentFleetProjectionService, private readonly detector: StrandedManagerDetector,
     private readonly episodes: StrandedEpisodeRepository, private readonly alerts: StrandedManagerAlertService) {}
 
+  // TODO(#1991): replace this temporary timer with one injected tick call from AgentLivenessReconciler after its final green head lands.
   start(intervalMs = 30_000): void { this.stop(); this.timer = setInterval(() => void this.tick(), intervalMs); this.timer.unref?.(); }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 
