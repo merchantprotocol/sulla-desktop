@@ -22,19 +22,16 @@ class PublisherStore implements AgentStateStore {
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { await this.replaceState(job); return true; }
-  async stopCascade(jobId: string): Promise<string[]> {
+  async cascadeJobs(jobId: string): Promise<AgentJob[]> {
     const root = this.durable.get(jobId); if (!root) return [];
     const threads = new Set(root.tasks.flatMap(task => task.threadId ? [task.threadId] : []));
-    const stopped: string[] = [];
-    let changed = true;
+    const found: AgentJob[] = []; let changed = true;
     while (changed) { changed = false; for (const job of this.durable.values()) {
       if (job.jobId !== jobId && (!job.parentThreadId || !threads.has(job.parentThreadId))) continue;
-      if (stopped.includes(job.jobId)) continue;
-      const next = { ...job, status: 'stopped' as const, tasks: job.tasks.map(task => ({ ...task, status: 'stopped' as const })) };
-      this.durable.set(job.jobId, next); stopped.push(job.jobId);
-      next.tasks.forEach(task => { if (task.threadId) threads.add(task.threadId); }); changed = true;
+      if (found.some(candidate => candidate.jobId === job.jobId)) continue;
+      found.push(structuredClone(job)); job.tasks.forEach(task => { if (task.threadId) threads.add(task.threadId); }); changed = true;
     } }
-    return stopped;
+    return found;
   }
 }
 

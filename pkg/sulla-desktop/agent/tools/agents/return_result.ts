@@ -9,6 +9,7 @@ import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
 import { completeJob, findTaskByThread, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -41,6 +42,17 @@ export class ReturnResultWorker extends BaseTool {
     const task = job.tasks[taskIndex];
     if (task.returnedAt) return { successBoolean: false, responseString: `Job ${ job.jobId } already returned its contract.` };
     if (!['running', 'parked'].includes(job.status)) return { successBoolean: false, responseString: `Job ${ job.jobId } is ${ job.status }; it no longer accepts a return.` };
+
+    // A manager owns its children until they settle or are explicitly stopped.
+    // Returning here would make its thread terminal and strand every later
+    // child completion, so parking is expressed only by ending the turn.
+    const runningChildren = await agentJobProvider.service.openChildrenForThread(threadId);
+    if (runningChildren > 0) {
+      return {
+        successBoolean: false,
+        responseString: `you have ${ runningChildren } running children; park by ending your turn, or stop them first`,
+      };
+    }
 
     const contract = task.contract ?? normalizeContract(undefined);
     const candidate = contractCandidate(contract, input);

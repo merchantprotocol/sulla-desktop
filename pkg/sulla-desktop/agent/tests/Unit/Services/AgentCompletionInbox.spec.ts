@@ -98,4 +98,15 @@ describe('AgentCompletionInbox', () => {
     expect(huge).toContain('Result truncated');
   });
 
+  it('reports a stopped task with its stopper and recorded reason', () => {
+    // risk: lifecycle truth — intentional stops must not be mislabeled as provider failures.
+    const content = formatCompletionBatch([{
+      jobId: 'job-stop', taskIndex: 0, results: [],
+      terminal: { status: 'stopped', stoppedBy: { agentId: 'coding-manager', threadId: 'manager-thread' }, reason: 'scope changed' },
+    }]);
+    expect(content).toContain('[sub-agent job job-stop STOPPED by coding-manager: scope changed]');
+    expect(content).not.toContain('FAILED');
+    expect(content).not.toContain('provider failure or aborted run');
+  });
+
 });

@@ -10,7 +10,7 @@ import type { ToolExecutionTarget } from '../tools/executionTargets';
 export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; threadId?: string; deviceId: string; workspacePath: string; }
 export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }
 
-/** Injectible owner of container bindings and the boot rebind grace period. */
+/** Injectible owner of container bindings and fail-closed boot rehydration. */
 export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
@@ -21,8 +21,8 @@ export class AgentContainerRuntimeRegistry {
     if (!this.supervisor) throw new Error('Agent container runtime supervisor is not configured');
     this.rebindPending = true;
     this.rehydrated = this.supervisor.liveBindings().then(bindings => {
-      this.bindings.clear();
-      for (const binding of bindings) this.bindings.set(binding.podId, binding);
+      // Merge inventory with registrations created while Docker inspection was in flight.
+      for (const binding of bindings) if (!this.bindings.has(binding.podId)) this.bindings.set(binding.podId, binding);
       this.rebindPending = false;
     });
     return this.rehydrated;

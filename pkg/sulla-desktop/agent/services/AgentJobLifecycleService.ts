@@ -17,12 +17,16 @@ export class AgentJobLifecycleService {
 
   constructor(
     private readonly children: ChildDependencyCounter,
-    private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<void>,
-    private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<void>,
+    private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<unknown>,
+    private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<unknown>,
   ) {}
 
+  openChildren(threadId: string): Promise<number> {
+    return this.children.openChildrenForThread(threadId);
+  }
+
   async parkWhenWaiting(jobId: string, taskIndex: number, threadId: string): Promise<boolean> {
-    const openChildren = await this.children.openChildrenForThread(threadId);
+    const openChildren = await this.openChildren(threadId);
     if (openChildren === 0) return false;
     await this.parkTask(jobId, taskIndex, openChildren);
     return true;

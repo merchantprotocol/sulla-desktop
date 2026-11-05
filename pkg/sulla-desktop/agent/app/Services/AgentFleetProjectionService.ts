@@ -99,8 +99,11 @@ export class AgentFleetProjectionService {
       ...fields,
       waitingOnChildren: job.waitingOnChildren ?? 0,
       taskCount: job.taskCount,
+      orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
       elapsed: this.elapsed(job.createdAt, job.finishedAt ?? undefined),
-      ...(detailed ? { error: job.error, results: job.results } : {}),
+      stoppedBy: job.stoppedBy,
+      stopReason: job.stopReason,
+      ...(detailed ? { error: job.error, results: job.results, orphanedChildNotices: job.orphanedChildNotices ?? [] } : {}),
       tasks: job.tasks.map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, telemetry[taskIndex], detailed)),
     };
   }

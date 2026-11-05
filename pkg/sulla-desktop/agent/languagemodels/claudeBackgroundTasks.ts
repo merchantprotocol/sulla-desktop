@@ -37,7 +37,7 @@
  *     the next turn's prompt as a fallback.
  */
 
-import { isObserverSpawn } from './claudeToolPolicy';
+import { ClaudeToolPolicy } from './claudeToolPolicy';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { emitSubAgentExchange } from '../tools/agents/jobExchange';
 
@@ -173,7 +173,7 @@ export interface WakeTarget {
  */
 export function wakeTargetFromState(state: any): WakeTarget | null {
   const meta = state?.metadata;
-  if (!meta || meta.isSubAgent || isObserverSpawn(meta)) return null;
+  if (!meta || meta.isSubAgent || new ClaudeToolPolicy().isObserverSpawn(meta)) return null;
   const channel = typeof meta.wsChannel === 'string' ? meta.wsChannel : '';
   const threadId = typeof meta.threadId === 'string' ? meta.threadId : '';
   if (!channel || !threadId) return null;

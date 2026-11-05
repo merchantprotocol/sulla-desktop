@@ -21,6 +21,7 @@ import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydrationCoordinator';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
@@ -213,11 +214,15 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 
 export function initAgentsIpc(): void {
-  // Do not decide a container is gone until the supervisor's bounded rebind
-  // window has closed. Every state read awaits this same readiness promise.
-  configureAgentContainerRuntimeSupervisor(new GuestAgentContainerRuntimeSupervisor());
-  const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
-  agentJobProvider.states.setReadiness(bootReconciliation);
+  // Do not decide a container is gone until fail-closed inventory completes. Every state read awaits this same readiness promise.
+  configureAgentContainerRuntimeSupervisor(new GuestAgentContainerRuntimeSupervisor(undefined, { resolve: async(jobId, taskIndex) => {
+    const task = (await agentJobProvider.states.jobForWrite(jobId))?.tasks[taskIndex];
+    return task ? { subject: `legacy:${ task.agentId }`, deviceId: 'legacy-rehydrated', agentId: task.agentId, threadId: task.threadId } : undefined;
+  } }));
+  const runtimeRehydration = new RuntimeRehydrationCoordinator(rehydrateAgentContainerRuntimes, () => agentLivenessReconciler.reconcile());
+  agentLivenessReconciler.setReadinessRecovery(runtimeRehydration);
+  agentJobProvider.states.setReadiness(() => runtimeRehydration.ready());
+  runtimeRehydration.start();
   agentLivenessReconciler.start();
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
@@ -346,7 +351,8 @@ export function initAgentsIpc(): void {
       ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
     };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
-    const result = await stopAgentJob(jobId);
+    const { StopPrincipal } = await import('@pkg/agent/app/ValueObjects/StopPrincipal');
+    const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from Live Agents');
     return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 
@@ -572,8 +578,8 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     // per task on each 3s poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
     const allJobs = (await agentJobProvider.states.jobs()).filter(job => {
-      if (job.status === 'completed' || job.status === 'stopped') return false;
-      if (job.status === 'failed') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
+      if (job.status === 'completed') return false;
+      if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
     });
     const definitions = await agentDefinitionService.list();

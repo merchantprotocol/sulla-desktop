@@ -342,24 +342,36 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   }
 }
 
-/** Reconstructs live bindings from Docker's durable agent-container labels. */
+export interface LegacyAgentContainerIdentityResolver {
+  resolve(jobId: string, taskIndex: number): Promise<{ subject: string; deviceId: string; orgId?: string; agentId?: string; threadId?: string } | undefined>;
+}
+
+/** Reconstructs live bindings from current and upgrade-era Docker labels. */
 export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
-  constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver()) {}
+  constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver(),
+    private readonly legacyIdentity?: LegacyAgentContainerIdentityResolver, private readonly timeoutMs = 10_000) {}
+  private withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Agent container inventory ${ action } timed out after ${ this.timeoutMs }ms; retry is required.`)), this.timeoutMs);
+      operation.then(value => { clearTimeout(timer); resolve(value) }, error => { clearTimeout(timer); reject(error) });
+    });
+  }
   async liveBindings(): Promise<AgentContainerRuntimeBinding[]> {
-    const containers = await this.runtime.list('com.sulla.workload=agent');
+    const containers = await this.withTimeout(this.runtime.list('com.sulla.workload=agent'), 'list');
     const bindings: AgentContainerRuntimeBinding[] = [];
     for (const container of containers) {
-      const details = await this.runtime.inspect(container.ID ?? container.Id ?? container.Names);
+      const details = await this.withTimeout(this.runtime.inspect(container.ID ?? container.Id ?? container.Names), 'inspect');
       if (details?.State?.Running !== true && details?.State?.Status !== 'running') continue;
-      const labels = details?.Config?.Labels ?? {};
-      if (!labels['com.sulla.job-id'] || !labels['com.sulla.subject'] || !labels['com.sulla.device-id']) continue;
-      bindings.push({
-        podId: details.Name?.replace(/^\//, '') ?? container.Names,
-        subject: labels['com.sulla.subject'], orgId: labels['com.sulla.org-id'] || undefined,
-        agentId: labels['com.sulla.agent-id'] || undefined, jobId: labels['com.sulla.job-id'],
-        threadId: labels['com.sulla.thread-id'] || undefined, deviceId: labels['com.sulla.device-id'],
-        workspacePath: details?.Config?.WorkingDir ?? '',
-      });
+      const labels = details?.Config?.Labels ?? {}; const jobId = labels['com.sulla.job-id'];
+      if (!jobId) continue;
+      const taskIndex = Number(labels['com.sulla.task-index']);
+      const legacy = (!labels['com.sulla.subject'] || !labels['com.sulla.device-id']) && Number.isInteger(taskIndex)
+        ? await this.legacyIdentity?.resolve(jobId, taskIndex) : undefined;
+      const subject = labels['com.sulla.subject'] || legacy?.subject; const deviceId = labels['com.sulla.device-id'] || legacy?.deviceId;
+      if (!subject || !deviceId) continue;
+      bindings.push({ podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
+        orgId: labels['com.sulla.org-id'] || legacy?.orgId, agentId: labels['com.sulla.agent-id'] || legacy?.agentId,
+        jobId, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
     }
     return bindings;
   }
@@ -933,6 +945,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     const [bridge, toolConfig] = await Promise.all([
       this.options.bridgeFor(input.provider),
       input.toolSessionId ? this.ensureToolConfig(input.toolSessionId) : Promise.resolve(undefined),
+      input.provider === 'codex' ? this.configureCodexHome() : Promise.resolve(),
     ]);
 
     return {
@@ -1011,7 +1024,27 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
     proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
     this.processPids.set(proc, pidFile);
+    if (request.context.provider === 'codex') {
+      proc.once('close', () => this.cleanupCodexPluginTemp());
+    }
     return proc;
+  }
+
+  private async configureCodexHome(): Promise<void> {
+    await guestExec([
+      'docker', 'exec', this.options.containerName, '/bin/sh', '-c',
+      'codex features disable plugins >/dev/null; codex features disable remote_plugin >/dev/null',
+    ]).catch(error => log.warn(`[AgentContainer] Codex plugin config failed: ${ (error as Error)?.message ?? error }`));
+  }
+
+  private cleanupCodexPluginTemp(): void {
+    guestExec([
+      'docker', 'exec', this.options.containerName, '/bin/sh', '-c', [
+        'if pgrep -x codex >/dev/null 2>&1; then exit 0; fi',
+        'd="$CODEX_HOME/.tmp"',
+        '[ ! -d "$d" ] || find "$d" -mindepth 1 -maxdepth 1 \\( -name "plugins-clone-*" -o -name plugins -o -name "git-*" \\) -exec rm -rf -- {} +',
+      ].join('; '),
+    ]).catch(error => log.warn(`[AgentContainer] Codex temp cleanup failed: ${ (error as Error)?.message ?? error }`));
   }
 
   async terminate(request: Parameters<ProviderExecutionTransport['terminate']>[0]): Promise<void> {

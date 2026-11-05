@@ -5,6 +5,15 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
+  <div class="composer-send-wrap">
+    <div v-if="childStop.childCount.value || childStop.error.value" class="child-stop-popover" role="status">
+      <template v-if="childStop.childCount.value">
+        <span><b>{{ childStop.childCount.value }}</b> sub-agent{{ childStop.childCount.value === 1 ? '' : 's' }} still running</span>
+        <button type="button" class="kill-children" @click="killChildren">Kill all</button>
+      </template>
+      <span v-else>{{ childStop.error.value }}</span>
+      <button type="button" class="dismiss-children" aria-label="Dismiss" @click="childStop.dismiss()">×</button>
+    </div>
   <button
     :class="['composer-send', { running, ready: canSend }]"
     type="button"
@@ -26,10 +35,14 @@
       aria-hidden="true"
     />
   </button>
+  </div>
 </template>
 
 <script setup lang="ts">
+import { onUnmounted } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { activateComposerSend } from './ComposerSendBehavior';
+import { ChildAgentStopController } from './ChildAgentStopController';
 import { useChatController } from '../../controller/useChatController';
 
 const props = defineProps<{
@@ -39,13 +52,31 @@ const props = defineProps<{
 const emit = defineEmits<(e: 'send') => void>();
 
 const controller = useChatController();
+const childStop = new ChildAgentStopController(ipcRenderer);
+
+function activeThreadId(): string {
+  return controller.thread.value.backendThreadId || controller.thread.value.id;
+}
+
+async function killChildren(): Promise<void> {
+  await childStop.kill(activeThreadId());
+}
+
+onUnmounted(() => childStop.dispose());
 
 function activate(): void {
+  const wasRunning = props.running;
   activateComposerSend(controller, props.running, props.canSend, () => emit('send'));
+  if (wasRunning) void childStop.inspect(activeThreadId());
 }
 </script>
 
 <style>
+.composer-send-wrap { position: relative; flex: 0 0 auto; }
+.child-stop-popover { position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 30; display: flex; align-items: center; gap: 9px; width: max-content; max-width: min(360px, 80vw); padding: 9px 10px; border: 1px solid var(--border-default); border-radius: 10px; color: var(--text-primary); background: var(--bg-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-page) 35%, transparent); font: 11px/1.35 var(--font-body); }
+.child-stop-popover button { border: 0; color: inherit; background: transparent; cursor: pointer; }
+.child-stop-popover .kill-children { color: var(--status-error); font-weight: 700; white-space: nowrap; }
+.child-stop-popover .dismiss-children { padding: 0 2px; color: var(--text-muted); font-size: 16px; line-height: 1; }
 .composer-send { display: none; }
 
 .composer-send {
