@@ -45,6 +45,7 @@ dbDescribe('registered custody transfer tools',()=>{
     // risk: peer custody theft
     await registry.createJob([{agentId:'healthy-owner',label:'owner',prompt:'manage',status:'running',threadId:'healthy-owner-thread'}],'root','root-thread',{parentAgentId:'root'});
     const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:'peer-worker-thread'}],'healthy-owner','healthy-owner-thread',{parentAgentId:'healthy-owner'});
+    await registry.createJob([{agentId:'peer',label:'peer',prompt:'manage',status:'running',threadId:'peer-thread'}],'root','root-thread',{parentAgentId:'root'});
     const meta={wsChannel:'peer',agentId:'peer',threadId:'peer-thread',subAgentDepth:1};
     const reassign=await tools.call('reassign_job',{jobId:job.jobId,to:'manager-two-thread',reason:'unauthorized'},meta);
     const adopt=await tools.call('adopt_job',{jobId:job.jobId,reason:'unauthorized'},meta);
