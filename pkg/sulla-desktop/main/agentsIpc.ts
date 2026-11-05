@@ -21,6 +21,7 @@ import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydrationCoordinator';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
@@ -218,8 +219,10 @@ export function initAgentsIpc(): void {
     const task = (await agentJobProvider.states.jobForWrite(jobId))?.tasks[taskIndex];
     return task ? { subject: `legacy:${ task.agentId }`, deviceId: 'legacy-rehydrated', agentId: task.agentId, threadId: task.threadId } : undefined;
   } }));
-  const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
-  agentJobProvider.states.setReadiness(bootReconciliation);
+  const runtimeRehydration = new RuntimeRehydrationCoordinator(rehydrateAgentContainerRuntimes, () => agentLivenessReconciler.reconcile());
+  agentLivenessReconciler.setReadinessRecovery(runtimeRehydration);
+  agentJobProvider.states.setReadiness(() => runtimeRehydration.ready());
+  runtimeRehydration.start();
   agentLivenessReconciler.start();
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {

@@ -47,12 +47,12 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       ($1, 'running', 1, now(), '[{"agentId":"worker","status":"running","threadId":"worker-thread"}]', 'hidden'),
       ($2, 'parked', 1, now(), '[{"agentId":"manager","status":"parked","threadId":"manager-thread"}]', 'hidden')`, [hiddenId, parkedId]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    const first = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    const first = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(first.resumable.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('running');
     expect((await agentJobProvider.jobs.job(parkedId))?.status).toBe('parked');
-    await agentJobProvider.jobs.claimInterruptedJobs(2);
-    const exhausted = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    await agentJobProvider.states.claimInterruptedJobs(2);
+    const exhausted = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(exhausted.exhausted.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('failed');
   });
