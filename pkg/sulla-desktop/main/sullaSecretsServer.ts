@@ -25,12 +25,14 @@ import {
   SecretsResolveError,
 } from '@pkg/agent/services/SecretsCapabilityService';
 import { hostPort } from '@pkg/utils/instance';
-import { getFunctionBrowserCapabilityService } from '@pkg/agent/services/DesktopFunctionBrowserAdapter';
+import { functionBrowserCompositionRoot } from '@pkg/agent/services/FunctionBrowserCompositionRoot';
+import type { FunctionBrowserCapabilityService } from '@pkg/agent/services/FunctionBrowserCapabilityService';
 import { FunctionBrowserCapabilityError } from '@pkg/agent/services/FunctionBrowserCapabilityService';
 
 const DEFAULT_PORT = hostPort(30121);
 const BIND_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 4 * 1024;
+const browserRequestHandler = new FunctionBrowserRequestHandler(functionBrowserCompositionRoot.capabilities);
 
 let server: http.Server | null = null;
 
@@ -106,7 +108,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (method === 'POST' && url.startsWith('/browser/')) {
-    await handleBrowser(url, req, res);
+    await browserRequestHandler.handle(url, req, res);
     return;
   }
 
@@ -170,58 +172,38 @@ async function handleInvalidate(req: http.IncomingMessage, res: http.ServerRespo
   writeJson(res, 200, { invalidated: true });
 }
 
-async function handleBrowser(path: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  let body: Record<string, unknown>;
-  try { body = await readJsonBody(req) } catch (err: any) {
-    writeJson(res, err?.code === 'body_too_large' ? 413 : 400, { error: err?.code ?? 'bad_request' });
-    return;
-  }
-  const token = typeof body.token === 'string' ? body.token : '';
-  if (!token) {
-    writeJson(res, 401, { error: 'invalid_capability' });
-    return;
-  }
-  const service = await getFunctionBrowserCapabilityService();
-  try {
-    if (path === '/browser/open') {
-      const url = typeof body.url === 'string' ? body.url : '';
-      if (!url) {
-        writeJson(res, 400, { error: 'invalid_request' });
-        return;
+class FunctionBrowserRequestHandler {
+  constructor(private readonly service: FunctionBrowserCapabilityService) {}
+  async handle(path: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await readJsonBody(req) } catch (err: any) { writeJson(res, err?.code === 'body_too_large' ? 413 : 400, { error: err?.code ?? 'bad_request' }); return }
+    const token = typeof body.token === 'string' ? body.token : '';
+    if (!token) { writeJson(res, 401, { error: 'invalid_capability' }); return }
+    try {
+      if (path === '/browser/open') {
+        const url = typeof body.url === 'string' ? body.url : '';
+        if (!url) { writeJson(res, 400, { error: 'invalid_request' }); return }
+        writeJson(res, 200, await this.service.open(token, url)); return;
       }
-      writeJson(res, 200, await service.open(token, url));
-      return;
-    }
-    if (path === '/browser/eval') {
-      const tabId = typeof body.tabId === 'string' ? body.tabId : '';
-      const code = typeof body.code === 'string' ? body.code : '';
-      if (!tabId || !code) {
-        writeJson(res, 400, { error: 'invalid_request' });
-        return;
+      if (path === '/browser/eval') {
+        const tabId = typeof body.tabId === 'string' ? body.tabId : ''; const code = typeof body.code === 'string' ? body.code : '';
+        if (!tabId || !code) { writeJson(res, 400, { error: 'invalid_request' }); return }
+        writeJson(res, 200, { result: await this.service.evaluate(token, tabId, code) }); return;
       }
-      writeJson(res, 200, { result: await service.evaluate(token, tabId, code) });
-      return;
-    }
-    if (path === '/browser/close') {
-      const tabId = typeof body.tabId === 'string' ? body.tabId : '';
-      if (!tabId) {
-        writeJson(res, 400, { error: 'invalid_request' });
-        return;
+      if (path === '/browser/close') {
+        const tabId = typeof body.tabId === 'string' ? body.tabId : '';
+        if (!tabId) { writeJson(res, 400, { error: 'invalid_request' }); return }
+        await this.service.close(token, tabId); writeJson(res, 200, { closed: true }); return;
       }
-      await service.close(token, tabId);
-      writeJson(res, 200, { closed: true });
-      return;
+      writeJson(res, 404, { error: 'not_found' });
+    } catch (err) {
+      if (err instanceof FunctionBrowserCapabilityError) {
+        const status = ['origin-not-allowed', 'foreign-tab', 'unsafe-network-target'].includes(err.outcome) ? 403 : err.outcome === 'invalid-url' ? 400 : 401;
+        writeJson(res, status, { error: err.outcome }); return;
+      }
+      console.warn('[SullaSecretsServer] browser request failed:', (err as Error).message);
+      writeJson(res, 500, { error: 'browser_error' });
     }
-    writeJson(res, 404, { error: 'not_found' });
-  } catch (err) {
-    if (err instanceof FunctionBrowserCapabilityError) {
-      const status = err.outcome === 'origin-not-allowed' || err.outcome === 'foreign-tab' ? 403
-        : err.outcome === 'invalid-url' ? 400 : 401;
-      writeJson(res, status, { error: err.outcome });
-      return;
-    }
-    console.warn('[SullaSecretsServer] browser request failed:', (err as Error).message);
-    writeJson(res, 500, { error: 'browser_error' });
   }
 }
 

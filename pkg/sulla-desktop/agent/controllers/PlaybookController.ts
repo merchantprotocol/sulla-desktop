@@ -1711,11 +1711,10 @@ export class PlaybookController<TState = any> {
               secretsHostUrl = SECRETS_HOST_URL;
             }
 
-            const { FunctionBrowserInvocation } = await import('@pkg/agent/services/FunctionBrowserInvocation');
-            browserInvocation = new FunctionBrowserInvocation(invocationId, manifest);
-            const browserEnv = await browserInvocation.environment();
-
             const timeoutMs = parseTimeoutMs(step.timeoutOverride);
+            const { FunctionBrowserInvocation } = await import('@pkg/agent/services/FunctionBrowserInvocation');
+            browserInvocation = new FunctionBrowserInvocation(invocationId, manifest, timeoutMs);
+            const browserEnv = await browserInvocation.environment();
             const ac = new AbortController();
             const timer = setTimeout(() => ac.abort(), timeoutMs);
 

@@ -4,11 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import * as crypto from 'crypto';
+import { BrowserUrlPolicy } from './BrowserUrlPolicy';
 
 const DEFAULT_TTL_MS = 60_000;
+const MAX_TTL_MS = 10 * 60_000;
+const TTL_GRACE_MS = 5_000;
 
 export interface FunctionBrowserAdapter {
-  open(assetId: string, url: string): Promise<void>;
+  open(assetId: string, url: string, validateNavigation: (url: string) => Promise<void>): Promise<void>;
   evaluate(assetId: string, code: string): Promise<unknown>;
   close(assetId: string): Promise<void>;
 }
@@ -18,9 +21,12 @@ interface BrowserCapability {
   expiresAt:     number;
   allowedOrigins: string[];
   tabs:          Map<string, string>;
+  pendingOpens:  Set<Promise<void>>;
+  expiryTimer:   ReturnType<typeof setTimeout>;
+  revoked:       boolean;
 }
 
-export type BrowserCapabilityOutcome = 'unknown-token' | 'expired' | 'foreign-tab' | 'origin-not-allowed' | 'invalid-url';
+export type BrowserCapabilityOutcome = 'unknown-token' | 'expired' | 'foreign-tab' | 'origin-not-allowed' | 'invalid-url' | 'unsafe-network-target';
 
 export class FunctionBrowserCapabilityError extends Error {
   constructor(public readonly outcome: BrowserCapabilityOutcome) {
@@ -53,6 +59,9 @@ export class FunctionBrowserCapabilityService {
     private readonly browser: FunctionBrowserAdapter,
     private readonly now: () => number = Date.now,
     private readonly tokenFactory: () => string = () => crypto.randomBytes(32).toString('base64url'),
+    private readonly urlPolicy = new BrowserUrlPolicy(),
+    private readonly schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = setTimeout,
+    private readonly cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void = clearTimeout,
   ) {}
 
   mintForManifest(invocationId: string, manifest: unknown, ttlMs: number = DEFAULT_TTL_MS): { token: string } | null {
@@ -62,21 +71,33 @@ export class FunctionBrowserCapabilityService {
 
   mint(invocationId: string, permission: FunctionBrowserPermission, ttlMs: number = DEFAULT_TTL_MS): { token: string } {
     const token = this.tokenFactory();
-    this.capabilities.set(token, {
+    const boundedTtl = Math.min(Math.max(ttlMs + TTL_GRACE_MS, TTL_GRACE_MS), MAX_TTL_MS);
+    const capability: BrowserCapability = {
       invocationId,
-      expiresAt: this.now() + ttlMs,
+      expiresAt: this.now() + boundedTtl,
       allowedOrigins: [...permission.allowedOrigins],
       tabs: new Map(),
-    });
+      pendingOpens: new Set(),
+      expiryTimer: null as unknown as ReturnType<typeof setTimeout>,
+      revoked: false,
+    };
+    capability.expiryTimer = this.schedule(() => { void this.invalidate(token) }, boundedTtl);
+    this.capabilities.set(token, capability);
     return { token };
   }
 
   async open(token: string, url: string): Promise<{ tabId: string }> {
     const capability = await this.requireCapability(token);
-    const parsed = this.validateUrl(url, capability.allowedOrigins);
+    const parsed = await this.validateUrl(url, capability.allowedOrigins);
     const tabId = crypto.randomUUID();
     const assetId = `function_${ capability.invocationId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-40) }_${ tabId }`;
-    await this.browser.open(assetId, parsed.toString());
+    const pending = this.browser.open(assetId, parsed.toString(), async candidate => { await this.validateUrl(candidate, capability.allowedOrigins) });
+    capability.pendingOpens.add(pending);
+    try { await pending } finally { capability.pendingOpens.delete(pending) }
+    if (capability.revoked || this.capabilities.get(token) !== capability || this.now() >= capability.expiresAt) {
+      await this.closeWithRetryRetention(capability, tabId, assetId);
+      throw new FunctionBrowserCapabilityError('expired');
+    }
     capability.tabs.set(tabId, assetId);
     return { tabId };
   }
@@ -92,16 +113,18 @@ export class FunctionBrowserCapabilityService {
     const capability = await this.requireCapability(token);
     const assetId = capability.tabs.get(tabId);
     if (!assetId) throw new FunctionBrowserCapabilityError('foreign-tab');
-    capability.tabs.delete(tabId);
     await this.browser.close(assetId);
+    capability.tabs.delete(tabId);
   }
 
   async invalidate(token: string): Promise<void> {
     const capability = this.capabilities.get(token);
-    this.capabilities.delete(token);
     if (!capability) return;
-    await Promise.allSettled([...capability.tabs.values()].map(assetId => this.browser.close(assetId)));
-    capability.tabs.clear();
+    capability.revoked = true;
+    this.capabilities.delete(token);
+    this.cancelSchedule(capability.expiryTimer);
+    await Promise.allSettled([...capability.pendingOpens]);
+    for (const [tabId, assetId] of [...capability.tabs]) await this.closeWithRetryRetention(capability, tabId, assetId);
   }
 
   private async requireCapability(token: string): Promise<BrowserCapability> {
@@ -114,15 +137,14 @@ export class FunctionBrowserCapabilityService {
     return capability;
   }
 
-  private validateUrl(raw: string, allowedOrigins: string[]): URL {
-    let url: URL;
-    try { url = new URL(raw) } catch { throw new FunctionBrowserCapabilityError('invalid-url') }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-      throw new FunctionBrowserCapabilityError('invalid-url');
+  private async validateUrl(raw: string, allowedOrigins: string[]): Promise<URL> {
+    try { return await this.urlPolicy.validate(raw, allowedOrigins) } catch (error) {
+      const outcome = (error as Error).message as BrowserCapabilityOutcome;
+      throw new FunctionBrowserCapabilityError(outcome);
     }
-    if (allowedOrigins.length > 0 && !allowedOrigins.includes(url.origin)) {
-      throw new FunctionBrowserCapabilityError('origin-not-allowed');
-    }
-    return url;
+  }
+
+  private async closeWithRetryRetention(capability: BrowserCapability, tabId: string, assetId: string): Promise<void> {
+    try { await this.browser.close(assetId); capability.tabs.delete(tabId) } catch { capability.tabs.set(tabId, assetId) }
   }
 }

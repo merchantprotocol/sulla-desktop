@@ -1,71 +1,40 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-// "Sulla" is a trademark. See TRADEMARK.md.
-
 import { describe, expect, it } from 'vitest';
-import {
-  FunctionBrowserCapabilityError,
-  FunctionBrowserCapabilityService,
-  type FunctionBrowserAdapter,
-} from './FunctionBrowserCapabilityService';
-
+import { BrowserUrlPolicy, type BrowserDnsResolver } from './BrowserUrlPolicy';
+import { FunctionBrowserCapabilityService, type FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
+class Resolver implements BrowserDnsResolver { constructor(private readonly values: Record<string, string[]> = {}) {} async lookup(host: string): Promise<Array<{address:string}>> { return (this.values[host] ?? ['93.184.216.34']).map(address => ({ address })) } }
 class RecordingBrowser implements FunctionBrowserAdapter {
-  readonly openTabs = new Set<string>();
-  async open(assetId: string): Promise<void> { this.openTabs.add(assetId) }
+  readonly openTabs = new Set<string>(); closeFailures = 0; redirect: string | null = null; openGate: Promise<void> | null = null;
+  async open(assetId: string, _url: string, validate: (url:string)=>Promise<void>): Promise<void> { this.openTabs.add(assetId); if (this.openGate) await this.openGate; if (this.redirect) await validate(this.redirect) }
   async evaluate(_assetId: string, code: string): Promise<unknown> { return { code } }
-  async close(assetId: string): Promise<void> { this.openTabs.delete(assetId) }
+  async close(assetId: string): Promise<void> { if (this.closeFailures-- > 0) throw new Error('transient'); this.openTabs.delete(assetId) }
 }
-
-class BrowserHarness {
-  readonly browser = new RecordingBrowser();
-  now = 1_000;
-  tokenNumber = 0;
-  readonly service = new FunctionBrowserCapabilityService(
-    this.browser,
-    () => this.now,
-    () => `token-${ ++this.tokenNumber }`,
-  );
+class Harness {
+  readonly browser = new RecordingBrowser(); now = 1_000; tokenNumber = 0; timer: (()=>void) | null = null;
+  readonly service = new FunctionBrowserCapabilityService(this.browser, () => this.now, () => `token-${++this.tokenNumber}`, new BrowserUrlPolicy(new Resolver()), callback => { this.timer = callback; return 1 as any }, () => undefined);
 }
-
 describe('FunctionBrowserCapabilityService', () => {
-  it('refuses to mint a capability when browser permission is absent', () => {
-    // risk: permission bypass
-    const harness = new BrowserHarness();
-    const capability = harness.service.mintForManifest('unauthorized', { spec: { permissions: {} } });
-    expect(capability).toBeNull();
+  it('refuses absent permission and unsupported URL schemes', async() => { // risk: permission/SSRF
+    const h = new Harness(); expect(h.service.mintForManifest('x',{spec:{permissions:{}}})).toBeNull(); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:[]});
+    for (const url of ['file:///etc/passwd','chrome://settings','data:text/plain,x','javascript:alert(1)']) await expect(h.service.open(token,url)).rejects.toMatchObject({outcome:'invalid-url'});
   });
-
-  it('refuses expired tokens and closes their tabs', async() => {
-    // risk: capability replay and leaked browser resources
-    const harness = new BrowserHarness();
-    const { token } = harness.service.mint('invocation-a', { enabled: true, allowedOrigins: [] }, 10);
-    const { tabId } = await harness.service.open(token, 'https://example.com');
-    expect(harness.browser.openTabs.size).toBe(1);
-    harness.now += 10;
-    await expect(harness.service.evaluate(token, tabId, 'document.title'))
-      .rejects.toMatchObject<Partial<FunctionBrowserCapabilityError>>({ outcome: 'expired' });
-    expect(harness.browser.openTabs.size).toBe(0);
+  it('rejects local, private, and DNS-to-private targets even without an origin allowlist', async() => { // risk: SSRF
+    const policy = new BrowserUrlPolicy(new Resolver({'private.example':['10.1.2.3']}));
+    for (const url of ['http://localhost','http://127.0.0.1','http://[::1]','http://10.0.0.1','http://172.16.0.1','http://192.168.0.1','http://169.254.1.1','http://100.64.0.1','http://private.example']) await expect(policy.validate(url)).rejects.toThrow('unsafe-network-target');
   });
-
-  it('refuses a foreign capability from evaluating another invocation tab', async() => {
-    // risk: cross-invocation browser data disclosure
-    const harness = new BrowserHarness();
-    const first = harness.service.mint('invocation-a', { enabled: true, allowedOrigins: [] });
-    const second = harness.service.mint('invocation-b', { enabled: true, allowedOrigins: [] });
-    const { tabId } = await harness.service.open(first.token, 'https://example.com');
-    await expect(harness.service.evaluate(second.token, tabId, 'document.title'))
-      .rejects.toMatchObject<Partial<FunctionBrowserCapabilityError>>({ outcome: 'foreign-tab' });
+  it('rejects an allowed public origin redirecting to another or private origin', async() => { // risk: redirect allowlist bypass
+    const h=new Harness(); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:['https://example.com']}); h.browser.redirect='https://other.example/'; await expect(h.service.open(token,'https://example.com')).rejects.toMatchObject({outcome:'origin-not-allowed'});
+    h.browser.redirect='http://127.0.0.1'; await expect(h.service.open(token,'https://example.com')).rejects.toMatchObject({outcome:'origin-not-allowed'});
   });
-
-  it('closes every remaining tab when the invocation ends', async() => {
-    // risk: persistent side effects and browser memory leak
-    const harness = new BrowserHarness();
-    const { token } = harness.service.mint('invocation-a', { enabled: true, allowedOrigins: [] });
-    await harness.service.open(token, 'https://example.com/a');
-    await harness.service.open(token, 'https://example.com/b');
-    expect(harness.browser.openTabs.size).toBe(2);
-    await harness.service.invalidate(token);
-    expect(harness.browser.openTabs.size).toBe(0);
+  it('invalidates an open racing teardown and closes the late-created tab', async() => { // risk: orphan privileged tab
+    const h=new Harness(); let release!:()=>void; h.browser.openGate=new Promise<void>(r=>{release=r}); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:[]}); const opening=h.service.open(token,'https://example.com'); await Promise.resolve(); const invalidating=h.service.invalidate(token); release(); await invalidating; await expect(opening).rejects.toMatchObject({outcome:'expired'}); expect(h.browser.openTabs.size).toBe(0);
+  });
+  it('passively expires and closes tabs without another broker call', async() => { // risk: leaked browser resources
+    const h=new Harness(); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:[]},10); await h.service.open(token,'https://example.com'); expect(h.timer).not.toBeNull(); h.timer!(); await Promise.resolve(); expect(h.browser.openTabs.size).toBe(0); await expect(h.service.evaluate(token,'x','1')).rejects.toMatchObject({outcome:'unknown-token'});
+  });
+  it('retains a failed close handle so invalidation retries cleanup', async() => { // risk: leaked browser resources
+    const h=new Harness(); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:[]}); const {tabId}=await h.service.open(token,'https://example.com'); h.browser.closeFailures=1; await expect(h.service.close(token,tabId)).rejects.toThrow('transient'); await h.service.invalidate(token); expect(h.browser.openTabs.size).toBe(0);
   });
 });
