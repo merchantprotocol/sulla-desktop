@@ -4,6 +4,8 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { spawn } from 'node:child_process';
+
+import { CodexHomePolicy } from './codex-home-policy.mjs';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
@@ -147,11 +149,14 @@ function emit(data) {
   }
 }
 
+const codexHomePolicy = new CodexHomePolicy();
+
 function commonCodexArgs(resume = false) {
   const args = ['exec', '-c', 'shell_environment_policy.inherit=all'];
   if (resume) args.push('resume', threadId);
   args.push('--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check');
   args.push('-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false');
+  args.push('-c', 'features.plugins=false', '-c', 'features.remote_plugin=false');
   args.push('-c', `model_instructions_file=${ JSON.stringify(instructions) }`);
   if (model) args.push('--model', model);
   args.push('-');
@@ -159,6 +164,7 @@ function commonCodexArgs(resume = false) {
 }
 
 function launchCodex(prompt, resume = false) {
+  codexHomePolicy.configure();
   child = spawn('codex', commonCodexArgs(resume), { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdout.on('data', emit);
   child.stderr.on('data', data => process.stderr.write(data));
@@ -166,6 +172,7 @@ function launchCodex(prompt, resume = false) {
   child.stdin.end(prompt);
   child.once('close', code => {
     child = null;
+    try { codexHomePolicy.cleanupPluginTemp(); } catch (error) { process.stderr.write(`codex temp cleanup: ${ error.message }\n`); }
     if (stopping) return process.exit(code || 130);
     if (queuedSteers.length > 0 && threadId) {
       const steers = queuedSteers.splice(0);

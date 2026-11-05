@@ -910,6 +910,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     const [bridge, toolConfig] = await Promise.all([
       this.options.bridgeFor(input.provider),
       input.toolSessionId ? this.ensureToolConfig(input.toolSessionId) : Promise.resolve(undefined),
+      input.provider === 'codex' ? this.configureCodexHome() : Promise.resolve(),
     ]);
 
     return {
@@ -988,7 +989,27 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
     proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
     this.processPids.set(proc, pidFile);
+    if (request.context.provider === 'codex') {
+      proc.once('close', () => this.cleanupCodexPluginTemp());
+    }
     return proc;
+  }
+
+  private async configureCodexHome(): Promise<void> {
+    await guestExec([
+      'docker', 'exec', this.options.containerName, '/bin/sh', '-c',
+      'set -eu; codex features disable plugins >/dev/null; codex features disable remote_plugin >/dev/null',
+    ]);
+  }
+
+  private cleanupCodexPluginTemp(): void {
+    guestExec([
+      'docker', 'exec', this.options.containerName, '/bin/sh', '-c', [
+        'if pgrep -x codex >/dev/null 2>&1; then exit 0; fi',
+        'd="$CODEX_HOME/.tmp"',
+        '[ ! -d "$d" ] || find "$d" -mindepth 1 -maxdepth 1 \\( -name "plugins-clone-*" -o -name plugins -o -name "git-*" \\) -exec rm -rf -- {} +',
+      ].join('; '),
+    ]).catch(error => log.warn(`[AgentContainer] Codex temp cleanup failed: ${ (error as Error)?.message ?? error }`));
   }
 
   async terminate(request: Parameters<ProviderExecutionTransport['terminate']>[0]): Promise<void> {
