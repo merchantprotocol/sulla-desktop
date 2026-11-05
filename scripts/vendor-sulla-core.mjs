@@ -7,7 +7,8 @@
  *
  * CI in this repo cannot read the private sulla-core repository, so the package is
  * committed as `npm pack` tarballs under vendor/sulla-core/ and referenced from
- * package.json as `file:vendor/sulla-core/sulla-foundation-<version>-<sha>.tgz`.
+ * package.json as `file:vendor/sulla-core/sulla-<package>-<version>.tgz`; MANIFEST.json
+ * records the source commit and sha256 of each tarball.
  *
  * Usage:
  *   node scripts/vendor-sulla-core.mjs <ref> [path-to-sulla-core-clone]
@@ -18,7 +19,8 @@
  * printed tarball names, then commit them with MANIFEST.json and the tarballs.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, createHash, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -32,14 +34,10 @@ class CoreVendor {
 
   run() {
     const sourceCommit = this.git(['rev-parse', `${this.ref}^{commit}`]).trim();
-    const shortSha = sourceCommit.slice(0, 7);
     const checkout = mkdtempSync(join(tmpdir(), 'sulla-core-vendor-'));
     this.git(['worktree', 'add', '--detach', checkout, sourceCommit]);
     try {
-      const packages = [
-        { name: '@sulla/foundation', directory: 'foundation', file: `sulla-foundation-0.1.0-${shortSha}.tgz` },
-        { name: '@sulla/domain', directory: 'domain', file: `sulla-domain-0.1.0-${shortSha}.tgz` },
-      ];
+      const packages = ['foundation', 'domain'].map((directory) => this.describe(checkout, directory));
       mkdirSync(this.destination, { recursive: true });
       for (const packageInfo of packages) {
         this.exec('npm', ['run', 'build', '-w', packageInfo.name], checkout);
@@ -58,9 +56,9 @@ class CoreVendor {
         sourceRepository: 'https://github.com/merchantprotocol/sulla-core',
         sourceRef: this.ref,
         sourceCommit,
-        packages: packages.map(({ name, file }) => ({
+        packages: packages.map(({ name, version, file }) => ({
           package: name,
-          version: '0.1.0',
+          version,
           file,
           sha256: createHash('sha256').update(readFileSync(join(this.destination, file))).digest('hex'),
         })),
@@ -70,6 +68,11 @@ class CoreVendor {
     } finally {
       this.git(['worktree', 'remove', '--force', checkout]);
     }
+  }
+
+  describe(checkout, directory) {
+    const { name, version } = JSON.parse(readFileSync(join(checkout, 'packages', directory, 'package.json'), 'utf8'));
+    return { name, directory, version, file: `sulla-${directory}-${version}.tgz` };
   }
 
   git(args) { return execFileSync('git', ['-C', this.clone, ...args], { encoding: 'utf8' }); }
