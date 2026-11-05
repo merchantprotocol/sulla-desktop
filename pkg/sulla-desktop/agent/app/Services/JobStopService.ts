@@ -23,7 +23,8 @@ export class JobStopService extends Service {
     job.stoppedBy = StopPrincipal.attribution(principal); job.stopReason = reason;
     // Persist the terminal state before aborting. Provider teardown can report a
     // container failure synchronously; the repository guard must already see stopped.
-    void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason)).then(() => this.runtime.abortScopes.get(jobId)?.abortJob());
+    void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason));
+    this.runtime.abortScopes.get(jobId)?.abortJob();
     return 'stopped';
   }
 

@@ -11,7 +11,8 @@ export class AgentLaunchPauseService {
   private readonly key = 'agentsKillAllSwitch';
 
   async state(): Promise<AgentLaunchPauseState> {
-    const value = await SullaSettingsModel.getSetting(this.key, null);
+    let value: any = null;
+    try { value = await SullaSettingsModel.getSetting(this.key, null); } catch { return { on: false }; }
     return value?.on === true ? { on: true, since: Number(value.since) || undefined } : { on: false };
   }
 
