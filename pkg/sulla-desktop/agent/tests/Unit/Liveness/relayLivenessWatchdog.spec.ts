@@ -39,13 +39,13 @@ describe('relay liveness watchdog', () => {
     const clock = new FakeRelayClock();
     const transport = new FakeRelayTransport();
     const warnings: string[] = [];
-    const watchdog = new RelayLivenessWatchdog(clock, transport, { warn: message => warnings.push(message) }, options);
+    const watchdog = new RelayLivenessWatchdog(clock, transport, { info: () => undefined, warn: message => warnings.push(message) }, options);
     watchdog.start();
 
     clock.advanceWithStall(82_000);
     expect(transport.pings).toBe(1);
     expect(transport.reconnects).toEqual([]);
-    expect(warnings[0]).toContain('drifted 67000ms');
+    expect(warnings[0]).toContain('\"driftMs\":67000');
 
     watchdog.noteInbound();
     clock.advanceWithStall(5_001);
@@ -56,7 +56,7 @@ describe('relay liveness watchdog', () => {
     // risk: half-open relay never recovers
     const clock = new FakeRelayClock();
     const transport = new FakeRelayTransport();
-    const watchdog = new RelayLivenessWatchdog(clock, transport, { warn: () => undefined }, options);
+    const watchdog = new RelayLivenessWatchdog(clock, transport, { info: () => undefined, warn: () => undefined }, options);
     watchdog.start();
 
     clock.advanceWithStall(82_000);

@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1122,
+  "entries": 1119,
   "files": {
     "background.ts": {
       "rules": {
@@ -2018,13 +2018,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/main/SleepPreventionService.ts": {
-      "rules": {
-        "mutable-state": 5,
-        "procedural-module": 9
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/agentTabContractIpc.ts": {
       "rules": {
         "procedural-module": 1
@@ -3040,8 +3033,7 @@
     },
     "pkg/sulla-desktop/main/sullaSecretsServer.ts": {
       "rules": {
-        "mutable-state": 1,
-        "procedural-module": 2
+        "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
