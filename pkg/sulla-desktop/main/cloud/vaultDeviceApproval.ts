@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import crypto from 'node:crypto';
 import { BrowserWindow, dialog } from 'electron';
 
 import { getConfiguredApprovalClient } from '@pkg/vault-broker';
 import { getDesktopDeviceId } from '../deviceIdentity';
-import { signedEnrollmentRequest } from './vaultEnrollment';
-
-interface EnrollmentRequest { id:string; requesterType:string; requesterId:string; publicKey:string; nonce:string; expiresAt:string }
+import { getCurrentUserId } from '../sullaCloudAuth';
+import { cloudRequest } from './cloudFetch';
+import { CloudVaultSyncHttpTransport, type EnrollmentRequest, type VaultSyncSignature } from './vaultSyncV3/transport';
+import { signDeviceMessage } from './deviceKey';
 
 interface ApprovalRequest {
   id: string; vaultId: string; vaultEpoch: number; publicKey: string; expiresAt: string;
@@ -76,24 +78,26 @@ class VaultDeviceApprovalService {
 
   private async pollEnrollment(client:NonNullable<ReturnType<typeof getConfiguredApprovalClient>>):Promise<void>{
     const deviceId=await getDesktopDeviceId();
-    const status=await client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/status?deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'});
-    const vault=status.body as {enabled?:boolean;vaultId?:string;epoch?:number}; if(!vault.enabled||!vault.vaultId)return;
-    const listed=await signedEnrollmentRequest('GET',`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/enrollment/requests`,vault.vaultId,'enrollment-list');
-    if(!listed.ok)return;
-    const body=await listed.json() as {requests?:EnrollmentRequest[]};
-    for(const request of body.requests??[]){
+    const transport=new CloudVaultSyncHttpTransport({client:{request:(url,init)=>cloudRequest(init?.method ?? 'GET',url,{headers:init?.headers as Record<string,string>|undefined,body:init?.body as BodyInit|undefined,responseType:'json'})},authHeaders:async()=>({})});
+    const status=await transport.getStatus(deviceId);
+    const vault=status as {enabled?:boolean;vaultId?:string;epoch?:number}; if(!vault.enabled||!vault.vaultId)return;
+    const userId=await getCurrentUserId();
+    const listed=await transport.listEnrollmentRequests(vault.vaultId,this.signature(vault.vaultId,'enrollment-list',undefined,deviceId,userId));
+    for(const request of listed.requests??[]){
       if(this.seen.has(`enroll:${request.id}`))continue; this.seen.add(`enroll:${request.id}`);
       if(!await this.promptEnrollment(request))continue;
-      const [bundleResult,recordsResult]=await Promise.all([
-        client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'}),
-        client.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/records?scope=personal&deviceId=${encodeURIComponent(deviceId)}`,responseType:'json'}),
-      ]);
-      if(bundleResult.status!==200||recordsResult.status!==200)continue;
-      const bundleBody=bundleResult.body as any, recordsBody=recordsResult.body as any;
-      const wrapped=await client.wrapVaultEnrollment({requestId:request.id,vaultId:vault.vaultId,vaultEpoch:Number(vault.epoch??bundleBody.bundle?.epoch),publicKey:request.publicKey,bundle:bundleBody.bundle??bundleBody,head:recordsBody.head,records:recordsBody.records,approved:true});
-      await signedEnrollmentRequest('POST',`/cloud-vault-sync/vaults/${encodeURIComponent(vault.vaultId)}/enrollment/requests/${encodeURIComponent(request.id)}/respond`,vault.vaultId,`enrollment-respond:${request.id}`,{wrappedUserKey:wrapped.wrappedUserKey});
+      const [bundleBody,recordsBody]=await Promise.all([transport.getBundle(vault.vaultId,deviceId),transport.getRecords(vault.vaultId,deviceId)]);
+      const wrapped=await client.wrapVaultEnrollment({requestId:request.id,vaultId:vault.vaultId,vaultEpoch:Number(vault.epoch??(bundleBody.bundle as any)?.epoch),publicKey:request.publicKey!,bundle:bundleBody.bundle??bundleBody,head:recordsBody.head,records:recordsBody.records,approved:true});
+      await transport.respondToEnrollmentRequest(vault.vaultId,request.id,{wrappedUserKey:wrapped.wrappedUserKey},this.signature(vault.vaultId,`enrollment-respond:${request.id}`,{wrappedUserKey:wrapped.wrappedUserKey},deviceId,userId));
       break;
     }
+  }
+
+  private signature(vaultId:string,op:string,body:unknown,deviceId:string,userId:string):VaultSyncSignature{
+    const bytes=body===undefined?Buffer.alloc(0):Buffer.from(JSON.stringify(body));
+    const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+    const proof=signDeviceMessage('vault-sync-v3',[userId,deviceId,vaultId,op,hash]);
+    return {deviceId,timestamp:proof.ts,signature:proof.signature};
   }
 
   private async promptEnrollment(request:EnrollmentRequest):Promise<boolean>{
