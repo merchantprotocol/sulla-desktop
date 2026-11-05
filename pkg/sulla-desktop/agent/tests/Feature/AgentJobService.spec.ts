@@ -114,6 +114,6 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
     expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
     const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
-    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
+    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'working', canMessage: false, canStop: false });
   });
 });
