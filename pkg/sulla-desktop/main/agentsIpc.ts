@@ -18,7 +18,7 @@
 import { ipcMain } from 'electron';
 import { StopAttributionFormatter } from '@pkg/agent/app/Formatters/StopAttributionFormatter';
 
-import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
+import { readConversationLog, readConversationPreview, type AgentConversationEntry, type AgentConversationLogIdentity } from './agentConversationLog';
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
@@ -147,6 +147,7 @@ export interface AgentConversationDetail {
   createdAt:    string;
   lastActiveAt: string;
   entries:      AgentConversationEntry[];
+  logIdentity?: AgentConversationLogIdentity;
   truncated:    boolean;
   missingLog:   boolean;
 }
