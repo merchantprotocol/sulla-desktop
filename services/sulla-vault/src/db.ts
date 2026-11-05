@@ -19,28 +19,27 @@ const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
 ]);
 
-/** Host and port of the configured Postgres, so socket errors can be attributed to it (or not). */
-let databaseEndpoint: { host: string; port: number } | null = null;
-
-export function setDatabaseEndpoint(connectionString: string | undefined): void {
-  databaseEndpoint = null;
-  if (!connectionString) return;
+/** Host and port of the configured Postgres (read on demand, no module state), so socket errors can be attributed to it or not. */
+function databaseEndpoint(): { host: string; port: number } | null {
+  const connectionString = process.env.SULLA_VAULT_DATABASE_URL;
+  if (!connectionString) return null;
   try {
     const url = new URL(connectionString);
-    databaseEndpoint = { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port) || 5432 };
+    return { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port) || 5432 };
   } catch {
-    // Unparseable URL: keep the permissive classification.
+    return null; // unparseable URL: keep the permissive classification
   }
 }
 
 /** Does a socket-level error (EAI_AGAIN, ECONNRESET, ...) point at Postgres rather than some other host? */
 function networkErrorTargetsDatabase(e: { hostname?: unknown; address?: unknown; port?: unknown }): boolean {
-  if (!databaseEndpoint) return true; // endpoint unknown (startup wait, tests): legacy behavior
-  if (typeof e.hostname === 'string') return e.hostname === databaseEndpoint.host;
-  if (typeof e.port === 'number' && e.port !== databaseEndpoint.port) return false;
-  if (typeof e.address === 'string' && e.port === undefined) return e.address === databaseEndpoint.host;
+  const endpoint = databaseEndpoint();
+  if (!endpoint) return true; // endpoint unknown (startup wait, tests): legacy behavior
+  if (typeof e.hostname === 'string') return e.hostname === endpoint.host;
+  if (typeof e.port === 'number' && e.port !== endpoint.port) return false;
+  if (typeof e.address === 'string' && e.port === undefined) return e.address === endpoint.host;
   // No host/port on the error: pg reports e.g. ECONNRESET on an established pool socket this way.
-  return typeof e.port === 'number' ? e.port === databaseEndpoint.port : true;
+  return typeof e.port === 'number' ? e.port === endpoint.port : true;
 }
 
 /**
@@ -125,7 +124,6 @@ export async function ensureVaultDatabase(config: VaultConfig): Promise<void> {
 }
 
 export async function connectDatabase(config: VaultConfig): Promise<Database> {
-  setDatabaseEndpoint(config.databaseUrl);
   await untilDatabaseReady('database setup', () => ensureVaultDatabase(config));
   const db = survivePoolErrors(new Pool({
     connectionString:        config.databaseUrl,

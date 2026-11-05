@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { isTransientDbError, setDatabaseEndpoint } from '../../../../../../services/sulla-vault/src/db';
+import { isTransientDbError } from '../../../../../../services/sulla-vault/src/db';
 import { describeUpstreamError, isUpstreamNetworkError } from '../../../../../../services/sulla-vault/src/upstreamEgress';
 
 function errno(code: string, extra: Record<string, unknown> = {}): Error & Record<string, unknown> {
@@ -13,10 +13,10 @@ function errno(code: string, extra: Record<string, unknown> = {}): Error & Recor
 }
 
 describe('vault database error classification', () => {
-  afterEach(() => setDatabaseEndpoint(undefined));
+  afterEach(() => { delete process.env.SULLA_VAULT_DATABASE_URL; });
 
   it('does not treat an upstream DNS failure as a Postgres outage', () => {
-    setDatabaseEndpoint('postgres://u:p@postgres:5432/sulla_vault');
+    process.env.SULLA_VAULT_DATABASE_URL = 'postgres://u:p@postgres:5432/sulla_vault';
     const dns = errno('EAI_AGAIN', { syscall: 'getaddrinfo', hostname: 'api.anthropic.com' });
     expect(isTransientDbError(dns)).toBe(false);
     expect(isUpstreamNetworkError(dns)).toBe(true);
@@ -28,13 +28,13 @@ describe('vault database error classification', () => {
   });
 
   it('does not treat upstream connect errors to another host or port as database errors', () => {
-    setDatabaseEndpoint('postgres://u:p@postgres:5432/sulla_vault');
+    process.env.SULLA_VAULT_DATABASE_URL = 'postgres://u:p@postgres:5432/sulla_vault';
     expect(isTransientDbError(errno('ETIMEDOUT', { syscall: 'connect', address: '104.18.0.1', port: 443 }))).toBe(false);
     expect(isTransientDbError(errno('ECONNRESET', { syscall: 'read' }))).toBe(true);
   });
 
   it('still classifies Postgres-originated failures as database_unavailable', () => {
-    setDatabaseEndpoint('postgres://u:p@postgres:5432/sulla_vault');
+    process.env.SULLA_VAULT_DATABASE_URL = 'postgres://u:p@postgres:5432/sulla_vault';
     expect(isTransientDbError(errno('57P01'))).toBe(true);
     expect(isTransientDbError(errno('08006'))).toBe(true);
     expect(isTransientDbError(errno('53300'))).toBe(true);
