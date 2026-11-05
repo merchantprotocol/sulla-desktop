@@ -119,7 +119,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
     const check = new CheckAgentJobsHarness();
     for (let index = 0; index < 10; index++) await check.call({ jobId: job.jobId });
-    await check.call({});
+    await check.call({ scope: 'all' });
     expect((await registry.getJobsForParentThread('retention-parent')).map(item => item.jobId)).toContain(job.jobId);
     expect((await sendJobMessage({ jobId: job.jobId, message: 'lookup only' })).successBoolean).toBe(false);
 
