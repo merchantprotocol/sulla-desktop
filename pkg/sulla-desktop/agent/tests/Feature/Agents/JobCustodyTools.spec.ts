@@ -8,10 +8,11 @@ import type {BaseTool} from '../../../tools/base';
 const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
 
 class RegisteredCustodyTool {
-  async call(name:'reassign_job'|'adopt_job',input:any,metadata:any){
+  async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job',input:any,metadata:any){
     const manifest=agentToolManifests.find(item=>item.name===name)!;
     const module:any=await manifest.loader();
-    const Type=module[name==='reassign_job'?'ReassignJobWorker':'AdoptJobWorker'];
+    const classes:any={reassign_job:'ReassignJobWorker',adopt_job:'AdoptJobWorker',send_job_message:'SendJobMessageWorker',stop_agent_job:'StopAgentJobWorker'};
+    const Type=module[classes[name]];
     const tool:BaseTool=new Type();
     tool.schemaDef=manifest.schemaDef;
     tool.setState({metadata});
@@ -53,5 +54,31 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(adopt.success).toBe(false); expect(String(adopt.error??adopt.result)).toContain('healthy-owner');
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
     expect(await agentJobProvider.custody.history(job.jobId)).toHaveLength(0);
+  });
+
+  it('H7 refuses the old owner and lets the new owner durably message after a move',async()=>{
+    // risk: an old manager acts after custody has committed
+    await registry.createJob([{agentId:'message-new',label:'new',prompt:'manage',status:'running',threadId:'message-new-thread'}],'root','root-thread',{parentAgentId:'root'});
+    const job=await registry.createJob([{agentId:'worker',label:'worker',prompt:'work',status:'running',threadId:'message-worker-thread'}],'message-old','message-old-thread',{parentAgentId:'message-old'});
+    const old={wsChannel:'message-old',agentId:'message-old',threadId:'message-old-thread',subAgentDepth:1};
+    const moved=await tools.call('reassign_job',{jobId:job.jobId,to:'message-new-thread',reason:'rotate manager'},old);
+    expect(moved,JSON.stringify(moved)).toMatchObject({success:true});
+    const refused=await tools.call('send_job_message',{jobId:job.jobId,message:'stale command'},old);
+    expect(refused.success).toBe(false); expect(String(refused.error??refused.result)).toContain('message-new');
+    const before=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='stale command'`,[job.jobId]);expect(before).toHaveLength(0);
+    const accepted=await tools.call('send_job_message',{jobId:job.jobId,message:'current command'},{wsChannel:'message-new',agentId:'message-new',threadId:'message-new-thread',subAgentDepth:1});
+    expect(accepted,JSON.stringify(accepted)).toMatchObject({success:true});
+    expect(await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='current command'`,[job.jobId])).toHaveLength(1);
+  });
+
+  it('H7 stop refusal names effective custody and leaves state unchanged',async()=>{
+    // risk: stale owner terminates work after a handoff
+    await registry.createJob([{agentId:'stop-new',label:'new',prompt:'manage',status:'running',threadId:'stop-new-thread'}],'root','root-thread',{parentAgentId:'root'});
+    const job=await registry.createJob([{agentId:'worker',label:'worker',prompt:'work',status:'running',threadId:'stop-worker-thread'}],'stop-old','stop-old-thread',{parentAgentId:'stop-old'});
+    const old={wsChannel:'stop-old',agentId:'stop-old',threadId:'stop-old-thread',subAgentDepth:1};
+    expect(await tools.call('reassign_job',{jobId:job.jobId,to:'stop-new-thread',reason:'rotate manager'},old)).toMatchObject({success:true});
+    const refused=await tools.call('stop_agent_job',{jobId:job.jobId,reason:'stale stop'},old);
+    expect(refused.success).toBe(false);expect(String(refused.error??refused.result)).toContain('stop-new');
+    expect((await registry.getJob(job.jobId)).status).toBe('running');
   });
 });
