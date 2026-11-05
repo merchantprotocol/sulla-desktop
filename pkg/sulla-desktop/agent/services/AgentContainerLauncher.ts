@@ -11,6 +11,7 @@ import Electron from 'electron';
 import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
+import { PreCreateFailureSettlement, type ContainerFailureDiagnosticLogger } from './ContainerFailureSettlement';
 import { probeAgentMcpHost, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -200,12 +201,14 @@ const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
 // The Mac's loopback as seen from containers on the Sulla runtime.
 const SULLA_RUNTIME_HOST_GATEWAY = '192.168.5.2';
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
-class AgentContainerFailureDiagnosticLogger {
+class AgentContainerFailureDiagnosticLogger implements ContainerFailureDiagnosticLogger {
   error(message: string, error: unknown): void {
     log.error(`[AgentContainer] ${ message }: ${ error instanceof Error ? error.message : String(error) }`);
   }
 }
 const failureDiagnosticLogger = new AgentContainerFailureDiagnosticLogger();
+
+const preCreateFailureSettlement = new PreCreateFailureSettlement(failureDiagnosticLogger);
 
 export interface AgentContainerRun {
   jobId:          string;
@@ -1496,10 +1499,11 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           recoveryWorkspacePath: workspacePath,
           workspaceDecisionReason: 'workspace retained with failed container',
         }))
-        : await cleanupContainerResources(runtime, undefined, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
-          name: containerName, reason: 'lifecycle-startup-failed', caller: 'createAgentContainerLifecycle.catch',
-        });
-    if (receipt.recoveryWorkspacePath && error instanceof Error) {
+        : await preCreateFailureSettlement.settle(error, 'persistent lifecycle before container create', () =>
+          cleanupContainerResources(runtime, undefined, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
+            name: containerName, reason: 'lifecycle-startup-failed', caller: 'createAgentContainerLifecycle.catch',
+          }));
+    if (receipt?.recoveryWorkspacePath && error instanceof Error) {
       error.message += ` Guest recovery workspace retained at ${ receipt.recoveryWorkspacePath }.`;
     }
     throw error;
@@ -1815,10 +1819,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         recoveryWorkspacePath: workspacePath,
         workspaceDecisionReason: 'workspace retained with failed container',
       }))
-      : await cleanupContainerResources(runtime, undefined, secretDir, undefined, workspacePath, guestRuntimePaths, {
-        name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
-      });
-    if (receipt.recoveryWorkspacePath && error instanceof Error) {
+      : await preCreateFailureSettlement.settle(error, 'agent job before container create', () =>
+        cleanupContainerResources(runtime, undefined, secretDir, undefined, workspacePath, guestRuntimePaths, {
+          name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
+        }));
+    if (receipt?.recoveryWorkspacePath && error instanceof Error) {
       error.message += ` Guest recovery workspace retained at ${ receipt.recoveryWorkspacePath }.`;
     }
     throw error;
