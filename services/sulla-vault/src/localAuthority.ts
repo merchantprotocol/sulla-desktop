@@ -105,6 +105,7 @@ import {
 import type { Database, Queryable } from './db.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
+import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 
 const CHALLENGE_TTL_MS = 30_000;
@@ -608,6 +609,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
     private readonly itemRepository: PostgresVaultItemRepository = new PostgresVaultItemRepository(db),
     private readonly auditLogRepository: PostgresVaultAuditLogRepository = new PostgresVaultAuditLogRepository(db),
+    private readonly userRepository: PostgresVaultUserRepository = new PostgresVaultUserRepository(db),
+    private readonly recoveryRepository: PostgresVaultRecoveryRepository = new PostgresVaultRecoveryRepository(db),
+    private readonly integrationStateRepository: PostgresIntegrationStateRepository = new PostgresIntegrationStateRepository(db),
+    private readonly migrationRepository: PostgresVaultMigrationRepository = new PostgresVaultMigrationRepository(db),
+    private readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
+    private readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -863,7 +870,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }> {
     const attemptGeneration = this.generation;
     if (!password || password.length > 1024) throw new LocalVaultError('invalid_credentials', 400, 'Password is required');
-    const existing = await this.db.query<{ kdf: {
+    const existing = await this.userRepository.findActiveKdf<{ kdf: {
       password?: { salt?: string; parameters?: { memoryBytes: number; operations: number } };
       salt?: string; parameters?: { memoryBytes: number; operations: number };
     } }>(
@@ -883,9 +890,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }, attemptGeneration);
       if (existing.rowCount && !storedKdf?.password?.salt) {
         const keys = this.requireKeys();
-        await this.db.query('UPDATE users SET kdf=$1,updated_at=now() WHERE id=$2', [
-          { authority: 'container', version: 1, password: { salt: derived.salt, parameters: derived.parameters } }, keys.userId,
-        ]);
+        await this.userRepository.updateKdf(keys.userId, { authority: 'container', version: 1, password: { salt: derived.salt, parameters: derived.parameters } });
       }
       this.stageCacheUpdate(derived.key);
       return { ...result, cacheUpdateRequired: true };
@@ -900,10 +905,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     newAccountKdf: unknown = { authority: 'container', version: 1 },
     attemptGeneration = this.generation,
   ): Promise<{ state: LocalVaultState }> {
-      const existing = await this.db.query<{
+      const existing = await this.userRepository.findActive<{
         id: string; login_hash_salt: Buffer; login_hash_verifier: Buffer; public_key: string;
         encrypted_private_key: EncryptedEnvelope; encrypted_user_key: EncryptedEnvelope;
-      }>('SELECT id,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key FROM users WHERE disabled_at IS NULL LIMIT 1');
+      }>();
 
       let next: UnlockedKeys;
       if (!existing.rowCount) {
@@ -912,11 +917,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         try {
           const pair = await createUserKeyPair(created.userKey);
           const verifier = makeLoginVerifier(loginHash);
-          const result = await this.db.query<{ id: string }>(
-            `INSERT INTO users(email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf)
-             VALUES ('desktop@local.sulla',$1,$2,$3,$4,$5,$6) RETURNING id`,
-            [verifier.salt, verifier.verifier, pair.publicKey, pair.encryptedPrivateKey, created.encryptedUserKey,
-              newAccountKdf],
+          const result = await this.userRepository.create<{ id: string }>(
+            [verifier.salt, verifier.verifier, pair.publicKey, pair.encryptedPrivateKey, created.encryptedUserKey, newAccountKdf],
           );
           next = { userId: result.rows[0].id, publicKey: pair.publicKey, userKey: created.userKey, privateKey: pair.privateKey, legacyVmk };
         } catch (error) {
@@ -953,7 +955,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       this.generation += 1;
       const activeGeneration = this.generation;
       const committed = this.config.legacyDatabaseUrl
-        ? await this.db.query("SELECT 1 FROM local_vault_migration_batches WHERE status='committed' LIMIT 1")
+        ? await this.migrationRepository.hasCommitted()
         : { rowCount: 1 };
       this.requireGeneration(activeGeneration);
       this.migrationState = committed.rowCount ? 'unlocked' : 'migration_required';
@@ -1051,7 +1053,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
    * create a password (with confirmation) instead of unlocking one.
    */
   async isSetupRequired(): Promise<boolean> {
-    const existing = await this.db.query('SELECT 1 FROM users WHERE disabled_at IS NULL LIMIT 1');
+    const existing = await this.userRepository.existsActive();
     return !existing.rowCount;
   }
 
@@ -1276,10 +1278,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!currentPassword || !nextPassword) throw new LocalVaultError('invalid_credentials', 400, 'Current and new passwords are required');
     const keys = this.requireKeys();
     const generation = this.generation;
-    const account = await this.db.query<{
+    const account = await this.userRepository.findCredentials<{
       login_hash_salt: Buffer; login_hash_verifier: Buffer;
       kdf: { password?: { salt: string; parameters: { memoryBytes: number; operations: number } } };
-    }>('SELECT login_hash_salt,login_hash_verifier,kdf FROM users WHERE id=$1', [keys.userId]);
+    }>(keys.userId);
     const passwordKdf = account.rows[0]?.kdf?.password;
     if (!passwordKdf) throw new LocalVaultError('invalid_credentials', 409, 'Password unlock is not configured');
     const current = await deriveMasterKey(currentPassword, passwordKdf.salt, passwordKdf.parameters);
@@ -1292,11 +1294,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
       await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'password_change', client);
-      await client.query(
-        `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
-        [verifier.salt, verifier.verifier, wrapped,
-          { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, keys.userId],
-      );
+      await this.userRepository.updatePassword(keys.userId, [
+        verifier.salt, verifier.verifier, wrapped,
+        { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } },
+      ], client);
       this.requireGeneration(generation);
       await this.auditHumanAction(client, keys.userId, 'human_password_changed');
       this.requireGeneration(generation);
@@ -1340,9 +1341,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       await this.runSecurityOperation(async() => {
         if (this.keys) return false;
         if (!await this.isSetupRequired()) {
-          const existing = await this.db.query<{ id: string; kdf: { cloudUserId?: string } }>(
-            'SELECT id,kdf FROM users WHERE disabled_at IS NULL LIMIT 1',
-          );
+          const existing = await this.userRepository.findActiveOwner<{ id: string; kdf: { cloudUserId?: string } }>();
           const owner = existing.rows[0]?.kdf?.cloudUserId;
           if (owner && owner !== cloudUserId) {
             throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
@@ -1365,10 +1364,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     let recoveryKey: Buffer | undefined;
     let recoveryMasterKey: Uint8Array | undefined;
     try {
-      const current = await this.db.query<{
+      const current = await this.userRepository.findCredentials<{
         login_hash_salt: Buffer; login_hash_verifier: Buffer;
         kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
-      }>('SELECT login_hash_salt,login_hash_verifier,kdf FROM users WHERE id=$1', [keys.userId]);
+      }>(keys.userId);
       const currentOwner = current.rows[0]?.kdf?.cloudUserId;
       if (currentOwner && currentOwner !== cloudUserId) {
         throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
@@ -1383,15 +1382,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         }
       }
       const passwordKdf = current.rows[0]?.kdf?.password;
-      const recoveryExists = await this.db.query('SELECT 1 FROM local_vault_recovery WHERE user_id=$1', [keys.userId]);
+      const recoveryExists = await this.recoveryRepository.exists(keys.userId);
       const alreadyWrapped = passwordKdf?.salt === kdf.salt && passwordKdf.parameters?.memoryBytes === kdf.memoryBytes &&
         passwordKdf.parameters?.operations === kdf.ops &&
         verifyLoginHash(await deriveLoginHash(masterKey), current.rows[0].login_hash_salt, current.rows[0].login_hash_verifier);
       if (alreadyWrapped && recoveryExists.rowCount) {
         if (!currentOwner) {
-          await this.db.query('UPDATE users SET kdf=$1,updated_at=now() WHERE id=$2', [
-            { authority: 'container', version: 1, cloudUserId, password: passwordKdf }, keys.userId,
-          ]);
+          await this.userRepository.updateKdf(keys.userId, { authority: 'container', version: 1, cloudUserId, password: passwordKdf });
         }
         this.stageCacheUpdate(masterKey);
         return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
@@ -1414,16 +1411,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
       await this.runTransaction(async client => {
         await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'account_password_migration', client);
-        await client.query(
-          `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
-          [verifier.salt, verifier.verifier, wrapped,
-            { authority: 'container', version: 1, cloudUserId, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } }, keys.userId],
-        );
+        await this.userRepository.updatePassword(keys.userId, [
+          verifier.salt,
+          verifier.verifier,
+          wrapped,
+          { authority: 'container', version: 1, cloudUserId, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } },
+        ], client);
         if (recoveryRow) {
-          await client.query(
-            `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key) VALUES ($1,$2,$3,$4)`,
-            [keys.userId, JSON.stringify({ kdf: recoveryRow.salt, verifier: recoveryRow.verifierSalt, parameters: recoveryRow.parameters }), recoveryRow.verifier, recoveryRow.wrap],
-          );
+          await this.recoveryRepository.insert([
+            keys.userId,
+            JSON.stringify({ kdf: recoveryRow.salt, verifier: recoveryRow.verifierSalt, parameters: recoveryRow.parameters }),
+            recoveryRow.verifier,
+            recoveryRow.wrap,
+          ], client);
         }
         this.requireGeneration(generation);
         await this.auditHumanAction(client, keys.userId, 'account_password_wrap_migrated');
@@ -1480,7 +1480,24 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if(!staged||staged.expiresAt<Date.now())throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
     try{ if(!await this.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists'); const b=staged.bundle;
       const verifier=makeLoginVerifier(await deriveLoginHash(staged.masterKey));
-      await this.runTransaction(async client=>{await client.query(`INSERT INTO users(id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf) VALUES ($1,'desktop@local.sulla',$2,$3,$4,$5,$6,$7)`,[b.vaultUserId,verifier.salt,verifier.verifier,b.publicKey,b.encryptedPrivateKey,b.encryptedUserKey,{authority:'container',version:1,cloudUserId:staged.cloudUserId,password:{salt:b.kdf.salt,parameters:{memoryBytes:b.kdf.memoryBytes,operations:b.kdf.ops}}}]); await client.query(`INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_pull_at) VALUES ($1,$2,$3,$4,0,'',$5,now())`,[b.vaultUserId,b.vaultId,b.epoch,b.bundleGeneration,createHash('sha256').update(JSON.stringify(b)).digest('hex')]);});
+      await this.runTransaction(async client => {
+        await this.userRepository.createWithId([
+          b.vaultUserId,
+          verifier.salt,
+          verifier.verifier,
+          b.publicKey,
+          b.encryptedPrivateKey,
+          b.encryptedUserKey,
+          { authority: 'container', version: 1, cloudUserId: staged.cloudUserId, password: { salt: b.kdf.salt, parameters: { memoryBytes: b.kdf.memoryBytes, operations: b.kdf.ops } } },
+        ], client);
+        await this.syncStateRepository.create([
+          b.vaultUserId,
+          b.vaultId,
+          b.epoch,
+          b.bundleGeneration,
+          createHash('sha256').update(JSON.stringify(b)).digest('hex'),
+        ], client);
+      });
       this.lockNow();this.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.generation+=1;this.migrationState='unlocked';this.stageCacheUpdate(staged.masterKey);return{adopted:true};
     }finally{staged.userKey.fill(0);staged.privateKey.fill(0);staged.masterKey.fill(0)}
   }
@@ -1492,9 +1509,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault access was not approved');
     const keys = this.requireKeys();
-    const state = await this.db.query<{ vault_id: string; epoch: number | string }>(
-      'SELECT vault_id,epoch FROM cloud_vault_sync_state WHERE owner_user_id=$1', [keys.userId],
-    );
+    const state = await this.syncStateRepository.find<{ vault_id: string; epoch: number | string }>(keys.userId);
     const row = state.rows[0];
     if (!row || row.vault_id !== input.vaultId || Number(row.epoch) !== input.vaultEpoch) {
       throw new LocalVaultError('invalid_operation', 409, 'Approval request does not match this vault');
@@ -1517,13 +1532,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       let replacedExisting = false;
       await this.runTransaction(async client => {
         replacedExisting = await this.rewrapHistory.preserveCurrentRecoveryWrap(keys.userId, 'rotation', client);
-        await client.query(
-          `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
-           VALUES ($1,$2,$3,$4)
-           ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
-          [keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
-            verifier.verifier.toString('base64url'), wrapped],
-        );
+        await this.recoveryRepository.upsertForRotation([keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
+            verifier.verifier.toString('base64url'), wrapped], client);
         this.requireGeneration(generation);
         await this.auditHumanAction(client, keys.userId, 'account_recovery_key_rotated');
       });
@@ -1548,13 +1558,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
       const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
       await this.runTransaction(async client => {
-      await client.query(
-        `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
-         VALUES ($1,$2,$3,$4)
-         ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
-        [keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
-          verifier.verifier.toString('base64url'), wrapped],
-      );
+      await this.recoveryRepository.upsertForHumanRecovery([keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
+          verifier.verifier.toString('base64url'), wrapped], client);
       this.requireGeneration(generation);
       await this.auditHumanAction(client, keys.userId, 'human_recovery_configured');
       this.requireGeneration(generation);
@@ -1572,9 +1577,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const session = this.validateHumanSession(sessionId, csrf);
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Recovery requires a locked vault');
     const attemptGeneration = this.generation;
-    const result = await this.db.query<{
-      user_id: string; recovery_salt: string; recovery_verifier: string; encrypted_user_key: EncryptedEnvelope;
-    }>('SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key FROM local_vault_recovery LIMIT 1');
+    const result = await this.recoveryRepository.findAny<{ user_id: string; recovery_salt: string; recovery_verifier: string; encrypted_user_key: EncryptedEnvelope }>();
     if (!result.rowCount) throw new LocalVaultError('invalid_credentials', 404, 'Vault recovery is not configured');
     const row = result.rows[0];
     const metadata = JSON.parse(row.recovery_salt) as { kdf: string; verifier: string; parameters: { memoryBytes: number; operations: number } };
@@ -1590,11 +1593,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
       await this.rewrapHistory.preserveCurrentPasswordWrap(row.user_id, 'recovery', client);
-      await client.query(
-        `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
-        [verifier.salt, verifier.verifier, wrapped,
-          { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, row.user_id],
-      );
+      await this.userRepository.updatePassword(row.user_id, [
+        verifier.salt, verifier.verifier, wrapped,
+        { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } },
+      ], client);
       this.requireStableGeneration(attemptGeneration);
       await this.auditHumanAction(client, row.user_id, 'human_recovery_unlocked');
       });
@@ -1622,9 +1624,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     const [user, items, recovery] = await Promise.all([
-      this.db.query('SELECT id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1', [keys.userId]),
+      this.userRepository.findById(keys.userId),
       this.itemRepository.listOwnedForBackup([keys.userId]),
-      this.db.query('SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [keys.userId]),
+      this.recoveryRepository.findForUser(keys.userId),
     ]);
     const backup = await deriveMasterKey(backupPassword);
     try {
@@ -1649,7 +1651,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Backup import requires a locked vault');
     if (!backupPassword || backupEnvelope?.version !== 1) throw new LocalVaultError('invalid_operation', 400, 'Backup input is invalid');
     const attemptGeneration = this.generation;
-    const existing = await this.db.query('SELECT 1 FROM users LIMIT 1');
+    const existing = await this.userRepository.exists();
     if (existing.rowCount) throw new LocalVaultError('policy_denied', 409, 'Backup import requires an empty local vault');
     const backup = await deriveMasterKey(backupPassword, backupEnvelope.salt, backupEnvelope.parameters);
     let clear: Uint8Array | undefined;
@@ -1664,20 +1666,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
-        await client.query(
-          `INSERT INTO users(id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        await this.userRepository.importBackup(
           [payload.user.id, payload.user.email, asBuffer(payload.user.login_hash_salt), asBuffer(payload.user.login_hash_verifier),
             payload.user.public_key, payload.user.encrypted_private_key, payload.user.encrypted_user_key, payload.user.kdf],
+          client,
         );
         for (const item of payload.items) {
           await this.itemRepository.insertBackupItem([item.id, payload.user.id, item.item_type, item.ciphertext, item.encrypted_item_key, item.agent_policy,
               item.integration_ref, item.revision, item.created_at, item.updated_at], client);
         }
         if (payload.recovery) {
-          await client.query(
-            `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key) VALUES ($1,$2,$3,$4)`,
+          await this.recoveryRepository.insert(
             [payload.user.id, payload.recovery.recovery_salt, payload.recovery.recovery_verifier, payload.recovery.encrypted_user_key],
+            client,
           );
         }
         this.requireStableGeneration(attemptGeneration);
@@ -1910,12 +1911,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const exists = await this.itemRepository.existsByIntegrationRefForActivation([keys.userId, `${ integrationId }/${ accountId }`]);
     this.requireGeneration(generation);
     if (!exists.rowCount) throw new LocalVaultError('invalid_operation', 404, 'Integration account is unavailable');
-    await this.db.query(
-      `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
-       VALUES ($1,$2,$3)
-       ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
-      [keys.userId, integrationId, accountId],
-    );
+    await this.integrationStateRepository.upsert(keys.userId, integrationId, accountId);
     this.requireGeneration(generation);
     return this.integrationMetadata(callerId, token, integrationId);
   }
@@ -2040,12 +2036,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         await this.itemRepository.insertIntegrationAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef], client);
       }
       if (input.active !== false) {
-        await client.query(
-          `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
-           VALUES ($1,$2,$3)
-           ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
-          [keys.userId, integrationId, accountId],
-        );
+        await this.integrationStateRepository.upsertImported(keys.userId, integrationId, accountId, client);
       }
       await this.auditHumanAction(client, keys.userId, existing.rowCount ? 'integration_account_updated' : 'integration_account_created', itemId, label);
     }));
@@ -2120,12 +2111,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       await this.itemRepository.softDeleteIntegrationAccounts([keys.userId, SULLA_CLOUD_INTEGRATION_ID], client);
       await this.itemRepository.insertSullaCloudAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
           `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`], client);
-      await client.query(
-        `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
-         VALUES ($1,$2,$3)
-         ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
-        [keys.userId, SULLA_CLOUD_INTEGRATION_ID, input.userId],
-      );
+      await this.integrationStateRepository.upsertCloud(keys.userId, SULLA_CLOUD_INTEGRATION_ID, input.userId, client);
       await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_adopted', itemId);
       this.requireGeneration(generation);
     }));
@@ -2138,10 +2124,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     return this.runSecurityOperation(() => this.runTransaction(async client => {
       const result = await this.itemRepository.softDeleteIntegrationFamilies([keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']], client);
-      await client.query(
-        `DELETE FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=ANY($2::text[])`,
-        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
-      );
+      await this.integrationStateRepository.clear(keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin'], client);
       await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_cleared');
       this.requireGeneration(generation);
       return { cleared: result.rowCount ?? 0 };
@@ -2164,10 +2147,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!allowsSullaCloudDesktopRequest(method, target.pathname)) {
       throw new LocalVaultError('policy_denied', 403, 'Sulla Cloud request path or method is not allowlisted');
     }
-    const state = await this.db.query<{ active_account_id: string }>(
-      `SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2`,
-      [keys.userId, SULLA_CLOUD_INTEGRATION_ID],
-    );
+    const state = await this.integrationStateRepository.findActive<{ active_account_id: string }>(keys.userId, SULLA_CLOUD_INTEGRATION_ID);
     const accountId = state.rows[0]?.active_account_id;
     if (!accountId) throw new LocalVaultError('credential_field_missing', 404, 'Sulla Cloud session is unavailable; sign in again');
     const request: BrokerExecuteRequest = {
@@ -2260,23 +2240,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const client = await legacy.connect();
       try {
         await client.query('BEGIN READ ONLY');
-        const result = await client.query<LegacyIntegrationRow>(
-          `SELECT 'integration_value'::text AS source_kind,value_id,integration_id,account_id,property,value,is_default,created_at,updated_at
-             FROM integration_values
-           UNION ALL
-           SELECT 'oauth_token', token_id * 10 + property_index, integration_id, account_id, property, value, false, created_at, updated_at
-             FROM oauth_tokens
-             CROSS JOIN LATERAL (VALUES
-               (1,'access_token',access_token),
-               (2,'refresh_token',refresh_token),
-               (3,'token_type',token_type),
-               (4,'scope',scope),
-               (5,'expires_at',expires_at::text),
-               (6,'provider_id',provider_id)
-             ) AS oauth_properties(property_index,property,value)
-            WHERE value IS NOT NULL
-            ORDER BY source_kind,value_id`,
-        );
+        const result = await this.legacyCredentialRepository.list(client);
         rows = result.rows;
         await client.query('COMMIT');
       } catch (error) {
@@ -2293,10 +2257,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
 
     const sourceFingerprint = stableLegacyFingerprint(rows);
-    const already = await this.db.query<{ id: string; imported_count: number; skipped_count: number }>(
-      "SELECT id,imported_count,skipped_count FROM local_vault_migration_batches WHERE source_fingerprint=$1 AND status='committed'",
-      [sourceFingerprint],
-    );
+    const already = await this.migrationRepository.findCommitted<{ id: string; imported_count: number; skipped_count: number }>(sourceFingerprint);
     if (already.rowCount) {
       this.requireGeneration(generation);
       this.migrationState = 'unlocked';
@@ -2316,12 +2277,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     try {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-vault-legacy-import'))");
-      const batch = await client.query<{ id: string }>(
-        `INSERT INTO local_vault_migration_batches(source_fingerprint,status)
-         VALUES ($1,'running')
-         ON CONFLICT(source_fingerprint) DO UPDATE SET status='running',error_code=NULL
-         RETURNING id`, [sourceFingerprint],
-      );
+      const batch = await this.migrationRepository.start<{ id: string }>(sourceFingerprint, client);
       batchId = batch.rows[0].id;
       let imported = 0;
       let skipped = 0;
@@ -2360,19 +2316,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         }
         await this.itemRepository.insertMigratedLegacyItem([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`], client);
         for (const row of groupRows) {
-          await client.query(
-            `INSERT INTO local_vault_migration_rows(source_kind,source_value_id,source_fingerprint,item_id)
-             VALUES ($1,$2,$3,$4) ON CONFLICT(source_kind,source_value_id) DO NOTHING`,
-            [row.source_kind, row.value_id, sourceFingerprint, itemId],
-          );
+          await this.migrationRepository.addRow([row.source_kind, row.value_id, sourceFingerprint, itemId], client);
         }
         imported += groupRows.length;
       }
       this.requireGeneration(generation);
-      await client.query(
-        `UPDATE local_vault_migration_batches SET status='committed',imported_count=$2,skipped_count=$3,committed_at=now()
-          WHERE id=$1`, [batchId, imported, skipped],
-      );
+      await this.migrationRepository.commit(batchId, imported, skipped, client);
       await client.query('COMMIT');
       keys.legacyVmk?.fill(0);
       keys.legacyVmk = undefined;
@@ -2382,9 +2331,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       await client.query('ROLLBACK');
       this.migrationState = 'migration_failed';
       if (batchId) {
-        await this.db.query(
-          `UPDATE local_vault_migration_batches SET status='failed',error_code='migration_failed' WHERE id=$1`, [batchId],
-        ).catch(() => undefined);
+        await this.migrationRepository.fail(batchId).catch(() => undefined);
       }
       if (error instanceof LocalVaultError) throw error;
       throw new LocalVaultError('migration_failed', 409, 'Legacy migration rolled back');
