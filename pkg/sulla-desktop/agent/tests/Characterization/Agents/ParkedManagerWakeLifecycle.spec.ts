@@ -394,8 +394,8 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     });
     expect((await registry.getJob(manager.jobId))?.tasks[0].returnedAt).toBeUndefined();
 
-    registry.abortJob(firstChild.jobId);
-    registry.abortJob(secondChild.jobId);
+    registry.abortJob(firstChild.jobId, StopPrincipal.system('ParkedManagerWakeLifecycle'), 'clear child before manager contract');
+    registry.abortJob(secondChild.jobId, StopPrincipal.system('ParkedManagerWakeLifecycle'), 'clear child before manager contract');
     const accepted = await worker.runHarness(managerThreadId, { status: 'completed', summary: 'done', output: {} });
     expect(accepted.successBoolean).toBe(true);
   });
