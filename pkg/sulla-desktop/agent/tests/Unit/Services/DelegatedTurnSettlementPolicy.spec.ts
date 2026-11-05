@@ -5,17 +5,33 @@ import { describe, expect, it } from 'vitest';
 import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../../services/DelegatedTurnSettlementPolicy';
 describe('DelegatedTurnSettlementPolicy', () => {
   const policy = new DelegatedTurnSettlementPolicy();
-  it('parks waits and child dependencies before reminder settlement', () => {
-    // risk: legitimate long-running work fails, or #2008 child parking regresses
-    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: true, reminderSent: false })).toBe('wait_park');
-    expect(policy.decide({ returned: false, openChildren: 2, pendingWait: false, reminderSent: false })).toBe('child_park');
+  it('parks each repeated wait and reaches terminal only after the worker returns', () => {
+    // risk: a second long wait is mistaken for a missing contract and kills a healthy worker
+    const turns = [
+      { returned: false, openChildren: 0, pendingWait: true, reminderSent: false },
+      { returned: false, openChildren: 0, pendingWait: true, reminderSent: false },
+      { returned: true, openChildren: 0, pendingWait: false, reminderSent: false },
+    ];
+    expect(turns.map(turn => policy.decide(turn))).toEqual(['wait_park', 'wait_park', 'terminal']);
   });
-  it('reminds once, then reports a typed failure carrying the real output', () => {
+  it('preserves F-1 child parking ahead of explicit waits and reminders', () => {
+    // risk: the worker wait story regresses existing manager/child lifecycle behavior
+    expect(policy.decide({ returned: false, openChildren: 2, pendingWait: true, reminderSent: false })).toBe('child_park');
+  });
+  it('parks a wait scheduled during the reminder turn instead of failing', () => {
+    // risk: reminderSent is incorrectly treated as terminal while the worker is legitimately parked
+    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false })).toBe('remind');
+    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: true, reminderSent: true })).toBe('wait_park');
+    expect(policy.decide({ returned: true, openChildren: 0, pendingWait: false, reminderSent: true })).toBe('terminal');
+  });
+  it('reminds exactly once, then reports a typed failure carrying the real last output', () => {
     // risk: agent death is misreported as fabricated provider failure
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false })).toBe('remind');
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true })).toBe('fail');
-    const error = new MissingContractAfterReminderError('assistant stopped after reminder');
-    expect(error.code).toBe('missing_contract_after_reminder'); expect(error.message).toContain('assistant stopped'); expect(error.message).not.toContain('provider failure');
-    expect(policy.failureCause({ messages: [{ role: 'assistant', content: 'real last text' }, { role: 'user', content: 'reminder' }] })).toBe('real last text');
+    const cause = policy.failureCause({ messages: [{ role: 'assistant', content: 'real last text' }, { role: 'user', content: 'reminder' }] });
+    const error = new MissingContractAfterReminderError(cause);
+    expect(error.code).toBe('missing_contract_after_reminder');
+    expect(error.message).toContain('real last text');
+    expect(error.message).not.toContain('provider failure');
   });
 });
