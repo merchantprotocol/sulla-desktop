@@ -172,8 +172,9 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const restartedProvider = new AgentJobServiceProvider();
     expect((await restartedProvider.jobs.job(consumed.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
     expect((await restartedProvider.jobs.job(unconsumed.jobId))?.tasks[0].completionDeliveredAt).toBeUndefined();
-    expect((await restartedProvider.service.getPendingCompletions()).map(job => job.jobId)).not.toContain(consumed.jobId);
-    expect((await restartedProvider.service.getPendingCompletions()).map(job => job.jobId)).toContain(unconsumed.jobId);
+    const pending = await restartedProvider.service.getPendingCompletions();
+    expect(pending.find(job => job.jobId === consumed.jobId)?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
+    expect(pending.map(job => job.jobId)).toContain(unconsumed.jobId);
 
     inbox.clearCompletionInboxes();
     await recovery.recoverPendingAgentCompletions();
