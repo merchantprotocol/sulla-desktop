@@ -8,6 +8,25 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 const CHECKIN_GUIDANCE = `[Worker check-ins]
 Call report_progress at each meaningful milestone and at least every ~5 minutes while working. Include blockers immediately. Check every new turn for blocks labelled "Message from orchestrator" and treat them as new direction for the current task.`;
 
+/** Builds the short operational contract injected into every delegated turn. */
+export class WorkerPromptBuilder {
+  build(metadata: Record<string, unknown>): string {
+    const jobId = String(metadata.delegatedJobId ?? metadata.jobId ?? 'unknown');
+    const taskIndex = String(metadata.delegatedTaskIndex ?? metadata.taskIndex ?? 'unknown');
+    const manager = String(metadata.managerAgentId ?? metadata.parentAgentId ?? metadata.workflowParentChannel ?? 'unknown');
+    const managerThread = String(metadata.managerThreadId ?? metadata.parentThreadId ?? 'unknown');
+    return `[How your job works]
+Job: ${ jobId } (task ${ taskIndex })
+Manager: ${ manager } (thread ${ managerThread }, job ${ jobId })
+Ending your turn without agents/return_result fails your task after one reminder.
+For anything longer than a minute, use sulla agents/wait with seconds and reason, then end your turn.
+Never use background processes, Monitor, cron, or scheduled wakeups.
+Manager messages arrive at your next tool boundary as "[Message from orchestrator]"; prefer short tool calls while waiting.
+Put questions in report_progress blockers so your manager is alerted.
+Use stdin for quote-safe check-ins: sulla agents/report_progress - <<'JSON' (JSON payload on the next line, then JSON on its own line).`;
+  }
+}
+
 function representedMessageIds(state: any): Set<string> {
   return new Set((state?.messages ?? [])
     .map((message: any) => message?.metadata?.jobMessageId)
@@ -17,15 +36,16 @@ function representedMessageIds(state: any): Set<string> {
 /** Add worker guidance and durable queued messages at a CLI model-call boundary. */
 export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): Promise<string> {
   if (!state?.metadata?.isSubAgent) return basePrompt;
+  const workerGuidance = new WorkerPromptBuilder().build(state.metadata);
   const threadId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : '';
-  if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ basePrompt }`;
+  if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
 
   let pending: Awaited<ReturnType<typeof AgentJobMessagingModel.pendingMessagesForThread>>;
   try {
     pending = await AgentJobMessagingModel.pendingMessagesForThread(threadId);
   } catch (err) {
     console.warn('[workerMessaging] queued-message read failed; continuing worker turn:', (err as Error).message);
-    return `${ CHECKIN_GUIDANCE }\n\n${ basePrompt }`;
+    return `${ CHECKIN_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
   }
   const represented = representedMessageIds(state);
   const fresh = pending.filter(message => !represented.has(message.id));
@@ -42,7 +62,7 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
     `[Message from orchestrator]\n${ message.message }`,
   ).join('\n\n');
 
-  return [CHECKIN_GUIDANCE, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
+  return [CHECKIN_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
 }
 
 export { CHECKIN_GUIDANCE };

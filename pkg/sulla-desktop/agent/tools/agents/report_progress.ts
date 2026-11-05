@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ReportProgressWorker extends BaseTool {
@@ -30,7 +30,7 @@ export class ReportProgressWorker extends BaseTool {
       return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
     }
 
-    const result = await AgentJobMessagingModel.appendCheckin(threadId, {
+    const result = await agentJobProvider.blockerEscalation.record(threadId, {
       step,
       summary,
       filesTouched: Array.isArray(input.filesTouched) ? input.filesTouched.map(String) : [],

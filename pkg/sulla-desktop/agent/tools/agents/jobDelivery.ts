@@ -11,7 +11,7 @@
  */
 
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
-import { enqueueAgentCompletion } from '../../services/AgentCompletionInbox';
+import { enqueueAgentCompletion, type AgentTerminalNotice } from '../../services/AgentCompletionInbox';
 import { OrphanedChildResultService, type OrphanedChildJobStore } from '../../services/OrphanedChildResultService';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
 
@@ -42,7 +42,18 @@ export function buildWakeContent(
   jobId: string,
   results: AgentJobResult[],
   failureReason?: string,
+  terminal?: AgentTerminalNotice,
 ): string {
+  if (terminal?.status === 'stopped') {
+    const stoppedBy = terminal.stoppedBy === 'human'
+      ? 'human'
+      : terminal.stoppedBy && 'agentId' in terminal.stoppedBy
+        ? terminal.stoppedBy.agentId
+        : terminal.stoppedBy?.system ?? 'unknown';
+    return `[sub-agent job ${ jobId } STOPPED by ${ stoppedBy }: ${ terminal.reason }]\n\n` +
+      'The task was intentionally stopped before returning a result. Decide whether to relaunch or continue without it.';
+  }
+  if (terminal?.status === 'failed') failureReason = terminal.reason;
   if (failureReason) {
     return `[sub-agent job ${ jobId } FAILED] ${ failureReason }\n\n` +
       'Your background sub-agent(s) errored before returning results. Decide how to proceed (retry, adjust, or report back).';
@@ -75,10 +86,11 @@ export async function wakeParentGraph(
   results: AgentJobResult[],
   failureReason?: string,
   taskIndex = 0,
+  terminal?: AgentTerminalNotice,
 ): Promise<boolean> {
   if (!parentThreadId) return false;
 
-  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, taskIndex, results, failureReason });
+  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, taskIndex, results, failureReason, terminal });
 }
 
 // ─── Proactive completion card ───────────────────────────────────
@@ -90,13 +102,22 @@ export async function emitProactiveCompletion(
   results: AgentJobResult[],
   failureReason?: string,
   parentThreadId?: string,
+  terminal?: AgentTerminalNotice,
 ): Promise<void> {
   try {
     const ws = getWebSocketClientService();
 
     let headline: string;
     let body: string;
-    if (failureReason) {
+    if (terminal?.status === 'stopped') {
+      const stoppedBy = terminal.stoppedBy === 'human'
+        ? 'human'
+        : terminal.stoppedBy && 'agentId' in terminal.stoppedBy
+          ? terminal.stoppedBy.agentId
+          : terminal.stoppedBy?.system ?? 'unknown';
+      headline = 'Background agent stopped';
+      body = `Job ${ jobId } was stopped by ${ stoppedBy }: ${ terminal.reason.slice(0, 200) }`;
+    } else if (failureReason) {
       headline = 'Background agents failed';
       body = `Job ${ jobId } errored: ${ failureReason.slice(0, 200) }`;
     } else {
@@ -141,16 +162,29 @@ export class JobCompletionDelivery {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
   }
 
+  private terminalNotice(job: AgentJob, taskIndex: number, failureReason?: string): AgentTerminalNotice | undefined {
+    const task = taskIndex >= 0 ? job.tasks[taskIndex] : undefined;
+    if (task?.status === 'stopped' || job.status === 'stopped') {
+      return {
+        status: 'stopped',
+        stoppedBy: task?.stoppedBy ?? job.stoppedBy,
+        reason: task?.stopReason ?? job.stopReason ?? 'no reason recorded',
+      };
+    }
+    return failureReason ? { status: 'failed', reason: failureReason } : undefined;
+  }
+
   async deliver(job: AgentJob, results: AgentJobResult[], taskIndex = 0, failureReason?: string): Promise<boolean> {
+    const terminal = this.terminalNotice(job, taskIndex, failureReason);
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
       const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
-      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, orphanReason, taskIndex);
+      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, orphanReason, taskIndex, terminal);
     }
     const channel = job.parentChannel || 'sulla-desktop';
-    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId);
-    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex);
+    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal);
+    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex, terminal);
   }
 }
 

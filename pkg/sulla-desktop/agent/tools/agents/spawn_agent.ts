@@ -22,7 +22,7 @@ import {
   createJob,
   failJob,
   getJob,
-  getJobAbortSignal,
+  getTaskAbortSignal,
   markCompletionDelivered,
   markTaskCompletionDelivered,
   recordTaskCompletion,
@@ -33,6 +33,8 @@ import {
   updateJobTask,
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
+import { agentWaitProvider } from '../../services/AgentWaitServices';
+import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
@@ -51,14 +53,15 @@ import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
+import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
 import type { AgentJobResult, AgentJobTask, AgentJobVisibility } from './jobRegistry';
 import type { RoutableAgent } from '../../services/ChatAgentRouting';
 
-export function childAbortForJob(asyncJob: boolean, parentAbort: any, jobAbortSignal?: AbortSignal) {
-  return asyncJob ? combineAborts(undefined, jobAbortSignal) : combineAborts(parentAbort, jobAbortSignal);
+export function childAbortForJob(asyncJob: boolean, parentAbort: any, taskAbortSignal?: AbortSignal) {
+  return asyncJob ? combineAborts(undefined, taskAbortSignal) : combineAborts(parentAbort, taskAbortSignal);
 }
 
 // No open-tab cap: how many children run at once is steered by agent prompts,
@@ -426,7 +429,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // Abort signal for THIS job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
-    let jobAbortSignal: AbortSignal | undefined;
+    const taskAbortSignals: AbortSignal[] = [];
     // Set once a job exists; its id is the dead-run activity key for the job.
     let activityJobId: string | undefined;
     // Delegation-log row per task index, so delivery can be recorded later.
@@ -438,6 +441,7 @@ export class SpawnAgentWorker extends BaseTool {
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
+      const taskAbortSignal = taskAbortSignals[index];
       const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
       delegationIds[index] = delegationId;
@@ -458,12 +462,15 @@ export class SpawnAgentWorker extends BaseTool {
       }
 
       let subStateRef: any;
-      let containerLifecycle: import('../../services/AgentContainerLauncher').AgentContainerLifecycle | undefined;
+      let containerLifecycle: ParkedContainerLifecycle | undefined;
       let taskResult: AgentJobResult | undefined;
       const returnedTask = async() => {
         if (!activityJobId) return undefined;
         const settled = (await getJob(activityJobId))?.tasks[index];
         return settled?.returnedAt ? settled : undefined;
+      };
+      const cancelScheduledWait = () => {
+        if (activityJobId) void agentWaitProvider.cancel(activityJobId, index).catch(() => {});
       };
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
@@ -502,6 +509,9 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
         subState.metadata.delegatedJobId = activityJobId;
+        subState.metadata.delegatedTaskIndex = index;
+        subState.metadata.managerAgentId = parentAgentId || parentChannel;
+        subState.metadata.managerThreadId = parentThreadId;
         // While this runner drives the graph, a human typing into the thread
         // (after "Open in tab") steers it instead of starting a second run.
         subState.metadata.delegatedRunActive = true;
@@ -521,7 +531,8 @@ export class SpawnAgentWorker extends BaseTool {
         // Fire-and-forget children outlive a superseded parent turn. Their
         // durable job abort is fired by stop_agent_job and by an explicit
         // stop_run on the parent thread. Synchronous children remain coupled.
-        const combined = childAbortForJob(async_, parentAbort, jobAbortSignal);
+        const combined = childAbortForJob(async_, parentAbort, taskAbortSignal);
+        taskAbortSignal?.addEventListener('abort', cancelScheduledWait, { once: true });
 
         if (combined) {
           subState.metadata.options ??= {};
@@ -548,75 +559,102 @@ export class SpawnAgentWorker extends BaseTool {
             promptMessage.content += '\n\n[Container workspace] Agent-local file, shell, and Git work runs in the bounded job workspace shown by pwd. The workspace survives container exit; the container itself is removed when this job ends.';
           }
           const { createAgentContainerLifecycle } = await import('../../services/AgentContainerLauncher');
-          containerLifecycle = await createAgentContainerLifecycle({
-            jobId: activityJobId,
+          const createLifecycle = () => createAgentContainerLifecycle({
+            jobId: activityJobId!,
             taskIndex: index,
             provider,
             model: subState.metadata.agent?.model,
             workspacePath: task.workspacePath,
             state: subState,
-            signal: combined?.signal ?? jobAbortSignal,
+            signal: combined?.signal ?? taskAbortSignal,
+            // A scheduled wait may exceed the container idle limit. Recreated
+            // runtimes must resume the same workspace and provider home.
+            persistenceKey: threadId,
           });
+          containerLifecycle = new ParkedContainerLifecycle(await createLifecycle(), createLifecycle);
         }
 
-        // Execute the sub-agent graph
+        // Execute and settle every delegated turn through one policy loop.
+        // The loop is intentionally re-entered after every wake/reminder so a
+        // worker can schedule any number of waits on the same thread.
         const executeGraph = () => containerLifecycle
           ? containerLifecycle.execute(() => graph.execute(subState))
           : graph.execute(subState);
-        let finalState = await executeGraph();
-
-        // A hidden manager that owns open children is waiting, not finished.
-        // Keep its runner parked without consuming its one contract reminder;
-        // completion/message delivery wakes this exact thread and the same
-        // graph executes the queued input as its next turn.
-        let returned = await returnedTask();
-        while (!returned && activityJobId && jobAbortSignal?.aborted !== true &&
-          await agentJobLifecycle.parkWhenWaiting(activityJobId, index, threadId)) {
-          subState.metadata.delegatedRunActive = false;
-          await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
-          if (jobAbortSignal?.aborted) break;
-          returned = await returnedTask();
-          if (returned) break;
-          await agentJobLifecycle.resume(activityJobId, index);
-          subState.metadata.delegatedRunActive = true;
+        const acknowledgeCompletionInput = async(wakeInput: any) => {
+          const entries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
+          await Promise.all(entries.map((entry: any) => markTaskCompletionDelivered(
+            String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
+          )));
+        };
+        const runFreshTurn = async(currentState: any) => {
           const wakeInput = subState.messages[subState.messages.length - 1];
           const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
           this.turnPreparer.prepare(subState);
-          finalState = await executeGraph();
-          returned = await returnedTask();
-          if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
-            // A released parked runner must consume its injected input. Retry
-            // once after an explicit fresh-turn preparation before surfacing
-            // an internal lifecycle failure (never a misleading provider error).
+          currentState = await executeGraph();
+          let returnedAfterTurn = await returnedTask();
+          if (!returnedAfterTurn && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
             this.turnPreparer.prepare(subState);
-            finalState = await executeGraph();
-            returned = await returnedTask();
-            if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
+            currentState = await executeGraph();
+            returnedAfterTurn = await returnedTask();
+            if (!returnedAfterTurn && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
               const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
               const completionIds = Array.isArray(wakeInput?.metadata?.completionEntries)
                 ? wakeInput.metadata.completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',')
                 : 'none';
-              const error = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
-              console.error(`[spawn_agent] ${ error }`);
-              throw new Error(error);
+              throw new Error(`Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`);
             }
           }
-          const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries)
-            ? wakeInput.metadata.completionEntries
-            : [];
-          await Promise.all(completionEntries.map((entry: any) => {
-            const taskIndex = Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0;
-            return markTaskCompletionDelivered(String(entry.jobId), taskIndex);
-          }));
+          await acknowledgeCompletionInput(wakeInput);
+          return { finalState: currentState, returned: returnedAfterTurn };
+        };
+
+        let finalState = await executeGraph();
+        let returned = await returnedTask();
+        let reminderSent = false;
+        const settlementPolicy = new DelegatedTurnSettlementPolicy();
+        while (activityJobId && taskAbortSignal?.aborted !== true) {
+          const openChildren = await agentJobLifecycle.openChildren(threadId);
+          const pendingWait = await agentWaitProvider.repository.pending(activityJobId, index);
+          // A timer/message can claim the durable wait before this turn reaches
+          // settlement. The task's parked state remains authoritative during
+          // that race, so consume the queued wake instead of fabricating a
+          // missing-contract failure.
+          const taskStillParked = (await getJob(activityJobId))?.tasks[index]?.status === 'parked';
+          const settlement = settlementPolicy.decide({
+            returned: Boolean(returned), openChildren, pendingWait: Boolean(pendingWait) || taskStillParked, reminderSent,
+          });
+          if (settlement === 'terminal' || settlement === 'fail') break;
+
+          if (settlement === 'remind') {
+            subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
+            reminderSent = true;
+            const turn = await runFreshTurn(finalState);
+            finalState = turn.finalState;
+            returned = turn.returned;
+            continue;
+          }
+
+          // Preserve F-1 exactly: child parking remains owned by
+          // parkWhenWaiting(), including its own fresh open-child check.
+          if (settlement === 'child_park' && !await agentJobLifecycle.parkWhenWaiting(activityJobId, index, threadId)) continue;
+          subState.metadata.delegatedRunActive = false;
+          if (settlement === 'wait_park') await containerLifecycle?.park();
+          await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
+          if (taskAbortSignal?.aborted) break;
+          returned = await returnedTask();
+          if (returned) continue;
+          await agentJobLifecycle.resume(activityJobId, index);
+          if (settlement === 'wait_park') await containerLifecycle?.resume();
+          subState.metadata.delegatedRunActive = true;
+          const turn = await runFreshTurn(finalState);
+          finalState = turn.finalState;
+          returned = turn.returned;
         }
 
-        // A caller schema means free text is not an answer: remind once, but
-        // only after the manager has no open child dependency left.
-        if (!returned && contract.schema && jobAbortSignal?.aborted !== true) {
-          subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
-          finalState = await executeGraph();
-          returned = await returnedTask();
-        }
+        // Settlement and stop both invalidate any scheduled timer before
+        // the task status changes, so a racing callback cannot wake it later.
+        await agentWaitProvider.cancel(activityJobId!, index);
+        taskAbortSignal?.removeEventListener('abort', cancelScheduledWait);
 
         if (returned) {
           taskResult = returnedJobResult(returned, label, threadId);
@@ -624,7 +662,7 @@ export class SpawnAgentWorker extends BaseTool {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
           taskResult = contract.schema && status !== 'blocked'
-            ? { label, status: 'error', output: `failed: no_contract — ${ label } ended without returning its "${ contract.name }" contract.\n\nLast message:\n${ text }`, threadId, contract: contract.name }
+            ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(settlementPolicy.failureCause(finalState)).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
 
@@ -651,6 +689,7 @@ export class SpawnAgentWorker extends BaseTool {
         // return_result is the completion commit point. A graph/provider error
         // racing after it must not overwrite the valid contract with failure.
         const returned = await returnedTask();
+
         if (returned) {
           taskResult = returnedJobResult(returned, label, threadId);
           await safeFinishDelegation(delegationId, { outcome: 'completed', detail: '' });
@@ -660,7 +699,7 @@ export class SpawnAgentWorker extends BaseTool {
           return taskResult;
         }
         const output = `Error: ${ (err as Error).message }`;
-        const stopped = jobAbortSignal?.aborted === true;
+        const stopped = taskAbortSignal?.aborted === true;
         await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `${ stopped ? 'stopped' : 'error' }: ${ output }` });
         if (activityJobId) {
           await updateJobTask(activityJobId, index, { status: stopped ? 'stopped' : 'error', threadId, finishedAt: Date.now() });
@@ -688,7 +727,7 @@ export class SpawnAgentWorker extends BaseTool {
           const cleanupReason = taskResult?.status === 'completed'
             ? 'delegated-job-completed'
             : 'delegated-job-finished';
-          const cleanupReceipt = await containerLifecycle?.close(cleanupReason, 'spawn_agent.finally');
+          const cleanupReceipt = await containerLifecycle?.close(cleanupReason);
           if (taskResult && cleanupReceipt) {
             taskResult.cleanupReceipt = cleanupReceipt;
             if (cleanupReceipt.recoveryWorkspacePath) {
@@ -696,7 +735,11 @@ export class SpawnAgentWorker extends BaseTool {
             }
           }
         } finally {
-          if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
+          taskAbortSignal?.removeEventListener('abort', cancelScheduledWait);
+          if (activityJobId) await agentWaitProvider.cancel(activityJobId, index).catch(() => {});
+          if (subStateRef?.metadata) {
+            subStateRef.metadata.delegatedRunActive = false;
+          }
           notifyAgentCompletionsReady(selector || parentChannel, threadId);
           // Deregister from parent's active-sub-agents list so stale threadIds
           // don't receive abort signals after the subagent has already exited
@@ -751,8 +794,8 @@ export class SpawnAgentWorker extends BaseTool {
       const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
-      jobAbortSignal = getJobAbortSignal(job.jobId);
       activityJobId = job.jobId;
+      for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(job.jobId, index)!;
 
       // A job whose whole agent tree goes silent is dead: stop it (which hands
       // back any task it owns) and tell the parent, instead of waiting forever
@@ -803,8 +846,8 @@ export class SpawnAgentWorker extends BaseTool {
     const syncJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
     let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
-    jobAbortSignal = getJobAbortSignal(jobId);
     activityJobId = jobId;
+    for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(jobId, index)!;
     // Stopping a dead job hands its tasks back even if the hung call never returns.
     stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
       if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);

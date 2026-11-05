@@ -24,6 +24,17 @@ import { resolveModelSlot } from './modelSlotRouting';
  */
 export const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate TaskList TaskGet TodoWrite TodoRead Task Agent';
 
+/** Native agent-management controls are unavailable to every acting Claude spawn. */
+export const ACTING_NATIVE_TOOL_DENYLIST = 'SendMessage TaskStop Workflow CronCreate CronDelete CronList RemoteTrigger';
+
+/**
+ * Native detached-work and direct-human controls are not available to any
+ * delegated worker or manager. Delegated agents must use Sulla's graph-bound
+ * tools; Bash remains available for synchronous commands, but Claude's
+ * run_in_background mode cannot be denied independently by tool name.
+ */
+export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger SendMessage Workflow mcp__sulla-native__ask_user_question';
+
 /**
  * Additional native tools disabled for SUBCONSCIOUS (observer) spawns only.
  *
@@ -50,21 +61,20 @@ export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit Note
  * chat, heartbeat, reviewers, workflow nodes, spawned sub-agents — gets the same base set. Only subconscious observers (memory
  * curators, never a swimlane actor) additionally lose the native actor tools.
  */
-export function disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {
-  if (isObserverSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`;
-  return BASE_DISALLOWED_TOOLS;
-}
+export class ClaudeToolPolicy {
+  public disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {
+    if (this.isObserverSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`;
+    const acting = `${ BASE_DISALLOWED_TOOLS } ${ ACTING_NATIVE_TOOL_DENYLIST }`;
+    return this.isDelegatedSpawn(metadata) ? `${ acting } ${ DELEGATED_NATIVE_TOOL_DENYLIST }` : acting;
+  }
 
-/**
- * Whether a spawn is an OBSERVER that must lose the native actor tools.
- *
- * Keyed off the resolved model slot, not `isSubAgent` alone: workflow-node
- * agents and spawned workers are sub-agents too, but they do real work and
- * are stamped `modelSlot: 'primary'`. Treating every sub-agent as an observer
- * stripped Bash/Read from routine workers, so they could not run the sulla CLI
- * and died before intake (RippleCore PR-merge conveyor, cv2x). Unmarked
- * `isSubAgent` graphs still resolve to 'subconscious' and stay locked down.
- */
-export function isObserverSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
-  return resolveModelSlot(metadata) === 'subconscious';
+  /** Delegated workers and delegated managers share the Sulla-only controls. */
+  public isDelegatedSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
+    return metadata?.isSubAgent === true;
+  }
+
+  /** Observers lose native actor tools; acting primary agents retain Bash/Read/etc. */
+  public isObserverSpawn(metadata: Record<string, unknown> | null | undefined): boolean {
+    return resolveModelSlot(metadata) === 'subconscious';
+  }
 }
