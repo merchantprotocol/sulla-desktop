@@ -3,9 +3,8 @@ import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 export interface AgentTreeNode { row: AgentStateRow; children: AgentTreeNode[]; depth: number }
 
-const LIVE_STATES = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
-
 export class AgentTreeBuilder {
+  private readonly liveStates = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
   constructor(private readonly rows: readonly AgentStateRow[]) {}
 
   forThread(rootThreadId: string): AgentTreeNode[] {
@@ -70,7 +69,7 @@ export class AgentTreeBuilder {
   }
 
   private compare(a: AgentStateRow, b: AgentStateRow): number {
-    const live = Number(LIVE_STATES.has(b.state)) - Number(LIVE_STATES.has(a.state));
+    const live = Number(this.liveStates.has(b.state)) - Number(this.liveStates.has(a.state));
     if (live) return live;
     return this.time(a.startedAt) - this.time(b.startedAt) || a.key.localeCompare(b.key);
   }
