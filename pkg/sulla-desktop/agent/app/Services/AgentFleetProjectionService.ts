@@ -46,21 +46,7 @@ export class AgentFleetProjectionService {
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
   async supervisionCandidates(): Promise<FleetJobView[]> {
-    const all = await this.states.jobs();
-    const childParentThreads = new Set(all.map(job => job.parentThreadId).filter((value): value is string => !!value));
-    const managers = all.filter(job => ['running', 'parked'].includes(job.status) && job.tasks.some(task => !!task.threadId && childParentThreads.has(task.threadId)));
-    const managerThreads = new Set(managers.flatMap(job => job.tasks.map(task => task.threadId).filter((value): value is string => !!value)));
-    const selected = [...managers];
-    const selectedIds = new Set(selected.map(job => job.jobId));
-    for (let cursor = 0; cursor < selected.length; cursor++) {
-      const parent = selected[cursor];
-      for (const task of parent.tasks) if (task.threadId) managerThreads.add(task.threadId);
-      for (const child of all) if (!selectedIds.has(child.jobId) && child.parentThreadId && managerThreads.has(child.parentThreadId)) {
-        selected.push(child); selectedIds.add(child.jobId);
-      }
-    }
-    const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
-    return this.project(selected, all, telemetry, false, stranded);
+    return this.list({ scope: 'all', limit: 100 });
   }
 
   async job(jobId: string): Promise<FleetJobView | undefined> {
