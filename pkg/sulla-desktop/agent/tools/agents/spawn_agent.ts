@@ -55,6 +55,7 @@ import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
+import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -436,6 +437,7 @@ export class SpawnAgentWorker extends BaseTool {
         provider:   task.provider?.trim() || undefined,
         model:      task.model?.trim() || undefined,
         runLocation: task.runLocation,
+        workspacePath: task.workspacePath,
         taskId:     task.projectTaskId?.trim(),
         status:     'queued',
         visibility: 'hidden',
@@ -460,13 +462,15 @@ export class SpawnAgentWorker extends BaseTool {
     const delegationIds: (string | null)[] = [];
 
     // ── Single task executor ────────────────────────────────────
-    const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
+    const executePersistedTask = async(input: { task: AgentJobTask; taskIndex: number; threadId: string; generation: number }): Promise<AgentJobResult> => {
+      const task: SpawnTask = { ...input.task, agentId: input.task.agentId, projectTaskId: input.task.taskId };
+      const index = input.taskIndex;
+      const threadId = input.threadId;
       const selector = taskAgentSelector(task);
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
       const taskAbortSignal = taskAbortSignals[index];
-      const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
       delegationIds[index] = delegationId;
 
@@ -785,6 +789,17 @@ export class SpawnAgentWorker extends BaseTool {
           GraphRegistry.delete(threadId);
         }
       }
+    };
+
+    const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
+    const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
+      const label = task.label || taskAgentSelector(task) || `task-${ index }`;
+      return taskRunner.run({
+        task: jobTasks[index],
+        taskIndex: index,
+        threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
+        generation: jobTasks[index].generation ?? 1,
+      });
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────

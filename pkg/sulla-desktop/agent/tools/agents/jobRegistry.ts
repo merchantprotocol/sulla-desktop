@@ -61,6 +61,7 @@ export interface AgentJobTask {
   provider?: string;
   model?: string;
   runLocation?: 'vm' | 'container';
+  workspacePath?: string;
   /** Restart recovery attempts already consumed. */
   restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
@@ -89,6 +90,12 @@ export interface AgentJobTask {
   /** Durable leaf-worker wait details while status is parked. */
   waitReason?: string;
   wakeAt?: number;
+  /** Monotonic execution generation; legacy tasks are generation 1. */
+  generation?: number;
+  /** Number of manager-requested reopen claims. */
+  reopenCount?: number;
+  /** Opaque ownership token while a reopened generation is active. */
+  reopenLeaseId?: string;
 }
 
 export interface OrphanedChildNotice {
