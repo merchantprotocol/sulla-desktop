@@ -43,15 +43,43 @@ describe('AgentExecDockerPolicy', () => {
 
   it('injects ownership labels into docker run issued through exec', () => {
     // risk: shell-launched containers bypass the catalog tool retention policy
-    const command = new AgentExecDockerPolicy().apply('docker run -d nginx', {}, identity);
+    const { command, labels } = new AgentExecDockerPolicy().apply('docker run -d nginx', {}, identity);
     expect(command).toContain("'com.sulla.owner=agent'");
     expect(command).toContain("'com.sulla.job-id=job-7'");
+    expect(labels).toMatchObject({ 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'job-7' });
+  });
+
+  it('labels every run and create launch in one command, including the docker container forms', () => {
+    // risk: a second launch in a chained command, or the container run/create spelling, escapes ownership labels and the reaper
+    const { command } = new AgentExecDockerPolicy().apply(
+      'docker run -d a && docker container run -d b; docker create c && docker container create d', {}, identity);
+    expect(command.match(/'com\.sulla\.owner=agent'/g)).toHaveLength(4);
+    for (const launch of ['docker run --label', 'docker container run --label', 'docker create --label', 'docker container create --label']) {
+      expect(command).toContain(launch);
+    }
+  });
+
+  it('refuses restart policies on run, create and docker update unless persistent with a reason', () => {
+    // risk: --restart set on a later launch or added afterwards with docker update resurrects forgotten previews on every boot
+    const policy = new AgentExecDockerPolicy();
+    for (const cmd of [
+      'docker run -d a && docker run --restart unless-stopped -d b',
+      'docker container create --restart=always c',
+      'docker update --restart=unless-stopped preview',
+      'docker container update --restart always preview',
+    ]) {
+      expect(() => policy.apply(cmd, {}, identity), cmd).toThrow(/restart policies are refused/);
+    }
+    expect(policy.apply('docker update --restart=no preview', {}, identity).command).toBe('docker update --restart=no preview');
+    expect(() => policy.apply('docker update --restart=always db', { persistent: true }, identity)).toThrow(/reason/);
+    expect(policy.apply('docker update --restart=always db', { persistent: true, reason: 'local database' }, identity).command)
+      .toBe('docker update --restart=always db');
   });
 
   it('refuses compose up when the resolved compose config declares a restart policy', () => {
     // risk: compose services with restart: unless-stopped survive every reboot
     shell = new FakeDockerShell('services:\n  web:\n    image: nginx\n    restart: unless-stopped\n');
-    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose -p preview up -d', {}, identity));
+    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose -p preview up -d', {}, identity).command);
     expect(result.code).toBe(64);
     expect(result.calls.some(call => / up -d$/.test(call))).toBe(false);
   });
@@ -59,7 +87,7 @@ describe('AgentExecDockerPolicy', () => {
   it('lets a compose up without restart policies run normally', () => {
     // risk: the guard blocks the normal preview workflow agents rely on
     shell = new FakeDockerShell('services:\n  web:\n    image: nginx\n');
-    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose -p preview up -d', {}, identity));
+    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose -p preview up -d', {}, identity).command);
     expect(result.code).toBe(0);
     expect(result.calls).toContain('compose -p preview up -d');
   });
@@ -67,7 +95,7 @@ describe('AgentExecDockerPolicy', () => {
   it('allows a restartable compose stack only with persistent:true and a reason', () => {
     shell = new FakeDockerShell('services:\n  web:\n    image: nginx\n    restart: always\n');
     expect(() => new AgentExecDockerPolicy().apply('docker compose up -d', { persistent: true }, identity)).toThrow(/reason/);
-    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose up -d', { persistent: true, reason: 'human asked for a long-lived service' }, identity));
+    const result = shell.run(new AgentExecDockerPolicy().apply('docker compose up -d', { persistent: true, reason: 'human asked for a long-lived service' }, identity).command);
     expect(result.code).toBe(0);
     expect(result.calls).toContain('compose up -d');
   });
