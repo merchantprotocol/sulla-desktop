@@ -74,6 +74,11 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+
+  /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
+  private prepareFreshTurn(state: AgentGraphState): void {
+    (this.turnPreparer ?? new DelegatedTurnPreparer()).prepare(state);
+  }
   private resumeContexts = new Map<string, {
     channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
     overrideAgentId?: string; inputSource?: string;
@@ -866,7 +871,7 @@ export class BackendGraphWebSocketService {
         resumeNodeId !== 'output';
 
       // Reset execution counters for this run (but NOT messages — those accumulate)
-      this.turnPreparer.prepare(state);
+      this.prepareFreshTurn(state);
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       // Front-door repair channels stay in the VM during the staged rollout,

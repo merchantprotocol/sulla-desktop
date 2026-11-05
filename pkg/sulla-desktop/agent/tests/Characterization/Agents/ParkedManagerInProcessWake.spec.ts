@@ -122,7 +122,10 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
         // parks again while its sibling remains open. The second wake returns
         // the manager's own contract.
         fakeState.metadata.cycleComplete = true;
-        if (executeCalls.length === 2) return fakeState;
+        if (executeCalls.length === 2) {
+          fakeState.messages.push({ role: 'assistant', content: 'worker 0 acknowledged; waiting for worker 1' });
+          return fakeState;
+        }
         const rr = new ReturnResultHarness();
         const result = await rr.runHarness(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
