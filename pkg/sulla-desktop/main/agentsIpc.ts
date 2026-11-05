@@ -15,7 +15,7 @@
 // the conversation_history rows for that agent's channel, and
 // agents:conversation reads one conversation's JSONL message log.
 
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
@@ -220,6 +220,7 @@ export function initAgentsIpc(): void {
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
   agentJobProvider.stranded.start();
+  app.once('will-quit', () => agentJobProvider.stranded.stop());
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');

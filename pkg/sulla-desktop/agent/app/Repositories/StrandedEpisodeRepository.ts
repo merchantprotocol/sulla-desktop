@@ -5,21 +5,43 @@
 import type { PostgresConnection } from '@sulla/foundation/postgres';
 import type { StrandedManagerCandidate } from '../Services/StrandedManagerDetector';
 
-/** Persists and compare-and-sets the current stranded episode inside agent_jobs.tasks JSONB. */
-export class StrandedEpisodeRepository {
-  constructor(private readonly connection: Pick<PostgresConnection, 'select'>) {}
+export interface PendingStrandedEpisode extends StrandedManagerCandidate { attempts: number }
 
-  async claim(candidate: StrandedManagerCandidate): Promise<boolean> {
-    const episode = { stateKey: candidate.stateKey, detectedAt: candidate.detectedAt, reason: candidate.reason, alertedAt: candidate.detectedAt };
-    const rows = await this.connection.select(`UPDATE agent_jobs SET tasks = jsonb_set(tasks, ARRAY[$2::text, 'stranded'], $3::jsonb, true)
-      WHERE job_id = $1 AND COALESCE(tasks->($2::int)->'stranded'->>'stateKey', '') <> $4 RETURNING job_id`,
-    [candidate.managerJobId, candidate.managerTaskIndex, JSON.stringify(episode), candidate.stateKey]);
+/** Durable outbox for stranded-manager episodes. Its PK is the episode CAS. */
+export class StrandedEpisodeRepository {
+  constructor(private readonly connection: Pick<PostgresConnection, 'select' | 'run'>) {}
+
+  async insertPending(candidate: StrandedManagerCandidate): Promise<boolean> {
+    const rows = await this.connection.select(`INSERT INTO agent_stranded_episodes
+      (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8 / 1000.0)) ON CONFLICT DO NOTHING RETURNING state_key`,
+    [candidate.managerJobId, candidate.managerTaskIndex, candidate.stateKey, candidate.parentChannel,
+      candidate.parentThreadId, candidate.label, candidate.reason, candidate.detectedAt]);
     return rows.length === 1;
   }
 
-  async clear(jobId: string, taskIndex: number): Promise<boolean> {
-    const rows = await this.connection.select(`UPDATE agent_jobs SET tasks = tasks #- ARRAY[$2::text, 'stranded']
-      WHERE job_id = $1 AND tasks->($2::int) ? 'stranded' RETURNING job_id`, [jobId, taskIndex]);
+  async pending(): Promise<PendingStrandedEpisode[]> {
+    const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' ORDER BY created_at, state_key`);
+    return rows.map(row => ({ managerJobId: String(row.manager_job_id), managerTaskIndex: Number(row.manager_task_index),
+      stateKey: String(row.state_key), parentChannel: String(row.parent_channel), parentThreadId: String(row.parent_thread_id),
+      label: String(row.label), reason: String(row.reason), reasonKind: String(row.state_key).includes(':result-not-woken:') ? 'result-not-woken' : 'parked-without-live-children',
+      detectedAt: new Date(row.created_at).getTime(), attempts: Number(row.attempts) }));
+  }
+
+  async markAttempt(stateKey: string): Promise<void> {
+    await this.connection.run(`UPDATE agent_stranded_episodes SET attempts = attempts + 1 WHERE state_key = $1 AND status = 'pending'`, [stateKey]);
+  }
+
+  async markDelivered(candidate: PendingStrandedEpisode): Promise<boolean> {
+    const rows = await this.connection.select(`UPDATE agent_stranded_episodes SET status = 'delivered', delivered_at = now()
+      WHERE manager_job_id = $1 AND manager_task_index = $2 AND state_key = $3 AND status = 'pending' RETURNING state_key`,
+    [candidate.managerJobId, candidate.managerTaskIndex, candidate.stateKey]);
     return rows.length === 1;
+  }
+
+  async deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> {
+    const rows = await this.connection.select(`SELECT DISTINCT ON (manager_job_id, manager_task_index) manager_job_id, manager_task_index, state_key, reason
+      FROM agent_stranded_episodes WHERE status = 'delivered' ORDER BY manager_job_id, manager_task_index, delivered_at DESC`);
+    return new Map(rows.map(row => [`${ row.manager_job_id }#${ row.manager_task_index }`, { stateKey: String(row.state_key), reason: String(row.reason) }]));
   }
 }

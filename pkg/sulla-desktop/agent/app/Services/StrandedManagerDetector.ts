@@ -17,16 +17,25 @@ export interface StrandedManagerCandidate {
   label: string;
 }
 
+export interface ManagerActivitySource { isActive(jobId: string, taskIndex: number, task: FleetTaskView, now: number): boolean }
+
+/** Default until #1991 injects authoritative live model/tool activity. */
+export class DurableTimestampActivitySource implements ManagerActivitySource {
+  isActive(_jobId: string, _taskIndex: number, task: FleetTaskView, now: number): boolean {
+    return now - Date.parse(task.lastActivityAt) < 10 * 60_000;
+  }
+}
+
 /** Pure policy for identifying a stranded manager episode from a fleet snapshot. */
 export class StrandedManagerDetector {
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now, private readonly activity: ManagerActivitySource = new DurableTimestampActivitySource()) {}
 
   detect(jobs: FleetJobView[]): StrandedManagerCandidate[] {
     const children = this.childrenByManager(jobs);
     const candidates: StrandedManagerCandidate[] = [];
     for (const job of jobs) for (const task of job.tasks) {
       const descendants = this.descendants(children, this.ref(job.jobId, task.taskIndex));
-      if (!descendants.length || task.status !== 'parked' || this.futureWait(task)) continue;
+      if (!descendants.length || task.status !== 'parked' || this.futureWait(task) || this.activity.isActive(job.jobId, task.taskIndex, task, this.now())) continue;
       const candidate = this.classify(job, task, descendants);
       if (candidate) candidates.push(candidate);
     }
@@ -42,7 +51,7 @@ export class StrandedManagerDetector {
   ref(jobId: string, taskIndex: number): string { return `${ jobId }#${ taskIndex }`; }
 
   private classify(job: FleetJobView, task: FleetTaskView, descendants: FleetTaskView[]): StrandedManagerCandidate | null {
-    if (!job.parentThreadId) return null;
+    if (!job.parentThreadId || !job.parentChannel) return null;
     const now = this.now();
     const managerActivity = Date.parse(task.lastActivityAt);
     const live = descendants.some(child => this.live(child, now));
@@ -60,7 +69,7 @@ export class StrandedManagerDetector {
     const childRefs = unprocessed.map(child => `${ child.threadId ?? 'unknown' }#${ child.taskIndex }:${ this.terminalAt(child) }`).sort().join(',');
     const stateKey = `stranded:${ job.jobId }:${ task.taskIndex }:${ reasonKind }:${ managerActivity }:${ maxTerminal }:${ childRefs }`;
     return { managerJobId: job.jobId, managerTaskIndex: task.taskIndex, stateKey, reason, reasonKind,
-      detectedAt: now, parentChannel: String(job.parentChannel ?? 'sulla-desktop'), parentThreadId: job.parentThreadId,
+      detectedAt: now, parentChannel: job.parentChannel, parentThreadId: job.parentThreadId,
       label: task.label || task.agentId };
   }
 
@@ -76,8 +85,8 @@ export class StrandedManagerDetector {
 
   private descendants(children: Map<string, FleetJobView[]>, root: string): FleetTaskView[] {
     const tasks: FleetTaskView[] = []; const queue = [...(children.get(root) ?? [])]; const seen = new Set<string>();
-    while (queue.length) {
-      const job = queue.shift()!;
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const job = queue[cursor];
       if (seen.has(job.jobId)) continue;
       seen.add(job.jobId);
       for (const task of job.tasks) { tasks.push(task); queue.push(...(children.get(this.ref(job.jobId, task.taskIndex)) ?? [])); }

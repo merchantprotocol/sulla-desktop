@@ -5,10 +5,12 @@
 import type { ParentNoticeInbox } from '../../services/BlockerEscalationService';
 import type { StrandedManagerCandidate } from './StrandedManagerDetector';
 
-/** Routes a claimed stranded episode through the same turn-safe inbox as blocker escalation. */
-export class StrandedManagerAlertService {
+export interface StrandedAlertDispatcher { alert(candidate: StrandedManagerCandidate): Promise<boolean> }
+
+/** Routes a durable pending episode through the turn-safe completion inbox. */
+export class StrandedManagerAlertService implements StrandedAlertDispatcher {
   constructor(private readonly inbox: ParentNoticeInbox) {}
-  alert(candidate: StrandedManagerCandidate): boolean {
+  async alert(candidate: StrandedManagerCandidate): Promise<boolean> {
     return this.inbox.enqueue(candidate.parentChannel, candidate.parentThreadId, {
       jobId: candidate.managerJobId, taskIndex: candidate.managerTaskIndex, results: [],
       notice: `stranded manager ${ candidate.label } (job ${ candidate.managerJobId } task ${ candidate.managerTaskIndex }): ${ candidate.reason } — message it, stop it, or relaunch`,
