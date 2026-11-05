@@ -83,6 +83,7 @@ dbDescribe('registered custody transfer tools',()=>{
     GraphRegistry.delete(`${owner}-thread`);
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
+    const {setCompletionInboxStopped}=await import('../../../services/AgentCompletionInbox');setCompletionInboxStopped(adopter,`${adopter}-thread`,true);
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
     const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
