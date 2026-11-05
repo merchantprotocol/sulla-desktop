@@ -8,10 +8,12 @@ export class LeadHandoffPacketAssembler {
   constructor(private readonly repository:LeadHandoffRepository,private readonly checkinLimit=5){}
   recordReplacementAudit(jobId:string,taskIndex:number,summary:string):Promise<void>{return this.repository.recordReplacementAudit(jobId,taskIndex,summary);}
   operation(...args:Parameters<LeadHandoffRepository['operation']>){return this.repository.operation(...args);}
+  loadOperation(...args:Parameters<LeadHandoffRepository['loadOperation']>){return this.repository.loadOperation(...args);}
+  saveLaunched(...args:Parameters<LeadHandoffRepository['saveLaunched']>){return this.repository.saveLaunched(...args);}
   saveOperation(...args:Parameters<LeadHandoffRepository['saveOperation']>){return this.repository.saveOperation(...args);}
   listDirectChildren(...args:Parameters<LeadHandoffRepository['listDirectChildren']>){return this.repository.listDirectChildren(...args);}
   claimAudit(...args:Parameters<LeadHandoffRepository['claimAudit']>){return this.repository.claimAudit(...args);}
-  claimWrapUp(...args:Parameters<LeadHandoffRepository['claimWrapUp']>){return this.repository.claimWrapUp(...args);}
+  markChildrenMoved(...args:Parameters<LeadHandoffRepository['markChildrenMoved']>){return this.repository.markChildrenMoved(...args);}
   finishWrapUp(...args:Parameters<LeadHandoffRepository['finishWrapUp']>){return this.repository.finishWrapUp(...args);}
   async assemble(jobId:string,taskIndex:number,note?:string):Promise<{prompt:string;snapshot:LeadHandoffSnapshot}|undefined>{
     const snapshot=await this.repository.snapshot(jobId,taskIndex); if(!snapshot)return undefined;
