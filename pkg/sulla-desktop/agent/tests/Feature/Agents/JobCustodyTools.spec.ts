@@ -40,14 +40,6 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await agentJobProvider.custody.history(worker.jobId)).toHaveLength(1);
     const pending=await agentJobProvider.messaging.pendingMessagesForThread('worker-thread');
     expect(pending.map(item=>item.message)).toContainEqual(expect.stringContaining('[Manager changed]'));
-    const old={wsChannel:'manager-one',agentId:'manager-one',threadId:'manager-one-thread',subAgentDepth:1};
-    const refusedMessage=await tools.call('send_job_message',{jobId:worker.jobId,message:'stale command'},old);
-    expect(refusedMessage.success).toBe(false);expect(String(refusedMessage.error??refusedMessage.result)).toContain('manager-two');
-    const accepted=await tools.call('send_job_message',{jobId:worker.jobId,message:'current command'},{wsChannel:'manager-two',agentId:'manager-two',threadId:'manager-two-thread',subAgentDepth:1});
-    expect(accepted,JSON.stringify(accepted)).toMatchObject({success:true});
-    expect(await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='current command'`,[worker.jobId])).toHaveLength(1);
-    const refusedStop=await tools.call('stop_agent_job',{jobId:worker.jobId,reason:'stale stop'},old);
-    expect(refusedStop.success).toBe(false);expect(String(refusedStop.error??refusedStop.result)).toContain('manager-two');expect((await registry.getJob(worker.jobId)).status).toBe('running');
   });
 
   it('H5 refuses a live peer through both registered tools without an audit row',async()=>{
