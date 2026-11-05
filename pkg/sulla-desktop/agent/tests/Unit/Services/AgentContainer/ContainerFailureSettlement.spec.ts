@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ContainerFailureSettlement,
+  PreCreateFailureSettlement,
   type FailureWithSecondaryErrors,
 } from '@pkg/agent/services/ContainerFailureSettlement';
 
@@ -86,5 +87,23 @@ describe('ContainerFailureSettlement', () => {
 
     expect((original as FailureWithSecondaryErrors).secondaryErrors).toEqual([cleanupError, keepError]);
     expect(logger.entries.map(entry => entry.error)).toEqual([cleanupError, keepError]);
+  });
+});
+
+describe('PreCreateFailureSettlement', () => {
+  it.each([
+    ['secret cleanup', new Error('secret cleanup failed')],
+    ['provider cleanup', new Error('provider cleanup failed')],
+  ])('surfaces the original startup error and records %s failure before create', async(_kind, cleanupError) => {
+    // risk: a secondary credential cleanup failure masks the actionable launch failure
+    const original = new Error('docker create failed');
+    const logger = new RecordingDiagnosticLogger();
+    const settlement = new PreCreateFailureSettlement(logger);
+
+    await settlement.settle(original, 'before create', () => Promise.reject(cleanupError));
+
+    expect((original as FailureWithSecondaryErrors).secondaryErrors).toEqual([cleanupError]);
+    expect(logger.entries).toEqual([{ message: 'before create: credential cleanup failed', error: cleanupError }]);
+    expect(original.message).toBe('docker create failed');
   });
 });

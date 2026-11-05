@@ -63,3 +63,19 @@ export class ContainerFailureSettlement<T> {
     return { retained, secondaryErrors };
   }
 }
+
+/** Applies the shared failure settlement when Docker failed before returning a container id. */
+export class PreCreateFailureSettlement {
+  constructor(private readonly logger: ContainerFailureDiagnosticLogger) {}
+
+  async settle<T>(originalError: unknown, context: string, cleanup: () => Promise<T>): Promise<T | undefined> {
+    let receipt: T | undefined;
+    await new ContainerFailureSettlement(
+      { clean: async() => { receipt = await cleanup() } },
+      { retain: async() => undefined },
+      this.logger,
+      context,
+    ).settle(originalError);
+    return receipt;
+  }
+}
