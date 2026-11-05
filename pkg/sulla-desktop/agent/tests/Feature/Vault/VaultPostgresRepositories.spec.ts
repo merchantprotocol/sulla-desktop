@@ -9,9 +9,11 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
 import type { SyncBundle, SyncHead, SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
+import { SYNC_SCHEMA_SQL } from '../../../../../../services/sulla-vault/src/browserEnvelope/schema';
 import { PostgresRewrapHistoryRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresRewrapHistoryRepository';
 import { PostgresVaultBundleRepository, PostgresVaultHeadRepository, PostgresVaultRecordRepository } from '../../../../../../services/sulla-vault/src/repositories/postgresVaultRepositories';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresVaultItemRepositories';
+import { PostgresIntegrationStateRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresVaultAuthorityRepositories';
 const { Pool } = pg;
 class EmbeddedClient {
   constructor(private readonly db: PGlite) {}
@@ -26,6 +28,7 @@ class VaultDatabase {
     else { this.pglite = new PGlite(); const client = new EmbeddedClient(this.pglite); this.database = Object.assign(client, { connect: async() => client }) as unknown as Database; }
     const dir = resolve(process.cwd(), 'services/sulla-vault/migrations');
     for (const file of (await readdir(dir)).filter(f => /^\d{3}_.+\.sql$/.test(f)).sort()) { let sql = await readFile(resolve(dir,file),'utf8'); if (this.pglite) { sql = sql.replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;', ''); await this.pglite.exec(sql); } else await this.db.query(sql); }
+    await this.db.query(SYNC_SCHEMA_SQL);
   }
   get db(): Database { if (!this.database) throw new Error('database not initialized'); return this.database; }
   async seed(userId: string, orgId: string) {
@@ -103,4 +106,43 @@ describe.sequential('vault Postgres repositories',()=>{
       expect.objectContaining({user_id:fx.user,recovery_salt:'salt',recovery_verifier:'verifier',reason:'rotation'}),
     ]);
   });
+  it('finds only the active vault user and updates that user password wrap', async()=>{ // risk: disabled-account authentication
+    const disabled='10000000-0000-4000-8000-000000000099';
+    await database.seed(disabled,'20000000-0000-4000-8000-000000000099');
+    await database.db.query('UPDATE users SET disabled_at=now() WHERE id<>$1',[disabled]);
+    const users=new PostgresVaultUserRepository(database.db);
+    await expect(users.findActive<{id:string}>()).resolves.toMatchObject({rows:[expect.objectContaining({id:disabled})]});
+    await database.db.query('UPDATE users SET disabled_at=NULL WHERE id=$1',[fx.user]);
+    await database.db.query('UPDATE users SET disabled_at=now() WHERE id=$1',[disabled]);
+    await users.updatePassword(fx.user,[Buffer.from('next-salt'),Buffer.from('next-verifier'),{ciphertext:'next-key'},{alg:'next'}]);
+    await expect(users.findCredentials<{login_hash_salt:Buffer;kdf:{alg:string}}>(fx.user)).resolves.toMatchObject({rows:[expect.objectContaining({kdf:{alg:'next'}})]});
+  });
+
+  it('keeps recovery rows isolated by user during reads and replacement', async()=>{ // risk: cross-user recovery takeover
+    const otherUser='10000000-0000-4000-8000-000000000002';
+    const recovery=new PostgresVaultRecoveryRepository(database.db);
+    await recovery.upsertForRotation([fx.user,'salt-a','verifier-a',{ciphertext:'wrap-a'}]);
+    await recovery.upsertForHumanRecovery([otherUser,'salt-b','verifier-b',{ciphertext:'wrap-b'}]);
+    await expect(recovery.findForUser<{user_id:string;recovery_salt:string}>(fx.user)).resolves.toMatchObject({rows:[{user_id:fx.user,recovery_salt:'salt-a',recovery_verifier:'verifier-a',encrypted_user_key:{ciphertext:'wrap-a'}}]});
+    await recovery.upsertForRotation([fx.user,'salt-next','verifier-next',{ciphertext:'wrap-next'}]);
+    await expect(recovery.findForUser<{user_id:string;recovery_salt:string}>(otherUser)).resolves.toMatchObject({rows:[expect.objectContaining({user_id:otherUser,recovery_salt:'salt-b'})]});
+  });
+
+  it('persists integration selection, migration bookkeeping, and cloud sync state', async()=>{ // risk: migration replay and sync routing
+    const integration=new PostgresIntegrationStateRepository(database.db);
+    await integration.upsert(fx.user,'github','primary');
+    await integration.upsert(fx.user,'github','secondary');
+    await expect(integration.findActive<{active_account_id:string}>(fx.user,'github')).resolves.toMatchObject({rows:[{active_account_id:'secondary'}]});
+    const migrationItem='40000000-0000-4000-8000-000000000010';
+    await new PostgresVaultItemRepository(database.db).insertAgentIntegrationItem([migrationItem,fx.user,'apiKey',{ciphertext:'migration'},{ciphertext:'key'},{mode:'agents',level:'autofill',agents:[],sites:[]},'legacy/account']);
+    const migration=new PostgresVaultMigrationRepository(database.db);
+    const batch=await migration.start<{id:string}>('fingerprint-a');
+    await migration.addRow(['integration_value',1,'fingerprint-a',migrationItem]);
+    await migration.commit(batch.rows[0].id,1,0);
+    await expect(migration.findCommitted<{imported_count:number}>('fingerprint-a')).resolves.toMatchObject({rows:[expect.objectContaining({imported_count:1})]});
+    const sync=new PostgresVaultSyncStateRepository(database.db);
+    await sync.create([fx.user,'50000000-0000-4000-8000-000000000001',3,4,'bundle-sha']);
+    await expect(sync.find<{vault_id:string;epoch:number}>(fx.user)).resolves.toMatchObject({rows:[{vault_id:'50000000-0000-4000-8000-000000000001',epoch:3}]});
+  });
+
 });
