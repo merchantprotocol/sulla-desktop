@@ -96,7 +96,7 @@ describe('AgentTaskReopenService', () => {
 
   it('reconstructs the prompt on the same thread when the original runner is gone', async() => {
     // risk: lost provider session must not lose the manager's requested fix
-    const jobs = { job: vi.fn(async() => ({ ...job, tasks: [{ ...task, result: { summary: 'first result' } }] })), claimReopen: vi.fn(async() => ({ generation: 2, leaseId: 'lease-2' })) };
+    const jobs = { job: vi.fn(async() => ({ ...job, tasks: [{ ...task, result: { summary: 'first result' } }] })), claimReopen: vi.fn(async() => ({ generation: 2, leaseId: 'lease-2' })), releaseReopenLease: vi.fn(async() => true) };
     const inbox = { enqueue: vi.fn(async() => 'delivered' as const) };
     const service = new AgentTaskReopenService(jobs as any, { forTask: vi.fn(async() => []) } as any, inbox, new HiddenTaskExecutionService({ execute: vi.fn(async(input: any) => ({ label: input.task.label, status: 'completed' as const, output: 'fresh', threadId: input.threadId })) }), { settle: vi.fn(), fail: vi.fn() });
 
