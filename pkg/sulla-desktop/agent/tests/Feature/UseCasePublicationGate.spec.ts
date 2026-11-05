@@ -47,10 +47,10 @@ class UseCasePublicationFixture {
     await this.pool.query('CREATE TRIGGER file_versions_prepare_lifecycle BEFORE INSERT ON file_versions FOR EACH ROW EXECUTE FUNCTION files_prepare_version_lifecycle()');
   }
 
-  async createVersion(path: string, creatorType = 'agent'): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null }> {
+  async createVersion(path: string, creatorType = 'agent', systemArea:string|null = null): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null }> {
     if (!this.pool) throw new Error('fixture not initialized');
     const collectionId = randomUUID(), fileId = randomUUID(), versionId = randomUUID();
-    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)', [collectionId]);
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,$2)', [collectionId, systemArea]);
     await this.pool.query('INSERT INTO files(id,collection_id,path) VALUES($1,$2,$3)', [fileId, collectionId, path]);
     await this.pool.query('INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,device_id) VALUES($1,$2,$3,$4,$5)',
       [versionId, fileId, creatorType, creatorType === 'agent' ? 'chat-agent' : 'background-agent', 'job-1']);
@@ -62,7 +62,7 @@ class UseCasePublicationFixture {
   async exercise(): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null; requests:number; publishedCount:number }> {
     if (!this.pool) throw new Error('fixture not initialized');
     const collectionId = randomUUID(), fileId = randomUUID(), versionId = randomUUID();
-    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)', [collectionId]);
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,$2)', [collectionId, systemArea]);
     await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Use Cases/skills/gate-test-skill/SKILL.md')", [fileId, collectionId]);
     await this.pool.query("INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,device_id) VALUES($1,$2,'agent','chat-agent','job-1')", [versionId, fileId]);
     const before = (await this.pool.query('SELECT draft_version_id,published_version_id FROM files WHERE id=$1', [fileId])).rows[0];
@@ -97,6 +97,21 @@ class UseCasePublicationFixture {
     return {malformedStatus:malformed.publication_status,draftVersionId:file.draft_version_id,publishedVersionId:file.published_version_id,approvedStatus:approved.publication_status,approvedPublishedBy:approved.published_by};
   }
 
+  async explainRepairPredicate():Promise<string> {
+    if (!this.pool) throw new Error('fixture not initialized');
+    const collectionId=randomUUID(), fileId=randomUUID();
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)',[collectionId]);
+    await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Documents/cardinality.md')",[fileId,collectionId]);
+    await this.pool.query(`INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,publication_status,published_at,published_by)
+      SELECT gen_random_uuid(),$1,'user','load','published',NOW(),'load' FROM generate_series(1,20000)`,[fileId]);
+    await this.pool.query('ANALYZE file_versions');
+    const plan=await this.pool.query(`EXPLAIN (COSTS OFF) SELECT v.id FROM file_versions v
+      JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id
+      WHERE v.created_by_type IN ('agent','agent-run') AND v.publication_status='published'
+        AND v.published_at IS NULL AND v.published_by IS NULL AND files_is_use_case_path(c.system_area,f.path)`);
+    return plan.rows.map(row=>row['QUERY PLAN']).join('\n');
+  }
+
   async dispose(): Promise<void> { await this.pool?.end(); await this.admin.query(`DROP SCHEMA IF EXISTS "${ this.schema }" CASCADE`); await this.admin.end() }
 }
 
@@ -122,6 +137,11 @@ describeWithDatabase('Use Case publication gate', () => {
     expect(result.publishedVersionId).toBeTruthy();
   });
 
+  it('uses the partial index for the repair predicate at representative cardinality',async()=>{
+    // risk: availability — rollout must not sequentially scan a large version history.
+    expect(await fixture.explainRepairPredicate()).toContain('file_versions_malformed_agent_publication_idx');
+  });
+
   it('repairs only malformed agent publications and restores the last approved pointer idempotently',async()=>{
     // risk: data integrity — a repair must preserve genuine approvals and their activation pointer.
     const result=await fixture.exerciseRepair();
@@ -131,17 +151,26 @@ describeWithDatabase('Use Case publication gate', () => {
     expect(result.draftVersionId).not.toBe(result.publishedVersionId);
   });
 
-  it.each(['Projects/p/TASKS.md', 'Documents/x.md'])('publishes an agent-created home-collection file at %s', async(path) => {
+  it.each(['Projects/p/TASKS.md', 'Brain/facts/x.md', 'Memory/x.md', 'Documents/x.md'])('publishes an agent-created home-collection file at %s', async(path) => {
     // risk: data availability — ordinary chat-agent writes must remain immediately visible to the human.
     const result = await fixture.createVersion(path);
     expect(result).toMatchObject({ versionStatus:'published', draftVersionId:null });
     expect(result.publishedVersionId).toBeTruthy();
   });
 
-  it('keeps agent-run writes outside Use Cases draft', async() => {
-    // risk: permissions — background-agent publication behavior from migration 041 must not regress.
-    const result = await fixture.createVersion('Documents/background-report.md', 'agent-run');
-    expect(result).toMatchObject({ versionStatus:'draft', publishedVersionId:null });
-    expect(result.draftVersionId).toBeTruthy();
+  it.each(['Projects/p/TASKS.md', 'Brain/facts/x.md', 'Memory/x.md', 'Documents/background-report.md'])(
+    'publishes an agent-run file outside Use Cases at %s', async(path) => {
+      // risk: data availability — background writers outside Use Cases retain immediate publication.
+      const result = await fixture.createVersion(path, 'agent-run');
+      expect(result).toMatchObject({ versionStatus:'published', draftVersionId:null });
+      expect(result.publishedVersionId).toBeTruthy();
+    },
+  );
+
+  it('publishes an agent Use Cases-looking path in the logs collection', async() => {
+    // risk: data availability — logs are excluded by the canonical Use Cases path policy.
+    if (!fixture) throw new Error('fixture unavailable');
+    const result = await fixture.createVersion('Use Cases/log.txt', 'agent', 'logs');
+    expect(result).toMatchObject({ versionStatus:'published', draftVersionId:null });
   });
 });
