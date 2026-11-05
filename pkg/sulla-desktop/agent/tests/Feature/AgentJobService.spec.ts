@@ -214,6 +214,28 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(durable?.tasks[1].status).toBe('running');
   });
 
+  it('preserves concurrent descendant updates while cascade stop records attribution', async() => {
+    // risk: a manager kill loses stopped-task attribution or a concurrent worker update
+    const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'cascade-race-manager' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'cascade-race-worker' }], 'manager', 'cascade-race-manager');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const stopping = registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'cascade race stop');
+    await didEnter;
+    const updating = registry.updateJobTask(child.jobId, 0, { summary: 'concurrent worker update' });
+    await updating; release(); await stopping; gate.mockRestore();
+    for (const jobId of [root.jobId, child.jobId]) {
+      const durable = await agentJobProvider.jobs.job(jobId);
+      expect(durable).toMatchObject({ status: 'stopped', stoppedBy: 'human', stopReason: 'cascade race stop' });
+      expect(durable?.tasks[0]).toMatchObject({ status: 'stopped' }); expect(durable?.tasks[0].finishedAt).toEqual(expect.any(Number));
+      expect(agentJobProvider.runtime.jobs.get(jobId)).toEqual(durable);
+    }
+    expect((await agentJobProvider.jobs.job(child.jobId))?.tasks[0].summary).toBe('concurrent worker update');
+  });
+
   it('prevents stale liveness reconciliation from overwriting completion', async() => {
     // risk: data accuracy — a reconciler queued behind real completion must not mark it lost
     const startedAt = Date.now() - 1_200_000;
