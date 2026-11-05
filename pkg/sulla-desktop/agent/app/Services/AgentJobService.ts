@@ -105,7 +105,9 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
-  void this.persist(this.repository.stop(jobId, job.tasks));
+  job.stoppedBy = 'human';
+  job.stopReason = 'unspecified';
+  void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, job.stopReason));
   return 'stopped';
 }
 async stopJobCascade(jobId: string, caller?: { agentId?: string; threadId?: string }, reason = 'unspecified'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
