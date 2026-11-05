@@ -7,6 +7,8 @@ import {agentToolManifests} from '../../../../tools/agents/manifests';
 import {ToolRegistry} from '../../../../tools/registry';
 import {ReplaceLeadService} from '../../../../app/Services/ReplaceLeadService';
 
+vi.mock('../../../../services/DecisionService',()=>({decisionService:{requiresApproval:vi.fn(async()=>false)}}));
+
 const owner={channel:'sulla-desktop',threadId:'parent-thread',agentId:'coding-manager-sol'};
 const actor={kind:'agent' as const,...owner};
 class ReplaceLeadHarness {
