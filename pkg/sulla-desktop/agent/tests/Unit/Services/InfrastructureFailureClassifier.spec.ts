@@ -10,14 +10,15 @@ import {
 
 describe('InfrastructureFailureClassifier', () => {
   const classifier = new InfrastructureFailureClassifier();
-
-  it.each([
+  const diskFullCases: Array<[unknown, string | undefined, string | undefined]> = [
     [{ code: 'ENOSPC', message: 'write failed' }, undefined, undefined],
     [Object.assign(new Error('write failed'), { errno: -28 }), undefined, undefined],
     [new Error('No space left on device'), undefined, undefined],
     [undefined, 'docker: failed: no space left on device', undefined],
-    [undefined, undefined, "fatal: git write error: No space left on device"],
-  ])('classifies disk exhaustion from errors, exits, and log tails', (error, exitOutput, lastLogLines) => {
+    [undefined, undefined, 'fatal: git write error: No space left on device'],
+  ];
+
+  it.each(diskFullCases)('classifies disk exhaustion from errors, exits, and log tails', (error, exitOutput, lastLogLines) => {
     // risk: machine failure is blamed on worker behavior
     expect(classifier.classify({ error, exitOutput, lastLogLines })).toMatchObject({
       failureType: 'infrastructure', reason: 'infrastructure: disk full',
