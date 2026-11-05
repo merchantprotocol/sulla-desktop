@@ -19,13 +19,13 @@ export class AgentTaskWaitRepository {
     try {
       await client.query('BEGIN');
       const parked = await client.query(`UPDATE agent_jobs SET
-        tasks = (SELECT jsonb_agg(CASE WHEN ordinal - 1 = $2::int THEN task || jsonb_build_object('status','parked','waitReason',$4,'wakeAt',$5::bigint) ELSE task END ORDER BY ordinal)
+        tasks = (SELECT jsonb_agg(CASE WHEN ordinal - 1 = $2::int THEN task || jsonb_build_object('status','parked','waitReason',$3,'wakeAt',$4::bigint) ELSE task END ORDER BY ordinal)
           FROM jsonb_array_elements(tasks) WITH ORDINALITY AS item(task, ordinal)),
         status = CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(tasks) WITH ORDINALITY AS item(task, ordinal)
           WHERE ordinal - 1 <> $2::int AND task->>'status' IN ('queued','running')) THEN 'parked' ELSE status END,
         waiting_on_children = 0
         WHERE job_id=$1 AND status IN ('running','parked') AND tasks->($2::int)->>'status'='running' RETURNING job_id`,
-      [wait.jobId, wait.taskIndex, wait.wakeAt, wait.reason, wait.wakeAt.getTime()]);
+      [wait.jobId, wait.taskIndex, wait.reason, wait.wakeAt.getTime()]);
       if (parked.rowCount !== 1) { await client.query('ROLLBACK'); return false; }
       await client.query(`INSERT INTO agent_task_waits (job_id, task_index, wake_at, reason, state) VALUES ($1,$2,$3,$4,'scheduled')
         ON CONFLICT (job_id, task_index) DO UPDATE SET wake_at=EXCLUDED.wake_at, reason=EXCLUDED.reason, state='scheduled', updated_at=now()`,
