@@ -63,6 +63,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
   function bareInstance(): InstanceType<typeof BackendGraphWebSocketService> {
     const instance = Object.create(BackendGraphWebSocketService.prototype);
     (instance as any).activeAborts = new Map();
+    (instance as any).conversationContainers = new Map();
     (instance as any).resumeContexts = new Map();
     (instance as any).wsService = { send: () => undefined, connect: () => undefined, onMessage: () => undefined };
     return instance;

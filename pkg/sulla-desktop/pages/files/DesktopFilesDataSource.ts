@@ -258,9 +258,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
       availableCollections,
       files: this.files,
       trash: trashItems,
-      status,
+      status: { ...status, indexing: indexCoverage(this.files.filter(file => !file.deletedAt)) },
     };
-    snapshot.status.indexing = indexCoverage(this.files.filter(file => !file.deletedAt));
     return snapshot;
   }
 
