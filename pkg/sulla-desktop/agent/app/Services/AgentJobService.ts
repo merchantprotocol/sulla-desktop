@@ -49,7 +49,7 @@ async createJob(
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
   await this.states.update(jobId, job => {
     if (!job.tasks[index]) return job;
-    const nextPatch = job.status === 'stopped' && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    const nextPatch = (job.status === 'stopped' || job.tasks[index].status === 'stopped') && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
     return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
   });
 }

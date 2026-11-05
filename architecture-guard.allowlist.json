@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1121,
+  "entries": 1120,
   "files": {
     "background.ts": {
       "rules": {
@@ -3648,12 +3648,6 @@
     "pkg/sulla-desktop/pages/chat/components/files/FileDrawer.vue": {
       "rules": {
         "long-file": 507
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/pages/chat/components/subagent/SubAgentRail.vue": {
-      "rules": {
-        "long-file": 429
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
