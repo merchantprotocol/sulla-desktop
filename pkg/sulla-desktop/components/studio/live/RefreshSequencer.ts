@@ -5,31 +5,13 @@
 
 export class RefreshSequencer {
   private latestRequested = 0;
-  private inFlight: Promise<void> | undefined;
 
-  request<T>(fetch: () => Promise<T>, apply: (result: T) => void, reject: () => void): Promise<void> {
+  next(): number {
     this.latestRequested += 1;
-    if (!this.inFlight) {
-      this.inFlight = this.drain(fetch, apply, reject).finally(() => {
-        this.inFlight = undefined;
-      });
-    }
-
-    return this.inFlight;
+    return this.latestRequested;
   }
 
-  private async drain<T>(fetch: () => Promise<T>, apply: (result: T) => void, reject: () => void): Promise<void> {
-    let ticket = 0;
-
-    do {
-      ticket = this.latestRequested;
-      try {
-        const result = await fetch();
-
-        if (ticket === this.latestRequested) apply(result);
-      } catch {
-        if (ticket === this.latestRequested) reject();
-      }
-    } while (ticket !== this.latestRequested);
+  isLatest(ticket: number): boolean {
+    return ticket === this.latestRequested;
   }
 }

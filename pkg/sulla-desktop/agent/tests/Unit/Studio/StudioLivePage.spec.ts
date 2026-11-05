@@ -131,7 +131,7 @@ describe('StudioLivePage activity refresh', () => {
     wrapper.unmount();
   });
 
-  it('discards a stale missing-list response when a newer live refresh is queued', async() => {
+  it('discards an older missing-list response that resolves after a newer live response', async() => {
     // risk: activity continuity — stale list data must not permanently stop a live selected detail feed.
     const fixture = new LivePageFixture();
 
@@ -142,22 +142,24 @@ describe('StudioLivePage activity refresh', () => {
     await flushPromises();
 
     const stale = new Deferred<AgentsListResponse>();
+    const current = new Deferred<AgentsListResponse>();
     let listReads = 0;
     invoke.mockImplementation(async(channel: string) => {
       if (channel === 'agents:list') {
         listReads += 1;
-        return listReads === 1 ? stale.promise : fixture.list;
+        return listReads === 1 ? stale.promise : current.promise;
       }
       if (channel === 'agents:conversation') return { id: 'thread-1', channel: 'worker', title: 'Run', status: 'running', createdAt: '', lastActiveAt: '', entries: [fixture.firstEntry], truncated: false, missingLog: false };
       throw new Error(`Unexpected IPC channel: ${ channel }`);
     });
 
     await vi.advanceTimersByTimeAsync(6_000);
-    expect(listReads).toBe(1);
+    expect(listReads).toBe(2);
+    current.resolve(fixture.list);
+    await flushPromises();
     stale.resolve({ ...fixture.list, jobs: [], updatedAt: fixture.list.updatedAt - 1 });
     await flushPromises();
 
-    expect(listReads).toBe(2);
     expect(wrapper.text()).not.toContain('Finished — no longer running');
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(true);
     const readsBeforeNextPoll = invoke.mock.calls.filter(([channel]) => channel === 'agents:conversation').length;
@@ -166,4 +168,5 @@ describe('StudioLivePage activity refresh', () => {
     expect(invoke.mock.calls.filter(([channel]) => channel === 'agents:conversation').length).toBeGreaterThan(readsBeforeNextPoll);
     wrapper.unmount();
   });
+
 });

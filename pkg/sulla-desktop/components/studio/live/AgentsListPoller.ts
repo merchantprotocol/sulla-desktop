@@ -44,14 +44,17 @@ export class AgentsListPoller {
 
   async refresh(): Promise<void> {
     if (this.visibility.hidden) return;
-    await this.refreshSequencer.request(
-      async() => await this.invoke('agents:list') as AgentsListResponse,
-      data => {
-        this.onData(data);
-        this.onAvailability(true);
-      },
-      () => this.onAvailability(false),
-    );
+    const ticket = this.refreshSequencer.next();
+
+    try {
+      const data = await this.invoke('agents:list') as AgentsListResponse;
+
+      if (!this.refreshSequencer.isLatest(ticket)) return;
+      this.onData(data);
+      this.onAvailability(true);
+    } catch {
+      if (this.refreshSequencer.isLatest(ticket)) this.onAvailability(false);
+    }
   }
 
   private readonly handleVisibilityChange = (): void => {
