@@ -25,12 +25,12 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   }
 
   if(metadata){
-    const caller=agentJobProvider.custodyActors.resolve(metadata);
+    const caller=await agentJobProvider.custodyCallerVerifier.verify(metadata);
     const owner=await agentJobProvider.custody.resolveOwner(jobId,taskIndex);
     if(!owner)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
-    if(caller.actor.kind==='agent'){
-      const same=caller.actor.threadId===owner.threadId;
-      const ancestor=await agentJobProvider.custodyLineage.isAncestor(caller.actor.threadId,owner.threadId);
+    if(caller.kind==='agent'){
+      const same=caller.threadId===owner.threadId;
+      const ancestor=await agentJobProvider.custodyLineage.isAncestor(caller.threadId,owner.threadId);
       if(!same&&!ancestor)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${owner.agentId} (${owner.channel}/${owner.threadId}).`};
     }
   }

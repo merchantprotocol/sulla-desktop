@@ -15,6 +15,9 @@ import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { JobStopService } from '../Services/JobStopService';
 import { JobCustodyService } from '../Services/JobCustodyService';
 import { CustodyCallerVerifier } from '../Services/CustodyCallerVerifier';
+import { CustodyDestinationResolver } from '../Services/CustodyDestinationResolver';
+import { DurableAgentInboxReceiverResolver } from '../../services/AgentInboxReceiverResolver';
+import { GraphRegistry } from '../../services/GraphRegistry';
 import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
@@ -35,6 +38,8 @@ export class AgentJobServiceProvider {
   readonly blockerEscalation: BlockerEscalationService;
   readonly custody: JobCustodyService;
   readonly custodyCallerVerifier: CustodyCallerVerifier;
+  readonly custodyDestinations: CustodyDestinationResolver;
+  readonly custodyLineage: JobTaskCustodyLineage;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -52,8 +57,11 @@ export class AgentJobServiceProvider {
     const topLevelConversations=new GraphRegistryTopLevelConversationRegistry();
     this.custodyCallerVerifier=new CustodyCallerVerifier(taskLocator,topLevelConversations);
     const topLevelSessions=new TopLevelHumanSessionAuthorityRule(topLevelConversations);
-    const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository),topLevelSessions);
+    this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository);
+    const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage,topLevelSessions);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
+    const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadByChannel(channel));
+    this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
