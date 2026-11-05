@@ -85,11 +85,23 @@ describe('AgentExecDockerPolicy', () => {
   });
 
   it('lets a compose up without restart policies run normally', () => {
-    // risk: the guard blocks the normal preview workflow agents rely on
+    // risk: compose previews bypass ownership labels and become invisible to retention
     shell = new FakeDockerShell('services:\n  web:\n    image: nginx\n');
     const result = shell.run(new AgentExecDockerPolicy().apply('docker compose -p preview up -d', {}, identity).command);
     expect(result.code).toBe(0);
-    expect(result.calls).toContain('compose -p preview up -d');
+    expect(result.calls).toContain('compose -p sulla-agent-job-7-preview config --services');
+    expect(result.calls.some(call => call.includes('compose -p sulla-agent-job-7-preview -f /mnt/data/sulla/runtime/agents/job-7/compose/sulla-agent-job-7-preview.override.yml up -d'))).toBe(true);
+  });
+
+  it('keeps an already job-scoped compose project and injects every ownership label through an override', () => {
+    // risk: generated compose containers are unlabelled, reaped unsafely, or collide with an unrelated project
+    const result = new AgentExecDockerPolicy().apply('docker compose -p sulla-agent-job-7-preview -f compose.yml up -d', {}, identity);
+    expect(result.command).toContain("-p 'sulla-agent-job-7-preview' -f compose.yml config --services");
+    expect(result.command).toContain('com.sulla.owner');
+    expect(result.command).toContain('com.sulla.job-id');
+    expect(result.command).toContain("-f \"$override\" up -d");
+    expect(result.command).not.toContain('sulla-agent-job-7-sulla-agent-job-7-preview');
+    expect(result.labels).toMatchObject({ 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'job-7' });
   });
 
   it('allows a restartable compose stack only with persistent:true and a reason', () => {
