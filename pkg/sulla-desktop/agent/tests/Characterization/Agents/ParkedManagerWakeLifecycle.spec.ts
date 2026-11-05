@@ -370,7 +370,11 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
       'sulla-desktop', 'return-i-root-thread',
     );
     const firstChild = await registry.createJob(
-      [{ agentId: 'codex-sol-worker', label: 'worker-a', prompt: 'build a', status: 'running', threadId: 'return-i-child-a', depth: 2 }],
+      [
+        { agentId: 'codex-sol-worker', label: 'worker-a', prompt: 'build a', status: 'running', threadId: 'return-i-child-a', depth: 2 },
+        { agentId: 'codex-sol-worker', label: 'worker-q', prompt: 'build q', status: 'queued', threadId: 'return-i-child-q', depth: 2 },
+        { agentId: 'codex-sol-worker', label: 'worker-done', prompt: 'done', status: 'completed', threadId: 'return-i-child-done', depth: 2 },
+      ],
       'coding-manager-sol', managerThreadId,
     );
     const secondChild = await registry.createJob(
@@ -383,11 +387,11 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     expect(refused).toEqual({
       successBoolean: false,
-      responseString: 'you have 2 running children; park by ending your turn, or stop them first',
+      responseString: 'you have 3 running children; park by ending your turn, or stop them first',
     });
     expect((await registry.getJob(manager.jobId))?.tasks[0].returnedAt).toBeUndefined();
 
-    await registry.completeJob(firstChild.jobId, [{ label: 'worker-a', status: 'completed', output: 'done', threadId: 'return-i-child-a' }]);
+    registry.abortJob(firstChild.jobId);
     registry.abortJob(secondChild.jobId);
     const accepted = await worker.runHarness(managerThreadId, { status: 'completed', summary: 'done', output: {} });
     expect(accepted.successBoolean).toBe(true);
@@ -460,7 +464,9 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     await registry.parkJobTask(manager.jobId, 0, 2);
 
     const check = new CheckAgentJobsHarness();
-    const detail = JSON.parse((await check.runHarness({ jobId: manager.jobId })).responseString!);
+    const response = await check.runHarness({ jobId: manager.jobId });
+    expect(response.successBoolean).toBe(true);
+    const detail = JSON.parse(response.responseString!);
     expect(detail).toMatchObject({ status: 'parked', waitingOnChildren: 2, tasks: [{ status: 'parked' }] });
     expect(await buildSubagentDirectoryContext('view-l-root-thread')).toContain('parked, waiting on 2 children');
   });
@@ -486,6 +492,38 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
       expect.objectContaining({ jobId: child.jobId, results, failureReason: undefined }),
     ]);
     expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
+  });
+
+  it('n) atomically deduplicates concurrent orphan delivery for a later task', async() => {
+    // risk: two recovery/live settlement paths race their orphan check and
+    // both wake the higher parent with the same irreversible result.
+    const managerThreadId = 'orphan-n-manager-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'orphan-n-root-thread',
+    );
+    const child = await registry.createJob(
+      [
+        { agentId: 'codex-sol-worker', label: 'earlier', prompt: 'first', status: 'completed', threadId: 'orphan-n-child-0', depth: 2 },
+        { agentId: 'codex-sol-worker', label: 'middle', prompt: 'second', status: 'completed', threadId: 'orphan-n-child-1', depth: 2 },
+        { agentId: 'codex-sol-worker', label: 'late', prompt: 'third', status: 'running', threadId: 'orphan-n-child-2', depth: 2 },
+      ],
+      'coding-manager-sol', managerThreadId,
+    );
+    await registry.completeJob(manager.jobId, [{ label: 'manager', status: 'completed', output: 'done', threadId: managerThreadId }]);
+    const results = [{ label: 'late', status: 'completed' as const, output: 'late result', threadId: 'orphan-n-child-2' }];
+    await registry.completeJob(child.jobId, results);
+    const settled = await registry.getJob(child.jobId) as any;
+
+    expect(await Promise.all([
+      jobDelivery.deliverJobCompletion(settled, results, 2),
+      jobDelivery.deliverJobCompletion(settled, results, 2),
+    ])).toEqual([true, true]);
+
+    expect(inbox.takeAgentCompletions('sulla-desktop', 'orphan-n-root-thread')).toHaveLength(1);
+    expect((await agentJobProvider.jobs.job(manager.jobId))?.orphanedChildNotices).toEqual([
+      expect.objectContaining({ childJobId: child.jobId, taskIndex: 2 }),
+    ]);
   });
 
 });

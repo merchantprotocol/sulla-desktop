@@ -124,7 +124,7 @@ export class CheckAgentJobsWorker extends BaseTool {
 
       const result = await serializeJob(job);
       return {
-        successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
+        successBoolean: job.status === 'running' || job.status === 'parked' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
         responseString: JSON.stringify(result, null, 2),
       };
     }

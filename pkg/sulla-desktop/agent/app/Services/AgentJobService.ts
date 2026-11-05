@@ -314,9 +314,10 @@ async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: nu
 
 /** Persist and mirror one deduplicated late-child notice on its terminal owner. */
 async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
-  const job = await this.getJob(jobId); const notices = job?.orphanedChildNotices ?? [];
-  if (!job || notices.some(entry => entry.childJobId === notice.childJobId && entry.taskIndex === notice.taskIndex)) return false;
-  await this.repository.appendOrphanNotice(jobId, notice); job.orphanedChildNotices = [...notices, notice]; return true;
+  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
+  const refreshed = await this.repository.job(jobId);
+  if (refreshed) this.runtime.jobs.set(jobId, refreshed);
+  return recorded;
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */

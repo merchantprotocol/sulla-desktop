@@ -118,7 +118,12 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async openChildrenForThread(threadId: string): Promise<number> {
-    const row = await this.connection.first(`SELECT count(*)::int AS count FROM agent_jobs WHERE parent_thread_id = $1 AND status IN ('running', 'parked')`, [threadId]);
+    const row = await this.connection.first(`SELECT count(*)::int AS count
+      FROM agent_jobs child
+      CROSS JOIN LATERAL jsonb_array_elements(child.tasks) AS task
+      WHERE child.parent_thread_id = $1
+        AND child.status IN ('running', 'parked')
+        AND task->>'status' IN ('queued', 'running', 'parked')`, [threadId]);
     return Number(row?.count) || 0;
   }
 
@@ -159,9 +164,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return row?.present === true || row?.present === 't';
   }
 
-  async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET orphaned_child_notices = orphaned_child_notices || $2::jsonb
-      WHERE job_id = $1 AND NOT orphaned_child_notices @> $3::jsonb`, [jobId, JSON.stringify([notice]), JSON.stringify([{ childJobId: notice.childJobId, taskIndex: notice.taskIndex }])]);
+  async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+    const inserted = await this.connection.first(`UPDATE agent_jobs SET orphaned_child_notices = orphaned_child_notices || $2::jsonb
+      WHERE job_id = $1 AND NOT orphaned_child_notices @> $3::jsonb
+      RETURNING job_id`, [jobId, JSON.stringify([notice]), JSON.stringify([{ childJobId: notice.childJobId, taskIndex: notice.taskIndex }])]);
+    return Boolean(inserted);
   }
 
   async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
