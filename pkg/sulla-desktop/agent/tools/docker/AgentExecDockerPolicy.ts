@@ -5,20 +5,35 @@
 
 import { AgentDockerRunPolicy, type AgentContainerIdentity, type AgentDockerRunRequest } from './AgentDockerRunPolicy';
 
+export interface AgentExecDockerResult {
+  command: string;
+  /** Labels added to every container launch in the command; undefined when the command launches none. */
+  labels?: Record<string, string>;
+}
+
 /** Applies the same ownership policy to docker commands issued through exec. */
 export class AgentExecDockerPolicy {
+  static readonly LAUNCH = /\bdocker\s+(?:container\s+)?(?:run|create)\b/g;
+  static readonly RESTART_REFUSED = 'Docker restart policies are refused for temporary agent containers (docker run/create/update --restart). Pass persistent:true with a non-empty reason to opt out.';
+  static readonly COMPOSE_RESTART_REFUSED = 'Refused: compose restart policies are not allowed for temporary agent containers. Remove restart: from the compose file, or pass persistent:true with a non-empty reason.';
+
   constructor(private readonly runPolicy = new AgentDockerRunPolicy()) {}
 
-  apply(command: string, request: AgentDockerRunRequest, identity: AgentContainerIdentity): string {
+  apply(command: string, request: AgentDockerRunRequest, identity: AgentContainerIdentity): AgentExecDockerResult {
     const persistent = request.persistent === true;
     if (persistent && !String(request.reason ?? '').trim()) throw new Error('persistent:true requires a non-empty reason');
+    if (!persistent && this.declaresRestartPolicy(command)) throw new Error(AgentExecDockerPolicy.RESTART_REFUSED);
     command = this.guardComposeUp(command, persistent);
-    if (!/\bdocker\s+run\b/.test(command)) return command;
-    const restart = command.match(/--restart(?:=|\s+)\S+/)?.[0];
-    const result = this.runPolicy.apply({ ...request, options: restart ?? '' }, identity);
-    const labelArgs = result.options.filter((value, index, all) => value === '--label' || all[index - 1] === '--label');
-    const escaped = labelArgs.map(value => `'${ value.replace(/'/g, `'\\''`) }'`).join(' ');
-    return command.replace(/\bdocker\s+run\b/, match => `${ match } ${ escaped }`);
+    if (!new RegExp(AgentExecDockerPolicy.LAUNCH.source).test(command)) return { command };
+    const { labels } = this.runPolicy.apply({ persistent, reason: request.reason, ttlSeconds: request.ttlSeconds }, identity);
+    const labelArgs = Object.entries(labels).map(([key, value]) => `--label '${ `${ key }=${ value }`.replace(/'/g, `'\\''`) }'`).join(' ');
+    return { command: command.replace(AgentExecDockerPolicy.LAUNCH, match => `${ match } ${ labelArgs }`), labels };
+  }
+
+  /** True when any docker run/create/update segment sets a restart policy other than "no". */
+  private declaresRestartPolicy(command: string): boolean {
+    return command.split(/[\n;&|]+/).some(segment => /\bdocker\s+(?:container\s+)?(?:run|create|update)\b/.test(segment)
+      && /--restart(?:=|\s+)["']?(?!no\b)[a-z]/i.test(segment));
   }
 
   /**
@@ -33,6 +48,4 @@ export class AgentExecDockerPolicy {
       return `${ guard } && ${ match }`;
     });
   }
-
-  static readonly COMPOSE_RESTART_REFUSED = 'Refused: compose restart policies are not allowed for temporary agent containers. Remove restart: from the compose file, or pass persistent:true with a non-empty reason.';
 }
