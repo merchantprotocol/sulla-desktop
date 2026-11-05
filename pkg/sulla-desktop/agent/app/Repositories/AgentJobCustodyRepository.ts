@@ -27,6 +27,10 @@ export class AgentJobCustodyRepository {
 
   async move(input: CustodyMoveInput, authorize: CustodyTransactionContext['authorize'], changedAt: Date): Promise<CustodyMoveResult> {
     return this.database.transaction(async client => {
+      // Inbox producers do not yet share the per-job advisory lock. This brief,
+      // exclusive writer barrier makes a concurrent insert commit before our
+      // snapshot or wait until after custody commits (and resolves the new owner).
+      await client.query('LOCK TABLE agent_inbox_messages IN SHARE ROW EXCLUSIVE MODE');
       const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex);
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
       const refusal = await authorize(current, client);
