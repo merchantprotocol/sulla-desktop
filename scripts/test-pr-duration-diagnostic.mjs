@@ -14,8 +14,15 @@ class RelatedSpecDurationDiagnostic {
     const output = '/tmp/vitest-related-timings.json'; const files = this.changedFiles();
     try { execFileSync('yarn', ['vitest', 'related', ...files, '--run', '--config', 'vitest.agent.config.mts', '--reporter=json', `--outputFile=${ output }`], { stdio: 'inherit' }); } catch {}
     const report = JSON.parse(readFileSync(output, 'utf8'));
-    const timings = (report.testResults ?? []).map(result => ({ name: result.name, duration: Math.max(0, (result.endTime ?? 0) - (result.startTime ?? 0)) })).sort((a, b) => b.duration - a.duration).slice(0, 15);
+    const results = report.testResults ?? [];
+    const timings = results.map(result => ({ name: result.name, duration: Math.max(0, (result.endTime ?? 0) - (result.startTime ?? 0)) })).sort((a, b) => b.duration - a.duration).slice(0, 15);
     for (const timing of timings) console.log(`::warning title=Vitest spec duration::${ timing.duration }ms ${ timing.name }`);
+    for (const result of results.filter(item => item.status === 'failed')) {
+      for (const assertion of result.assertionResults?.filter(item => item.status === 'failed') ?? []) {
+        const message = (assertion.failureMessages ?? []).join(' | ').replaceAll('\n', '%0A');
+        console.log(`::error title=Vitest failure::${ assertion.fullName }: ${ message }`);
+      }
+    }
   }
 }
 new RelatedSpecDurationDiagnostic().run();
