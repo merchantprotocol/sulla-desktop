@@ -5,6 +5,9 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runDockerCommand } from './runDockerCommand';
+import { AgentDockerRunPolicy } from './AgentDockerRunPolicy';
+import { JobMessagingCheckinWriter } from './JobMessagingCheckinWriter';
+import { PersistentContainerAuditor } from './PersistentContainerAuditor';
 
 /**
  * Docker Run Tool - Worker class for execution
@@ -12,13 +15,29 @@ import { runDockerCommand } from './runDockerCommand';
 export class DockerRunWorker extends BaseTool {
   name = '';
   description = '';
-  protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { image, name, command, options } = input;
 
-    const args = ['run'];
-    if (options) {
-      args.push(...options.split(' '));
+  constructor(
+    private readonly policy = new AgentDockerRunPolicy(),
+    private readonly auditor = new PersistentContainerAuditor(new JobMessagingCheckinWriter()),
+  ) {
+    super();
+  }
+
+  protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const { image, name, command } = input;
+    const metadata = this.state?.metadata ?? {};
+    const identity = {
+      jobId: String(metadata.jobId ?? metadata.threadId ?? 'unknown'),
+      agentId: String(metadata.agentId ?? metadata.wsChannel ?? 'unknown'),
+    };
+    let policyResult;
+    try {
+      policyResult = this.policy.apply(input, identity);
+    } catch (error) {
+      return { successBoolean: false, responseString: (error as Error).message };
     }
+
+    const args = ['run', ...policyResult.options];
     if (name) {
       args.push('--name', name);
     }
@@ -38,9 +57,12 @@ export class DockerRunWorker extends BaseTool {
       }
 
       const containerId = res.stdout.trim();
+      if (input.persistent === true) {
+        await this.auditor.record(metadata.threadId, 'docker_run', String(input.reason).trim(), policyResult.labels);
+      }
       return {
         successBoolean: true,
-        responseString: `Container started successfully. Image: ${ image }, Container ID: ${ containerId }`,
+        responseString: `Container started successfully. Image: ${ image }, Container ID: ${ containerId }, Labels: ${ JSON.stringify(policyResult.labels) }`,
       };
     } catch (error) {
       return {

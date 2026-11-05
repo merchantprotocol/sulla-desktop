@@ -17,11 +17,15 @@ import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrok
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import type { AgentContainerRetentionBootstrap } from '@pkg/agent/services/AgentContainerRetentionBootstrap';
+import type { AgentWorkspaceRetentionBootstrap } from '@pkg/agent/services/AgentWorkspaceRetentionBootstrap';
+import type { AgentContainerLaunchComposition } from '@pkg/agent/services/AgentContainerComposition';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
+import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
@@ -120,6 +124,14 @@ export class ChatCompletionsServer {
   private readonly wsService = getWebSocketClientService();
   private taskerUnsubscribe: (() => void) | null = null;
   private apiToken:          string | null = null;
+  private containerRetention?: AgentContainerRetentionBootstrap;
+  private workspaceRetention?: AgentWorkspaceRetentionBootstrap;
+  private containerLaunchComposition?: AgentContainerLaunchComposition;
+
+  getAgentContainerLaunchComposition(): AgentContainerLaunchComposition {
+    if (!this.containerLaunchComposition) throw new Error('Agent container composition is not initialized');
+    return this.containerLaunchComposition;
+  }
 
   constructor() {
     this.initializeTaskerWebSocketListener();
@@ -1920,6 +1932,39 @@ export class ChatCompletionsServer {
 
   async start(requestedPort?: number): Promise<void> {
     await this.loadApiToken();
+    if (!this.containerRetention) {
+      const [{ AgentContainerRetentionBootstrap }, { GuestDockerRuntimeDriver }, { AgentContainerLaunchComposition }, { JobRegistryStatusReader }, jobRegistry] = await Promise.all([
+        import('@pkg/agent/services/AgentContainerRetentionBootstrap'),
+        import('@pkg/agent/services/AgentContainerLauncher'),
+        import('@pkg/agent/services/AgentContainerComposition'),
+        import('@pkg/agent/services/JobRegistryStatusReader'),
+        import('@pkg/agent/tools/agents/jobRegistry'),
+      ]);
+      this.containerLaunchComposition = new AgentContainerLaunchComposition(
+        new GuestDockerRuntimeDriver(), getSullaFilesMountManager(), paths.sullaRuntime,
+      );
+      this.containerRetention = new AgentContainerRetentionBootstrap(
+        this.containerLaunchComposition.runtime, paths.sullaRuntime,
+        { setTimeout: (callback, delayMs) => setTimeout(callback, delayMs), clearTimeout: timer => clearTimeout(timer) },
+        { info: message => console.log(message), error: message => console.error(message) },
+        this.containerLaunchComposition.activeContainers,
+        undefined,
+        undefined,
+        new JobRegistryStatusReader(jobRegistry),
+      );
+      this.containerRetention.start();
+      const [{ AgentWorkspaceRetentionBootstrap }, { GuestDiskSpaceProbe, SullaRuntimeCommandRunner }] = await Promise.all([
+        import('@pkg/agent/services/AgentWorkspaceRetentionBootstrap'),
+        import('@pkg/agent/services/GuestDiskSpaceProbe'),
+      ]);
+      this.workspaceRetention = new AgentWorkspaceRetentionBootstrap(
+        new (await import('@pkg/agent/services/JobRegistryStatusReader')).WorkspaceJobRegistryStateReader(jobRegistry),
+        new GuestDiskSpaceProbe(new SullaRuntimeCommandRunner(paths.sullaRuntime), '/mnt/data'),
+        { setInterval: (callback, delayMs) => setInterval(callback, delayMs), clearInterval: handle => clearInterval(handle as NodeJS.Timeout) },
+        { info: message => console.log(message), error: message => console.error(message) },
+      );
+      this.workspaceRetention.start();
+    }
     const port = requestedPort ?? await chatCompletionsPort();
 
     // Loopback only: the guest reaches it through the runtime's forwarder,
@@ -1945,6 +1990,10 @@ export class ChatCompletionsServer {
   }
 
   async stop(): Promise<void> {
+    this.workspaceRetention?.dispose();
+    this.workspaceRetention = undefined;
+    this.containerRetention?.dispose();
+    this.containerRetention = undefined;
     if (this.taskerUnsubscribe) {
       this.taskerUnsubscribe();
       this.taskerUnsubscribe = null;

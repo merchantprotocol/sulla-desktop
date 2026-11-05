@@ -82,6 +82,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   function bareInstance(): InstanceType<typeof BackendGraphWebSocketService> {
     const instance = Object.create(BackendGraphWebSocketService.prototype);
     (instance as any).activeAborts = new Map();
+    (instance as any).conversationContainers = new Map();
     return instance;
   }
 

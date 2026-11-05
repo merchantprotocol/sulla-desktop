@@ -5,6 +5,9 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { AgentExecDockerPolicy, type AgentExecDockerResult } from '../docker/AgentExecDockerPolicy';
+import { JobMessagingCheckinWriter } from '../docker/JobMessagingCheckinWriter';
+import { PersistentContainerAuditor } from '../docker/PersistentContainerAuditor';
 
 /**
  * Exec Tool - Worker class for execution
@@ -17,6 +20,13 @@ export class ExecWorker extends BaseTool {
   name = '';
   description = '';
 
+  constructor(
+    private readonly dockerPolicy = new AgentExecDockerPolicy(),
+    private readonly persistenceAuditor = new PersistentContainerAuditor(new JobMessagingCheckinWriter()),
+  ) {
+    super();
+  }
+
   schemaDef = {
     command:     { type: 'string' as const, optional: true, description: 'The exact shell command to run' },
     cmd:         { type: 'string' as const, optional: true, description: 'Alias for command' },
@@ -24,10 +34,13 @@ export class ExecWorker extends BaseTool {
     cwd:         { type: 'string' as const, optional: true, description: 'Working directory inside the VM to run the command in' },
     timeout:     { type: 'number' as const, optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
     stdin:       { type: 'string' as const, optional: true, description: 'Optional stdin data to pipe into the command' },
+    persistent:  { type: 'boolean' as const, optional: true, description: 'Allow a Docker restart policy; requires reason' },
+    reason:      { type: 'string' as const, optional: true, description: 'Audit reason required for persistent Docker containers' },
+    ttlSeconds:  { type: 'number' as const, optional: true, description: 'Agent container TTL (default 4 hours)' },
   };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const command = String(input.command ?? input.cmd ?? '').trim();
+    let command = String(input.command ?? input.cmd ?? '').trim();
 
     if (!command) {
       return {
@@ -36,6 +49,20 @@ export class ExecWorker extends BaseTool {
       };
     }
 
+    const metadata = this.state?.metadata ?? {};
+    let docker: AgentExecDockerResult;
+    try {
+      docker = this.dockerPolicy.apply(command, input, {
+        jobId: String(metadata.jobId ?? metadata.threadId ?? 'unknown'),
+        agentId: String(metadata.agentId ?? metadata.wsChannel ?? 'unknown'),
+      });
+    } catch (error) {
+      return { successBoolean: false, responseString: (error as Error).message };
+    }
+    command = docker.command;
+    if (input.persistent === true && /\bdocker\b/.test(command)) {
+      await this.persistenceAuditor.record(metadata.threadId, 'exec', String(input.reason).trim(), docker.labels ?? {});
+    }
     const cwd = input.cwd ? String(input.cwd).trim() : undefined;
     const timeoutMs = input.timeout ? Number(input.timeout) : 120_000;
     const stdin = input.stdin ? String(input.stdin) : undefined;

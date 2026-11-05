@@ -17,6 +17,7 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { RunActivity } from './RunActivity';
+import { ConversationContainerSettlementService, type ConversationTerminalReader } from './ConversationContainerSettlementService';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -54,6 +55,11 @@ const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
+export interface ConversationIdleTimer {
+  set(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clear(timer: ReturnType<typeof setTimeout>): void;
+}
+
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
 export function getBackendGraphWebSocketService(): BackendGraphWebSocketService {
@@ -64,6 +70,20 @@ export function getBackendGraphWebSocketService(): BackendGraphWebSocketService 
 }
 
 export class BackendGraphWebSocketService {
+  constructor(
+    private readonly terminalThreads: ConversationTerminalReader = parkedAgentRehydrator,
+    private readonly idleTimers: ConversationIdleTimer = {
+      set: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: timer => clearTimeout(timer),
+    },
+    initialize = true,
+  ) {
+    if (initialize) {
+      registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
+      this.initialize();
+    }
+  }
+
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
@@ -91,7 +111,7 @@ export class BackendGraphWebSocketService {
   }
 
   private armConversationIdle(key: string, lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle): ReturnType<typeof setTimeout> {
-    const timer = setTimeout(() => {
+    const timer = this.idleTimers.set(() => {
       const current = this.conversationContainers.get(key);
       if (current?.lifecycle !== lifecycle) return;
       const [channelId, ...threadParts] = key.split('|');
@@ -103,8 +123,21 @@ export class BackendGraphWebSocketService {
       lifecycle.close('conversation-idle-timeout', 'BackendGraphWebSocketService.armConversationIdle')
         .catch(error => console.warn('[BackendGraphWS] Failed to reap idle conversation container:', error));
     }, CONVERSATION_CONTAINER_IDLE_MS);
-    timer.unref();
+    timer.unref?.();
     return timer;
+  }
+
+  private async settleConversationContainer(channelId: string, threadId: string): Promise<void> {
+    const key = this.abortKey(channelId, threadId);
+    const current = this.conversationContainers.get(key);
+    if (!current) return;
+    await new ConversationContainerSettlementService(this.terminalThreads).settle(
+      threadId,
+      current,
+      timer => this.idleTimers.clear(timer),
+      () => this.conversationContainers.delete(key),
+      () => this.armConversationIdle(key, current.lifecycle),
+    ).catch(error => console.warn('[BackendGraphWS] Failed to settle conversation container:', error));
   }
 
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
@@ -162,10 +195,6 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor() {
-    registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
-    this.initialize();
-  }
 
   /**
    * One owner for a settled completion's delivery to the parent thread. A
@@ -236,7 +265,7 @@ export class BackendGraphWebSocketService {
     this.suspendedRuns.clear();
     this.resumeContexts.clear();
     for (const [, record] of this.conversationContainers) {
-      clearTimeout(record.idleTimer);
+      this.idleTimers.clear(record.idleTimer);
       record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
         .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
     }
@@ -301,11 +330,11 @@ export class BackendGraphWebSocketService {
     // ('primary', …) pin nothing, while 'fast' pins the resolved light model.
     const pinned = (value: string | undefined) => cliPinnedModelId(provider, value);
     if (existing && !existing.lifecycle.closed && existing.agentId === agentId && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
-      clearTimeout(existing.idleTimer);
+      this.idleTimers.clear(existing.idleTimer);
       return existing.lifecycle;
     }
     if (existing) {
-      clearTimeout(existing.idleTimer);
+      this.idleTimers.clear(existing.idleTimer);
       await existing.lifecycle.close(existing.agentId === agentId ? 'provider-or-model-switch' : 'agent-switch', 'BackendGraphWebSocketService.conversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
@@ -331,7 +360,7 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const current = this.conversationContainers.get(key);
     if (current?.lifecycle === lost) {
-      clearTimeout(current.idleTimer);
+      this.idleTimers.clear(current.idleTimer);
       this.conversationContainers.delete(key);
     }
     await lost.close('container-disappeared', 'BackendGraphWebSocketService.recoverConversationContainer')
@@ -485,7 +514,7 @@ export class BackendGraphWebSocketService {
         const key = this.abortKey(channelId, threadId);
         const container = this.conversationContainers.get(key);
         if (container) {
-          clearTimeout(container.idleTimer);
+          this.idleTimers.clear(container.idleTimer);
           this.conversationContainers.delete(key);
           await container.lifecycle.close('new-conversation', 'BackendGraphWebSocketService.handleChannelMessage')
             .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
@@ -962,6 +991,7 @@ export class BackendGraphWebSocketService {
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
+        await this.settleConversationContainer(channelId, threadId);
 
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this
