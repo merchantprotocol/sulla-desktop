@@ -10,8 +10,8 @@ import { promisify } from 'node:util';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-import toolPlacements from '../../../../../resources/tool-placements.json';
-import { initializeCatalog, resolveTool } from '../../../../../services/sulla-tools/src/catalog';
+import toolPlacements from '../../../../../../resources/tool-placements.json';
+import { initializeCatalog, resolveTool } from '../../../../../../services/sulla-tools/src/catalog';
 
 const exec = promisify(execFile);
 const root = process.cwd();
