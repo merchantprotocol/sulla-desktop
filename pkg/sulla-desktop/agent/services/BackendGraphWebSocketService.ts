@@ -192,7 +192,10 @@ export class BackendGraphWebSocketService {
 
   constructor(private readonly turnPreparer = new DelegatedTurnPreparer(), dependencies: { inboxRepository?: AgentInboxRepository; inboxReceiverResolver?: AgentInboxReceiverResolver } = {}) {
     const repository = dependencies.inboxRepository ?? new PostgresAgentInboxRepository(new DesktopPostgresConnection(postgresClient));
-    this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(agentJobProvider.jobs, channel => this.inboxThread({ channel }));
+    this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
+      agentJobProvider.jobs,
+      channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
+    );
     this.agentInbox = new AgentInbox(repository, {
       isRunning: target => this.inboxThread(target) !== undefined,
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
