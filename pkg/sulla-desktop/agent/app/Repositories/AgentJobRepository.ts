@@ -71,7 +71,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked', 'failed')`, [jobId, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
   /** Acknowledge one consumed task without reopening terminal rows to general task mutation. */
@@ -97,7 +97,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async stop(jobId: string, tasks: AgentJobTask[], stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked', 'failed')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
   }
 
   async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<string[]> {
