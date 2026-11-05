@@ -93,7 +93,7 @@ export class AgentStateService {
     if (job.tasks.length === 0) return job;
     const statuses = job.tasks.map(task => task.status);
     let status: AgentJob['status'];
-    if (statuses.some(taskStatus => taskStatus === 'error' || taskStatus === 'lost')) status = 'failed';
+    if (statuses.some(taskStatus => taskStatus === 'error')) status = 'failed';
     else if (statuses.some(taskStatus => ['queued', 'running', 'blocked'].includes(taskStatus))) status = 'running';
     else if (statuses.some(taskStatus => taskStatus === 'parked')) status = 'parked';
     else if (statuses.every(taskStatus => taskStatus === 'stopped')) status = 'stopped';
