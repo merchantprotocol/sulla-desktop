@@ -70,7 +70,13 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     AgentJobServiceProvider = providerModule.AgentJobServiceProvider;
   }, 60_000);
   afterAll(async() => database.dispose());
-  afterEach(() => { inbox.clearCompletionInboxes(); wakeParkedAgent.mockClear() });
+  afterEach(async() => {
+    inbox.clearCompletionInboxes();
+    wakeParkedAgent.mockClear();
+    // Keep the shared migrated schema fast while isolating restart sweeps from
+    // running jobs intentionally left behind by earlier lifecycle scenarios.
+    await database.query('TRUNCATE TABLE agent_jobs CASCADE');
+  });
 
   // Known-good agent identities: resolve() refuses to rehydrate an agent it
   // cannot find a definition for, so the test double only needs to answer
