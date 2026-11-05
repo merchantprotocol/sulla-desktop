@@ -46,7 +46,7 @@ describe('agents/replace_lead',()=>{
    // risk: tool exposure — acceptance behavior must be reachable through the production registry.
    const registry=new ToolRegistry(); registry.registerManifests(agentToolManifests.filter(manifest=>manifest.name==='replace_lead'));
    const tool:any=await registry.createToolForCategory('agents','replace_lead'); const h=new ReplaceLeadHarness(); tool.service=h.service; tool.setState({metadata:{wsChannel:owner.channel,threadId:owner.threadId,routedAgentId:owner.agentId}});
-   const bad=await tool.call({jobId:'lead',taskIndex:0}); expect(bad.success).toBe(false); expect(bad.error).toContain('agentId');
+   await expect(tool.call({jobId:'lead',taskIndex:0})).rejects.toThrow('agentId');
    const good=await tool.call({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol'}); expect(good.success).toBe(true); expect(h.launcher.launchReplacement).toHaveBeenCalledOnce();
  });
 });

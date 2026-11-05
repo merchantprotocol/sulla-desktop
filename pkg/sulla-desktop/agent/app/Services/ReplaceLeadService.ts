@@ -13,11 +13,12 @@ export class ReplaceLeadService {
  constructor(private readonly custody:JobCustodyPort,private readonly packets:LeadHandoffPacketAssembler,private readonly launcher:LeadTaskExecutionPort,private readonly messaging:AgentJobMessagingRepository,private readonly wrapUp:LeadWrapUpPort){}
  async replace(input:ReplaceLeadInput):Promise<any>{
    const owner=await this.custody.resolveOwner(input.jobId,input.taskIndex); if(!owner)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
+   const launchOwner:CustodyOwner={channel:owner.channel,threadId:owner.threadId,agentId:owner.agentId};
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note); if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    const authority=await this.custody.move({jobId:input.jobId,taskIndex:input.taskIndex,to:owner,actor:input.actor,reason:'replace_lead authority check'});
    if(!authority.ok&&authority.code!=='no-op')return authority;
    let launched;
-   try{launched=await this.launcher.launchReplacement({oldJobId:input.jobId,oldTaskIndex:input.taskIndex,agentId:input.agentId,model:input.model,provider:input.provider,prompt:packet.prompt,owner});}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
+   try{launched=await this.launcher.launchReplacement({oldJobId:input.jobId,oldTaskIndex:input.taskIndex,agentId:input.agentId,model:input.model,provider:input.provider,prompt:packet.prompt,owner:launchOwner});}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    const replacementOwner:CustodyOwner={channel:owner.channel,threadId:launched.threadId,agentId:input.agentId};
    const moved:any[]=[]; const failed:any[]=[];
    for(const child of packet.snapshot.children){for(let taskIndex=0;taskIndex<child.tasks.length;taskIndex++){
