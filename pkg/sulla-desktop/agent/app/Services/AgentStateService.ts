@@ -20,13 +20,18 @@ export class AgentStateService {
   private versionValue: number;
   private readonly changes = new EventEmitter();
   private readiness: Promise<void> = Promise.resolve();
+  private readonly pendingTerminalWrites = new Set<string>();
 
   constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now) {
     this.versionValue = now();
   }
 
   get version(): number { return this.versionValue; }
-  setReadiness(readiness: Promise<unknown>): void { this.readiness = readiness.then(() => undefined); }
+  setReadiness(readiness: Promise<unknown>): void {
+    this.readiness = readiness.then(() => undefined, error => {
+      console.error('[AgentStateService] boot reconciliation failed; continuing with periodic repair:', error);
+    });
+  }
   async ready(): Promise<void> { await this.readiness; }
   onChange(listener: AgentStateChangeListener): () => void {
     this.changes.on('change', listener);
@@ -52,6 +57,11 @@ export class AgentStateService {
   async refresh(): Promise<AgentJob[]> { await this.ready(); return this.refreshUnsafe(); }
   async jobs(): Promise<AgentJob[]> { return this.refresh(); }
   async job(jobId: string): Promise<AgentJob | undefined> { await this.refresh(); return this.cache.jobs.get(jobId); }
+  /** Write-side lookup. Lifecycle writes must not wait for boot reconciliation. */
+  async jobForWrite(jobId: string): Promise<AgentJob | undefined> {
+    await this.refreshUnsafe();
+    return this.cache.jobs.get(jobId);
+  }
 
   async descendants(parentThreadId: string): Promise<AgentJob[]> {
     const jobs = await this.jobs(); const threadIds = new Set([parentThreadId]); const descendants: AgentJob[] = [];
@@ -72,13 +82,15 @@ export class AgentStateService {
   }
 
   isLive(job: AgentJob, task: AgentJobTask): boolean { return ['running', 'parked'].includes(job.status) && ['queued', 'running', 'parked', 'blocked'].includes(task.status); }
+  hasPendingTerminalWrite(jobId: string): boolean { return this.pendingTerminalWrites.has(jobId); }
+  markPendingTerminalWrite(jobId: string): void { this.pendingTerminalWrites.add(jobId); }
 
   async create(job: AgentJob): Promise<AgentJob> {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); return next;
   }
 
   async update(jobId: string, mutate: (current: AgentJob) => AgentJob): Promise<AgentJob | undefined> {
-    const current = await this.job(jobId); if (!current) return undefined;
+    const current = await this.jobForWrite(jobId); if (!current) return undefined;
     const next = this.withDerivedStatus(mutate(structuredClone(current))); await this.commit(next); return next;
   }
 
@@ -102,7 +114,9 @@ export class AgentStateService {
 
   touch(): void { this.emitChange(); }
   async commit(job: AgentJob): Promise<void> {
-    const next = this.withDerivedStatus(job); await this.store.replaceState(next); this.cache.jobs.set(next.jobId, next); this.emitChange();
+    const next = this.withDerivedStatus(job);
+    try { await this.store.replaceState(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); }
+    finally { this.pendingTerminalWrites.delete(next.jobId); }
   }
 
   private withDerivedStatus(job: AgentJob): AgentJob {

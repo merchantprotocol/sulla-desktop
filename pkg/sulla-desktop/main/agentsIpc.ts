@@ -20,7 +20,7 @@ import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvid
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
-import { awaitAgentContainerRuntimeRehydration, hasAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { probeAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
@@ -206,15 +206,15 @@ const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
 });
 const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
-  container: async task => hasAgentContainerRuntime(undefined, task.threadId),
+  container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
   lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
 });
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 
 export function initAgentsIpc(): void {
-  const bootReconciliation = awaitAgentContainerRuntimeRehydration().then(() => agentLivenessReconciler.reconcile());
+  const bootReconciliation = agentLivenessReconciler.reconcile();
   agentJobProvider.states.setReadiness(bootReconciliation);
-  void bootReconciliation.then(() => agentLivenessReconciler.start());
+  agentLivenessReconciler.start();
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
@@ -308,7 +308,7 @@ export function initAgentsIpc(): void {
   });
 
   ipcMain.handle('agents:list', async(): Promise<AgentsListResponse> => {
-    await bootReconciliation;
+    await agentJobProvider.states.ready();
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.
 
@@ -326,8 +326,7 @@ export function initAgentsIpc(): void {
     if (!jobId || !Number.isInteger(taskIndex) || taskIndex < 0 || !message?.trim()) {
       return { ok: false, error: 'A job, task, and message are required.' };
     }
-    await bootReconciliation;
-    const job = await agentJobProvider.states.job(jobId);
+    const job = await agentJobProvider.states.jobForWrite(jobId);
     if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return {
       ok: false, stale: true, error: `Job ${ jobId } task ${ taskIndex } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
     };
@@ -338,8 +337,7 @@ export function initAgentsIpc(): void {
 
   ipcMain.handle('agents:stop-job', async(_event, jobId: string) => {
     if (!jobId) return { ok: false, error: 'A job is required.' };
-    await bootReconciliation;
-    const job = await agentJobProvider.states.job(jobId);
+    const job = await agentJobProvider.states.jobForWrite(jobId);
     if (!job || !job.tasks.some(task => agentJobProvider.states.isLive(job, task))) return {
       ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
     };
@@ -399,7 +397,7 @@ export function initAgentsIpc(): void {
   // "Open in tab": show a running hidden child's thread as a chat tab.
   ipcMain.handle('agents:open-job-in-tab', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
     if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
-    const job = await agentJobProvider.states.job(jobId);
+    const job = await agentJobProvider.states.jobForWrite(jobId);
     if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return false;
     const [{ promoteJobTaskToTab }, { markTaskPromoted }] = await Promise.all([
       import('@pkg/agent/services/AgentTabOpener'),

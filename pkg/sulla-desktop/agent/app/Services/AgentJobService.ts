@@ -51,10 +51,10 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
-  return (await this.states.descendants(parentThreadId)).filter(job => !job.dismissedAt);
+  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt).sort((a, b) => a.createdAt - b.createdAt);
 }
 async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> {
-  const job = await this.states.job(jobId);
+  const job = await this.states.jobForWrite(jobId);
   if (job?.parentThreadId !== parentThreadId || !job.tasks[taskIndex]) return false;
   await this.states.update(jobId, current => {
     const tasks = current.tasks.map((task, index) => index === taskIndex ? { ...task, dismissed: true } : task);
@@ -85,7 +85,7 @@ getJobAbortSignal(jobId: string): AbortSignal | undefined {
 abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   const job = this.runtime.jobs.get(jobId);
   if (!job) return 'not-found';
-  if (!['running', 'parked'].includes(job.status)) return 'already-finished';
+  if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
   this.runtime.abortControllers.get(jobId)?.abort();
   const finishedAt = this.clock.now().getTime();
   const next = { ...job, status: 'stopped' as const, finishedAt, waitingOnChildren: 0,
@@ -93,11 +93,12 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
       ? { ...task, status: 'stopped' as const, finishedAt }
       : task) };
   // Compatibility path is synchronous; state remains unchanged until the durable write succeeds.
+  this.states.markPendingTerminalWrite(jobId);
   void this.states.commit(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
   return 'stopped';
 }
 async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
-  const root = await this.states.job(jobId);
+  const root = await this.states.jobForWrite(jobId);
   if (!root) return 'not-found';
   if (!['running', 'parked'].includes(root.status)) return 'already-finished';
   const stoppedIds = await this.states.stopCascade(jobId);
@@ -141,16 +142,16 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> { 
  * job-level status).
  */
 async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
-  const job = await this.states.job(jobId); if (!job || job.tasks[taskIndex]?.status !== 'running') return;
+  const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'running') return;
   await this.states.transition(jobId, taskIndex, { status: 'parked' }, { waitingOnChildren });
 }
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
-  const job = await this.states.job(jobId); if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
+  const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
   await this.states.transition(jobId, taskIndex, { status: 'running' }, { waitingOnChildren: 0, finishedAt: null });
 }
 
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job) return;
   this.runtime.abortControllers.delete(jobId);
@@ -185,7 +186,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 }
 /** Persist one settled task before its siblings finish. */
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex]) return;
   job.results[taskIndex] = result;
@@ -198,7 +199,7 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
@@ -208,7 +209,7 @@ async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<voi
 }
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   if (!source || source.completionDeliveredAt) return;
   await this.states.commit({ ...source, completionDeliveredAt: this.clock.now().getTime() });
 }
@@ -263,7 +264,7 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
   summary?: string;
   status:  AgentJobTask['status'];
 }): Promise<AgentJob> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   const task = job?.tasks[taskIndex];
   if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
@@ -284,7 +285,7 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
 
 /** Mark a hidden child as opened in a chat tab (rail shows the tab pill). */
 async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask | undefined> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job?.tasks[taskIndex]) return undefined;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], promotedToTab: true };
@@ -293,7 +294,7 @@ async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask |
 }
 
 async failJob(jobId: string, error: string): Promise<void> {
-  const source = await this.states.job(jobId);
+  const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job) return;
   this.runtime.abortControllers.delete(jobId);

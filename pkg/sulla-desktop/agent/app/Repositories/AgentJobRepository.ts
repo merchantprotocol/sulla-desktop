@@ -46,8 +46,12 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async replaceState(job: AgentJob): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET status = $2, tasks = $3::jsonb, results = $4::jsonb,
       error = $5, finished_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE to_timestamp($6 / 1000.0) END,
-      waiting_on_children = $7 WHERE job_id = $1`, [job.jobId, job.status, JSON.stringify(job.tasks),
-      JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0]);
+      waiting_on_children = $7,
+      completion_delivered_at = CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END,
+      dismissed_at = CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END
+      WHERE job_id = $1`, [job.jobId, job.status, JSON.stringify(job.tasks),
+      JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0,
+      job.completionDeliveredAt ?? null, job.dismissedAt ?? null]);
   }
 
   async replaceStateIfActivityUnchanged(job: AgentJob, taskIndex: number, observedActivity: number | null): Promise<boolean> {

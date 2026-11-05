@@ -1,7 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
 import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
 import { TestDatabase } from '../Support/TestDatabase';
@@ -130,16 +130,77 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const jobId = `rebind-race-${ Date.now() }`;
     await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
       VALUES ($1, 'running', 1, now() - interval '20 minutes', $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
-      agentId: 'worker', status: 'running', threadId: 'rebind-thread', startedAt: Date.now() - 1_200_000,
+      agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-thread', startedAt: Date.now() - 1_200_000,
     }])]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    let rebound = false;
+    let containerProbe: boolean | undefined;
     const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
-      graph: () => false, container: async() => rebound, lastCheckin: async() => null,
+      graph: () => false, container: async() => containerProbe, lastCheckin: async() => null,
     }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
-    rebound = true;
     expect(await reconciler.reconcile()).toBe(0);
     expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+    containerProbe = true;
+    expect(await reconciler.reconcile()).toBe(0);
+    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+  });
+
+  it('refuses a lost transition when a check-in arrives after liveness observation', async() => {
+    // risk: a worker check-in races the reconciler and live work is durably killed
+    const jobId = `checkin-race-${ Date.now() }`;
+    const startedAt = Date.now() - 1_200_000;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, to_timestamp($2 / 1000.0), $3::jsonb, 'hidden')`, [jobId, startedAt, JSON.stringify([{
+      agentId: 'race-worker', status: 'running', startedAt,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceStateIfActivityUnchanged.bind(agentJobProvider.jobs);
+    const race = vi.spyOn(agentJobProvider.jobs, 'replaceStateIfActivityUnchanged').mockImplementationOnce(async(...args) => {
+      await database.query(`INSERT INTO agent_job_checkins (job_id, task_index, step, summary) VALUES ($1, 0, 'alive', 'race won')`, [jobId]);
+      return original(...args);
+    });
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: task => task.agentId !== 'race-worker', container: async() => false, lastCheckin: async() => null,
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    race.mockRestore();
+    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+    expect(agentJobProvider.runtime.jobs.get(jobId)?.status).toBe('running');
+  });
+
+  it('keeps cache unchanged and emits nothing when the Postgres repository write rejects', async() => {
+    // risk: a failed durable write publishes a state Postgres never accepted
+    const job = await registry.createJob([{ agentId: 'worker', label: 'write', prompt: 'x', status: 'running' }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const before = structuredClone(agentJobProvider.runtime.jobs.get(job.jobId));
+    const emitted = vi.fn(); const unsubscribe = agentJobProvider.states.onChange(emitted);
+    const failure = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockRejectedValueOnce(new Error('forced postgres failure'));
+    await expect(agentJobProvider.states.transition(job.jobId, 0, { status: 'stopped' })).rejects.toThrow('forced postgres failure');
+    failure.mockRestore(); unsubscribe();
+    expect(agentJobProvider.runtime.jobs.get(job.jobId)).toEqual(before);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it('keeps memory and Postgres equal through the complete lifecycle transition set', async() => {
+    // risk: lifecycle transitions split durable truth from action-button state
+    const job = await registry.createJob([{ agentId: 'worker', label: 'lifecycle', prompt: 'x', status: 'queued' }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const assertEqual = async() => {
+      const cached = agentJobProvider.runtime.jobs.get(job.jobId);
+      const durable = await agentJobProvider.jobs.job(job.jobId);
+      expect(cached).toEqual(durable);
+    };
+    await assertEqual();
+    await registry.updateJobTask(job.jobId, 0, { status: 'running', startedAt: Date.now() }); await assertEqual();
+    await registry.parkJobTask(job.jobId, 0, 1); await assertEqual();
+    await registry.resumeParkedJob(job.jobId, 0); await assertEqual();
+    await registry.completeJob(job.jobId, [{ label: 'lifecycle', status: 'completed', output: 'ok', threadId: '' }]); await assertEqual();
+
+    const failed = await registry.createJob([{ agentId: 'worker', label: 'failed', prompt: 'x', status: 'running' }]);
+    await registry.failJob(failed.jobId, 'expected');
+    expect(agentJobProvider.runtime.jobs.get(failed.jobId)).toEqual(await agentJobProvider.jobs.job(failed.jobId));
+    const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running' }]);
+    await registry.stopJobCascade(stopped.jobId);
+    expect(agentJobProvider.runtime.jobs.get(stopped.jobId)).toEqual(await agentJobProvider.jobs.job(stopped.jobId));
   });
 
   it('repairs a contradictory job rollup from its task state in Postgres and cache', async() => {

@@ -4,7 +4,7 @@
 
 import type { AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentStateService } from './AgentStateService';
-export interface AgentLivenessProbe { graph(task: AgentJobTask): boolean; container(task: AgentJobTask): Promise<boolean>; lastCheckin(jobId: string, taskIndex: number): Promise<number | null>; }
+export interface AgentLivenessProbe { graph(task: AgentJobTask): boolean; container(task: AgentJobTask): Promise<boolean | undefined>; lastCheckin(jobId: string, taskIndex: number): Promise<number | null>; }
 export interface AgentLivenessConfig { quietAfterMs: number; lostAfterMs: number; intervalMs: number; }
 const DEFAULT_CONFIG: AgentLivenessConfig = { quietAfterMs: 5 * 60_000, lostAfterMs: 15 * 60_000, intervalMs: 30_000 };
 
@@ -24,7 +24,10 @@ export class AgentLivenessReconciler {
       if (!['queued', 'running', 'parked', 'blocked'].includes(task.status)) continue;
       const hasLiveChildren = task.status === 'parked' && task.threadId
         ? jobs.some(child => child.parentThreadId === task.threadId && ['running', 'parked'].includes(child.status)) : false;
-      if (hasLiveChildren || this.probe.graph(task) || await this.probe.container(task)) continue;
+      const containerLive = await this.probe.container(task);
+      // Unknown means the runtime supervisor is still rebuilding bindings after
+      // restart. Its bounded grace protects only the lost decision, never reads.
+      if (hasLiveChildren || this.probe.graph(task) || containerLive !== false) continue;
       const checkinAt = await this.probe.lastCheckin(job.jobId, taskIndex);
       const lastActivityAt = checkinAt ?? task.startedAt ?? job.createdAt;
       if (this.clock() - lastActivityAt < this.config.lostAfterMs) continue;

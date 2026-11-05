@@ -14,8 +14,14 @@ export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
   private readonly rehydrated: Promise<void>;
-  constructor(rebindGraceMs = 30_000) { this.rehydrated = new Promise(resolve => { const timer = setTimeout(resolve, rebindGraceMs); timer.unref?.(); }); }
+  private rebindPending = true;
+  constructor(rebindGraceMs = 30_000) { this.rehydrated = new Promise(resolve => { const timer = setTimeout(() => { this.rebindPending = false; resolve(); }, rebindGraceMs); timer.unref?.(); }); }
   ready(): Promise<void> { return this.rehydrated; }
+  /** Tri-state liveness: undefined protects tasks while restart rebind is pending. */
+  probe(jobId?: string, threadId?: string): boolean | undefined {
+    if (this.has(jobId, threadId)) return true;
+    return this.rebindPending ? undefined : false;
+  }
   withRuntime<T>(binding: AgentContainerRuntimeBinding, action: () => T): T { return this.activeRuntime.run(binding, action); }
   has(jobId?: string, threadId?: string): boolean { return Array.from(this.bindings.values()).some(binding => (!jobId || binding.jobId === jobId) && (!threadId || binding.threadId === threadId)); }
   current(): AgentContainerRuntimeBinding | undefined { return this.activeRuntime.getStore(); }
@@ -32,6 +38,7 @@ export const agentContainerRuntimeRegistry = new AgentContainerRuntimeRegistry()
 export const awaitAgentContainerRuntimeRehydration = () => agentContainerRuntimeRegistry.ready();
 export const withAgentContainerRuntime = <T>(binding: AgentContainerRuntimeBinding, action: () => T) => agentContainerRuntimeRegistry.withRuntime(binding, action);
 export const hasAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.has(jobId, threadId);
+export const probeAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.probe(jobId, threadId);
 export const currentAgentContainerRuntime = () => agentContainerRuntimeRegistry.current();
 export const registerAgentContainerRuntime = (binding: AgentContainerRuntimeBinding) => agentContainerRuntimeRegistry.register(binding);
 export const requireAgentContainerRuntime = (ctx: ToolExecutionContext) => agentContainerRuntimeRegistry.require(ctx);
