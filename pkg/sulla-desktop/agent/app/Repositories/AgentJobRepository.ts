@@ -86,18 +86,20 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   /** Atomically archive the settled generation and claim exactly one reopened generation. */
   async claimReopen(jobId: string, taskIndex: number, expectedGeneration: number): Promise<{ generation: number; leaseId: string } | undefined> {
     const leaseId = randomUUID();
+    // Seed legacy generation state separately. PostgreSQL data-modifying CTEs
+    // share one snapshot, so an UPDATE cannot see a row inserted by a sibling
+    // CTE in the same statement. This insert is idempotent and changes no claim.
+    await this.connection.run(`INSERT INTO agent_job_task_reopens (job_id, task_index, generation, reopen_count)
+      SELECT $1, $2, COALESCE((tasks -> $2::int ->> 'generation')::int, 1),
+        COALESCE((tasks -> $2::int ->> 'reopenCount')::int, 0)
+      FROM agent_jobs WHERE job_id = $1 AND (tasks -> $2::int) IS NOT NULL
+      ON CONFLICT (job_id, task_index) DO NOTHING`, [jobId, taskIndex]);
     const rows = await this.connection.select(`WITH current_task AS (
       SELECT job_id, tasks -> $2::int AS task
       FROM agent_jobs WHERE job_id = $1 FOR UPDATE
-    ), state AS (
-      INSERT INTO agent_job_task_reopens (job_id, task_index, generation, reopen_count)
-      SELECT $1, $2, COALESCE((task->>'generation')::int, 1), COALESCE((task->>'reopenCount')::int, 0)
-      FROM current_task
-      ON CONFLICT (job_id, task_index) DO UPDATE SET updated_at = agent_job_task_reopens.updated_at
-      RETURNING *
     ), eligible AS (
       SELECT current_task.task, state.generation, state.reopen_count
-      FROM current_task JOIN state ON true
+      FROM current_task JOIN agent_job_task_reopens state ON state.job_id = $1 AND state.task_index = $2
       WHERE current_task.task->>'status' IN ('completed', 'blocked')
         AND state.generation = $3 AND state.reopen_count < 5 AND state.lease_id IS NULL
     ), history AS (
