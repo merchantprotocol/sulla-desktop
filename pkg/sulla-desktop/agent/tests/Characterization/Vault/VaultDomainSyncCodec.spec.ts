@@ -88,6 +88,7 @@ describe('domain-backed Desktop vault sync codec', () => {
       ...kat.desktop.bundle,
       kdf: { ...kat.desktop.bundle.kdf, memoryBytes: 1 },
     }, kat.password))).toBe('kdf_bounds');
+    expect(errorCode(() => codec.unlockRecovery(kat.desktop.bundle, 'synthetic-recovery-code'))).toBe('recovery_missing');
   });
 
   it('keeps UTF-16 code-unit ordering for mixed-case and non-ASCII record ids', async() => {
