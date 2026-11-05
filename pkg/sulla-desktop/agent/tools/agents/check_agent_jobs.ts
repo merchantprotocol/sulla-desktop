@@ -26,7 +26,7 @@ export class CheckAgentJobsWorker extends BaseTool {
       }
       const results = Array.isArray(job.results) ? job.results as Array<{ status?: string }> : [];
       return {
-        successBoolean: job.status === 'running' || (job.status === 'completed' && results.every(result => result.status === 'completed')),
+        successBoolean: ['running', 'parked'].includes(job.status) || (job.status === 'completed' && results.every(result => result.status === 'completed')),
         responseString: JSON.stringify(job, null, 2),
       };
     }
