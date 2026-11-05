@@ -24,8 +24,15 @@ export interface AgentConversationEntry {
   offset?:   number;
 }
 
+export interface AgentConversationLogIdentity {
+  size:        number;
+  ino:         number;
+  birthtimeMs: number;
+}
+
 export interface AgentConversationLog {
-  entries:    AgentConversationEntry[];
+  entries:      AgentConversationEntry[];
+  logIdentity?: AgentConversationLogIdentity;
   /** True when older entries were dropped to stay under the read caps. */
   truncated:  boolean;
   /** True when the index row has no readable log file. */
@@ -145,7 +152,7 @@ export async function readConversationLog(file: string | null | undefined, logsD
 
   try {
     handle = await fs.promises.open(file, 'r');
-    const { size } = await handle.stat();
+    const { size, ino, birthtimeMs } = await handle.stat();
     const start = Math.max(0, size - MAX_LOG_BYTES);
     const buffer = Buffer.alloc(size - start);
 
@@ -164,7 +171,12 @@ export async function readConversationLog(file: string | null | undefined, logsD
 
     const parsed = new ConversationLogParser().parse(completeLines, sourceOffset);
 
-    return { ...parsed, truncated: parsed.truncated || start > 0, missingLog: false };
+    return {
+      ...parsed,
+      truncated: parsed.truncated || start > 0,
+      missingLog: false,
+      logIdentity: { size, ino, birthtimeMs },
+    };
   } catch {
     return { entries: [], truncated: false, missingLog: true };
   } finally {

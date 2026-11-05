@@ -37,8 +37,12 @@ class Deferred<T> {
   }
 }
 
-function detail(entries: AgentConversationDetail['entries'], id = 'thread-1'): AgentConversationDetail {
-  return { id, channel: 'worker', title: 'Run', status: 'running', createdAt: '', lastActiveAt: '', entries, truncated: false, missingLog: false };
+function detail(
+  entries: AgentConversationDetail['entries'],
+  id = 'thread-1',
+  logIdentity?: AgentConversationDetail['logIdentity'],
+): AgentConversationDetail {
+  return { id, channel: 'worker', title: 'Run', status: 'running', createdAt: '', lastActiveAt: '', entries, logIdentity, truncated: false, missingLog: false };
 }
 
 function entryTexts(snapshot: FeedSnapshot | undefined): string[] {
@@ -118,6 +122,56 @@ describe('AgentDetailFeed', () => {
     await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['old']));
     await feed.refresh();
     expect(entryTexts(snapshots.at(-1))).toEqual(['old', 'new']);
+    feed.dispose();
+  });
+
+  it('replaces a truncated log generation, then appends new records exactly once', async() => {
+    // risk: activity continuity — log rotation must not freeze the feed at stale high offsets.
+    const oldEntry = { kind: 'event' as const, ts: '1', text: 'old generation', offset: 900 };
+    const replacement = { kind: 'event' as const, ts: '2', text: 'replacement', offset: 0 };
+    const appended = { kind: 'event' as const, ts: '3', text: 'appended', offset: 30 };
+    const oldIdentity = { size: 1_000, ino: 10, birthtimeMs: 100 };
+    const replacementIdentity = { size: 30, ino: 11, birthtimeMs: 200 };
+    const appendedIdentity = { ...replacementIdentity, size: 60 };
+    const snapshots: FeedSnapshot[] = [];
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(detail([oldEntry], 'thread-1', oldIdentity))
+      .mockResolvedValueOnce(detail([replacement], 'thread-1', replacementIdentity))
+      .mockResolvedValueOnce(detail([replacement, appended], 'thread-1', appendedIdentity))
+      .mockResolvedValueOnce(detail([replacement, appended], 'thread-1', appendedIdentity));
+    const feed = new AgentDetailFeed(invoke, new FakeVisibilitySource(), setInterval, clearInterval, snapshot => snapshots.push(snapshot));
+
+    feed.select('thread-1');
+    await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['old generation']));
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement']);
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement', 'appended']);
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement', 'appended']);
+    feed.dispose();
+  });
+
+  it('keeps a same-identity, same-size reread unchanged', async() => {
+    // risk: activity accuracy — an unchanged poll must not duplicate already rendered records.
+    const entry = { kind: 'event' as const, ts: '1', text: 'stable', offset: 10 };
+    const logIdentity = { size: 40, ino: 10, birthtimeMs: 100 };
+    const snapshots: FeedSnapshot[] = [];
+    const feed = new AgentDetailFeed(
+      vi.fn().mockResolvedValue(detail([entry], 'thread-1', logIdentity)),
+      new FakeVisibilitySource(),
+      setInterval,
+      clearInterval,
+      snapshot => snapshots.push(snapshot),
+    );
+
+    feed.select('thread-1');
+    await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['stable']));
+    const sequence = snapshots.at(-1)?.detail?.entries[0]?.feedSequence;
+    await feed.refresh();
+
+    expect(entryTexts(snapshots.at(-1))).toEqual(['stable']);
+    expect(snapshots.at(-1)?.detail?.entries[0]?.feedSequence).toBe(sequence);
     feed.dispose();
   });
 

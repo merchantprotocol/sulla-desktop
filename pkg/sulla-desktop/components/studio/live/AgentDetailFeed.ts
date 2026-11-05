@@ -111,6 +111,15 @@ export class AgentDetailFeed {
 
   private mergeDetail(incoming: AgentConversationDetail): FeedDetail {
     if (!this.detail || this.detail.id !== incoming.id) return { ...incoming, entries: this.append(incoming.entries) };
+    const previousIdentity = this.detail.logIdentity;
+    const incomingIdentity = incoming.logIdentity;
+    const logWasReplaced = previousIdentity !== undefined && incomingIdentity !== undefined && (
+      previousIdentity.ino !== incomingIdentity.ino ||
+      previousIdentity.birthtimeMs !== incomingIdentity.birthtimeMs ||
+      incomingIdentity.size < previousIdentity.size
+    );
+
+    if (logWasReplaced) return { ...incoming, entries: this.append(incoming.entries) };
     const existing = this.detail.entries;
     const knownOffsets = existing.flatMap(entry => entry.offset === undefined ? [] : [entry.offset]);
     const lastKnownOffset = knownOffsets.length === 0 ? -1 : Math.max(...knownOffsets);
