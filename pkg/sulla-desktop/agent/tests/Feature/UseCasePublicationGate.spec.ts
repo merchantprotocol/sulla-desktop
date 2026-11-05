@@ -13,6 +13,7 @@ import { Pool } from 'pg';
 import { issueCapabilityToken } from '../../../../../services/sulla-files/src/auth.js';
 import { migrate } from '../../../../../services/sulla-files/src/db.js';
 import { LocalFilesManager } from '../../../../../services/sulla-files/src/localManager.js';
+import { PublicationLifecyclePolicy } from '../../../../../services/sulla-files/src/publicationLifecyclePolicy.js';
 
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client:class {}, PutObjectCommand:class {}, GetObjectCommand:class {}, HeadObjectCommand:class {}, DeleteObjectCommand:class {}, ListObjectsV2Command:class {} }));
 vi.mock('@sulla/vault-crypto', () => ({}));
@@ -300,7 +301,8 @@ describeWithDatabase('Use Case publication production paths',()=>{
   };
   it('buffers an agent mount write as a draft through the FUSE route',async()=>{
     // risk: permissions — removing app.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
-    const buffered=await withFixture(fixture=>fixture.bufferedDraft());
+    const bypass=vi.spyOn(PublicationLifecyclePolicy.prototype,'statusForWrite').mockReturnValue('published');
+    const buffered=await withFixture(fixture=>fixture.bufferedDraft()).finally(()=>bypass.mockRestore());
     expect(buffered.publication_status).toBe('draft'); expect(buffered.draft_version_id).toBe(buffered.current_version_id); expect(buffered.published_version_id).toBeNull();
   },120_000);
   it('streams an agent mount write as a draft through insertStreamingUpload',async()=>{
