@@ -119,6 +119,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
       'replay-parent', 'replay-parent-thread',
     );
     const results = [{ label: 'replay', status: 'completed' as const, output: 'done', threadId: '' }];
+    await registry.recordTaskCompletion(job.jobId, 0, results[0]);
     await registry.completeJob(job.jobId, results);
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(job.jobId) as any, results)).toBe(true);
     expect((await registry.getPendingCompletions()).map(j => j.jobId)).toContain(job.jobId);
@@ -173,7 +174,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await restartedProvider.jobs.job(consumed.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
     expect((await restartedProvider.jobs.job(unconsumed.jobId))?.tasks[0].completionDeliveredAt).toBeUndefined();
     const pending = await restartedProvider.service.getPendingCompletions();
-    expect(pending.find(job => job.jobId === consumed.jobId)?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
+    expect(pending.map(job => job.jobId)).not.toContain(consumed.jobId);
     expect(pending.map(job => job.jobId)).toContain(unconsumed.jobId);
 
     inbox.clearCompletionInboxes();
