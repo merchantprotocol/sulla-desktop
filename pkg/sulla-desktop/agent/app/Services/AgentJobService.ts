@@ -49,7 +49,10 @@ async createJob(
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
   await this.states.mutateJob(jobId, job => {
     if (!job.tasks[index]) return job;
-    const nextPatch = (job.status === 'stopped' || job.tasks[index].status === 'stopped') && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    const protectedPatch = (job.status === 'stopped' || job.tasks[index].status === 'stopped') && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
+    // Runner bookkeeping precedes recordTaskCompletion; don't expose a terminal rollup before its diagnostics exist.
+    const { status: pendingStatus, ...nonStatusPatch } = protectedPatch;
+    const nextPatch = pendingStatus === 'completed' || pendingStatus === 'error' ? nonStatusPatch : protectedPatch;
     return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
   }, undefined, false);
 }
