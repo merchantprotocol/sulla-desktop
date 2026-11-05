@@ -50,7 +50,6 @@ export class AgentJobServiceProvider {
     this.runtime = new JobRuntimeRegistry();
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const graphPresence = { matches: async(owner: { channel:string; threadId:string; agentId:string }) => { const { GraphRegistry } = await import('../../services/GraphRegistry'); const entry=GraphRegistry.get(owner.threadId); if(!entry)return false; const metadata=entry.state.metadata as any; return String(metadata.wsChannel??'')===owner.channel&&String(metadata.agentId??metadata.agent?.id??metadata.wsChannel??'')===owner.agentId; } };
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => !['queued', 'running', 'parked'].includes(status) }, graphPresence, new MainStrandedOwnerDetector(taskLocator,this.jobs));
@@ -60,7 +59,8 @@ export class AgentJobServiceProvider {
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage,topLevelSessions);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
-    const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadByChannel(channel));
+    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
+    const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);

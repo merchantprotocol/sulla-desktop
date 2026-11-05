@@ -18,7 +18,9 @@ export class CustodyDestinationResolver {
       if(!['queued','running','parked'].includes(task.status))return {ok:false,message:`Destination thread ${destination} is terminal.`};
       return {ok:true,owner:{channel:task.agentId,threadId:destination,agentId:task.agentId}};
     }
-    const target=await this.receivers.resolve(destination);
+    const candidates=await this.receivers.resolveAll?.(destination);
+    if(candidates&&candidates.length>1)return {ok:false,message:`Destination "${destination}" is ambiguous: ${candidates.map(candidate=>candidate.threadId).join(', ')}.`};
+    const target=candidates?.[0]??await this.receivers.resolve(destination);
     target.threadId??=await this.activeThread(destination);
     if(!target.threadId||!target.agentId)return {ok:false,message:`Destination "${destination}" is not a unique live agent channel or thread.`};
     return {ok:true,owner:{channel:target.channel,threadId:target.threadId,agentId:target.agentId}};

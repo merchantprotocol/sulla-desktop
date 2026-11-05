@@ -4,24 +4,26 @@
 
 import type { AgentInboxTarget } from './AgentInbox';
 import type { AgentJob } from '../tools/agents/jobRegistry';
+import type { JobCustodyPort } from '../app/Services/JobCustodyTypes';
 
-export interface AgentInboxReceiverResolver { resolve(channel: string): Promise<AgentInboxTarget> }
+export interface AgentInboxReceiverResolver { resolve(channel: string): Promise<AgentInboxTarget>; resolveAll?(channel:string):Promise<AgentInboxTarget[]> }
 export interface AgentInboxJobReader { allJobs(): Promise<AgentJob[]> }
 
 /** Resolves a channel to its own persona and durable parked thread; never falls back to Sulla for named agents. */
 export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverResolver {
-  constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThread: (channel: string) => string | undefined) {}
+  constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThreads: (channel: string) => string[],private readonly custody?:Pick<JobCustodyPort,'resolveOwner'>) {}
 
   async resolve(channel: string): Promise<AgentInboxTarget> {
-    const agentId = channel;
-    const liveThread = this.activeThread(channel);
-    if (liveThread) return { channel, threadId: liveThread, agentId };
+    return (await this.resolveAll(channel))[0]??{channel,agentId:channel};
+  }
+  async resolveAll(channel:string):Promise<AgentInboxTarget[]>{
+    const candidates=new Map<string,AgentInboxTarget>();
+    for(const threadId of this.activeThreads(channel))candidates.set(threadId,{channel,threadId,agentId:channel});
     const jobs = await this.jobs.allJobs();
     for (const job of jobs.sort((a,b) => b.createdAt-a.createdAt)) {
-      const task = job.tasks.find(candidate => candidate.agentId===agentId && candidate.status==='parked' && candidate.threadId);
-      if (task?.threadId) return { channel, threadId: task.threadId, agentId };
-      if (job.parentAgentId===agentId && job.status==='parked' && job.parentThreadId) return { channel, threadId: job.parentThreadId, agentId };
+      for(let index=0;index<job.tasks.length;index++){const task=job.tasks[index];if(task.agentId===channel&&task.status==='parked'&&task.threadId)candidates.set(task.threadId,{channel,threadId:task.threadId,agentId:channel});}
+      if(job.status==='parked'){const owner=await this.custody?.resolveOwner(job.jobId);if(owner?.agentId===channel)candidates.set(owner.threadId,owner);}
     }
-    return { channel, agentId };
+    return [...candidates.values()];
   }
 }

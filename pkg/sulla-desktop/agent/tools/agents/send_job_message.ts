@@ -24,19 +24,19 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
   }
 
-  if(metadata){
-    const caller=await agentJobProvider.custodyCallerVerifier.verify(metadata);
-    const owner=await agentJobProvider.custody.resolveOwner(jobId,taskIndex);
-    if(!owner)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
-    if(caller.kind==='agent'){
+  const caller=metadata?await agentJobProvider.custodyCallerVerifier.verify(metadata):undefined;
+  const locked=await agentJobProvider.custody.withOwner(jobId,taskIndex,async(client,owner)=>{
+    if(caller){
       const same=caller.threadId===owner.threadId;
       const ancestor=await agentJobProvider.custodyLineage.isAncestor(caller.threadId,owner.threadId);
-      if(!same&&!ancestor)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${owner.agentId} (${owner.channel}/${owner.threadId}).`};
+      if(!same&&!ancestor)return {forbidden:owner} as const;
     }
-  }
-
-  const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
-  if (targets.length === 0) {
+    return {queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
+  });
+  if(!locked)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
+  if('forbidden' in locked)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${locked.forbidden.agentId} (${locked.forbidden.channel}/${locked.forbidden.threadId}).`};
+  const queued=locked.queued;
+  if (queued.length === 0) {
     return {
       successBoolean: false,
       responseString: taskIndex === undefined
@@ -44,15 +44,11 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         : `Job "${ jobId }" has no task at index ${ taskIndex } (or it has already finished).`,
     };
   }
-  if (targets.some(target => !['running', 'parked'].includes(target.jobStatus))) {
+  if (queued.some(({target}) => !['running', 'parked'].includes(target.jobStatus))) {
     return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
   }
 
   const job = await getJob(jobId);
-  const queued = await Promise.all(targets.map(async(target) => ({
-    target,
-    record: await AgentJobMessagingModel.queueMessage(target, message),
-  })));
   let deliveredLive = 0;
   const notWoken: Array<{ taskIndex: number; reason: string }> = [];
 

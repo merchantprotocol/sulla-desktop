@@ -22,6 +22,6 @@ export class JobCustodyService implements JobCustodyPort {
     return result;
   }
   resolveOwner(jobId:string,taskIndex?:number):Promise<CustodyRecord|undefined>{return this.repository.resolveOwner(jobId,taskIndex);}
-  withOwner<T>(jobId:string,taskIndex:number|undefined,actor:VerifiedCustodyActor,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{actor.assertVerified();return this.repository.withCustodyLock(jobId,taskIndex,operation);}
+  withOwner<T>(jobId:string,taskIndex:number|undefined,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{return this.repository.withCustodyLock(jobId,taskIndex,operation);}
   history(jobId:string):Promise<CustodyAuditRecord[]>{return this.repository.history(jobId);}
 }
