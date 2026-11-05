@@ -151,11 +151,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async markCompletionDelivered(jobId: string): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND status = 'completed' AND completion_delivered_at IS NULL`, [jobId]);
+    await this.connection.run(`UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND completion_delivered_at IS NULL`, [jobId]);
   }
 
   async pendingCompletions(): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE (tasks @? '$[*] ? (@.completion != null)' OR (status = 'completed' AND completion_delivered_at IS NULL)) AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY COALESCE(finished_at, created_at) ASC`);
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+      WHERE completion_delivered_at IS NULL
+        AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
+        AND parent_channel IS NOT NULL
+        AND parent_thread_id IS NOT NULL
+      ORDER BY COALESCE(finished_at, created_at) ASC`);
     return rows.map(row => this.map(row));
   }
 
