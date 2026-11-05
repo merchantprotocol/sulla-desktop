@@ -22,6 +22,7 @@ class RegisteredCustodyTool {
 
 dbDescribe('registered custody transfer tools',()=>{
   const database=new TestDatabase(); const tools=new RegisteredCustodyTool(); let registry:any;
+  const priorEnvironment={url:process.env.SULLA_DATABASE_URL,options:process.env.PGOPTIONS,poolMax:process.env.SULLA_DATABASE_POOL_MAX};
   beforeAll(async()=>{
     await database.initialize(); process.env.SULLA_DATABASE_URL=database.appUrl(); process.env.PGOPTIONS=`-csearch_path=${database.schema},public`; process.env.SULLA_DATABASE_POOL_MAX='1';
     const {postgresClient}=await import('../../../database/PostgresClient'); await postgresClient.initialize(); await postgresClient.query(`SET search_path TO "${database.schema}", public`);
@@ -31,6 +32,9 @@ dbDescribe('registered custody transfer tools',()=>{
     const {postgresClient}=await import('../../../database/PostgresClient');
     await postgresClient.end();
     await database.dispose();
+    if(priorEnvironment.url===undefined)delete process.env.SULLA_DATABASE_URL;else process.env.SULLA_DATABASE_URL=priorEnvironment.url;
+    if(priorEnvironment.options===undefined)delete process.env.PGOPTIONS;else process.env.PGOPTIONS=priorEnvironment.options;
+    if(priorEnvironment.poolMax===undefined)delete process.env.SULLA_DATABASE_POOL_MAX;else process.env.SULLA_DATABASE_POOL_MAX=priorEnvironment.poolMax;
   });
 
   it('H1/H7 transfers custody through the registered manifest path and records durable notices',async()=>{
