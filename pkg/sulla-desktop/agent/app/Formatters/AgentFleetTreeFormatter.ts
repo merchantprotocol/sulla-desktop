@@ -64,7 +64,7 @@ export class AgentFleetTreeFormatter {
 
   private bound(line: FleetTreeLine): FleetTreeLine {
     if (this.bytes(line) <= 400) return line;
-    const bounded = { ...line, truncated: true };
+    const bounded: FleetTreeLine = { ...line, truncated: true };
     for (const key of ['label', 'step', 'pr', 'parent', 'ref', 'activityAge', 'state'] as const) {
       if (this.bytes(bounded) <= 400) break;
       const value = bounded[key];
