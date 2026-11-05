@@ -300,6 +300,9 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     await vi.waitFor(async() => {
       const job = await registry.getJob(launch.jobId);
       expect(job?.status).toBe('failed');
+      // The failure row and its lifecycle diagnostic are the observable unit;
+      // don't stop waiting at an unrelated intermediate failed rollup.
+      expect(job?.error).toContain(`job=${ launch.jobId }`);
     }, { timeout: 2_000, interval: 10 });
     const failed = await registry.getJob(launch.jobId);
     expect(failed?.error).toContain(`job=${ launch.jobId }`);
