@@ -38,34 +38,41 @@ export class BrowserUrlPolicy {
   }
 
   private isUnsafeAddress(raw: string): boolean {
-    const mapped = raw.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-    const address = mapped ?? raw.toLowerCase();
-    if (isIP(address) === 4) {
-      const n = address.split('.').reduce((value, octet) => (value << 8) + Number(octet), 0) >>> 0;
-      return BrowserUrlPolicy.V4_BLOCKS.some(([base, bits]) => bits === 0 || (n >>> (32 - bits)) === (base >>> (32 - bits)));
-    }
-    if (isIP(address) !== 6) return true;
-    const words = this.ipv6Words(address);
-    if (words[0] === 0 && words[1] === 0 && words[2] === 0 && words[3] === 0 && words[4] === 0 && words[5] === 0xffff) {
-      return this.isUnsafeAddress(`${ words[6] >> 8 }.${ words[6] & 255 }.${ words[7] >> 8 }.${ words[7] & 255 }`);
-    }
-    const normalized = address.replace(/^0+/, '');
-    return address === '::' || address === '::1' || address.startsWith('fc') || address.startsWith('fd') ||
-      /^fe[89ab]/.test(address) || address.startsWith('ff') || normalized.startsWith('2001:db8:') ||
-      address.startsWith('2001:10:') || address.startsWith('100:');
+    if (isIP(raw) === 4) return this.matchesCidr(this.ipv4Value(raw), BrowserUrlPolicy.V4_BLOCKS, 32);
+    if (isIP(raw) !== 6) return true;
+    return this.matchesCidr(this.ipv6Value(raw), BrowserUrlPolicy.V6_BLOCKS, 128);
   }
 
-  private ipv6Words(address: string): number[] {
+  private ipv4Value(address: string): bigint {
+    return address.split('.').reduce((value, octet) => (value << 8n) | BigInt(octet), 0n);
+  }
+
+  private ipv6Value(address: string): bigint {
     const halves = address.split('::');
-    const parse = (part: string): number[] => part ? part.split(':').map(word => parseInt(word || '0', 16)) : [];
+    const parse = (part: string): number[] => part ? part.split(':').flatMap(word => word.includes('.')
+      ? [Number(this.ipv4Value(word) >> 16n), Number(this.ipv4Value(word) & 0xffffn)]
+      : [parseInt(word || '0', 16)]) : [];
     const left = parse(halves[0]); const right = parse(halves[1] ?? '');
-    return [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill(0), ...right];
+    return [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill(0), ...right]
+      .reduce((value, word) => (value << 16n) | BigInt(word), 0n);
   }
 
-  private static readonly V4_BLOCKS: Array<[number, number]> = [
-    [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8],
-    [0xa9fe0000, 16], [0xac100000, 12], [0xc0000000, 24], [0xc0000200, 24],
-    [0xc0a80000, 16], [0xc6120000, 15], [0xc6336400, 24], [0xcb007100, 24],
-    [0xe0000000, 4], [0xf0000000, 4], [0xffffffff, 32],
+  private matchesCidr(value: bigint, ranges: ReadonlyArray<readonly [bigint, number]>, width: number): boolean {
+    return ranges.some(([base, bits]) => (value >> BigInt(width - bits)) === (base >> BigInt(width - bits)));
+  }
+
+  private static readonly V4_BLOCKS: ReadonlyArray<readonly [bigint, number]> = [
+    [0x00000000n, 8], [0x0a000000n, 8], [0x64400000n, 10], [0x7f000000n, 8],
+    [0xa9fe0000n, 16], [0xac100000n, 12], [0xc0000000n, 24], [0xc0000200n, 24],
+    [0xc0586300n, 24], [0xc0a80000n, 16], [0xc6120000n, 15], [0xc6336400n, 24],
+    [0xcb007100n, 24], [0xe0000000n, 4], [0xf0000000n, 4], [0xffffffffn, 32],
+  ];
+  private static readonly V6_BLOCKS: ReadonlyArray<readonly [bigint, number]> = [
+    [0n, 128], [1n, 128], [0n, 96], [0xffff00000000n, 96],
+    [0x64ff9b000000000000000000000000n, 96], [0x64ff9b000100000000000000000000n, 48],
+    [0x1000000000000000000000000000000n, 64], [0x20010000000000000000000000000000n, 23],
+    [0x20010db8000000000000000000000000n, 32], [0x20020000000000000000000000000000n, 16],
+    [0xfc000000000000000000000000000000n, 7], [0xfe800000000000000000000000000000n, 10],
+    [0xfec00000000000000000000000000000n, 10], [0xff000000000000000000000000000000n, 8],
   ];
 }

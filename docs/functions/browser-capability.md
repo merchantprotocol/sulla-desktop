@@ -14,7 +14,7 @@ spec:
         - https://www.foodnetwork.com
 ```
 
-`browser: true` is also accepted when the function genuinely needs arbitrary HTTP(S) origins. Prefer `allowedOrigins`; entries are exact origins (scheme, host, and optional port).
+`browser: true` is also accepted when the function genuinely needs arbitrary HTTP(S) origins. Prefer `allowedOrigins`; entries are exact origins (scheme, host, and optional port). This is an important security boundary: DNS can change between validation and the browser's network connection, so an explicit list of trusted origins materially reduces the residual DNS-rebinding window. Use unrestricted `browser: true` only when the function cannot know its public origins in advance.
 
 Desktop injects `SULLA_BROWSER_HOST_URL` and `SULLA_BROWSER_TOKEN` only for the duration of an authorized invocation. Import or bundle [`SullaBrowserClient.mjs`](examples/SullaBrowserClient.mjs):
 

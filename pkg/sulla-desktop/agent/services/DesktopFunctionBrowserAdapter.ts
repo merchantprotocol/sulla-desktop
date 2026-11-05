@@ -6,11 +6,10 @@ import type { FunctionBrowserAdapter } from './FunctionBrowserCapabilityService'
 import { buildWrapper, classifyCode } from '../tools/browser/exec';
 import type { ChromeApi } from '@pkg/main/chromeApi';
 const EVALUATION_TIMEOUT_MS = 15_000;
-const MAX_RESULT_BYTES = 1024 * 1024;
 export class DesktopFunctionBrowserAdapter implements FunctionBrowserAdapter {
   private readonly tabIds = new Map<string, string>();
   private readonly navigationGuards = new Map<string, { validate: (url: string) => Promise<void>; listener: (details: { tabId: string; url: string }) => void }>();
-  constructor(private readonly chrome: ChromeApi, private readonly evaluationTimeoutMs = EVALUATION_TIMEOUT_MS, private readonly maxResultBytes = MAX_RESULT_BYTES) {}
+  constructor(private readonly chrome: ChromeApi, private readonly evaluationTimeoutMs = EVALUATION_TIMEOUT_MS) {}
   async open(assetId: string, url: string, validateNavigation: (url: string) => Promise<void>): Promise<void> {
     const tab = await this.chrome.tabs.create({ url, hidden: true, requestGuard: validateNavigation, denyPopups: true }); this.tabIds.set(assetId, tab.id);
     let violation: Error | null = null;
@@ -48,22 +47,20 @@ export class DesktopFunctionBrowserAdapter implements FunctionBrowserAdapter {
     try {
       const results = await Promise.race([this.chrome.scripting.executeScript({ target: { tabId }, code: buildWrapper(code, classified.form) }), timeout]);
       const envelope: any = results[0]?.result; if (envelope?.error) throw new Error('browser script failed');
-      let serialized: string | undefined; try { serialized = JSON.stringify(envelope?.result) } catch { throw new Error('browser result is not JSON-serializable') }
-      if (serialized === undefined) throw new Error('browser result is not JSON-serializable');
-      if (Buffer.byteLength(serialized) > this.maxResultBytes) throw new Error('browser result exceeds size limit');
-      return JSON.parse(serialized);
+      return envelope?.result;
     } catch (error) { if ((error as Error).message === 'browser evaluation timed out') await this.close(assetId).catch(() => undefined); throw error } finally { if (timer) clearTimeout(timer) }
   }
   async close(assetId: string): Promise<void> {
     const tabId = this.tabIds.get(assetId); if (tabId === undefined) return;
+    try { await this.chrome.tabs.remove(tabId) } catch (error) {
+      const existing = await this.chrome.tabs.get(tabId).catch(() => null); if (existing) throw error;
+    }
+    this.tabIds.delete(assetId);
     const guard = this.navigationGuards.get(assetId);
     if (guard) {
       this.chrome.webNavigation.onBeforeNavigate.removeListener(guard.listener);
       this.chrome.webNavigation.onCommitted.removeListener(guard.listener);
       this.navigationGuards.delete(assetId);
-    }
-    try { await this.chrome.tabs.remove(tabId); this.tabIds.delete(assetId) } catch (error) {
-      const existing = await this.chrome.tabs.get(tabId).catch(() => null); if (!existing) { this.tabIds.delete(assetId); return } throw error;
     }
   }
   private requireTabId(assetId: string): string { const tabId = this.tabIds.get(assetId); if (tabId === undefined) throw new Error('browser tab not found'); return tabId }

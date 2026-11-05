@@ -11,16 +11,13 @@ class Event {
 }
 class ChromeHarness {
   removed: string[]=[]; result: Promise<any> = Promise.resolve([{result:{result:'ok'}}]);
-  currentUrl='https://example.com'; createProperties:any;
-  tabs={create:async(props:any)=>{this.createProperties=props; return {id:'tab'}},get:async()=>({id:'tab',url:this.currentUrl,status:'complete'}),remove:async(id:string)=>{this.removed.push(id)}};
+  currentUrl='https://example.com'; createProperties:any; removeFailures=0;
+  tabs={create:async(props:any)=>{this.createProperties=props; return {id:'tab'}},get:async()=>({id:'tab',url:this.currentUrl,status:'complete'}),remove:async(id:string)=>{if(this.removeFailures-->0) throw new Error('transient'); this.removed.push(id)}};
   scripting={executeScript:async()=>this.result}; webNavigation={onBeforeNavigate:new Event(),onCommitted:new Event()};
 }
 describe('DesktopFunctionBrowserAdapter',()=>{
   it('terminates the tab when evaluation exceeds its deadline',async()=>{ // risk: Electron denial of service
     const chrome=new ChromeHarness(); chrome.result=new Promise(()=>{}); const adapter=new DesktopFunctionBrowserAdapter(chrome as any,1,1024); await adapter.open('a','https://example.com',async()=>{}); await expect(adapter.evaluate('a','1')).rejects.toThrow('timed out'); expect(chrome.removed).toEqual(['tab']);
-  });
-  it('rejects an oversized result before it reaches the HTTP writer',async()=>{ // risk: Electron memory exhaustion
-    const chrome=new ChromeHarness(); chrome.result=Promise.resolve([{result:{result:'x'.repeat(20)}}]); const adapter=new DesktopFunctionBrowserAdapter(chrome as any,100,10); await adapter.open('a','https://example.com',async()=>{}); await expect(adapter.evaluate('a','1')).rejects.toThrow('size limit');
   });
   it('keeps navigation guarded and closes before eval after a private redirect',async()=>{ // risk: SSRF
     const chrome=new ChromeHarness(); const adapter=new DesktopFunctionBrowserAdapter(chrome as any);
@@ -43,5 +40,15 @@ describe('DesktopFunctionBrowserAdapter',()=>{
     chrome.webNavigation.onCommitted.emit({tabId:'tab',url:'http://127.0.0.1'});
     await new Promise(resolve=>setTimeout(resolve,0));
     expect(chrome.removed).toEqual(['tab']);
+  });
+  it('keeps both navigation guards attached when tab removal fails',async()=>{ // risk: SSRF after failed cleanup
+    const chrome=new ChromeHarness(); const adapter=new DesktopFunctionBrowserAdapter(chrome as any);
+    await adapter.open('a','https://example.com',async()=>{}); chrome.removeFailures=1;
+    await expect(adapter.close('a')).rejects.toThrow('transient');
+    expect(chrome.webNavigation.onBeforeNavigate.listeners).toHaveLength(1);
+    expect(chrome.webNavigation.onCommitted.listeners).toHaveLength(1);
+    await adapter.close('a');
+    expect(chrome.webNavigation.onBeforeNavigate.listeners).toHaveLength(0);
+    expect(chrome.webNavigation.onCommitted.listeners).toHaveLength(0);
   });
 });

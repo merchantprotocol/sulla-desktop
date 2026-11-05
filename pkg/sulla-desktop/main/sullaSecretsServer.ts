@@ -32,6 +32,7 @@ import { FunctionBrowserCapabilityError } from '@pkg/agent/services/FunctionBrow
 const DEFAULT_PORT = hostPort(30121);
 const BIND_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 4 * 1024;
+const MAX_BROWSER_RESPONSE_BYTES = 1024 * 1024;
 
 let server: http.Server | null = null;
 
@@ -77,11 +78,12 @@ export async function startSullaSecretsServer(port: number = DEFAULT_PORT): Prom
 export async function stopSullaSecretsServer(): Promise<void> {
   const srv = server;
   server = null;
-  if (!srv) return;
+  if (!srv) { await functionBrowserCompositionRoot.capabilities.shutdown(); return }
 
   await new Promise<void>((resolve) => {
     srv.close(() => resolve());
   });
+  await functionBrowserCompositionRoot.capabilities.shutdown();
   console.log('[SullaSecretsServer] Stopped');
 }
 
@@ -171,7 +173,7 @@ async function handleInvalidate(req: http.IncomingMessage, res: http.ServerRespo
   writeJson(res, 200, { invalidated: true });
 }
 
-class FunctionBrowserRequestHandler {
+export class FunctionBrowserRequestHandler {
   constructor(private readonly service: FunctionBrowserCapabilityService) {}
   async handle(path: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
@@ -187,7 +189,11 @@ class FunctionBrowserRequestHandler {
       if (path === '/browser/eval') {
         const tabId = typeof body.tabId === 'string' ? body.tabId : ''; const code = typeof body.code === 'string' ? body.code : '';
         if (!tabId || !code) { writeJson(res, 400, { error: 'invalid_request' }); return }
-        writeJson(res, 200, { result: await this.service.evaluate(token, tabId, code) }); return;
+        const serialized = JSON.stringify({ result: await this.service.evaluate(token, tabId, code) });
+        if (Buffer.byteLength(serialized) > MAX_BROWSER_RESPONSE_BYTES) {
+          writeJson(res, 413, { error: 'browser_result_too_large' }); return;
+        }
+        writeSerializedJson(res, 200, serialized); return;
       }
       if (path === '/browser/close') {
         const tabId = typeof body.tabId === 'string' ? body.tabId : '';
@@ -211,7 +217,10 @@ const browserRequestHandler = new FunctionBrowserRequestHandler(functionBrowserC
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 function writeJson(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
+  writeSerializedJson(res, status, JSON.stringify(payload));
+}
+
+function writeSerializedJson(res: http.ServerResponse, status: number, body: string): void {
   res.writeHead(status, {
     'Content-Type':   'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body).toString(),

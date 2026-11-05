@@ -26,6 +26,54 @@ interface BrowserCapability {
   revoked:       boolean;
 }
 
+class BrowserTabCleanupRegistry {
+  private readonly pending = new Map<string, number>();
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  constructor(
+    private readonly browser: FunctionBrowserAdapter,
+    private readonly schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>,
+    private readonly cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void,
+  ) {}
+
+  retain(assetId: string): void {
+    if (this.pending.has(assetId)) return;
+    this.pending.set(assetId, 0);
+    this.scheduleRetry(assetId);
+  }
+
+  get size(): number { return this.pending.size }
+
+  async drain(): Promise<void> {
+    for (const timer of this.timers.values()) this.cancelSchedule(timer);
+    this.timers.clear();
+    while (this.pending.size > 0) {
+      for (const assetId of [...this.pending.keys()]) await this.tryClose(assetId, false);
+    }
+  }
+
+  private scheduleRetry(assetId: string): void {
+    const attempt = this.pending.get(assetId);
+    if (attempt === undefined || this.timers.has(assetId)) return;
+    const delay = Math.min(100 * (2 ** attempt), 5_000);
+    const timer = this.schedule(() => {
+      this.timers.delete(assetId);
+      void this.tryClose(assetId, true);
+    }, delay);
+    this.timers.set(assetId, timer);
+  }
+
+  private async tryClose(assetId: string, reschedule: boolean): Promise<void> {
+    try {
+      await this.browser.close(assetId);
+      this.pending.delete(assetId);
+    } catch {
+      this.pending.set(assetId, (this.pending.get(assetId) ?? 0) + 1);
+      if (reschedule) this.scheduleRetry(assetId);
+    }
+  }
+}
+
 export type BrowserCapabilityOutcome = 'unknown-token' | 'expired' | 'foreign-tab' | 'origin-not-allowed' | 'invalid-url' | 'unsafe-network-target';
 
 export class FunctionBrowserCapabilityError extends Error {
@@ -54,6 +102,7 @@ export class FunctionBrowserPermissionReader {
 
 export class FunctionBrowserCapabilityService {
   private readonly capabilities = new Map<string, BrowserCapability>();
+  private readonly cleanupRegistry: BrowserTabCleanupRegistry;
 
   constructor(
     private readonly browser: FunctionBrowserAdapter,
@@ -62,7 +111,9 @@ export class FunctionBrowserCapabilityService {
     private readonly urlPolicy = new BrowserUrlPolicy(),
     private readonly schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = setTimeout,
     private readonly cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void = clearTimeout,
-  ) {}
+  ) { this.cleanupRegistry = new BrowserTabCleanupRegistry(browser, schedule, cancelSchedule) }
+
+  get pendingCleanupCount(): number { return this.cleanupRegistry.size }
 
   mintForManifest(invocationId: string, manifest: unknown, ttlMs: number = DEFAULT_TTL_MS): { token: string } | null {
     const permission = new FunctionBrowserPermissionReader().read(manifest);
@@ -124,7 +175,14 @@ export class FunctionBrowserCapabilityService {
     this.capabilities.delete(token);
     this.cancelSchedule(capability.expiryTimer);
     await Promise.allSettled([...capability.pendingOpens]);
-    for (const [tabId, assetId] of [...capability.tabs]) await this.closeWithRetryRetention(capability, tabId, assetId);
+    for (const [tabId, assetId] of [...capability.tabs]) {
+      try { await this.browser.close(assetId); capability.tabs.delete(tabId) } catch { this.cleanupRegistry.retain(assetId) }
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all([...this.capabilities.keys()].map(token => this.invalidate(token)));
+    await this.cleanupRegistry.drain();
   }
 
   private async requireCapability(token: string): Promise<BrowserCapability> {
@@ -145,6 +203,9 @@ export class FunctionBrowserCapabilityService {
   }
 
   private async closeWithRetryRetention(capability: BrowserCapability, tabId: string, assetId: string): Promise<void> {
-    try { await this.browser.close(assetId); capability.tabs.delete(tabId) } catch { capability.tabs.set(tabId, assetId) }
+    try { await this.browser.close(assetId); capability.tabs.delete(tabId) } catch {
+      if (capability.revoked) this.cleanupRegistry.retain(assetId);
+      else capability.tabs.set(tabId, assetId);
+    }
   }
 }
