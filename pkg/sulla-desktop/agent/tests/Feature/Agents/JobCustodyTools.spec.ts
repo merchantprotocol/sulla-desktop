@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {agentToolManifests} from '../../../tools/agents/manifests';
@@ -29,6 +30,7 @@ dbDescribe('registered custody transfer tools',()=>{
   const database=new TestDatabase(); const tools=new RegisteredCustodyTool(); let registry:any;
   const priorEnvironment={url:process.env.SULLA_DATABASE_URL,options:process.env.PGOPTIONS,poolMax:process.env.SULLA_DATABASE_POOL_MAX};
   beforeAll(async()=>{
+    const {SullaSettingsModel}=await import('../../../database/models/SullaSettingsModel');SullaSettingsModel.setFallbackFilePath(join(tmpdir(),'job-custody-tools-settings.json'));
     await database.initialize(); process.env.SULLA_DATABASE_URL=database.appUrl(); process.env.PGOPTIONS=`-csearch_path=${database.schema},public`; process.env.SULLA_DATABASE_POOL_MAX='1';
     const {postgresClient}=await import('../../../database/PostgresClient'); await postgresClient.initialize(); await postgresClient.query(`SET search_path TO "${database.schema}", public`);
     registry=await import('../../../tools/agents/jobRegistry');
