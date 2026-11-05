@@ -46,9 +46,9 @@ describe('agents/replace_lead',()=>{
  it('calls through the registered manifest and validates required args',async()=>{
    // risk: tool exposure — acceptance behavior must be reachable through the production registry.
    const registry=new ToolRegistry(); registry.registerManifests(agentToolManifests.filter(manifest=>manifest.name==='replace_lead'));
-   const tool:any=await registry.createToolForCategory('agents','replace_lead'); const replace=vi.fn(async()=>({ok:true,message:'done'})); tool.service={replace}; tool.setState({metadata:{wsChannel:owner.channel,threadId:owner.threadId,routedAgentId:owner.agentId}});
+   const tool:any=await registry.createToolForCategory('agents','replace_lead'); const validated=vi.fn(async()=>({successBoolean:true,responseString:'done'})); tool._validatedCall=validated;
    await expect(tool.call({jobId:'lead',taskIndex:0})).rejects.toThrow('agentId');
-   const good=await tool.call({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol'}); expect(good.success).toBe(true); expect(replace).toHaveBeenCalledWith(expect.objectContaining({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol'}));
+   const good=await tool.call({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol'}); expect(good.success).toBe(true); expect(validated).toHaveBeenCalledWith(expect.objectContaining({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol'}));
  });
  it('refuses a peer before launching and names the live owner',async()=>{
    // risk: authorization — peers cannot replace an actively owned lead.
