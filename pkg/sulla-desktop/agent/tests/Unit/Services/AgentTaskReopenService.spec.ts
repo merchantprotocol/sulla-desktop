@@ -35,7 +35,7 @@ describe('AgentTaskReopenService', () => {
     expect(first).toEqual({ reopened: true, generation: 2 });
     expect(second).toEqual({ reopened: true, generation: 2, joined: true });
     expect(run).toHaveBeenCalledTimes(1);
-    const runCall = (run.mock.calls as Array<[{ threadId: string; generation: number }]>).at(0);
+    const runCall = (run.mock.calls as unknown as Array<[{ threadId: string; generation: number }]>).at(0);
     expect(runCall).toBeDefined();
     if (!runCall) throw new Error('runner call was not recorded');
     expect(runCall[0]).toMatchObject({ threadId: 'thread-1', generation: 2 });
@@ -63,7 +63,7 @@ describe('AgentTaskReopenService', () => {
     const service = new AgentTaskReopenService(jobs as any, { forTask: vi.fn(async() => []) } as any, inbox, new HiddenAgentTaskRunnerRegistry(), { now: () => new Date() } as any, { settle: vi.fn(), fail: vi.fn() });
 
     expect(await service.reopen('job-1', 0, 'fix the missing test', 'manager')).toEqual({ reopened: true, generation: 2, fallback: true });
-    const receiveCall = (inbox.receive.mock.calls as Array<[{ target: { threadId?: string }; envelope: { body: string } }]>).at(0);
+    const receiveCall = (inbox.receive.mock.calls as unknown as Array<[{ target: { threadId?: string }; envelope: { body: string } }]>).at(0);
     expect(receiveCall).toBeDefined();
     if (!receiveCall) throw new Error('inbox receive call was not recorded');
     const entry = receiveCall[0];
