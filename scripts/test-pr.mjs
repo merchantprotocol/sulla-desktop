@@ -97,7 +97,7 @@ class PerPrTestRunner {
           ? ['run', '--config', 'vitest.agent.config.mts', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
           : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts'];
         this.output.log(this.requiresSmoke(files) ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
-        await this.processRunner.run('yarn', ['vitest', ...selection], deadline);
+        await this.processRunner.run('yarn', ['vitest', ...selection, '--reporter=default', '--reporter=github-actions'], deadline);
       }
       this.output.log(`Per-PR tests completed in ${ ((this.clock.now() - started) / 1_000).toFixed(2) }s (budget: 60s).`);
     } catch (error) {
