@@ -6,7 +6,7 @@ import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
-import type { CustodyOwner, JobCustodyPort } from './JobCustodyTypes';
+import type { CustodyOwner, CustodyRecord, JobCustodyPort } from './JobCustodyTypes';
 import type { CustodyLineagePort } from './JobCustodyAuthorityPolicy';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
@@ -40,8 +40,10 @@ export class JobStopService extends Service {
     const tasks=job.tasks.map(item=>({...item}));
     tasks[taskIndex] = { ...task, status: 'stopped', finishedAt: stoppedAt, stoppedBy: StopPrincipal.attribution(principal), stopReason: reason };
     const settlesJob = tasks.every(item => !['queued', 'running', 'parked'].includes(item.status));
-    const mutation=async(client:any,owner:CustodyOwner)=>{
-      if(principal.kind==='agent'&&!await this.authorizedAgainst(owner,principal.threadId))return 'forbidden' as const;
+    const snapshot=principal.kind==='agent'?await this.custody?.resolveOwner(jobId,taskIndex):undefined;
+    const snapshotAncestor=principal.kind==='agent'&&snapshot&&snapshot.threadId!==principal.threadId?await this.authorizedAgainst(snapshot,principal.threadId):false;
+    const mutation=async(client:any,owner:CustodyRecord)=>{
+      if(principal.kind==='agent'&&owner.threadId!==principal.threadId&&!(snapshotAncestor&&snapshot?.threadId===owner.threadId&&snapshot.version===owner.version))return 'forbidden' as const;
       await this.repository.stopWithClient(client,jobId,tasks,StopPrincipal.attribution(principal),reason,settlesJob); return 'stopped' as const;
     };
     const outcome=this.custody?await this.custody.withOwner(jobId,taskIndex,mutation):
@@ -74,7 +76,9 @@ export class JobStopService extends Service {
     if (!root) return 'not-found';
     if (!['running', 'parked'].includes(root.status)) return 'already-finished';
     const stoppedBy = StopPrincipal.attribution(principal);
-    const locked=async(client:any,owner:CustodyOwner)=>{if(principal.kind==='agent'&&!await this.authorizedAgainst(owner,principal.threadId))return {forbidden:true as const};return {stoppedIds:await this.repository.stopCascadeWithClient(client,jobId,stoppedBy,reason)};};
+    const snapshot=principal.kind==='agent'?await this.custody?.resolveOwner(jobId):undefined;
+    const snapshotAncestor=principal.kind==='agent'&&snapshot&&snapshot.threadId!==principal.threadId?await this.authorizedAgainst(snapshot,principal.threadId):false;
+    const locked=async(client:any,owner:CustodyRecord)=>{if(principal.kind==='agent'&&owner.threadId!==principal.threadId&&!(snapshotAncestor&&snapshot?.threadId===owner.threadId&&snapshot.version===owner.version))return {forbidden:true as const};return {stoppedIds:await this.repository.stopCascadeWithClient(client,jobId,stoppedBy,reason)};};
     const result=this.custody?await this.custody.withOwner(jobId,undefined,locked):{stoppedIds:await this.repository.stopCascade(jobId,stoppedBy,reason)};
     if(!result)return 'not-found'; if('forbidden'in result)return 'forbidden';
     const stoppedIds=result.stoppedIds;

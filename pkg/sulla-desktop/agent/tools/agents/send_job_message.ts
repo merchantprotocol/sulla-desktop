@@ -25,11 +25,13 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   }
 
   const caller=metadata?await agentJobProvider.custodyCallerVerifier.verify(metadata):undefined;
+  const snapshot=caller?await agentJobProvider.custody.resolveOwner(jobId,taskIndex):undefined;
+  const snapshotAncestor=caller&&snapshot&&caller.threadId!==snapshot.threadId?await agentJobProvider.custodyLineage.isAncestor(caller.threadId,snapshot.threadId):false;
   const locked=await agentJobProvider.custody.withOwner(jobId,taskIndex,async(client,owner)=>{
     if(caller){
       const same=caller.threadId===owner.threadId;
-      const ancestor=await agentJobProvider.custodyLineage.isAncestor(caller.threadId,owner.threadId);
-      if(!same&&!ancestor)return {forbidden:owner} as const;
+      const unchanged=snapshot?.threadId===owner.threadId&&snapshot.version===owner.version;
+      if(!same&&!(unchanged&&snapshotAncestor))return {forbidden:owner} as const;
     }
     return {queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
   });
