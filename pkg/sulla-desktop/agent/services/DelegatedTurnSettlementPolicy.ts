@@ -11,13 +11,27 @@ export class DelegatedTurnSettlementPolicy {
     return input.reminderSent ? 'fail' : 'remind';
   }
 
+  private readonly maxFailureCauseLength = 2_000;
+  private readonly injectedContextPattern = /\n*<(?:[a-z_]+_observations|[a-z_]+_context|observational_memory|routine_digest|lane_health|citations|system-reminder)>[\s\S]*?<\/(?:[a-z_]+_observations|[a-z_]+_context|observational_memory|routine_digest|lane_health|citations|system-reminder)>/g;
+
+  private realAssistantText(content: unknown): string {
+    const text = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+    return text.replace(this.injectedContextPattern, '').trim();
+  }
+
   failureCause(finalState: any): string {
     const messages = Array.isArray(finalState?.messages) ? [...finalState.messages].reverse() : [];
-    const assistant = messages.find((message: any) => message?.role === 'assistant');
-    if (!assistant) return '(no assistant output was recorded)';
-    const content = typeof assistant.content === 'string' ? assistant.content.trim() : JSON.stringify(assistant.content ?? '');
-    const toolCalls = assistant.tool_calls ?? assistant.toolCalls;
-    return toolCalls ? `${ content || '(empty assistant text)' }\nTool call: ${ JSON.stringify(toolCalls) }` : (content || '(empty assistant text)');
+    for (const assistant of messages) {
+      if (assistant?.role !== 'assistant') continue;
+      const content = this.realAssistantText(assistant.content);
+      const toolCalls = assistant.tool_calls ?? assistant.toolCalls;
+      if (!content && !toolCalls) continue;
+      const cause = toolCalls
+        ? `${ content || '(empty assistant text)' }\nTool call: ${ JSON.stringify(toolCalls) }`
+        : content;
+      return cause.slice(0, this.maxFailureCauseLength);
+    }
+    return '(no assistant output was recorded)';
   }
 }
 export class MissingContractAfterReminderError extends Error {
