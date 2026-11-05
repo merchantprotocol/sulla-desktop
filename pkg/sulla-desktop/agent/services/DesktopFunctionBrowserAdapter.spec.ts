@@ -17,7 +17,7 @@ class ChromeHarness {
 }
 describe('DesktopFunctionBrowserAdapter',()=>{
   it('terminates the tab when evaluation exceeds its deadline',async()=>{ // risk: Electron denial of service
-    const chrome=new ChromeHarness(); chrome.result=new Promise(()=>{}); const adapter=new DesktopFunctionBrowserAdapter(chrome as any,1,1024); await adapter.open('a','https://example.com',async()=>{}); await expect(adapter.evaluate('a','1')).rejects.toThrow('timed out'); expect(chrome.removed).toEqual(['tab']);
+    const chrome=new ChromeHarness(); chrome.result=new Promise(()=>{}); const adapter=new DesktopFunctionBrowserAdapter(chrome as any,1); await adapter.open('a','https://example.com',async()=>{}); await expect(adapter.evaluate('a','1')).rejects.toThrow('timed out'); expect(chrome.removed).toEqual(['tab']);
   });
   it('keeps navigation guarded and closes before eval after a private redirect',async()=>{ // risk: SSRF
     const chrome=new ChromeHarness(); const adapter=new DesktopFunctionBrowserAdapter(chrome as any);

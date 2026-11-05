@@ -21,7 +21,7 @@ class BrowserServiceStub {
   async evaluate(): Promise<unknown> { return this.result }
 }
 
-function request(): Readable { return Readable.from([JSON.stringify({ token: 't', tabId: 'tab', code: '1' })]) }
+function request(): Readable { return Readable.from([Buffer.from(JSON.stringify({ token: 't', tabId: 'tab', code: '1' }))]) }
 
 describe('FunctionBrowserRequestHandler response ceiling', () => {
   let service: BrowserServiceStub; let handler: FunctionBrowserRequestHandler;
