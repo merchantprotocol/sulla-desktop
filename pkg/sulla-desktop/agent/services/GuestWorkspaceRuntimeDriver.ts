@@ -8,13 +8,15 @@ import type { GitCommandResult, GitCommandRunner, WorkspaceDirEntryStat, Workspa
 import type { WorkspaceRecoveryPreserver, WorkspaceRemover } from './AgentWorkspaceRetentionPolicy';
 import { GUEST_AGENT_WORKSPACES_ROOT, GUEST_RUNTIME_ROOT, runGuest } from './GuestRuntimeTransport';
 
+export interface WorkspaceRuntimeDriver extends WorkspaceFileSystem, GitCommandRunner, WorkspaceRemover, WorkspaceRecoveryPreserver {}
+
 export interface GuestWorkspaceCommandTransport { run(args: string[]): Promise<string>; }
 export class GuestRuntimeCommandTransport implements GuestWorkspaceCommandTransport {
   async run(args: string[]): Promise<string> { return await runGuest(args); }
 }
 
 /** Every operation is executed inside the guest; no host filesystem path is opened. */
-export class GuestWorkspaceRuntimeDriver implements WorkspaceFileSystem, GitCommandRunner, WorkspaceRemover, WorkspaceRecoveryPreserver {
+export class GuestWorkspaceRuntimeDriver implements WorkspaceRuntimeDriver {
   static readonly RECOVERY_ROOT = `${GUEST_RUNTIME_ROOT}/workspace-recovery`;
   constructor(private readonly transport: GuestWorkspaceCommandTransport = new GuestRuntimeCommandTransport(), private readonly maxRecoveryArchives = 20) {}
 

@@ -33,6 +33,7 @@ export interface WorkspaceRemovalRecord {
   path:   string;
   jobId:  string;
   reason: WorkspaceRemovalReason;
+  bytesFreed?: number;
 }
 
 export interface WorkspaceKeptUnsafeRecord {
@@ -343,7 +344,7 @@ export class AgentWorkspaceRetentionPolicy {
       const freed = await this.remover.remove(candidate.lease.inspectionPath);
       candidate.lease.consumed();
       candidate.lease = undefined;
-      report.removed.push({ path: candidate.path, jobId: candidate.jobId, reason });
+      report.removed.push({ path: candidate.path, jobId: candidate.jobId, reason, ...(freed === undefined ? {} : { bytesFreed: freed }) });
       if (freed !== undefined) report.bytesFreed += freed;
       return freed;
     } catch (error) {

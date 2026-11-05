@@ -8,7 +8,7 @@ import { WorkspaceRetentionConfig } from './AgentWorkspaceRetentionConfig';
 import { AgentWorkspaceRetentionPolicy, type DiskSpaceProbe, type WorkspaceJobStateReader } from './AgentWorkspaceRetentionPolicy';
 import { AgentWorkspaceRetentionScheduler, type RetentionTimer } from './AgentWorkspaceRetentionScheduler';
 import { GUEST_AGENT_WORKSPACES_ROOT } from './GuestRuntimeTransport';
-import { GuestWorkspaceRuntimeDriver } from './GuestWorkspaceRuntimeDriver';
+import { GuestWorkspaceRuntimeDriver, type WorkspaceRuntimeDriver } from './GuestWorkspaceRuntimeDriver';
 
 export interface WorkspaceRetentionLogger { info(message: string): void; error(message: string): void; }
 
@@ -21,7 +21,7 @@ export class AgentWorkspaceRetentionBootstrap {
     timer: RetentionTimer,
     logger: WorkspaceRetentionLogger,
     config = new WorkspaceRetentionConfig(),
-    driver = new GuestWorkspaceRuntimeDriver(),
+    driver: WorkspaceRuntimeDriver = new GuestWorkspaceRuntimeDriver(),
   ) {
     const policy = new AgentWorkspaceRetentionPolicy(
       GUEST_AGENT_WORKSPACES_ROOT, driver, new WorkspaceInspector(driver, driver), { isActive: () => false },
