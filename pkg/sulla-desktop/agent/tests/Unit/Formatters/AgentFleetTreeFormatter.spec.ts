@@ -30,4 +30,22 @@ describe('AgentFleetTreeFormatter', () => {
     expect(Buffer.byteLength(JSON.stringify(output.tasks[0]), 'utf8')).toBeLessThanOrEqual(400);
     expect(output.tasks[0].truncated).toBe(true);
   });
+
+  it('walks each manager task depth-first even when a sibling manager was created first', () => {
+    // risk: a manager's worker is separated from its team and attributed to the wrong manager
+    const formatter = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor(), () => now);
+    const managerA = job({ jobId: 'A', createdAt: new Date(now - 60_000).toISOString() });
+    const managerB = job({ jobId: 'B', createdAt: new Date(now - 50_000).toISOString() });
+    const workerA1 = job({ jobId: 'A1', parentJobId: 'A', parentTaskIndex: 0, createdAt: new Date(now - 40_000).toISOString() });
+    expect(formatter.format([managerA, managerB, workerA1]).tasks.map(line => line.ref)).toEqual(['A#0', 'A1#0', 'B#0']);
+  });
+
+  it('emits orphaned and cyclic jobs once without recursing forever', () => {
+    // risk: corrupt lineage makes fleet supervision omit agents or crash
+    const formatter = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor(), () => now);
+    const orphan = job({ jobId: 'orphan', parentJobId: 'missing', parentTaskIndex: 0 });
+    const cycleA = job({ jobId: 'cycle-a', parentJobId: 'cycle-b', parentTaskIndex: 0 });
+    const cycleB = job({ jobId: 'cycle-b', parentJobId: 'cycle-a', parentTaskIndex: 0 });
+    expect(formatter.format([cycleB, orphan, cycleA]).tasks.map(line => line.ref).sort()).toEqual(['cycle-a#0', 'cycle-b#0', 'orphan#0']);
+  });
 });

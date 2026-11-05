@@ -29,4 +29,26 @@ describe('SubagentDirectoryBuilder', () => {
     expect(output).not.toContain('- worker ·');
     expect(output.length).toBeLessThanOrEqual(SUBAGENT_DIRECTORY_MAX_CHARS);
   });
+
+  it('renders completion output text and preserves promotion and parked-child markers', async() => {
+    // risk: a missed wake hides the worker deliverable or management state behind [object Object]
+    const completedTask = { ...task(0, 'finished-worker'), status: 'completed', returned: true, finishedAt: new Date(now - 1_000).toISOString(), completion: { status: 'completed', summary: 'done', output: 'PR #2030 is ready' } };
+    const completed: FleetJobView = { ...direct, jobId: 'completed', status: 'completed', finishedAt: completedTask.finishedAt, tasks: [completedTask] };
+    const parkedTask = { ...task(0, 'manager'), status: 'parked', promotedToTab: true };
+    const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 2, tasks: [parkedTask] };
+    const output = await new SubagentDirectoryBuilder(new FleetReader([completed, parked]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
+    expect(output).toContain('finished-worker: "PR #2030 is ready"');
+    expect(output).not.toContain('[object Object]');
+    expect(output).toContain('hidden→tab');
+    expect(output).toContain('parked, waiting on 2 children');
+  });
+
+  it('budgets whole lines and reports omitted rows without slicing tokens', async() => {
+    // risk: bounded prompt output corrupts a worker result or management instruction mid-line
+    const tasks = Array.from({ length: 30 }, (_, index) => ({ ...task(index, `worker-${ index }-${ 'x'.repeat(180) }`) }));
+    const output = await new SubagentDirectoryBuilder(new FleetReader([{ ...direct, tasks }]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
+    expect(output.length).toBeLessThanOrEqual(SUBAGENT_DIRECTORY_MAX_CHARS);
+    expect(output).toMatch(/… \d+ more:/);
+    expect(output.split('\n').every(line => line === '' || line.startsWith('#') || line.startsWith('-') || line.startsWith('Direct') || line.startsWith('These') || line.startsWith('⚠'))).toBe(true);
+  });
 });

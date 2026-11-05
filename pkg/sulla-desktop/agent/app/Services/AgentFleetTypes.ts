@@ -29,6 +29,7 @@ export interface FleetTaskView {
   parentTaskIndex: number | null;
   rootThreadId: string | null;
   latestCheckin: FleetCheckinView | null;
+  promotedToTab?: boolean;
   result?: unknown;
   completion?: unknown;
 }
@@ -44,6 +45,7 @@ export interface FleetJobView {
   parentTaskIndex: number | null;
   rootThreadId: string | null;
   tasks: FleetTaskView[];
+  waitingOnChildren?: number;
   results?: Array<{ status?: string; output?: unknown; result?: unknown }>;
   error?: string;
 }
