@@ -1019,7 +1019,7 @@ export class BackendGraphWebSocketService {
         releaseChatActivity(`graph:${ abortKey }`);
 
         // Error, abort and success all release queued peer messages as one follow-up batch.
-        void this.agentInbox.flush({ channel: channelId, threadId })
+        void this.agentInbox?.flush({ channel: channelId, threadId })
           .catch(err => console.error('[BackendGraphWS] Failed to flush agent inbox:', err));
 
         // Keep a durable transcript for tabs that mount after their first run
