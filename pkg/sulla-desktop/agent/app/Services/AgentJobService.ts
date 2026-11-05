@@ -93,8 +93,7 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
       ? { ...task, status: 'stopped' as const, finishedAt }
       : task) };
   // Compatibility path is synchronous; state remains unchanged until the durable write succeeds.
-  this.states.markPendingTerminalWrite(jobId);
-  void this.states.commit(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
+  void this.states.commitPendingTerminal(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
   return 'stopped';
 }
 async stopJobCascade(jobId: string): Promise<'stopped' | 'not-found' | 'already-finished'> {
@@ -151,6 +150,7 @@ async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
 }
 
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
+  await this.states.awaitPendingTerminalWrite(jobId);
   const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   if (!job) return;
@@ -264,6 +264,7 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
   summary?: string;
   status:  AgentJobTask['status'];
 }): Promise<AgentJob> {
+  await this.states.awaitPendingTerminalWrite(jobId);
   const source = await this.states.jobForWrite(jobId);
   const job = source ? structuredClone(source) : undefined;
   const task = job?.tasks[taskIndex];

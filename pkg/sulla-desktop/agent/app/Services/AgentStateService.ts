@@ -21,6 +21,7 @@ export class AgentStateService {
   private readonly changes = new EventEmitter();
   private readiness: Promise<void> = Promise.resolve();
   private readonly pendingTerminalWrites = new Set<string>();
+  private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
   constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now) {
     this.versionValue = now();
@@ -86,6 +87,14 @@ export class AgentStateService {
   isLive(job: AgentJob, task: AgentJobTask): boolean { return ['running', 'parked'].includes(job.status) && ['queued', 'running', 'parked', 'blocked'].includes(task.status); }
   hasPendingTerminalWrite(jobId: string): boolean { return this.pendingTerminalWrites.has(jobId); }
   markPendingTerminalWrite(jobId: string): void { this.pendingTerminalWrites.add(jobId); }
+  async awaitPendingTerminalWrite(jobId: string): Promise<void> { await this.pendingTerminalPromises.get(jobId); }
+  commitPendingTerminal(job: AgentJob): Promise<void> {
+    this.markPendingTerminalWrite(job.jobId);
+    const pending = this.commit(job);
+    this.pendingTerminalPromises.set(job.jobId, pending);
+    void pending.then(() => this.pendingTerminalPromises.delete(job.jobId), () => this.pendingTerminalPromises.delete(job.jobId));
+    return pending;
+  }
 
   async create(job: AgentJob): Promise<AgentJob> {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); return next;
