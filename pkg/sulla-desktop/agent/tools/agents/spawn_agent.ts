@@ -22,6 +22,7 @@ import {
   getJob,
   getJobAbortSignal,
   markCompletionDelivered,
+  markTaskCompletionDelivered,
   recordTaskCompletion,
   MAX_SUBAGENT_DEPTH,
   registerJobWatcher,
@@ -598,6 +599,11 @@ export class SpawnAgentWorker extends BaseTool {
               throw new Error(error);
             }
           }
+          const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries)
+            ? wakeInput.metadata.completionEntries
+            : [];
+          await Promise.all(completionEntries.map((entry: any) =>
+            markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex))));
         }
 
         // A caller schema means free text is not an answer: remind once, but
