@@ -50,7 +50,7 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
     if (!job.tasks[index]) return job;
     const nextPatch = job.status === 'stopped' && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
     return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
-  });
+  }, patch.finishedAt === undefined);
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
@@ -199,7 +199,7 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
-  });
+  }, false);
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {

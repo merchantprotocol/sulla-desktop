@@ -120,10 +120,12 @@ export class AgentStateService {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); return next;
   }
 
-  async update(jobId: string, mutate: (current: AgentJob) => AgentJob): Promise<AgentJob | undefined> {
+  async update(jobId: string, mutate: (current: AgentJob) => AgentJob, deriveStatus = true): Promise<AgentJob | undefined> {
     return this.mutations.run(jobId, async() => {
       const current = await this.jobForWrite(jobId); if (!current) return undefined;
-      const next = this.withDerivedStatus(mutate(structuredClone(current))); await this.commitUnsafe(next); return next;
+      const mutated = mutate(structuredClone(current));
+      const next = deriveStatus ? this.withDerivedStatus(mutated) : mutated;
+      await this.commitUnsafe(next, deriveStatus); return next;
     });
   }
 
@@ -150,8 +152,8 @@ export class AgentStateService {
     await this.mutations.run(job.jobId, () => this.commitUnsafe(job));
   }
 
-  private async commitUnsafe(job: AgentJob): Promise<void> {
-    const next = this.withDerivedStatus(job);
+  private async commitUnsafe(job: AgentJob, deriveStatus = true): Promise<void> {
+    const next = deriveStatus ? this.withDerivedStatus(job) : job;
     try { await this.store.replaceState(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); }
     finally { this.pendingTerminalWrites.delete(next.jobId); }
   }
@@ -160,12 +162,11 @@ export class AgentStateService {
     if (job.tasks.length === 0) return job;
     if (['completed', 'failed', 'stopped'].includes(job.status)) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
-    if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
+    if (statuses.some(value => value === 'error')) status = 'failed';
+    else if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
     else if (statuses.some(value => value === 'parked')) status = 'parked';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
-    // Task settlement is persisted before the final job verdict. Keep the job
-    // live until completeJob/failJob commits that explicit terminal verdict.
-    else status = job.status;
+    else status = 'completed';
     return status === job.status ? job : { ...job, status };
   }
   private emitChange(): void { this.versionValue = Math.max(this.versionValue + 1, Date.now()); this.changes.emit('change', this.versionValue); }
