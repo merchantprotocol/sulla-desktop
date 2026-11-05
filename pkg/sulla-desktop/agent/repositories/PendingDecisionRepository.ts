@@ -11,6 +11,23 @@ interface DecisionQueryClient {
 export class PendingDecisionRepository {
   constructor(private readonly client: DecisionQueryClient) {}
 
+  async findById(id: string): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(
+      `SELECT record FROM human_decisions WHERE id=$1 LIMIT 1`, [id],
+    );
+    return rows[0]?.record;
+  }
+
+  async claimLateAnswer(id: string): Promise<boolean> {
+    const rows = await this.client.query<{ id: string }>(`
+      UPDATE human_decisions
+      SET record = jsonb_set(record, '{payload,lateAnswerDelivered}', 'true'::jsonb, true), updated_at = NOW()
+      WHERE id = $1 AND status = 'expired'
+        AND COALESCE((record->'payload'->>'lateAnswerDelivered')::boolean, false) = false
+      RETURNING id`, [id]);
+    return rows.length > 0;
+  }
+
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
       WHERE status IN ('pending', 'deferred') AND session_id=$1 AND record->>'kind'='approval'
