@@ -9,12 +9,14 @@ import { agentLaunchPauseService, type AgentLaunchPauseState } from './AgentLaun
 import type { AgentJob } from '../tools/agents/jobRegistry';
 
 export interface AgentKillResult { ok: boolean; killedJobs: number; error?: string }
+export interface KillJobStore { allJobs(): Promise<AgentJob[]> }
+export type StopTree = (jobId: string, principal: ReturnType<typeof StopPrincipal.human>, reason: string) => Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'>;
 
 /** Human-only fleet kill orchestration. Persistence happens before runtime aborts. */
 export class AgentKillService {
   constructor(
-    private readonly jobs = agentJobProvider.jobs,
-    private readonly stopTree = agentJobProvider.service.stopJobCascade.bind(agentJobProvider.service),
+    private readonly jobs: KillJobStore = agentJobProvider.jobs,
+    private readonly stopTree: StopTree = agentJobProvider.service.stopJobCascade.bind(agentJobProvider.service),
     private readonly stopTurn: (threadId: string, reason: string) => Promise<void> = stopAgentTab,
   ) {}
 
