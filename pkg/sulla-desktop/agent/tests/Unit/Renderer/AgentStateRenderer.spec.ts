@@ -12,8 +12,8 @@ class FakeTransport implements AgentStateTransport {
   private listener: ((event: unknown, snapshot: AgentStateSnapshot) => void) | null = null;
   constructor(snapshot: AgentStateSnapshot) { this.snapshot = snapshot }
   invoke(channel: string): Promise<unknown> { return Promise.resolve(channel === 'agents:state-snapshot' ? this.snapshot : this.result) }
-  on(_channel: string, listener: (event: unknown, snapshot: AgentStateSnapshot) => void): unknown { this.listener = listener }
-  removeListener(): unknown { this.listener = null }
+  on(_channel: string, listener: (event: unknown, snapshot: AgentStateSnapshot) => void): unknown { this.listener = listener; return undefined }
+  removeListener(): unknown { this.listener = null; return undefined }
   push(snapshot: AgentStateSnapshot): void { this.listener?.({}, snapshot) }
 }
 class FakeHost implements AgentStateWindow {

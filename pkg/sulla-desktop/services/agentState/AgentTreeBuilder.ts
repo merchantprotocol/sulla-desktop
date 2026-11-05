@@ -53,7 +53,8 @@ export class AgentTreeBuilder {
     while (candidate) {
       if (visited.has(candidate.row.key)) return true;
       visited.add(candidate.row.key);
-      const { parentJobId, parentTaskIndex } = candidate.row;
+      const parentJobId: string | null = candidate.row.parentJobId;
+      const parentTaskIndex: number | null = candidate.row.parentTaskIndex;
       candidate = parentJobId === null || parentTaskIndex === null ? undefined : nodes.get(`${ parentJobId }:${ parentTaskIndex }`);
     }
     return false;
