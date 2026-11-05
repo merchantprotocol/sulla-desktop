@@ -1713,7 +1713,8 @@ export class PlaybookController<TState = any> {
 
             const timeoutMs = parseTimeoutMs(step.timeoutOverride);
             const { FunctionBrowserInvocation } = await import('@pkg/agent/services/FunctionBrowserInvocation');
-            browserInvocation = new FunctionBrowserInvocation(invocationId, manifest, timeoutMs);
+            const { functionBrowserCompositionRoot } = await import('@pkg/agent/services/FunctionBrowserCompositionRoot');
+            browserInvocation = new FunctionBrowserInvocation(invocationId, manifest, timeoutMs, functionBrowserCompositionRoot.capabilities);
             const browserEnv = await browserInvocation.environment();
             const ac = new AbortController();
             const timer = setTimeout(() => ac.abort(), timeoutMs);

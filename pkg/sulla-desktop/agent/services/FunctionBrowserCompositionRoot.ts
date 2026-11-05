@@ -11,4 +11,7 @@ export class FunctionBrowserCompositionRoot {
   readonly adapter = new DesktopFunctionBrowserAdapter(getChromeApi());
   readonly capabilities = new FunctionBrowserCapabilityService(this.adapter, Date.now, undefined, this.urlPolicy);
 }
+// Tool workers are constructed through zero-argument framework loaders, so the
+// process shares exactly one broker here. Only framework entry boundaries may
+// import it; every broker component below that boundary uses constructor DI.
 export const functionBrowserCompositionRoot = new FunctionBrowserCompositionRoot();

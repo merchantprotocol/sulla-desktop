@@ -7,6 +7,7 @@ import { BaseTool, ToolResponse } from '../base';
 import { DEPS_FILES, RUNTIME_URLS } from './constants';
 import { materializeStoredFunctionInGuest, removeGuestFunctionMaterialization } from './guestFunctionMaterialization';
 import { FunctionBrowserInvocation } from '../../services/FunctionBrowserInvocation';
+import { functionBrowserCompositionRoot } from '../../services/FunctionBrowserCompositionRoot';
 
 export class FunctionTimeoutParser {
   parse(value: unknown): number {
@@ -276,6 +277,7 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
     `direct-${ slug }-${ Date.now() }`,
     manifest,
     new FunctionTimeoutParser().parse(spec.timeout),
+    functionBrowserCompositionRoot.capabilities,
   );
   try {
     const browserEnv = await browserInvocation.environment();
