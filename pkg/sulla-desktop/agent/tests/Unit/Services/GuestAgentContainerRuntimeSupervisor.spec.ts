@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ default: { app: { getVersion: () => 'test' } } }));
 import type { ContainerRuntimeDriver } from '@pkg/runtime/containerRuntime';
 import { GuestAgentContainerRuntimeSupervisor } from '../../../services/AgentContainerLauncher';
 

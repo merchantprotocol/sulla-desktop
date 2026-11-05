@@ -220,14 +220,7 @@ jobs:
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
-        run: |
-          set +e
-          yarn test:pr 2>&1 | tee /tmp/test-pr.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            node -e "const fs=require('fs'); const s=fs.readFileSync('/tmp/test-pr.log','utf8').split('\n').slice(-40).join('\n').slice(-6000).replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'); console.log('::error title=Per-PR test output::'+s)"
-          fi
-          exit "$status"
+        run: yarn test:pr
 
   # Full run on push to main (and manual dispatch): yarn test:agent runs the
   # whole agent-runtime suite, measured at 89-123s on #1959/#1964/#1968, plus
