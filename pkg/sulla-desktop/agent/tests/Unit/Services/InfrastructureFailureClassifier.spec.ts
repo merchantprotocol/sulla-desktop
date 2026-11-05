@@ -6,7 +6,19 @@ import { describe, expect, it } from 'vitest';
 import {
   InfrastructureFailureClassifier,
   InfrastructureFailureResultPresenter,
+  RunningTaskInfrastructureFailureResolver,
 } from '@pkg/agent/services/InfrastructureFailureClassifier';
+
+class FakeRunningWorker {
+  constructor(private readonly resolver: RunningTaskInfrastructureFailureResolver) {}
+  async run(): Promise<ReturnType<RunningTaskInfrastructureFailureResolver['resolve']>> {
+    try {
+      throw new Error('Agent container exited 1: yarn: ENOSPC: no space left on device, write');
+    } catch (error) {
+      return this.resolver.resolve({ error, lastLogLines: 'fatal: git write error: No space left on device' });
+    }
+  }
+}
 
 describe('InfrastructureFailureClassifier', () => {
   const classifier = new InfrastructureFailureClassifier();
@@ -34,6 +46,16 @@ describe('InfrastructureFailureClassifier', () => {
     // risk: the parent must parse prose and cannot distinguish machine failure
     const failure = classifier.classify({ error: Object.assign(new Error('write'), { code: 'ENOSPC' }) })!;
     expect(new InfrastructureFailureResultPresenter().present(failure)).toEqual({
+      status: 'failed', failureType: 'infrastructure', summary: 'infrastructure: disk full',
+    });
+  });
+
+  it('turns a running worker non-zero exit into a typed parent failure end-to-end', async() => {
+    // risk: a worker losing the disk mid-task is blamed on the worker and its parent cannot retry safely
+    const runner = new FakeRunningWorker(new RunningTaskInfrastructureFailureResolver(
+      classifier, new InfrastructureFailureResultPresenter(),
+    ));
+    await expect(runner.run()).resolves.toEqual({
       status: 'failed', failureType: 'infrastructure', summary: 'infrastructure: disk full',
     });
   });

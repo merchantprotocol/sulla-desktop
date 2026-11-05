@@ -51,6 +51,7 @@ export class AgentContainerLaunchComposition {
 
   create(threadId?: string): AgentContainerLaunchCoordinator {
     const resourceRunner = new SullaRuntimeCommandRunner(this.runtimeBinary);
+    const reporter = new AgentJobCheckinReporter(threadId);
     const probe = new SullaFilesMountHealthProbe(
       this.mountManager,
       new SullaRuntimeGuestCommandRunner(this.runtimeBinary),
@@ -60,11 +61,14 @@ export class AgentContainerLaunchComposition {
       this.runtime,
       new IdempotentRetry(),
       new SullaFilesBindPlanner(probe),
-      new AgentJobCheckinReporter(threadId),
+      reporter,
       this.activeContainers,
       new WorkerResourcePreflight(
         new GuestDiskSpaceProbe(resourceRunner, '/mnt/data'),
         new GuestSystemLoadProbe(resourceRunner),
+        undefined,
+        undefined,
+        { warn: message => reporter.warning(message) },
       ),
       new InfrastructureFailureClassifier(),
     );

@@ -9,6 +9,7 @@ import type { GuestCommandRunner } from './GuestDiskSpaceProbe';
 export interface SystemLoadReading { loadAverage: number; cpuCount: number }
 export interface SystemLoadProbe { reading(): Promise<SystemLoadReading> }
 export interface MemorySpaceProbe { freeBytes(): Promise<number> }
+export interface ResourcePreflightLogger { warn(message: string): void | Promise<void> }
 
 export interface WorkerResourceThresholds {
   minimumFreeDiskBytes: number;
@@ -55,25 +56,39 @@ export class WorkerResourcePreflight {
     private readonly load: SystemLoadProbe,
     private readonly thresholds: WorkerResourceThresholds = DEFAULT_WORKER_RESOURCE_THRESHOLDS,
     private readonly memory?: MemorySpaceProbe,
+    private readonly logger?: ResourcePreflightLogger,
   ) {}
 
   async assertLaunchAllowed(): Promise<void> {
-    const freeDiskBytes = await this.disk.freeBytes();
-    if (freeDiskBytes < this.thresholds.minimumFreeDiskBytes) {
+    const freeDiskBytes = await this.probe('disk', () => this.disk.freeBytes());
+    if (freeDiskBytes !== undefined && freeDiskBytes < this.thresholds.minimumFreeDiskBytes) {
       throw new InfrastructureFailure(`infrastructure: disk full (${ this.gib(freeDiskBytes) } GiB free, need ${ this.gib(this.thresholds.minimumFreeDiskBytes) } GiB)`);
     }
 
-    const { loadAverage, cpuCount } = await this.load.reading();
-    const maximumLoad = this.thresholds.maximumLoadPerCpu * cpuCount;
-    if (loadAverage > maximumLoad) {
-      throw new InfrastructureFailure(`infrastructure: system load high (${ loadAverage.toFixed(2) }, maximum ${ maximumLoad.toFixed(2) } for ${ cpuCount } CPUs)`);
+    const load = await this.probe('load', () => this.load.reading());
+    if (load !== undefined) {
+      const { loadAverage, cpuCount } = load;
+      const maximumLoad = this.thresholds.maximumLoadPerCpu * cpuCount;
+      if (loadAverage > maximumLoad) {
+        throw new InfrastructureFailure(`infrastructure: system load high (${ loadAverage.toFixed(2) }, maximum ${ maximumLoad.toFixed(2) } for ${ cpuCount } CPUs)`);
+      }
     }
 
     if (this.memory && this.thresholds.minimumFreeMemoryBytes !== undefined) {
-      const freeMemoryBytes = await this.memory.freeBytes();
-      if (freeMemoryBytes < this.thresholds.minimumFreeMemoryBytes) {
+      const freeMemoryBytes = await this.probe('memory', () => this.memory!.freeBytes());
+      if (freeMemoryBytes !== undefined && freeMemoryBytes < this.thresholds.minimumFreeMemoryBytes) {
         throw new InfrastructureFailure(`infrastructure: memory low (${ this.gib(freeMemoryBytes) } GiB free, need ${ this.gib(this.thresholds.minimumFreeMemoryBytes) } GiB)`);
       }
+    }
+  }
+
+  private async probe<T>(name: string, read: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await read();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.logger?.warn(`[AgentContainer] ${ name } resource preflight probe failed; allowing launch: ${ message }`);
+      return undefined;
     }
   }
 

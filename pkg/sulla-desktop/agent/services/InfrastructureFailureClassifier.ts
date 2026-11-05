@@ -24,6 +24,19 @@ export class InfrastructureFailureResultPresenter {
   }
 }
 
+/** Resolves a running worker's process failure into the parent-facing result contract. */
+export class RunningTaskInfrastructureFailureResolver {
+  constructor(
+    private readonly classifier: InfrastructureFailureClassifier,
+    private readonly presenter: InfrastructureFailureResultPresenter,
+  ) {}
+
+  resolve(evidence: ProcessFailureEvidence): InfrastructureTaskFailureResult | undefined {
+    const failure = this.classifier.classify(evidence);
+    return failure ? this.presenter.present(failure) : undefined;
+  }
+}
+
 /** Converts known machine failures into typed failures without mislabeling ordinary work errors. */
 export class InfrastructureFailureClassifier {
   classify(evidence: ProcessFailureEvidence): InfrastructureFailure | undefined {

@@ -8,6 +8,7 @@ import {
   WorkerResourcePreflight,
   type MemorySpaceProbe,
   type SystemLoadProbe,
+  type ResourcePreflightLogger,
 } from '@pkg/agent/services/WorkerResourcePreflight';
 
 class FixedDiskProbe { constructor(private readonly bytes: number) {} async freeBytes(): Promise<number> { return this.bytes } }
@@ -16,6 +17,8 @@ class FixedLoadProbe implements SystemLoadProbe {
   async reading() { return { loadAverage: this.loadAverage, cpuCount: this.cpuCount } }
 }
 class FixedMemoryProbe implements MemorySpaceProbe { constructor(private readonly bytes: number) {} async freeBytes() { return this.bytes } }
+class ThrowingDiskProbe { async freeBytes(): Promise<number> { throw new Error('probe timed out') } }
+class RecordingLogger implements ResourcePreflightLogger { warnings: string[] = []; warn(message: string) { this.warnings.push(message) } }
 
 const GiB = 1024 ** 3;
 
@@ -47,5 +50,17 @@ describe('WorkerResourcePreflight', () => {
     const thresholds = { minimumFreeDiskBytes: 2 * GiB, maximumLoadPerCpu: 2, minimumFreeMemoryBytes: GiB };
     const preflight = new WorkerResourcePreflight(new FixedDiskProbe(3 * GiB), new FixedLoadProbe(0, 4), thresholds, new FixedMemoryProbe(0.5 * GiB));
     await expect(preflight.assertLaunchAllowed()).rejects.toMatchObject({ failureType: 'infrastructure' });
+  });
+
+  it('fails open and warns when a resource probe throws', async() => {
+    // risk: a broken observability probe blocks every otherwise healthy worker launch
+    const logger = new RecordingLogger();
+    const preflight = new WorkerResourcePreflight(
+      new ThrowingDiskProbe(), new FixedLoadProbe(0, 4), undefined, undefined, logger,
+    );
+    await expect(preflight.assertLaunchAllowed()).resolves.toBeUndefined();
+    expect(logger.warnings).toEqual([
+      '[AgentContainer] disk resource preflight probe failed; allowing launch: probe timed out',
+    ]);
   });
 });
