@@ -11,6 +11,7 @@
  * of a lease timer, which keeps renewing whether or not the agent does work.
  */
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
+import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
 
 const lastActivity = new Map<string, number>();
 
@@ -65,6 +66,8 @@ export function watchForDeadRun(
   key: string,
   onDead: (reason: string) => void | Promise<void>,
   stillAlive: () => Promise<boolean> = async() => false,
+  liveness: { createdAt: number; hasCheckin: () => Promise<boolean> } = { createdAt: Date.now(), hasCheckin: async() => false },
+  policy = new AgentJobLivenessPolicy(),
 ): () => void {
   RunActivity.begin(key);
   let fired = false;
@@ -73,7 +76,15 @@ export function watchForDeadRun(
       if (fired) return;
       const minutes = await deadRunMinutes();
       const last = RunActivity.lastActivityAt(key) ?? Date.now();
-      if (Date.now() - last < minutes * 60_000) return;
+      const now = Date.now();
+      if (!policy.isStalled({
+        createdAt: liveness.createdAt,
+        startedAt: liveness.createdAt,
+        lastActivityAt: last,
+        hasCheckin: await liveness.hasCheckin(),
+        now,
+        stallMs: minutes * 60_000,
+      })) return;
       if (await stillAlive()) return;
       fired = true;
       await onDead(`no agent activity for ${ minutes } minute(s)`);

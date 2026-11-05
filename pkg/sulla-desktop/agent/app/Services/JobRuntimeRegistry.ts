@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { Service } from '@sulla/foundation';
 import type { AgentJob } from '../../tools/agents/jobRegistry';
+import { JobAbortScope } from './JobAbortScope';
 export class JobRuntimeRegistry extends Service {
   static readonly DEFAULT_TERMINAL_CACHE_LIMIT = 100;
   readonly jobs = new Map<string, AgentJob>();
-  readonly abortControllers = new Map<string, AbortController>();
+  readonly abortScopes = new Map<string, JobAbortScope>();
   readonly watchers = new Map<string, () => void>();
   private started = false;
   start(): void { this.started = true; }
-  stop(): void { for (const value of this.abortControllers.values()) value.abort(); for (const stop of this.watchers.values()) stop(); this.reset(); this.started = false; }
-  reset(): void { this.jobs.clear(); this.abortControllers.clear(); this.watchers.clear(); }
+  stop(): void { for (const value of this.abortScopes.values()) value.abortJob(); for (const stop of this.watchers.values()) stop(); this.reset(); this.started = false; }
+  reset(): void { this.jobs.clear(); this.abortScopes.clear(); this.watchers.clear(); }
   isStarted(): boolean { return this.started; }
 
   /** Bounds only settled cache entries; durable rows remain available for rehydration. */
@@ -24,7 +25,7 @@ export class JobRuntimeRegistry extends Service {
       .slice(Math.max(0, limit));
     for (const job of candidates) {
       this.jobs.delete(job.jobId);
-      this.abortControllers.delete(job.jobId);
+      this.abortScopes.delete(job.jobId);
       this.watchers.get(job.jobId)?.();
       this.watchers.delete(job.jobId);
     }

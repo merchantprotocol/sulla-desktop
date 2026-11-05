@@ -19,6 +19,7 @@ import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relay
 
 import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
 import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
+import { ToolRequestArguments } from '../../../packages/runtime-protocol/src/toolRequestArguments.js';
 
 validateConfig();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
@@ -94,7 +95,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
     return response.status(status).json({ success: false, error: { code: auth.code, message: auth.message }, request_id: requestId });
   }
 
-  const args = request.body?.params && typeof request.body.params === 'object' ? request.body.params : (request.body ?? {});
+  const args = ToolRequestArguments.normalize(request.body);
   try {
     ctx = await scopeToolExecutionContext(ctx, tool, args);
   } catch (error) {

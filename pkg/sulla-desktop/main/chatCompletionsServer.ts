@@ -26,6 +26,7 @@ import paths from '@pkg/utils/paths';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import { describePortOwner } from '@pkg/utils/portOwner';
+import { ToolRequestArguments } from '@pkg/runtime/toolRequestArguments';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -1212,7 +1213,7 @@ export class ChatCompletionsServer {
         }
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};
-        const params = body.params && typeof body.params === 'object' ? body.params : body;
+        const params = ToolRequestArguments.normalize(body);
         const toolName = String((tool)?.name || endpoint || '').trim();
         const canonicalCategory = String(tool.metadata?.category ?? '').trim();
         const isGitHubTool = canonicalCategory === 'github';
@@ -1323,7 +1324,7 @@ export class ChatCompletionsServer {
         if (canonicalCategory === 'vault' && ['request', 'list_api_keys'].includes(endpoint)) {
           if (!executionContext) return res.status(403).json({ success: false, error: 'Vault item tools require a verified execution context' });
           if (endpoint === 'request') {
-            try { executionContext = await scopeItemExecutionContext(executionContext, params.item); }
+            try { executionContext = await scopeItemExecutionContext(executionContext, params.item as string); }
             catch (error) { return res.status(403).json({ success: false, error: (error as Error).message }); }
           }
         }
