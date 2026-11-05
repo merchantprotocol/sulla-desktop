@@ -23,7 +23,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       waitingOnChildren: Number(row.waiting_on_children) || 0,
       restartResumeCount: Number(row.restart_resume_count) || 0,
       dismissedAt: row.dismissed_at ? new Date(row.dismissed_at).getTime() : null,
-      stoppedBy: row.stopped_by === 'human' ? 'human' : (row.stopped_by ? { agentId: row.stopped_by.agentId ?? undefined, threadId: row.stopped_by.threadId ?? undefined } : undefined),
+      stoppedBy: row.stopped_by === 'human' ? 'human' : (row.stopped_by?.system
+        ? { system: String(row.stopped_by.system) }
+        : row.stopped_by ? { agentId: String(row.stopped_by.agentId), threadId: String(row.stopped_by.threadId) } : undefined),
       stopReason: row.stop_reason ?? undefined,
     };
   }

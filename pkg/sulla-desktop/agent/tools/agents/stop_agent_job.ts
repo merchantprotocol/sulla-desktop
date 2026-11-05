@@ -8,8 +8,9 @@ import { emitSubAgentExchange } from './jobExchange';
 import { getJob, releaseJobWatcher, stopJobCascade } from './jobRegistry';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
+import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
 
-export async function stopAgentJob(jobId: string, caller?: { agentId?: string; threadId?: string }, reason = 'unspecified'): Promise<ToolResponse> {
+export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'unspecified'): Promise<ToolResponse> {
   if (!jobId) {
     return {
       successBoolean: false,
@@ -17,8 +18,9 @@ export async function stopAgentJob(jobId: string, caller?: { agentId?: string; t
     };
   }
 
+  if (!principal) return { successBoolean: false, responseString: 'Cannot stop job: cannot verify caller.' };
   const job = await getJob(jobId);
-  const outcome = await stopJobCascade(jobId, caller, reason);
+  const outcome = await stopJobCascade(jobId, principal, reason);
 
   switch (outcome) {
   case 'stopped':
@@ -83,7 +85,7 @@ export class StopAgentJobWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const metadata = this.state?.metadata;
-    const caller = metadata ? { agentId: resolveAgentIdentity(metadata) || metadata.routedAgentId, threadId: metadata.threadId } : undefined;
+    const caller = StopPrincipal.agent(metadata && (resolveAgentIdentity(metadata) || metadata.routedAgentId), metadata?.threadId);
     return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '', caller, typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim() : 'unspecified');
   }
 }

@@ -7,7 +7,7 @@ import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
-import type { AgentJob as AgentJobType } from '../../tools/agents/jobRegistry';
+import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
@@ -95,7 +95,7 @@ getJobAbortSignal(jobId: string): AbortSignal | undefined {
  * the loop sees the aborted signal and unwinds. Returns the outcome so the tool
  * can report accurately.
  */
-abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
+abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' {
   const job = this.runtime.jobs.get(jobId);
   if (!job) return 'not-found';
   if (!['running', 'parked'].includes(job.status)) return 'already-finished';
@@ -105,17 +105,17 @@ abortJob(jobId: string): 'stopped' | 'not-found' | 'already-finished' {
   job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
     ? { ...task, status: 'stopped', finishedAt: job.finishedAt ?? this.clock.now().getTime() }
     : task);
-  job.stoppedBy = 'human';
-  job.stopReason = 'unspecified';
+  job.stoppedBy = StopPrincipal.attribution(principal);
+  job.stopReason = reason;
   void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, job.stopReason));
   return 'stopped';
 }
-async stopJobCascade(jobId: string, caller?: { agentId?: string; threadId?: string }, reason = 'unspecified'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
+async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
   const root = await this.getJob(jobId);
   if (!root) return 'not-found';
   if (!['running', 'parked'].includes(root.status)) return 'already-finished';
-  if (caller && !(caller.threadId ? await this.taskLocator.isAncestorThread(root, caller.threadId) : caller.agentId === root.parentAgentId)) return 'forbidden';
-  const stoppedBy: AgentJobType['stoppedBy'] = caller ? { agentId: caller.agentId, threadId: caller.threadId } : 'human';
+  if (principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(root, principal.threadId)) return 'forbidden';
+  const stoppedBy = StopPrincipal.attribution(principal);
   const stoppedIds = await this.repository.stopCascade(jobId, stoppedBy, reason);
   const stoppedAt = this.clock.now().getTime();
   for (const stoppedId of stoppedIds) {

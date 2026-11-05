@@ -7,6 +7,7 @@
 // Main-process agent dispatcher: routes messages on the sulla-desktop and
 // heartbeat channels to the default agent via GraphRegistry.
 import { toolRegistry } from '@pkg/agent/tools/registry';
+import { StopPrincipal } from '../app/ValueObjects/StopPrincipal';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
@@ -473,7 +474,7 @@ export class BackendGraphWebSocketService {
       }
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       setCompletionInboxStopped(channelId, stopThreadId, true);
-      for (const job of await getJobsForParentThread(stopThreadId)) abortJob(job.jobId);
+      for (const job of await getJobsForParentThread(stopThreadId)) abortJob(job.jobId, StopPrincipal.human(), 'Stopped from chat UI');
       return;
     }
 

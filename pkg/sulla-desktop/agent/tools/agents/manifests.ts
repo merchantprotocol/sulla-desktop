@@ -102,7 +102,7 @@ export const agentToolManifests: ToolManifest[] = [
     description: 'Record a milestone check-in for your current delegated task (hidden worker or agent tab). Call it at meaningful milestones and at least every ~5 minutes; your parent sees it in its subagent directory.',
     category:    'agents',
     schemaDef:   {
-      step:         { type: 'string', description: 'Short milestone or phase name.' },
+      step:         { type: 'string', optional: true, description: 'Short milestone or phase name. Defaults to progress.' },
       summary:      { type: 'string', description: 'What changed or was verified since the previous check-in.' },
       filesTouched: { type: 'array', items: { type: 'string' }, optional: true, description: 'Files created or changed so far.' },
       blockers:     { type: 'array', items: { type: 'string' }, optional: true, description: 'Concrete blockers requiring orchestrator or human action.' },

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
+
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import {
@@ -334,7 +336,7 @@ export class SpawnAgentWorker extends BaseTool {
     // A tab waiting on its human is idle, not dead: only a turn in flight that
     // has gone silent counts as a dead run.
     const stopWatch = watchForDeadRun(job.jobId, async(reason) => {
-      if (abortJob(job.jobId) !== 'stopped') return;
+      if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
       releaseJobWatcher(job.jobId);
       const message = `dead run: ${ reason }; tab job stopped`;
       console.warn(`[spawn_agent] Tab job ${ job.jobId } ${ message }`);
@@ -724,7 +726,7 @@ export class SpawnAgentWorker extends BaseTool {
       // on a provider call that will never return.
       let stoppedAsDead = false;
       const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason) => {
-        if (abortJob(job.jobId) !== 'stopped') return;
+        if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
         stoppedAsDead = true;
         const message = `dead run: ${ reason }; job stopped`;
         console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
@@ -772,7 +774,7 @@ export class SpawnAgentWorker extends BaseTool {
     activityJobId = jobId;
     // Stopping a dead job hands its tasks back even if the hung call never returns.
     stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
-      if (abortJob(jobId) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
+      if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
     });
     let results: AgentJobResult[];
     try {
