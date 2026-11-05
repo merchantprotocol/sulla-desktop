@@ -15,7 +15,8 @@ export class JobStopService extends Service {
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
     const job = this.runtime.jobs.get(jobId); if (!job) return 'not-found';
-    if (!['running', 'parked'].includes(job.status)) return 'already-finished';
+    if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
+    this.states.markPendingTerminalWrite(jobId);
     const stoppedBy = StopPrincipal.attribution(principal); const finishedAt = this.clock.now().getTime();
     void this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : ({ ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, stoppedBy, stopReason: reason,
       tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt } : task) }))
