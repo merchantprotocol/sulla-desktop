@@ -15,10 +15,10 @@ import {
   type RandomSource,
 } from '@sulla/domain';
 
+import { DomainEnvelopeErrorMapper } from './DomainEnvelopeErrorMapper.js';
 import { SodiumMasterKeyDeriver, type Sodium } from './SodiumMasterKeyDeriver.js';
 import { VaultSyncEnvelope } from './VaultSyncEnvelope.js';
 import { VaultSyncExportMapper } from './VaultSyncExportMapper.js';
-import { VaultSyncSealer } from './VaultSyncSealer.js';
 import { VaultSyncShape } from './VaultSyncShape.js';
 
 /**
@@ -42,8 +42,8 @@ export class VaultSyncRuntime {
     this.canonical = new CanonicalJson();
     const wraps = new KeyWrap(this.crypto, this.random);
     this.codec = new VaultSyncCodec(this.crypto, wraps, masterKeys);
-    const sealer = new VaultSyncSealer(this.crypto, this.codec, this.canonical, shape);
-    this.envelope = new VaultSyncEnvelope(this.codec, wraps, masterKeys, sealer, shape);
+    const errors = new DomainEnvelopeErrorMapper();
+    this.envelope = new VaultSyncEnvelope(this.codec, wraps, masterKeys, shape, errors);
     this.exports = new VaultSyncExportMapper();
   }
 

@@ -21,7 +21,7 @@
     "pg": "8.18.0",
     "ws": "8.21.0",
     "yaml": "2.8.3",
-    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.2.0.tgz",
+    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.2.1.tgz",
     "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.0.tgz"
   },
   "devDependencies": {

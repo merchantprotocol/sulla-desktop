@@ -8,7 +8,7 @@
 // key unwrapping run in @sulla/domain (VaultSyncCodec, KeyWrap). This class owns
 // what stays Desktop's: strict shape checks first, so malformed input keeps its
 // established error code, then translation of domain failures into EnvelopeError.
-// Record/head sealing and head verification go through the TEMP VaultSyncSealer.
+// Record/head sealing and verification call the shared domain codec directly.
 // Pinned to the shared vault-sync-v3 known-answer fixture, like the browser twin
 // www-sulladesktop js/cloud/passwords/sync-envelope.js.
 
@@ -25,7 +25,7 @@ import {
   type SyncHead,
   type SyncRecord,
 } from './VaultSyncContracts.js';
-import type { VaultSyncSealer } from './VaultSyncSealer.js';
+import type { DomainEnvelopeErrorMapper } from './DomainEnvelopeErrorMapper.js';
 import { VaultSyncShape } from './VaultSyncShape.js';
 
 export class VaultSyncEnvelope {
@@ -35,8 +35,8 @@ export class VaultSyncEnvelope {
     private readonly codec: VaultSyncCodec,
     private readonly wraps: KeyWrap,
     private readonly masterKeys: MasterKeyDeriver,
-    private readonly sealer: VaultSyncSealer,
     private readonly shape: VaultSyncShape,
+    private readonly errors: DomainEnvelopeErrorMapper,
   ) {}
 
   buildBundle(fields: BundleFields, userKey: Uint8Array): SyncBundle {
@@ -46,7 +46,7 @@ export class VaultSyncEnvelope {
     try {
       bundle = this.codec.sealBundle(body as Omit<VaultBundle, 'mac'>, userKey);
     } catch (error) {
-      throw EnvelopeError.fromDomain(error);
+      throw this.errors.map(error);
     }
     this.shape.checkBundle(bundle);
     return bundle;
@@ -58,7 +58,7 @@ export class VaultSyncEnvelope {
     try {
       this.codec.verifyBundle(bundle as VaultBundle, userKey);
     } catch (error) {
-      throw EnvelopeError.fromDomain(error, 'bundle_mac');
+      throw this.errors.map(error, 'bundle_mac');
     }
   }
 
@@ -88,7 +88,21 @@ export class VaultSyncEnvelope {
   }
 
   buildRecord(fields: RecordFields, scopeKey: Uint8Array): SyncRecord {
-    return this.sealer.sealRecord(fields, scopeKey);
+    this.shape.assertKey(scopeKey);
+    const body = {
+      format: VaultSyncShape.FORMAT.record,
+      v: VaultSyncShape.SUPPORTED_VERSION,
+      ...fields,
+      deleted: Boolean(fields.deleted),
+    } as Omit<VaultRecord, 'mac'>;
+    let record: unknown;
+    try {
+      record = this.codec.sealRecord(body, scopeKey);
+    } catch (error) {
+      throw this.errors.map(error);
+    }
+    this.shape.checkRecord(record);
+    return record;
   }
 
   /** Verify one record against the expected vault/scope. Throws on any mismatch. */
@@ -102,16 +116,46 @@ export class VaultSyncEnvelope {
     try {
       this.codec.verifyRecord(record as VaultRecord, scopeKey, expect);
     } catch (error) {
-      throw EnvelopeError.fromDomain(error, 'record_mac');
+      throw this.errors.map(error, 'record_mac');
     }
   }
 
   buildHead(input: HeadInput, scopeKey: Uint8Array): SyncHead {
-    return this.sealer.sealHead(input, scopeKey);
+    this.shape.assertKey(scopeKey);
+    let head: unknown;
+    try {
+      head = this.codec.createHead(
+        input.vaultId,
+        input.scope,
+        input.seq,
+        input.prevHeadMac ?? '',
+        [...input.records] as VaultRecord[],
+        scopeKey,
+      );
+    } catch (error) {
+      throw this.errors.map(error);
+    }
+    this.shape.checkHead(head);
+    return head;
   }
 
   verifyHead(head: unknown, scopeKey: Uint8Array, expect: HeadExpectation): void {
-    this.sealer.verifyHead(head, scopeKey, expect);
+    this.shape.checkHead(head);
+    if (head.vaultId !== expect.vaultId || head.scope !== expect.scope) {
+      throw new EnvelopeError('head_moved', 'Manifest head belongs to another vault or scope');
+    }
+    this.shape.assertKey(scopeKey);
+    try {
+      this.codec.verifyHead(
+        head,
+        scopeKey,
+        [...expect.records] as VaultRecord[],
+        expect.minSeq,
+        expect.expectedPrevHeadMac,
+      );
+    } catch (error) {
+      throw this.errors.map(error, 'head_mac');
+    }
   }
 
   decryptItem(item: unknown, ownerKey: Uint8Array, ownerId: string, itemId: string): string {
@@ -120,7 +164,7 @@ export class VaultSyncEnvelope {
     try {
       return this.codec.decryptItem(item, ownerKey, ownerId, itemId);
     } catch (error) {
-      throw EnvelopeError.fromDomain(error);
+      throw this.errors.map(error);
     }
   }
 }

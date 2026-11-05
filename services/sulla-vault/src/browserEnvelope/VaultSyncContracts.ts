@@ -11,8 +11,6 @@
 //   record  sulla-vault-sync-record v1     one item/folder (or tombstone), MAC binds generation
 //   head    sulla-vault-sync-head   v1     per-scope seq + hash of every record, MAC'd
 
-import { CryptoError } from '@sulla/domain';
-
 export interface AeadEnvelope {
   version: 1;
   algorithm: 'xchacha20-poly1305';
@@ -98,16 +96,6 @@ export interface RecordExpectation {
 
 /** The established, observable sync failure: `code` is the stable contract, `message` is shown to the owner. */
 export class EnvelopeError extends Error {
-  private static readonly DOMAIN_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
-    bundle_mac: 'Vault bundle failed its integrity check',
-    record_moved: 'Record belongs to another vault or scope',
-    record_mac: 'Record failed its integrity check',
-    decrypt_failed: 'Decryption failed',
-    wrong_password: 'Wrong master password',
-    non_integer: 'Canonical JSON only carries safe integers',
-    bad_type: 'Canonical JSON cannot carry this value',
-  });
-
   constructor(
     public readonly code: string,
     message?: string,
@@ -115,15 +103,4 @@ export class EnvelopeError extends Error {
     super(message || code);
   }
 
-  /**
-   * Translate a failure raised inside @sulla/domain. A `TypeError` there comes from
-   * base64url decoding of a MAC that passed the shape check but is non-canonical;
-   * libsodium treated that as a MAC mismatch, so it maps to `macFailureCode`.
-   */
-  static fromDomain(error: unknown, macFailureCode?: string): EnvelopeError | unknown {
-    if (error instanceof CryptoError) return new EnvelopeError(error.code, EnvelopeError.DOMAIN_MESSAGES[error.code]);
-    if (macFailureCode && error instanceof TypeError)
-      return new EnvelopeError(macFailureCode, EnvelopeError.DOMAIN_MESSAGES[macFailureCode]);
-    return error;
-  }
 }

@@ -207,10 +207,10 @@ describe('domain-backed Desktop vault sync (VaultSyncEnvelope)', () => {
       const head = sync.buildHead({ vaultId: kat.desktop.head.vaultId, scope: 'personal', seq: 1, records }, userKey);
       expect(head.stateHash).toBe(expected);
       sync.verifyHead(head, userKey, { vaultId: head.vaultId, scope: 'personal', records: [...records].reverse() });
-      // Domain v0.2.0 sorts with localeCompare: this is why VaultSyncSealer must stay until v0.2.1.
+      // Domain v0.2.1 owns the wire ordering; Desktop must not carry a second implementation.
       const crypto = new NobleCryptoPrimitives();
       const codec = new VaultSyncCodec(crypto, new KeyWrap(crypto, WebCryptoRandomSource.fromGlobal()));
-      expect(codec.stateHash(records)).not.toBe(expected);
+      expect(codec.stateHash(records)).toBe(expected);
     } finally {
       userKey.fill(0);
     }
