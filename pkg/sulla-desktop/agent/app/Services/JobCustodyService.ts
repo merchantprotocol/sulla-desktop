@@ -9,6 +9,11 @@ import type { CustodyAuditRecord,CustodyChangeNotifier,CustodyMoveInput,CustodyM
 
 export class JobCustodyService implements JobCustodyPort {
   constructor(private readonly repository:AgentJobCustodyRepository,private readonly policy:JobCustodyAuthorityPolicy,private readonly notifier:CustodyChangeNotifier,private readonly clock:Clock){}
+  async authorizeManagement(jobId:string,taskIndex:number|undefined,actor:import('./JobCustodyTypes').CustodyActor):Promise<CustodyMoveResult|undefined>{
+    const current=await this.repository.resolveOwner(jobId,taskIndex);
+    if(!current)return {ok:false,code:'not-found',message:`Job ${jobId} was not found.`};
+    return this.policy.authorizeManagement(current,actor);
+  }
   async move(input:CustodyMoveInput):Promise<CustodyMoveResult>{
     const changedAt=this.clock.now();
     const result=await this.repository.move(input,async current=>this.policy.authorize({jobId:input.jobId,taskIndex:input.taskIndex,current,destination:input.to,actor:input.actor}),changedAt);

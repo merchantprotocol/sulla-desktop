@@ -22,7 +22,7 @@ export class LeadHandoffPacketAssembler {
     lines.push(``,`## Recent lead check-ins`);
     for(const item of snapshot.checkins.slice(0,this.checkinLimit)) lines.push(`- ${item.step}: ${item.summary}${item.blockers?.length?` (blockers: ${item.blockers.join('; ')})`:''}`);
     lines.push(``,`## Undelivered results/inbox (${snapshot.inbox.length})`);
-    for(const row of snapshot.inbox) lines.push(`- ${row.kind}: ${JSON.stringify(row.payload)}`);
+    for(const row of snapshot.inbox) lines.push(`- ${row.kind}: ${row.body}`);
     lines.push(``,`## Queued messages (${snapshot.messages.length})`);
     for(const row of snapshot.messages) lines.push(`- ${row.message}`);
     const resume=[task.prompt,...snapshot.checkins.map(c=>c.summary)].join('\n').match(/(?:\/mnt\/[^\s)`]+|resume[^\n.]*)/gi)??[];

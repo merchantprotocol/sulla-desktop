@@ -19,7 +19,7 @@ export class LeadHandoffRepository extends Repository<AgentJobModel> {
       task.threadId?this.jobs.jobsForParentThread(task.threadId):Promise.resolve([]),
       this.messaging.telemetryForJob(jobId),
       this.connection.select(`SELECT id,message,created_at FROM agent_job_messages WHERE job_id=$1 AND task_index=$2 AND delivered_at IS NULL ORDER BY created_at`,[jobId,taskIndex]),
-      this.connection.select(`SELECT message_id,kind,payload,created_at FROM agent_inbox_messages WHERE ids->>'jobId'=$1 AND COALESCE((ids->>'taskIndex')::int,-1)=$2 AND delivered_at IS NULL ORDER BY created_at`,[jobId,taskIndex]),
+      this.connection.select(`SELECT message_id,kind,body,ids,created_at FROM agent_inbox_messages WHERE ids->>'jobId'=$1 AND COALESCE((ids->>'taskIndex')::int,-1)=$2 AND delivered_at IS NULL ORDER BY created_at`,[jobId,taskIndex]),
     ]);
     return {lead,taskIndex,children,checkins:telemetry[taskIndex]?.checkins??[],messages:messageRows,inbox:inboxRows};
   }

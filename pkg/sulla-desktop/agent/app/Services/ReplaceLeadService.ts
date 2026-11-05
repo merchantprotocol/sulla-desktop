@@ -15,8 +15,8 @@ export class ReplaceLeadService {
    const owner=await this.custody.resolveOwner(input.jobId,input.taskIndex); if(!owner)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    const launchOwner:CustodyOwner={channel:owner.channel,threadId:owner.threadId,agentId:owner.agentId};
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note); if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
-   const authority=await this.custody.move({jobId:input.jobId,taskIndex:input.taskIndex,to:owner,actor:input.actor,reason:'replace_lead authority check'});
-   if(!authority.ok&&authority.code!=='no-op')return authority;
+   const refusal=await this.custody.authorizeManagement(input.jobId,input.taskIndex,input.actor);
+   if(refusal)return refusal;
    let launched;
    try{launched=await this.launcher.launchReplacement({oldJobId:input.jobId,oldTaskIndex:input.taskIndex,agentId:input.agentId,model:input.model,provider:input.provider,prompt:packet.prompt,owner:launchOwner});}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    const replacementOwner:CustodyOwner={channel:owner.channel,threadId:launched.threadId,agentId:input.agentId};
