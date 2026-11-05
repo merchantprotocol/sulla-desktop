@@ -15,27 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 100
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
       # Parity walks history from HEAD to the pinned sulla-tools commit. Run it
       # before the depth=1 base fetch below, which marks the base tip shallow
       # and cuts the merge commit's history, so every PR failed this check.
       - name: Bundled sulla-tools parity
-        run: node scripts/check-bundled-tools-parity.mjs || { echo "::error title=Bundled parity failed::See architecture workflow output"; exit 1; }
+        run: node scripts/check-bundled-tools-parity.mjs
       - name: Bundled sulla-tools parity tests
-        run: node --test scripts/check-bundled-tools-parity.test.mjs || { echo "::error title=Bundled parity tests failed::See architecture workflow output"; exit 1; }
+        run: node --test scripts/check-bundled-tools-parity.test.mjs
       - name: Bundled sulla-files migration parity
         run: node scripts/check-bundled-files-parity.mjs
       - name: Bundled sulla-files migration parity tests
         run: node --test scripts/check-bundled-files-parity.test.mjs
       - name: Fetch PR base (allowlist may only shrink)
         if: github.event_name == 'pull_request'
-        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || { echo "::error title=Base fetch failed::See architecture workflow output"; exit 1; }
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
       - name: Architecture guard
         env:
           GUARD_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
-        run: node scripts/architecture-guard/guard.mjs || { echo "::error title=Architecture scan failed::See architecture workflow output"; exit 1; }
+        run: node scripts/architecture-guard/guard.mjs
