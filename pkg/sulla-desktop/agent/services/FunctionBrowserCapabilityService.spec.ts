@@ -22,7 +22,7 @@ describe('FunctionBrowserCapabilityService', () => {
   });
   it('rejects local, private, and DNS-to-private targets even without an origin allowlist', async() => { // risk: SSRF
     const policy = new BrowserUrlPolicy(new Resolver({'private.example':['10.1.2.3']}));
-    for (const url of ['http://localhost','http://127.0.0.1','http://[::1]','http://10.0.0.1','http://172.16.0.1','http://192.168.0.1','http://169.254.1.1','http://100.64.0.1','http://private.example']) await expect(policy.validate(url)).rejects.toThrow('unsafe-network-target');
+    for (const url of ['http://localhost','http://127.0.0.1','http://[::1]','http://[::ffff:127.0.0.1]','http://[fc00::1]','http://[fe80::1]','http://10.0.0.1','http://172.16.0.1','http://192.168.0.1','http://169.254.1.1','http://100.64.0.1','http://private.example']) await expect(policy.validate(url)).rejects.toThrow('unsafe-network-target');
   });
   it('rejects an allowed public origin redirecting to another or private origin', async() => { // risk: redirect allowlist bypass
     const h=new Harness(); const {token}=h.service.mint('x',{enabled:true,allowedOrigins:['https://example.com']}); h.browser.redirect='https://other.example/'; await expect(h.service.open(token,'https://example.com')).rejects.toMatchObject({outcome:'origin-not-allowed'});
