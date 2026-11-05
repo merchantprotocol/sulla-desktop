@@ -22,10 +22,12 @@ class EnrollmentRouteFixture {
   async start(): Promise<string> {
     const database = { query: async() => ({ rows: [], rowCount: 0 }) } as unknown as Database;
     const authority = {
-      commitVaultEnrollment: async(...args: unknown[]) => {
-        if (args[0] !== this.approvalServiceId || args[1] !== this.approvalServiceToken) {
+      requireApprovalIdentity: (serviceId: string, token: string | undefined) => {
+        if (serviceId !== this.approvalServiceId || token !== this.approvalServiceToken) {
           throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
         }
+      },
+      commitVaultEnrollment: async(...args: unknown[]) => {
         this.commitCalls.push(args);
         return { committed: true };
       },
