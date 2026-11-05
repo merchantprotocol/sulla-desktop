@@ -22,7 +22,7 @@ import {
   wakeTargetFromState,
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
-import { disallowedToolsFor } from './claudeToolPolicy';
+import { ClaudeToolPolicy } from './claudeToolPolicy';
 import {
   CliFaultError, CliHandoffFailure, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
 } from './cliFaultRecovery';
@@ -91,7 +91,7 @@ const perf = Logging.perf;
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 
-// Native-tool policy (disallowedToolsFor: base + observer/worker denylists)
+// Native-tool policy (disallowedToolsFor: base + observer/delegated denylists)
 // lives in claudeToolPolicy.ts so tests can assert it without importing this
 // service's full dependency graph. Includes the zj21 sub-agent spawn lockdown:
 // Task/Agent are disallowed on every spawn — delegation goes through
@@ -208,6 +208,7 @@ function handoffAbortError(): Error {
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
+  private readonly toolPolicy: ClaudeToolPolicy;
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -307,7 +308,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     /**
      * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
      * observers lose the native actor toolset (Read/Write/Edit/Bash/…),
-     * worker sub-agents lose detached-work tools (Monitor/ScheduleWakeup/…).
+     * delegated workers/managers lose detached-work and direct-human tools
+     * (Monitor/ScheduleWakeup/SendMessage/Workflow/…). Bash remains available
+     * synchronously; run_in_background cannot be denied independently by name.
      */
     disallowedTools:   string;
     /**
@@ -422,8 +425,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor() {
+  constructor(toolPolicy = new ClaudeToolPolicy()) {
     super({ id: 'claude-code', model: 'claude-code', baseUrl: 'local-vm' });
+    this.toolPolicy = toolPolicy;
   }
 
   /** Non-streaming chat — buffers the whole response and returns it. */
@@ -927,7 +931,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // isSubAgent — workflow-node agents are sub-agents stamped 'primary' and
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
-    const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
+    const disallowedTools = this.toolPolicy.disallowedToolsFor(options.state?.metadata as any);
     // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
     const systemPromptFile: ProviderFileRef = await transport.files.write({

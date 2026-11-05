@@ -502,6 +502,9 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
         subState.metadata.delegatedJobId = activityJobId;
+        subState.metadata.delegatedTaskIndex = index;
+        subState.metadata.managerAgentId = parentAgentId || parentChannel;
+        subState.metadata.managerThreadId = parentThreadId;
         // While this runner drives the graph, a human typing into the thread
         // (after "Open in tab") steers it instead of starting a second run.
         subState.metadata.delegatedRunActive = true;
