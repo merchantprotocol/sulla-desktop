@@ -10,6 +10,7 @@ import { createApp } from '../../../../../../services/sulla-vault/src/app';
 
 import type { VaultConfig } from '../../../../../../services/sulla-vault/src/config';
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
+import { LocalVaultError } from '../../../../../../services/sulla-vault/src/localAuthority';
 import type { LocalVaultAuthority } from '../../../../../../services/sulla-vault/src/localAuthority';
 
 class EnrollmentRouteFixture {
@@ -22,6 +23,9 @@ class EnrollmentRouteFixture {
     const database = { query: async() => ({ rows: [], rowCount: 0 }) } as unknown as Database;
     const authority = {
       commitVaultEnrollment: async(...args: unknown[]) => {
+        if (args[0] !== this.approvalServiceId || args[1] !== this.approvalServiceToken) {
+          throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
+        }
         this.commitCalls.push(args);
         return { committed: true };
       },
