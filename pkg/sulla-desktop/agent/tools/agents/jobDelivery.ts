@@ -12,9 +12,10 @@
 
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { enqueueAgentCompletion } from '../../services/AgentCompletionInbox';
+import { OrphanedChildResultService, type OrphanedChildJobStore } from '../../services/OrphanedChildResultService';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
 
-import type { AgentJobResult, AgentJobTask } from './jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
 
 /** A returned contract as the job result the parent reads. */
 export function returnedJobResult(task: AgentJobTask, label: string, threadId: string): AgentJobResult {
@@ -132,15 +133,29 @@ export async function emitProactiveCompletion(
  * whether the wake went out; a false return leaves the completion pending
  * for the recovery pass.
  */
-export async function deliverJobCompletion(job: {
-  jobId:           string;
-  parentChannel?:  string;
-  parentThreadId?: string;
-}, results: AgentJobResult[], taskIndex = 0): Promise<boolean> {
-  const channel = job.parentChannel || 'sulla-desktop';
-  await emitProactiveCompletion(channel, job.jobId, results, undefined, job.parentThreadId);
-  const delivered = await wakeParentGraph(channel, job.parentThreadId, job.jobId, results, undefined, taskIndex);
-  // The inbox owns acknowledgement: the durable row remains pending until
-  // BackendGraphWebSocketService actually dispatches the batch into a turn.
-  return delivered;
+/** The single classifier/emitter used by live settlement and recovery. */
+export class JobCompletionDelivery {
+  private readonly orphanedChildResults: OrphanedChildResultService;
+
+  constructor(jobs: OrphanedChildJobStore) {
+    this.orphanedChildResults = new OrphanedChildResultService(jobs);
+  }
+
+  async deliver(job: AgentJob, results: AgentJobResult[], taskIndex = 0, failureReason?: string): Promise<boolean> {
+    const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
+    if (orphan) {
+      if (orphan.duplicate || !orphan.route) return true;
+      const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
+      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, orphanReason, taskIndex);
+    }
+    const channel = job.parentChannel || 'sulla-desktop';
+    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId);
+    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex);
+  }
+}
+
+/** Compatibility entry point for callers not yet constructed by the provider. */
+export async function deliverJobCompletion(job: AgentJob, results: AgentJobResult[], taskIndex = 0, failureReason?: string): Promise<boolean> {
+  const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+  return agentJobProvider.delivery.deliver(job, results, taskIndex, failureReason);
 }

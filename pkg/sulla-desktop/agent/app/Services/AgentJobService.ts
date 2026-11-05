@@ -8,7 +8,7 @@ import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
-import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
@@ -127,14 +127,10 @@ async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: strin
   }
   return 'stopped';
 }
-
-
-
 async getJob(jobId: string): Promise<AgentJob | undefined> {
   await this.recovery.ensureHydrated();
   const cached = this.runtime.jobs.get(jobId);
   if (cached) return cached;
-
   // Cache miss — a pre-restart job may still exist in Postgres (swept to
   // 'failed' by ensureBootSweep, or finished before the restart).
   try {
@@ -142,16 +138,13 @@ async getJob(jobId: string): Promise<AgentJob | undefined> {
     if (persisted) {
       const job = persisted;
       this.runtime.jobs.set(jobId, job);
-
       return job;
     }
   } catch (err) {
     console.warn('[jobRegistry] persistence read failed:', (err as Error).message);
   }
-
   return undefined;
 }
-
 async getAllJobs(): Promise<AgentJob[]> {
   await this.recovery.ensureHydrated();
 
@@ -317,6 +310,14 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
   return this.taskLocator.findTaskByThread(threadId);
+}
+
+/** Persist and mirror one deduplicated late-child notice on its terminal owner. */
+async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
+  const refreshed = await this.repository.job(jobId);
+  if (refreshed) this.runtime.jobs.set(jobId, refreshed);
+  return recorded;
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */

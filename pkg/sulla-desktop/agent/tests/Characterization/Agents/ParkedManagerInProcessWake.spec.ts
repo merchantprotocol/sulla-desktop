@@ -187,4 +187,48 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
     expect(fakeGraph.execute).toHaveBeenCalledTimes(2);
   });
+
+  it('routes the real settleTask path above a manager that becomes terminal before its child settles', async() => {
+    // risk: production settleTask bypasses orphan classification and wakes a
+    // terminal manager even though compatibility delivery tests pass.
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'codex-sol-worker', run_location: 'vm' } as any);
+    const managerThreadId = 'real-settle-orphan-manager';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'real-settle-orphan-root',
+    );
+    let release!: () => void;
+    const runGate = new Promise<void>(resolve => { release = resolve; });
+    const childState: any = {
+      metadata: { wsChannel: 'codex-sol-worker', options: {}, agent: {} },
+      messages: [],
+    };
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({
+      graph: { execute: vi.fn(async() => {
+        await runGate;
+        childState.messages.push({ role: 'assistant', content: 'built through real spawn path' });
+        return childState;
+      }) },
+      state: childState,
+    } as any);
+
+    const spawn = new SpawnHarness();
+    const launch = JSON.parse((await spawn.runHarness(managerThreadId, 'coding-manager-sol', {
+      tasks: [{ agentId: 'codex-sol-worker', label: 'late real worker', prompt: 'build' }],
+      async: true,
+    })).responseString!);
+    await registry.completeJob(manager.jobId, [{ label: 'manager', status: 'completed', output: 'finished early', threadId: managerThreadId }]);
+    release();
+
+    await vi.waitFor(async() => expect((await registry.getJob(launch.jobId))?.status).toBe('completed'), { timeout: 2_000, interval: 10 });
+    const root = await vi.waitFor(() => {
+      const notices = inbox.takeAgentCompletions('sulla-desktop', 'real-settle-orphan-root');
+      expect(notices).toHaveLength(1);
+      return notices;
+    }, { timeout: 2_000, interval: 10 });
+    expect(root[0]).toMatchObject({ jobId: launch.jobId, taskIndex: 0, failureReason: expect.stringContaining('orphaned child result') });
+    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([]);
+    expect((await registry.getJob(manager.jobId))?.status).toBe('completed');
+    expect((await registry.getJob(manager.jobId))?.orphanedChildNotices).toHaveLength(1);
+  });
 });

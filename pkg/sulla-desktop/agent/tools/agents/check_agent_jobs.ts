@@ -63,12 +63,14 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
     status: job.status,
     waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
+    orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     error: job.error,
     stoppedBy: job.stoppedBy,
     stopReason: job.stopReason,
     tasks: jobTaskViews(job, telemetry),
     results: job.results,
+    orphanedChildNotices: job.orphanedChildNotices ?? [],
   };
 }
 
@@ -87,6 +89,7 @@ function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobT
     status: job.status,
     waitingOnChildren: job.waitingOnChildren ?? 0,
     taskCount: job.taskCount,
+    orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     stoppedBy: job.stoppedBy,
     stopReason: job.stopReason,
@@ -125,7 +128,7 @@ export class CheckAgentJobsWorker extends BaseTool {
 
       const result = await serializeJob(job);
       return {
-        successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
+        successBoolean: job.status === 'running' || job.status === 'parked' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
         responseString: JSON.stringify(result, null, 2),
       };
     }
