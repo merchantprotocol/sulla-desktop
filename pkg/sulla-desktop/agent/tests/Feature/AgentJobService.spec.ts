@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
 import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
+import { AgentContainerRuntimeRegistry, type AgentContainerRuntimeBinding } from '../../services/AgentContainerRuntimeRegistry';
 import { TestDatabase } from '../Support/TestDatabase';
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 dbDescribe('AgentJobService state machine with real Postgres', () => {
@@ -125,23 +126,48 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });
 
-  it('does not mark a live container task lost while runtime rebind is pending', async() => {
+  it('rehydrates supervisor-visible containers before boot reconciliation and loses absent ones', async() => {
     // risk: Desktop restart falsely kills a still-running container agent
-    const jobId = `rebind-race-${ Date.now() }`;
+    const jobId = `rebind-live-${ Date.now() }`;
+    const absentId = `rebind-absent-${ Date.now() }`;
     await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
-      VALUES ($1, 'running', 1, now() - interval '20 minutes', $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
-      agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-thread', startedAt: Date.now() - 1_200_000,
-    }])]);
+      VALUES ($1, 'running', 1, now() - interval '20 minutes', $3::jsonb, 'hidden'),
+             ($2, 'running', 1, now() - interval '20 minutes', $4::jsonb, 'hidden')`, [jobId, absentId,
+      JSON.stringify([{ agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-live-thread', startedAt: Date.now() - 1_200_000 }]),
+      JSON.stringify([{ agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-absent-thread', startedAt: Date.now() - 1_200_000 }])]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    let containerProbe: boolean | undefined;
+    const binding: AgentContainerRuntimeBinding = { podId: 'live-container', subject: 'owner', jobId, threadId: 'rebind-live-thread', deviceId: 'desktop', workspacePath: '/workspace' };
+    const runtimeRegistry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [binding] });
     const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
-      graph: () => false, container: async() => containerProbe, lastCheckin: async() => null,
+      graph: () => false, container: async task => runtimeRegistry.probe(undefined, task.threadId), lastCheckin: async() => null,
     }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
-    expect(await reconciler.reconcile()).toBe(0);
+    const boot = runtimeRegistry.rehydrate().then(() => reconciler.reconcile());
+    agentJobProvider.states.setReadiness(boot);
+    expect(await boot).toBe(1);
     expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
-    containerProbe = true;
-    expect(await reconciler.reconcile()).toBe(0);
-    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+    expect((await agentJobProvider.jobs.job(absentId))?.status).toBe('failed');
+    expect(agentJobProvider.runtime.jobs.get(jobId)?.status).toBe('running');
+    expect(agentJobProvider.runtime.jobs.get(absentId)?.status).toBe('failed');
+  });
+
+  it('preserves both concurrent task settlements in Postgres and cache', async() => {
+    // risk: parallel worker completion loses a sibling result
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const created = await registry.createJob([
+      { agentId: 'worker-a', label: 'A', prompt: 'a', status: 'running' },
+      { agentId: 'worker-b', label: 'B', prompt: 'b', status: 'running' },
+    ]);
+    const settle = (index: number) => agentJobProvider.states.update(created.jobId, asyncJob => {
+      asyncJob.results[index] = { label: String(index), status: 'completed', output: `result-${ index }`, threadId: `thread-${ index }` };
+      asyncJob.tasks[index] = { ...asyncJob.tasks[index], status: 'completed', completion: asyncJob.results[index] };
+      return asyncJob;
+    });
+    const first = settle(0); const second = settle(1);
+    await Promise.all([first, second]);
+    const [durable] = await database.query<{ tasks: Array<{ status: string }>; results: Array<{ output: string }> }>('SELECT tasks, results FROM agent_jobs WHERE job_id = $1', [created.jobId]);
+    expect(durable.tasks.map(task => task.status)).toEqual(['completed', 'completed']);
+    expect(durable.results.map(result => result.output)).toEqual(['result-0', 'result-1']);
+    expect(agentJobProvider.runtime.jobs.get(created.jobId)?.results.map(result => result.output)).toEqual(['result-0', 'result-1']);
   });
 
   it('refuses a lost transition when a check-in arrives after liveness observation', async() => {

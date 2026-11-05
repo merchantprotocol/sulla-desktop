@@ -8,14 +8,25 @@ import type { ToolExecutionContext } from '../tools/executionContext';
 import type { ToolExecutionTarget } from '../tools/executionTargets';
 
 export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; threadId?: string; deviceId: string; workspacePath: string; }
+export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }
 
 /** Injectible owner of container bindings and the boot rebind grace period. */
 export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
-  private readonly rehydrated: Promise<void>;
+  private rehydrated: Promise<void> = Promise.resolve();
   private rebindPending = true;
-  constructor(rebindGraceMs = 30_000) { this.rehydrated = new Promise(resolve => { const timer = setTimeout(() => { this.rebindPending = false; resolve(); }, rebindGraceMs); timer.unref?.(); }); }
+  constructor(private readonly supervisor?: AgentContainerRuntimeSupervisor) {}
+  rehydrate(): Promise<void> {
+    if (!this.supervisor) throw new Error('Agent container runtime supervisor is not configured');
+    this.rebindPending = true;
+    this.rehydrated = this.supervisor.liveBindings().then(bindings => {
+      this.bindings.clear();
+      for (const binding of bindings) this.bindings.set(binding.podId, binding);
+      this.rebindPending = false;
+    });
+    return this.rehydrated;
+  }
   ready(): Promise<void> { return this.rehydrated; }
   /** Tri-state liveness: undefined protects tasks while restart rebind is pending. */
   probe(jobId?: string, threadId?: string): boolean | undefined {
@@ -34,7 +45,18 @@ export class AgentContainerRuntimeRegistry {
   forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined { return target === 'agent-local' && ctx.pod_id ? this.require(ctx) : undefined; }
 }
 
-export const agentContainerRuntimeRegistry = new AgentContainerRuntimeRegistry();
+class DeferredAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
+  private source?: AgentContainerRuntimeSupervisor;
+  configure(source: AgentContainerRuntimeSupervisor): void { this.source = source }
+  liveBindings(): Promise<AgentContainerRuntimeBinding[]> {
+    if (!this.source) throw new Error('Agent container runtime supervisor is not configured');
+    return this.source.liveBindings();
+  }
+}
+const deferredSupervisor = new DeferredAgentContainerRuntimeSupervisor();
+export const agentContainerRuntimeRegistry = new AgentContainerRuntimeRegistry(deferredSupervisor);
+export const configureAgentContainerRuntimeSupervisor = (supervisor: AgentContainerRuntimeSupervisor) => deferredSupervisor.configure(supervisor);
+export const rehydrateAgentContainerRuntimes = () => agentContainerRuntimeRegistry.rehydrate();
 export const awaitAgentContainerRuntimeRehydration = () => agentContainerRuntimeRegistry.ready();
 export const withAgentContainerRuntime = <T>(binding: AgentContainerRuntimeBinding, action: () => T) => agentContainerRuntimeRegistry.withRuntime(binding, action);
 export const hasAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.has(jobId, threadId);

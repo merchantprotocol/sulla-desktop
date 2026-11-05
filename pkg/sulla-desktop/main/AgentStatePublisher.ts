@@ -15,7 +15,10 @@ export class AgentStatePublisher {
     ipcMain.handle(AGENT_STATE_SNAPSHOT_CHANNEL, async() => { await this.states.ready(); return this.projector.snapshot(); });
     this.unsubscribe = this.states.onChange(() => this.schedule());
   }
-  private schedule(): void { if (this.timer) return; this.timer = setTimeout(() => void this.publish(), this.delayMs); }
+  private schedule(): void {
+    if (this.timer) return;
+    this.timer = setTimeout(() => void this.publish().catch(error => console.error('[AgentStatePublisher] snapshot publish failed:', error)), this.delayMs);
+  }
   private async publish(): Promise<void> {
     this.timer = undefined;
     const snapshot = await this.projector.snapshot();
