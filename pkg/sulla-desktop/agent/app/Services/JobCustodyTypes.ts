@@ -9,6 +9,7 @@ export interface CustodyAuditRecord { jobId: string; taskIndex?: number; from: C
 export type CustodyRefusalCode = 'not-found'|'forbidden'|'invalid-destination'|'cycle'|'no-op'|'lease-active'|'version-conflict';
 export type CustodyMoveResult = { ok: true; previous: CustodyOwner; current: CustodyRecord } | { ok: false; code: CustodyRefusalCode; message: string; current?: CustodyOwner; retryable?: boolean };
 export interface CustodyMoveInput { jobId: string; taskIndex?: number; to: CustodyOwner; actor: CustodyActor; reason: string }
-export interface JobCustodyPort { authorizeManagement(jobId:string,taskIndex:number|undefined,actor:CustodyActor):Promise<CustodyMoveResult|undefined>; move(input: CustodyMoveInput): Promise<CustodyMoveResult>; resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined>; history(jobId: string): Promise<CustodyAuditRecord[]> }
+export interface CustodyTransactionClient { query<T=any>(sql:string, values?:unknown[]):Promise<{rows:T[]}> }
+export interface JobCustodyPort { move(input: CustodyMoveInput): Promise<CustodyMoveResult>; resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined>; withOwner<T>(jobId: string, taskIndex: number|undefined, operation: (client: CustodyTransactionClient, owner: CustodyRecord) => Promise<T>): Promise<T|undefined>; history(jobId: string): Promise<CustodyAuditRecord[]> }
 export interface CustodyChangeNotifier { changed(change: CustodyAuditRecord): Promise<void> }
 export class NoopCustodyChangeNotifier implements CustodyChangeNotifier { async changed(): Promise<void> {} }
