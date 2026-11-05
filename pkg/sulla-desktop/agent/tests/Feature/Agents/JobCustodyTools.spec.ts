@@ -159,4 +159,70 @@ dbDescribe('registered custody transfer tools',()=>{
     GraphRegistry.delete(ownerThread);entrants.forEach(entry=>GraphRegistry.delete(entry.thread));
   });
 
+
+  it('H4 serializes registered return_result with reassign_job in both commit orders',async()=>{
+    // risk: lost/duplicated contracts; guards jobDelivery.ts:188-195 and AgentJobCustodyRepository.ts:20-28
+    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
+    for(const order of ['return-first','move-first'] as const){
+      completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
+      const old=`h4-old-${order}-${stamp}`,next=`h4-new-${order}-${stamp}`,child=`h4-child-${order}-${stamp}`;
+      await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
+      const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
+      await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[job.jobId]);
+      const returned=()=>tools.call('return_result',{status:'completed',summary:'race result',output:{order}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1});
+      const moved=()=>tools.call('reassign_job',{jobId:job.jobId,to:next,reason:`${order} race`},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1});
+      const results=order==='return-first'?[await returned(),await moved()]:[await moved(),await returned()];
+      expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
+      expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId)).toHaveLength(1);
+      expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId)).toHaveLength(0);
+    }
+  });
+
+  it('H4 keeps an adopted managers worker completion with that manager',async()=>{
+    // risk: adopter steals nested contracts; guards JobCompletionDelivery custody scope in jobDelivery.ts:188-195
+    const {GraphRegistry}=await import('../../../services/GraphRegistry');const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
+    completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
+    const owner=`h4po-owner-${stamp}`,adopter=`h4po-adopter-${stamp}`,managerThread=`h4po-manager-${stamp}`,workerThread=`h4po-worker-${stamp}`;
+    for(const [agent,thread] of [[owner,owner],[adopter,adopter]] as const){const graph=await GraphRegistry.getOrCreate(agent,thread);Object.assign(graph.state.metadata,{agentId:agent,wsChannel:agent,threadId:thread,isSubAgent:false,subAgentDepth:0});}
+    const manager=await registry.createJob([{agentId:'nested-manager',label:'M',prompt:'manage',status:'parked',threadId:managerThread}],owner,owner,{parentAgentId:owner});
+    await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[manager.jobId]);GraphRegistry.delete(owner);
+    const child=await registry.createJob([{agentId:'nested-worker',label:'W',prompt:'work',status:'running',threadId:workerThread}], 'nested-manager',managerThread,{parentAgentId:'nested-manager'});
+    await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[child.jobId]);
+    expect(await tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0})).toMatchObject({success:true});
+    expect(await tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2})).toMatchObject({success:true});
+    expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId)).toHaveLength(1);
+    expect(completionInboxStore.take(adopter,adopter).filter(entry=>entry.jobId===child.jobId)).toHaveLength(0);GraphRegistry.delete(adopter);
+  });
+
+  it('H6 fresh provider recovery preserves custody and dedupes stale completion replay',async()=>{
+    // risk: restart redelivery to stale owner; guards AgentCompletionRecoveryService.ts:43-55 and AgentJobServiceProvider.ts:48-70
+    const {AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');const {AgentCompletionRecoveryService,CompletionDeliveryPolicy}=await import('../../../services/AgentCompletionRecoveryService');const {CompletionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
+    const old=`h6-old-${stamp}`,next=`h6-new-${stamp}`,child=`h6-worker-${stamp}`;await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
+    const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
+    expect(await tools.call('reassign_job',{jobId:job.jobId,to:next,reason:'restart handoff'},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1})).toMatchObject({success:true});
+    await database.query(`UPDATE agent_jobs SET status='completed',results=$2::jsonb,tasks=jsonb_set(jsonb_set(tasks,'{0,status}','"completed"'),'{0,completion}',$3::jsonb) WHERE job_id=$1`,[job.jobId,JSON.stringify([{label:'W',status:'completed',output:'done',threadId:child}]),JSON.stringify({label:'W',status:'completed',output:'done',threadId:child})]);
+    const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),fresh.custody);
+    await recovery.recover();await recovery.recover();
+    expect(await fresh.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});expect(await fresh.custody.history(job.jobId)).toHaveLength(1);
+    expect(inbox.take(next,next).filter(entry=>entry.jobId===job.jobId)).toHaveLength(1);expect(inbox.take(old,old)).toHaveLength(0);
+    const notices=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE $1 ORDER BY message_id`,[`custody:${job.jobId}:job:1:%`]);expect(notices).toHaveLength(2);expect(new Set(notices.map(row=>row.receiver_thread_id))).toEqual(new Set([old,next]));
+  });
+
+  it('refuses an ambiguous live channel and lists both candidates without mutation',async()=>{
+    // risk: nondeterministic custody; guards CustodyDestinationResolver.ts:21-22
+    const {GraphRegistry}=await import('../../../services/GraphRegistry');const stamp=Date.now(),channel=`ambiguous-${stamp}`,a=`amb-a-${stamp}`,b=`amb-b-${stamp}`,owner=`amb-owner-${stamp}`;
+    for(const thread of [a,b]){const graph=await GraphRegistry.getOrCreate(channel,thread);Object.assign(graph.state.metadata,{agentId:channel,wsChannel:channel,threadId:thread,isSubAgent:false,subAgentDepth:0});}
+    const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:`amb-worker-${stamp}`}],owner,owner,{parentAgentId:owner});const result=await tools.call('reassign_job',{jobId:job.jobId,to:channel,reason:'ambiguous'},{wsChannel:owner,agentId:owner,threadId:owner,subAgentDepth:1});
+    expect(result.success).toBe(false);expect(JSON.stringify(result)).toContain(a);expect(JSON.stringify(result)).toContain(b);const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');expect(await agentJobProvider.custody.history(job.jobId)).toHaveLength(0);expect((await agentJobProvider.custody.resolveOwner(job.jobId))?.threadId).toBe(owner);GraphRegistry.delete(a);GraphRegistry.delete(b);
+  });
+
+  it('refuses moving a job to its grandchild thread without mutation',async()=>{
+    // risk: cyclic manager graph; guards MainCustodyOwnerLiveness.ts:60-64 and JobCustodyAuthorityPolicy.ts:31
+    const stamp=Date.now(),root=`cycle-root-${stamp}`,parentThread=`cycle-parent-${stamp}`,childThread=`cycle-child-${stamp}`,grandchildThread=`cycle-grandchild-${stamp}`;
+    const parent=await registry.createJob([{agentId:'parent',label:'P',prompt:'work',status:'running',threadId:parentThread}],root,root,{parentAgentId:root});
+    await registry.createJob([{agentId:'child',label:'C',prompt:'work',status:'running',threadId:childThread}],'parent',parentThread,{parentAgentId:'parent'});
+    await registry.createJob([{agentId:'grandchild',label:'G',prompt:'work',status:'running',threadId:grandchildThread}],'child',childThread,{parentAgentId:'child'});
+    const result=await tools.call('reassign_job',{jobId:parent.jobId,to:grandchildThread,reason:'must reject cycle'},{wsChannel:root,agentId:root,threadId:root,subAgentDepth:0});expect(result.success).toBe(false);expect(JSON.stringify(result)).toContain('descendant');const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');expect(await agentJobProvider.custody.history(parent.jobId)).toHaveLength(0);expect((await agentJobProvider.custody.resolveOwner(parent.jobId))?.threadId).toBe(root);
+  });
+
 });
