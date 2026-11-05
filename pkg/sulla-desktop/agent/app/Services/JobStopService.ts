@@ -18,10 +18,11 @@ export class JobStopService extends Service {
     if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
     this.states.markPendingTerminalWrite(jobId);
     const stoppedBy = StopPrincipal.attribution(principal); const finishedAt = this.clock.now().getTime();
-    void this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : ({ ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, stoppedBy, stopReason: reason,
-      tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt } : task) }))
-      .then(updated => { if (updated) this.runtime.abortScopes.get(jobId)?.abortJob(); })
-      .catch(error => console.warn('[JobStopService] stop persistence failed:', (error as Error).message));
+    const persistence = this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : ({ ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, stoppedBy, stopReason: reason,
+      tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt } : task) }));
+    // Register the mutation queue entry before aborting so teardown failures line up behind the durable stop.
+    this.runtime.abortScopes.get(jobId)?.abortJob();
+    void persistence.catch(error => console.warn('[JobStopService] stop persistence failed:', (error as Error).message));
     return 'stopped';
   }
 
