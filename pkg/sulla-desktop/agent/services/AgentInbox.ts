@@ -54,6 +54,7 @@ export class AgentInbox {
     const reservation = this.runGuard.tryReserve(target);
     if (!reservation) return 0;
     let delivered = 0;
+    let hitCap = false;
     try {
       for (let turn = 0; turn < this.maxDrainTurns; turn++) {
         const claim = await this.repository.claim(target, randomUUID());
@@ -74,6 +75,7 @@ export class AgentInbox {
           if (receipt === 'accepted') {
             await this.repository.acknowledge(claim);
             delivered += claim.entries.length;
+            hitCap = turn + 1 === this.maxDrainTurns;
           } else await this.repository.release(claim);
         } catch (error) {
           clearInterval(renewalTimer);
@@ -86,9 +88,15 @@ export class AgentInbox {
       return delivered;
     } finally {
       reservation.release();
-      const pendingTargets = await this.repository.pendingTargets();
-      if (pendingTargets.some(pending => this.isSameTarget(pending, target))) {
-        this.scheduler.schedule(() => { void this.flush(target); });
+      if (hitCap) {
+        try {
+          const pendingTargets = await this.repository.pendingTargets();
+          if (pendingTargets.some(pending => this.isSameTarget(pending, target))) {
+            this.scheduler.schedule(() => { void this.flush(target); });
+          }
+        } catch {
+          // Preserve the original delivery or repository error.
+        }
       }
     }
   }

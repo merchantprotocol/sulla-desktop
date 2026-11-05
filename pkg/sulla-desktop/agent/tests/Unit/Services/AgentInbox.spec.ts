@@ -41,6 +41,10 @@ describe('AgentInbox',()=>{
     const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();delivery.receipt='failed';const inbox=new AgentInbox(repository,delivery);
     expect(await inbox.receive(entry('retry'))).toBe('queued');delivery.receipt='accepted';expect(await inbox.flush(entry('retry').target)).toBe(1);expect(delivery.batches).toHaveLength(2);
   });
+  it('does not schedule a cap handoff for a deferred wake',async()=>{ // risk: retry storm
+    const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();delivery.receipt='deferred';const scheduler=new ManualScheduler();await repository.enqueue(entry('deferred'));
+    const inbox=new AgentInbox(repository,delivery,undefined,1,30_000,scheduler);expect(await inbox.flush(entry('deferred').target)).toBe(0);expect(scheduler.callbacks).toHaveLength(0);
+  });
   it('atomically assigns a message to only one concurrent consumer',async()=>{ // risk: duplicate turns
     const repository=new MemoryInboxRepository();await repository.enqueue(entry('once'));const a=await repository.claim(entry('once').target,'a');const b=await repository.claim(entry('once').target,'b');
     expect(a.entries).toHaveLength(1);expect(b.entries).toHaveLength(0);
