@@ -10,9 +10,10 @@ import { JobAbortScope } from './JobAbortScope';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
+import { JobWrapUpService } from './JobWrapUpService';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly stops: JobStopService) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
 async createJob(
   taskInput: number | AgentJobTask[],
@@ -210,6 +211,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
   if (!job) return;
   this.runtime.abortScopes.delete(jobId);
+  this.wrapUp.jobSettled(jobId);
 
   // Terminal verdicts are immutable. A stopped job may still settle its
   // in-flight promise afterwards, but only its partial result payload changes.
@@ -244,6 +246,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
   if (!job?.tasks[taskIndex]) return;
+  this.wrapUp.taskSettled(jobId, taskIndex);
   job.results[taskIndex] = result;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex],
     status: job.tasks[taskIndex].status === 'stopped' ? 'stopped' : result.status,
@@ -331,6 +334,7 @@ async recordTaskReturn(jobId: string, taskIndex: number, patch: {
   const task = job?.tasks[taskIndex];
   if (!job || !task) throw new Error(`Job "${ jobId }" has no task ${ taskIndex }.`);
   if (task.returnedAt) throw new Error(`Job "${ jobId }" already returned its contract.`);
+  this.wrapUp.taskSettled(jobId, taskIndex);
   if (!['running', 'parked'].includes(job.status)) throw new Error(`Job "${ jobId }" is ${ job.status }; it no longer accepts a return.`);
   job.tasks[taskIndex] = {
     ...task,
@@ -358,6 +362,7 @@ async failJob(jobId: string, error: string): Promise<void> {
   const job = this.runtime.jobs.get(jobId) ?? await this.getJob(jobId);
   if (!job) return;
   this.runtime.abortScopes.delete(jobId);
+  this.wrapUp.jobSettled(jobId);
 
   // Terminal verdicts are immutable; late promise rejection cannot clobber them.
   if (!['running', 'parked'].includes(job.status)) return;

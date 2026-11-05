@@ -5,8 +5,8 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { emitSubAgentExchange } from './jobExchange';
-import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask, updateJobTask } from './jobRegistry';
-import { sendJobMessage } from './send_job_message';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
@@ -30,17 +30,11 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
     if (authorization === 'not-found') return { successBoolean: false, responseString: `Job "${ jobId }" not found.` };
     const targets = taskIndex === undefined ? (job?.tasks ?? []).map((_, index) => index) : [taskIndex];
     const stoppedBy = StopPrincipal.attribution(principal);
-    await Promise.all(targets.map(index => updateJobTask(jobId, index, { stoppedBy, stopReason: reason })));
     const who = stoppedBy === 'human' ? 'human' : 'agentId' in stoppedBy ? stoppedBy.agentId : stoppedBy.system;
     const message = `[Stop requested by ${ who }] Finish your current step and return your contract now with what you have`;
-    await sendJobMessage({ jobId, taskIndex, message });
-    const graceMs = Math.max(1, options.gracePeriodSeconds ?? 120) * 1_000;
-    const timer = setTimeout(async() => {
-      if (taskIndex === undefined) await stopJobCascade(jobId, principal, reason);
-      else await stopJobTask(jobId, taskIndex, principal, reason);
-    }, graceMs);
-    timer.unref();
-    return { successBoolean: true, responseString: `Wrap-up requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}; it has ${ graceMs / 1_000 } seconds to return before hard stop.` };
+    const graceSeconds = Math.max(1, options.gracePeriodSeconds ?? 120);
+    await agentJobProvider.wrapUp.request(jobId, targets, principal, reason, graceSeconds, message);
+    return { successBoolean: true, responseString: `Wrap-up requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}; it has ${ graceSeconds } seconds to return before hard stop.` };
   }
   const outcome = taskIndex === undefined
     ? await stopJobCascade(jobId, principal, reason)
