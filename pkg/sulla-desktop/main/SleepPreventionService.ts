@@ -104,8 +104,8 @@ class ElectronPowerSaveBlockerAdapter implements PowerSaveBlockerAdapter {
   start(type: 'prevent-app-suspension' | 'prevent-display-sleep'): number {
     return (require('electron') as typeof import('electron')).powerSaveBlocker.start(type);
   }
-  stop(id: number): void {
-    (require('electron') as typeof import('electron')).powerSaveBlocker.stop(id);
+  stop(id: number): boolean {
+    return (require('electron') as typeof import('electron')).powerSaveBlocker.stop(id);
   }
   isStarted(id: number): boolean {
     return (require('electron') as typeof import('electron')).powerSaveBlocker.isStarted(id);

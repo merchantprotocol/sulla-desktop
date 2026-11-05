@@ -18,7 +18,7 @@ class FakePowerSaveBlocker implements PowerSaveBlockerAdapter {
     this.active.add(id);
     return id;
   }
-  stop(id: number): void { this.stops.push(id); this.active.delete(id); }
+  stop(id: number): boolean { this.stops.push(id); return this.active.delete(id); }
   isStarted(id: number): boolean { return this.active.has(id); }
 }
 
