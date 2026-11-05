@@ -14,7 +14,7 @@ describe('AgentTaskReopenService', () => {
     // risk: duplicate external side effects
     let claimed = false;
     const jobs = {
-      job: vi.fn(async() => job),
+      job: vi.fn(async() => claimed ? { ...job, status: 'running', tasks: [{ ...task, status: 'running', generation: 2, reopenCount: 1 }] } : job),
       claimReopen: vi.fn(async() => claimed ? undefined : (claimed = true, { generation: 2, leaseId: 'lease-2' })),
       releaseReopenLease: vi.fn(async() => true),
     };
@@ -33,9 +33,10 @@ describe('AgentTaskReopenService', () => {
     await new Promise(resolve => setImmediate(resolve));
 
     expect(first).toEqual({ reopened: true, generation: 2 });
-    expect(second).toEqual({ reopened: false, reason: 'already_reopening' });
+    expect(second).toEqual({ reopened: true, generation: 2, joined: true });
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0][0]).toMatchObject({ threadId: 'thread-1', generation: 2 });
+    expect(inbox.receive).toHaveBeenCalledTimes(2);
     expect(inbox.receive).toHaveBeenCalledWith(expect.objectContaining({ envelope: expect.objectContaining({ kind: 'parent', from: 'manager', body: 'fix A' }) }));
     expect(settlement.settle).toHaveBeenCalledTimes(1);
   });
@@ -50,5 +51,20 @@ describe('AgentTaskReopenService', () => {
     const service = new AgentTaskReopenService(jobs as any, { forTask: vi.fn() } as any, { receive: vi.fn() }, runners, { now: () => new Date() } as any, { settle: vi.fn(), fail: vi.fn() });
     expect(await service.reopen('job-1', 0, 'retry', 'manager')).toEqual({ reopened: false, reason });
     expect(jobs.claimReopen).not.toHaveBeenCalled();
+  });
+
+  it('reconstructs the prompt on the same thread when the original runner is gone', async() => {
+    // risk: lost provider session must not lose the manager's requested fix
+    const jobs = { job: vi.fn(async() => ({ ...job, tasks: [{ ...task, result: { summary: 'first result' } }] })), claimReopen: vi.fn(async() => ({ generation: 2, leaseId: 'lease-2' })) };
+    const inbox = { receive: vi.fn(async() => 'delivered' as const) };
+    const service = new AgentTaskReopenService(jobs as any, { forTask: vi.fn(async() => []) } as any, inbox, new HiddenAgentTaskRunnerRegistry(), { now: () => new Date() } as any, { settle: vi.fn(), fail: vi.fn() });
+
+    expect(await service.reopen('job-1', 0, 'fix the missing test', 'manager')).toEqual({ reopened: true, generation: 2, fallback: true });
+    const entry = inbox.receive.mock.calls[0][0];
+    expect(entry.target.threadId).toBe('thread-1');
+    expect(entry.envelope.body).toContain('previous provider session or workspace was lost');
+    expect(entry.envelope.body).toContain('do it');
+    expect(entry.envelope.body).toContain('first result');
+    expect(entry.envelope.body).toContain('fix the missing test');
   });
 });

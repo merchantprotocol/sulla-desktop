@@ -76,6 +76,7 @@ export class ReturnResultWorker extends BaseTool {
         summary,
         status: status === 'failed' ? 'error' : status,
       });
+      if (task.reopenLeaseId) await agentJobProvider.jobs.releaseReopenLease(job.jobId, taskIndex, currentGeneration, task.reopenLeaseId);
     } catch (err) {
       return { successBoolean: false, responseString: (err as Error).message };
     }
@@ -96,7 +97,7 @@ export class ReturnResultWorker extends BaseTool {
       // settle it after a restart, so its return commits and wakes its parent
       // here. A live runner sees the same recorded return and completion is
       // idempotently coalesced by job id.
-      if (job.status === 'parked' || Number(job.restartResumeCount) > 0) {
+      if (job.status === 'parked' || Number(job.restartResumeCount) > 0 || Number(task.reopenCount) > 0) {
         await finishRecoveredJob(recorded);
         return {
           successBoolean: true,
