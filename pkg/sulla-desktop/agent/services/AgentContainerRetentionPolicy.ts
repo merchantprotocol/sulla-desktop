@@ -35,7 +35,7 @@ export interface RemovedContainer {
 }
 
 export interface RetentionError {
-  stage:    'list' | 'inspect' | 'remove' | 'disk-probe';
+  stage:    'list' | 'agent-owner-list' | 'inspect' | 'remove' | 'disk-probe';
   id?:      string;
   message:  string;
 }
@@ -129,9 +129,8 @@ export class ContainerRetentionPolicy {
   async enforce(): Promise<RetentionReport> {
     const removed: RemovedContainer[] = [];
     const errors: RetentionError[] = [];
-    if (!await this.reapAgentOwnedTemporaryContainers(removed, errors)) {
-      return { removed, errors, keptCount: 0, freeBytesBefore: null, freeBytesAfter: null };
-    }
+    // A failed temporary-container pass is recorded but never skips the failed-container retention below.
+    await this.reapAgentOwnedTemporaryContainers(removed, errors);
 
     let listed: any[];
     try {
@@ -208,13 +207,13 @@ export class ContainerRetentionPolicy {
     };
   }
 
-  private async reapAgentOwnedTemporaryContainers(removed: RemovedContainer[], errors: RetentionError[]): Promise<boolean> {
+  private async reapAgentOwnedTemporaryContainers(removed: RemovedContainer[], errors: RetentionError[]): Promise<void> {
     let listed: any[];
     try {
       listed = await this.runtime.list('com.sulla.owner=agent');
     } catch (error) {
-      errors.push({ stage: 'list', message: errorMessage(error) });
-      return false;
+      errors.push({ stage: 'agent-owner-list', message: errorMessage(error) });
+      return;
     }
     const nowSeconds = Math.floor(this.clock.now() / 1_000);
     const candidates: Array<{ container: DescribedContainer; labels: Record<string, string> }> = [];
@@ -246,7 +245,7 @@ export class ContainerRetentionPolicy {
         errors.push({ stage: 'inspect', id: String(listedId), message: errorMessage(error) });
       }
     }
-    if (!candidates.length) return true;
+    if (!candidates.length) return;
     try {
       let free = await this.disk.freeBytes();
       candidates.sort((a, b) => a.container.createdAtMs - b.container.createdAtMs);
@@ -257,7 +256,6 @@ export class ContainerRetentionPolicy {
     } catch (error) {
       errors.push({ stage: 'disk-probe', message: errorMessage(error) });
     }
-    return true;
   }
 
   private hasAgentWorkloadLabel(details: any): boolean {
