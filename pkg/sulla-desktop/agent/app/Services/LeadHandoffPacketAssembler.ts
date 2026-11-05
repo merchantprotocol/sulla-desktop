@@ -6,6 +6,7 @@ import type { LeadHandoffRepository,LeadHandoffSnapshot } from '../Repositories/
 
 export class LeadHandoffPacketAssembler {
   constructor(private readonly repository:LeadHandoffRepository,private readonly checkinLimit=5){}
+  recordReplacementAudit(jobId:string,taskIndex:number,summary:string):Promise<void>{return this.repository.recordReplacementAudit(jobId,taskIndex,summary);}
   async assemble(jobId:string,taskIndex:number,note?:string):Promise<{prompt:string;snapshot:LeadHandoffSnapshot}|undefined>{
     const snapshot=await this.repository.snapshot(jobId,taskIndex); if(!snapshot)return undefined;
     const task=snapshot.lead.tasks[taskIndex];

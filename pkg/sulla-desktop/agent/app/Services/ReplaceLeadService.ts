@@ -26,6 +26,7 @@ export class ReplaceLeadService {
      (result.ok||result.code==='no-op'?moved:failed).push({jobId:child.jobId,taskIndex,...(!result.ok?{error:result.message}:{})});
    }}
    const actor=input.actor.kind==='human'?'human':input.actor.agentId; const audit=`replaced by ${launched.jobId} by ${actor}${input.note?.trim()?`: ${input.note.trim()}`:''}`;
+   await this.packets.recordReplacementAudit(input.jobId,input.taskIndex,audit);
    const target=(await this.messaging.targetsForJob(input.jobId,input.taskIndex))[0]; if(target)await this.messaging.queueMessage(target,`[Lead replacement] ${audit}`);
    await this.wrapUp.request(input.jobId,input.taskIndex,input.actor,audit);
    return {ok:failed.length===0,replacement:launched,moved,failed,prompt:packet.prompt,message:failed.length?`Replacement launched; ${moved.length} children moved and ${failed.length} failed.`:`Replacement launched and ${moved.length} child tasks moved.`};

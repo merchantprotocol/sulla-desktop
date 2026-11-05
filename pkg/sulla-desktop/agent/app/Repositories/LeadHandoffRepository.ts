@@ -12,6 +12,9 @@ export interface LeadHandoffSnapshot { lead: AgentJob; taskIndex: number; childr
 export class LeadHandoffRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
   constructor(connection:any, private readonly jobs:AgentJobRepository, readonly messaging:AgentJobMessagingRepository){ super(connection); }
+  async recordReplacementAudit(jobId:string,taskIndex:number,summary:string):Promise<void>{
+    await this.connection.run(`INSERT INTO agent_job_checkins (job_id,task_index,step,summary,files_touched,blockers) VALUES($1,$2,'lead-replaced',$3,'[]'::jsonb,'[]'::jsonb)`,[jobId,taskIndex,summary]);
+  }
   async snapshot(jobId:string, taskIndex:number):Promise<LeadHandoffSnapshot|undefined>{
     const lead=await this.jobs.job(jobId); const task=lead?.tasks[taskIndex];
     if(!lead||!task) return undefined;

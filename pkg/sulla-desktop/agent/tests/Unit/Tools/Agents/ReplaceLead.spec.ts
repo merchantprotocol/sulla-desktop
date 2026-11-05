@@ -13,7 +13,7 @@ class ReplaceLeadHarness {
  readonly moves:any[]=[]; readonly wrapped:any[]=[];
  readonly custody={authorizeManagement:vi.fn(async()=>undefined),resolveOwner:vi.fn(async()=>({...owner,jobId:'lead',taskIndex:0,version:1,changedAt:new Date()})),history:vi.fn(),move:vi.fn(async(input:any)=>{this.moves.push(input);return input.to.threadId===owner.threadId?{ok:false,code:'no-op',message:'unchanged',current:owner}:{ok:true,previous:owner,current:{...input.to,jobId:input.jobId,taskIndex:input.taskIndex,version:2,changedAt:new Date()}}})};
  readonly snapshot:any={lead:{jobId:'lead',status:'failed',tasks:[{label:'Lead',prompt:'Ship F-5',status:'error',threadId:'old-lead'}]},taskIndex:0,checkins:[{step:'push',summary:'PR https://github.test/pull/7 head abcdef1',blockers:[]}],messages:[{message:'Fix CI'}],inbox:[{kind:'contract',payload:{summary:'worker done'}}],children:Array.from({length:3},(_,i)=>({jobId:`child-${i}`,status:'running',results:[],tasks:[{label:`Worker ${i+1}`,status:'running',threadId:`worker-${i}`}]}))};
- readonly packets={assemble:vi.fn(async()=>({prompt:'# Lead replacement handoff\n## Your team: 3 workers\n- Worker 1 — running; heads: abcdef1\n- Worker 2 — running\n- Worker 3 — running',snapshot:this.snapshot}))};
+ readonly packets={recordReplacementAudit:vi.fn(async()=>{}),assemble:vi.fn(async()=>({prompt:'# Lead replacement handoff\n## Your team: 3 workers\n- Worker 1 — running; heads: abcdef1\n- Worker 2 — running\n- Worker 3 — running',snapshot:this.snapshot}))};
  readonly launcher={launchReplacement:vi.fn(async()=>({jobId:'replacement',taskIndex:0,threadId:'new-lead'}))};
  readonly messaging={targetsForJob:vi.fn(async()=>[{jobId:'lead',taskIndex:0}]),queueMessage:vi.fn(async()=>({}))};
  readonly wrapUp={request:vi.fn(async(...args:any[])=>{this.wrapped.push(args)})};
@@ -28,6 +28,7 @@ describe('agents/replace_lead',()=>{
    expect(h.launcher.launchReplacement).toHaveBeenCalledWith(expect.objectContaining({owner,prompt:expect.stringContaining('Your team: 3 workers')}));
    expect(h.moves.map(move=>move.jobId)).toEqual(['child-0','child-1','child-2']);
    expect(h.moves.every(move=>move.to.threadId==='new-lead')).toBe(true);
+   expect(h.packets.recordReplacementAudit).toHaveBeenCalledWith('lead',0,expect.stringContaining('replaced by replacement'));
    expect(h.wrapUp.request).toHaveBeenCalledAfter(h.custody.move as any);
  });
  it('keeps state unchanged when launch fails',async()=>{
