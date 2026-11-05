@@ -4,7 +4,8 @@
 
 import type { PostgresClient } from '../PostgresClient';
 
-export async function up(client:PostgresClient):Promise<void>{await client.query(`CREATE TABLE IF NOT EXISTS agent_lead_replacements (
+export class AgentLeadReplacementsMigration {
+ async up(client:PostgresClient):Promise<void>{await client.query(`CREATE TABLE IF NOT EXISTS agent_lead_replacements (
   old_job_id TEXT NOT NULL REFERENCES agent_jobs(job_id) ON DELETE CASCADE,
   old_task_index INTEGER NOT NULL,
   replacement_job_id TEXT,
@@ -17,4 +18,7 @@ export async function up(client:PostgresClient):Promise<void>{await client.query
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(old_job_id,old_task_index)
 )`);}
-export async function down(client:PostgresClient):Promise<void>{await client.query(`DROP TABLE IF EXISTS agent_lead_replacements`);}
+ async down(client:PostgresClient):Promise<void>{await client.query(`DROP TABLE IF EXISTS agent_lead_replacements`);}
+}
+export async function up(client:PostgresClient):Promise<void>{await new AgentLeadReplacementsMigration().up(client);}
+export async function down(client:PostgresClient):Promise<void>{await new AgentLeadReplacementsMigration().down(client);}
