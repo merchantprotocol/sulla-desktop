@@ -104,8 +104,8 @@
     "yazl": "^3.3.1",
     "yjs": "13.6.33",
     "zod": "3.25.76",
-    "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.0-4bf92d1.tgz",
-    "@sulla/domain": "file:vendor/sulla-core/sulla-domain-0.1.0-4bf92d1.tgz"
+    "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.0-2213270.tgz",
+    "@sulla/domain": "file:vendor/sulla-core/sulla-domain-0.1.0-2213270.tgz"
   },
   "devDependencies": {
     "@babel/core": "7.29.0",
