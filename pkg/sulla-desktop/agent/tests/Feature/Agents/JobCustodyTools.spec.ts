@@ -86,6 +86,9 @@ dbDescribe('registered custody transfer tools',()=>{
     const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.registerIdleDispatcher(()=>{});
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
+    // Hidden runners call this same delivery service after the registered return tool ends their turn.
+    const recorded=await registry.getJob(lead.jobId);const {returnedJobResult}=await import('../../../tools/agents/jobDelivery');
+    const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');await agentJobProvider.delivery.deliver(recorded,[returnedJobResult(recorded.tasks[0],'L',recorded.tasks[0].threadId)],0);
     const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
     const completions=takeAgentCompletions(adopter,`${adopter}-thread`);expect(completions).toHaveLength(1);expect(completions[0]).toMatchObject({jobId:lead.jobId,taskIndex:0});
     expect(takeAgentCompletions(owner,`${owner}-thread`)).toHaveLength(0);
