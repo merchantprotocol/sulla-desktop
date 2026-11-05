@@ -469,6 +469,9 @@ export class SpawnAgentWorker extends BaseTool {
         const settled = (await getJob(activityJobId))?.tasks[index];
         return settled?.returnedAt ? settled : undefined;
       };
+      const cancelScheduledWait = () => {
+        if (activityJobId) void agentWaitProvider.cancel(activityJobId, index).catch(() => {});
+      };
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
           agentConfigChannel,
@@ -529,9 +532,6 @@ export class SpawnAgentWorker extends BaseTool {
         // durable job abort is fired by stop_agent_job and by an explicit
         // stop_run on the parent thread. Synchronous children remain coupled.
         const combined = childAbortForJob(async_, parentAbort, taskAbortSignal);
-        const cancelScheduledWait = () => {
-          if (activityJobId) void agentWaitProvider.cancel(activityJobId, index).catch(() => {});
-        };
         taskAbortSignal?.addEventListener('abort', cancelScheduledWait, { once: true });
 
         if (combined) {
@@ -684,10 +684,6 @@ export class SpawnAgentWorker extends BaseTool {
         // return_result is the completion commit point. A graph/provider error
         // racing after it must not overwrite the valid contract with failure.
         const returned = await returnedTask();
-        // Settlement and stop both invalidate any scheduled timer before
-        // the task status changes, so a racing callback cannot wake it later.
-        await agentWaitProvider.cancel(activityJobId, index);
-        taskAbortSignal?.removeEventListener('abort', cancelScheduledWait);
 
         if (returned) {
           taskResult = returnedJobResult(returned, label, threadId);
