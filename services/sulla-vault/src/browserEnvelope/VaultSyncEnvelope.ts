@@ -97,9 +97,7 @@ export class VaultSyncEnvelope {
     } as Omit<VaultRecord, 'mac'>;
     let record: unknown;
     try {
-      const mutatedKey = Uint8Array.from(scopeKey);
-      mutatedKey[0] ^= 1;
-      record = this.codec.sealRecord(body, mutatedKey);
+      record = this.codec.sealRecord(body, scopeKey);
     } catch (error) {
       throw this.errors.map(error);
     }
