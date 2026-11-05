@@ -33,6 +33,15 @@ class LivePageFixture {
     updatedAt: Date.now(),
   };
 
+  get conversationReads(): number {
+    return this.conversationReadCount;
+  }
+
+  finishSelectedRun(): void {
+    this.list.jobs[0].status = 'completed';
+    this.list.jobs[0].tasks[0].status = 'completed';
+  }
+
   install(): void {
     invoke.mockImplementation(async(channel: string) => {
       if (channel === 'agents:list') return this.list;
@@ -80,6 +89,34 @@ describe('StudioLivePage activity refresh', () => {
     expect(wrapper.get('.tl').element).toBe(timeline);
     expect(wrapper.text()).not.toContain('Loading activity…');
     expect(wrapper.text()).toContain(fixture.appendedEntry.toolName);
+    wrapper.unmount();
+  });
+
+  it('keeps vanished selected activity readable but disables controls and stops detail polling', async() => {
+    // risk: operator safety — a finished run must not retain stale message or stop controls.
+    const fixture = new LivePageFixture();
+
+    fixture.install();
+    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+
+    await flushPromises();
+    await wrapper.get('.agent-row').trigger('click');
+    await flushPromises();
+    const timeline = wrapper.get('.tl').element;
+
+    fixture.finishSelectedRun();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await flushPromises();
+
+    expect(wrapper.get('.tl').element).toBe(timeline);
+    expect(wrapper.text()).toContain('Finished — no longer running');
+    expect(wrapper.find('.composer').exists()).toBe(false);
+    expect(wrapper.find('.hero .btn.danger').exists()).toBe(false);
+    const readsAfterFinalFetch = fixture.conversationReads;
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    await flushPromises();
+    expect(fixture.conversationReads).toBe(readsAfterFinalFetch);
     wrapper.unmount();
   });
 });

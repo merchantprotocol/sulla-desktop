@@ -6,6 +6,8 @@
 import type { AgentConversationDetail } from '@pkg/main/agentsIpc';
 
 type ConversationEntry = AgentConversationDetail['entries'][number];
+export type FeedEntry = ConversationEntry & { readonly feedSequence: number };
+export type FeedDetail = Omit<AgentConversationDetail, 'entries'> & { entries: FeedEntry[] };
 type IpcInvoker = (channel: string, ...args: unknown[]) => Promise<unknown>;
 type TimerHandle = ReturnType<typeof setInterval>;
 
@@ -16,16 +18,18 @@ export interface VisibilitySource {
 }
 
 export interface FeedSnapshot {
-  detail: AgentConversationDetail | null;
+  detail: FeedDetail | null;
   loading: boolean;
 }
 
 export class AgentDetailFeed {
   private threadId: string | null = null;
-  private detail: AgentConversationDetail | null = null;
+  private detail: FeedDetail | null = null;
   private firstLoad = true;
   private timer: TimerHandle | undefined;
   private generation = 0;
+  private nextSequence = 1;
+  private finishing = false;
 
   constructor(
     private readonly invoke: IpcInvoker,
@@ -43,8 +47,11 @@ export class AgentDetailFeed {
     this.threadId = nextThreadId;
     this.detail = null;
     this.firstLoad = true;
+    this.nextSequence = 1;
+    this.finishing = false;
     this.generation += 1;
     this.emit(false);
+    if (this.threadId) this.start();
     if (this.threadId && !this.visibility.hidden) void this.refresh();
   }
 
@@ -67,6 +74,13 @@ export class AgentDetailFeed {
     this.threadId = null;
     this.detail = null;
     this.generation += 1;
+  }
+
+  async finish(): Promise<void> {
+    if (this.finishing) return;
+    this.finishing = true;
+    await this.refresh();
+    this.stop();
   }
 
   async refresh(): Promise<void> {
@@ -95,24 +109,42 @@ export class AgentDetailFeed {
   static entryKey(entry: ConversationEntry): string {
     const entryWithId = entry as ConversationEntry & { id?: string };
 
-    if (entryWithId.id) return entryWithId.id;
-    const value = `${ entry.ts }\u0000${ entry.kind }\u0000${ entry.toolName ?? '' }\u0000${ entry.text }`;
-    let hash = 2166136261;
-
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-
-    return `${ entry.ts }:${ entry.kind }:${ entry.toolName ?? '' }:${ (hash >>> 0).toString(36) }`;
+    if (entryWithId.id) return `id:${ entryWithId.id }`;
+    return JSON.stringify([entry.ts, entry.kind, entry.toolName ?? '', entry.text]);
   }
 
-  private mergeDetail(incoming: AgentConversationDetail): AgentConversationDetail {
-    if (!this.detail || this.detail.id !== incoming.id) return { ...incoming, entries: [...incoming.entries] };
-    const known = new Set(this.detail.entries.map(AgentDetailFeed.entryKey));
-    const additions = incoming.entries.filter(entry => !known.has(AgentDetailFeed.entryKey(entry)));
+  private mergeDetail(incoming: AgentConversationDetail): FeedDetail {
+    if (!this.detail || this.detail.id !== incoming.id) return { ...incoming, entries: this.append(incoming.entries) };
+    const existing = this.detail.entries;
+    const incomingKeys = incoming.entries.map(AgentDetailFeed.entryKey);
+    const existingKeys = existing.map(AgentDetailFeed.entryKey);
 
-    return { ...incoming, entries: [...this.detail.entries, ...additions] };
+    // A shorter reread may be any unchanged slice of the capped tail.
+    if (this.containsOrdered(existingKeys, incomingKeys)) return { ...incoming, entries: existing };
+
+    let overlap = Math.min(existingKeys.length, incomingKeys.length);
+
+    while (overlap > 0 && !this.sameKeys(existingKeys.slice(-overlap), incomingKeys.slice(0, overlap))) overlap -= 1;
+
+    // With no overlap the source window reset or shifted beyond our retained history.
+    // Appending all incoming rows preserves readable history without losing multiplicity.
+    return { ...incoming, entries: [...existing, ...this.append(incoming.entries.slice(overlap))] };
+  }
+
+  private append(entries: ConversationEntry[]): FeedEntry[] {
+    return entries.map(entry => ({ ...entry, feedSequence: this.nextSequence++ }));
+  }
+
+  private containsOrdered(existing: string[], incoming: string[]): boolean {
+    if (incoming.length === 0) return true;
+    for (let start = 0; start <= existing.length - incoming.length; start += 1) {
+      if (this.sameKeys(existing.slice(start, start + incoming.length), incoming)) return true;
+    }
+    return false;
+  }
+
+  private sameKeys(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((key, index) => key === right[index]);
   }
 
   private emit(loading: boolean): void {
