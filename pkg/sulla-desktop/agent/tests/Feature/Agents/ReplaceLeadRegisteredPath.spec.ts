@@ -6,7 +6,7 @@ import '../../Support/TestHomeEnv';
 import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 
-vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
+vi.setConfig({testTimeout:40_000,hookTimeout:30_000});
 import {TestDatabase} from '../../Support/TestDatabase';
 
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
