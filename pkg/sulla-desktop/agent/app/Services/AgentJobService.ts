@@ -244,7 +244,7 @@ async markTaskPromoted(jobId: string, taskIndex: number): Promise<AgentJobTask |
 async failJob(jobId: string, error: string): Promise<void> {
   if (this.states.hasPendingTerminalWrite(jobId)) return;
   this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
-  await this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : { ...current, status: 'failed', finishedAt: this.clock.now().getTime(), error,
+  await this.states.mutateJob(jobId, current => ['completed','stopped'].includes(current.status) ? undefined : { ...current, status: 'failed', finishedAt: current.finishedAt ?? this.clock.now().getTime(), error,
     tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'error', finishedAt: this.clock.now().getTime() } : task) });
 }
 
