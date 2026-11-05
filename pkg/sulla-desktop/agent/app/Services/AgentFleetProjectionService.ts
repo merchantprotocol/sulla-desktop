@@ -32,12 +32,12 @@ export class AgentFleetProjectionService {
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetObject[]> {
-    const bounded = await this.states.list(request.limit, request.includeFinished);
-    const all = request.scope === 'mine' ? await this.states.jobs() : bounded;
+    const all = await this.states.jobs();
     const index = new AgentLineageIndex(all);
-    const selected = request.scope === 'mine'
-      ? index.descendants(this.requiredCaller(request.callerThreadId)).filter(job => bounded.some(candidate => candidate.jobId === job.jobId))
-      : bounded;
+    const scoped = request.scope === 'mine'
+      ? index.descendants(this.requiredCaller(request.callerThreadId))
+      : all;
+    const selected = this.bound(scoped, request.limit, request.includeFinished);
     const telemetry = await this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId));
     return this.project(selected, all, telemetry, false);
   }
@@ -47,6 +47,16 @@ export class AgentFleetProjectionService {
     if (!job) return undefined;
     const telemetry = await this.telemetry.telemetryForJob(jobId);
     return (await this.project([job], all, { [jobId]: telemetry }, true))[0];
+  }
+
+  private bound(jobs: AgentJob[], limit = 25, includeFinished = true): AgentJob[] {
+    const visible = jobs.filter(job => !job.dismissedAt);
+    const active = visible.filter(job => ['running', 'parked'].includes(job.status));
+    if (!includeFinished) return active.sort((left, right) => right.createdAt - left.createdAt);
+    const boundedLimit = Math.min(100, Math.max(1, limit));
+    const terminal = visible.filter(job => !['running', 'parked'].includes(job.status))
+      .sort((left, right) => right.createdAt - left.createdAt).slice(0, boundedLimit);
+    return [...active, ...terminal].sort((left, right) => right.createdAt - left.createdAt);
   }
 
   private requiredCaller(callerThreadId?: string): string {

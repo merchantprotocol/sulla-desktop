@@ -157,13 +157,15 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     check.setState({ metadata: { threadId: rootA } });
     const mine = await check.call({ scope: 'mine' });
     const minePayload = JSON.parse(mine.responseString);
-    expect(minePayload.jobs.map((value: any) => value.jobId)).toEqual([managerA.jobId, workerA.jobId, grandchildA.jobId]);
+    expect(minePayload.jobs.map((value: any) => value.jobId)).toEqual(expect.arrayContaining([managerA.jobId, workerA.jobId, grandchildA.jobId]));
+    expect(minePayload.jobs).toHaveLength(3);
     expect(minePayload.jobs.some((value: any) => value.jobId === managerB.jobId)).toBe(false);
-    expect(minePayload.jobs[1]).toMatchObject({
+    const projectedWorkerA = minePayload.jobs.find((value: any) => value.jobId === workerA.jobId);
+    expect(projectedWorkerA).toMatchObject({
       parentThreadId: `fleet-manager-a-${ stamp }`, parentAgentId: 'manager-a', parentJobId: managerA.jobId,
       parentTaskIndex: 1, rootThreadId: rootA, rootChatTitle: 'Root A title',
     });
-    expect(minePayload.jobs[1].tasks[0]).toMatchObject({ parentJobId: managerA.jobId, parentTaskIndex: 1, rootThreadId: rootA, rootChatTitle: 'Root A title' });
+    expect(projectedWorkerA.tasks[0]).toMatchObject({ parentJobId: managerA.jobId, parentTaskIndex: 1, rootThreadId: rootA, rootChatTitle: 'Root A title' });
 
     const all = await check.call({ scope: 'all', limit: 100 });
     const allPayload = JSON.parse(all.responseString);

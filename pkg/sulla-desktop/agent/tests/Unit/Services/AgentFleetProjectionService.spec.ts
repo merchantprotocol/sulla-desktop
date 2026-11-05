@@ -41,14 +41,14 @@ describe('AgentFleetProjectionService', () => {
     const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, new FleetTelemetryReader(), titles as any, () => 10_000);
 
     const mine = await fleet.list({ scope: 'mine', callerThreadId: 'root-a' });
-    expect(mine.map(value => value.jobId)).toEqual(['a-manager', 'a-worker', 'a-grandchild']);
+    expect(mine.map(value => value.jobId)).toEqual(['a-grandchild', 'a-worker', 'a-manager']);
     expect(mine.some(value => String(value.jobId).startsWith('b-'))).toBe(false);
     expect(mine[1]).toMatchObject({ parentThreadId: 'a-manager-thread', parentAgentId: 'manager', parentJobId: 'a-manager', parentTaskIndex: 1, rootThreadId: 'root-a', rootChatTitle: 'Title root-a' });
     expect((mine[1].tasks as any[])[0]).toMatchObject({ parentJobId: 'a-manager', parentTaskIndex: 1, rootThreadId: 'root-a', rootChatTitle: 'Title root-a' });
     expect(titles.calls).toEqual([['root-a']]);
 
     const all = await fleet.list({ scope: 'all' });
-    expect(all.map(value => value.jobId)).toEqual(values.map(value => value.jobId));
+    expect(all.map(value => value.jobId)).toEqual([...values].reverse().map(value => value.jobId));
     expect(titles.calls[1].sort()).toEqual(['root-a', 'root-b']);
   });
 
