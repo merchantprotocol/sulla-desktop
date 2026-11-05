@@ -68,8 +68,8 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if (target.taskStatus === 'parked') {
       // A manager message wins the durable wait race. CAS cancellation makes
       // the later timer a no-op before the existing parked-wake path runs.
-      const { agentTaskWaitRepository, agentWakeScheduler } = await import('../../services/AgentWaitServices');
-      if (await agentTaskWaitRepository.cancel(jobId, target.taskIndex)) agentWakeScheduler.cancel(jobId, target.taskIndex);
+      const { agentWaitProvider } = await import('../../services/AgentWaitServices');
+      await agentWaitProvider.cancel(jobId, target.taskIndex);
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
       // The ack is written by dispatchToAgent itself, only once the woken
       // turn actually consumed this message (graph.execute succeeded) — the

@@ -16,7 +16,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
-import { agentWakeScheduler } from './AgentWaitServices';
+import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
@@ -428,7 +428,7 @@ export class BackendGraphWebSocketService {
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
-    agentWakeScheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
+    agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
   }
 
   /**

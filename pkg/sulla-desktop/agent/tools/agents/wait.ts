@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { agentTaskParkingService } from '../../services/AgentWaitServices';
+import { agentWaitProvider } from '../../services/AgentWaitServices';
 import { AgentWaitRequest } from '../../services/AgentWaitRequest';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob } from './jobRegistry';
@@ -21,7 +21,7 @@ export class AgentWaitWorker extends BaseTool {
         return { successBoolean: false, responseString: 'The current thread is not an open delegated task.' };
       }
       const request = AgentWaitRequest.create(input.seconds, input.reason);
-      await agentTaskParkingService.park(jobId, taskIndex, request);
+      await agentWaitProvider.parking.park(jobId, taskIndex, request);
       return { successBoolean: true, responseString: `Parked. End your turn now; you will be woken at ${ request.wakeAt.toISOString() } or when your manager messages you.` };
     } catch (error) {
       return { successBoolean: false, responseString: (error as Error).message };
