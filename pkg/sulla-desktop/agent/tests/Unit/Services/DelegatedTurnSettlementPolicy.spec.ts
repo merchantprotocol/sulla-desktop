@@ -24,6 +24,17 @@ describe('DelegatedTurnSettlementPolicy', () => {
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: true, reminderSent: true })).toBe('wait_park');
     expect(policy.decide({ returned: true, openChildren: 0, pendingWait: false, reminderSent: true })).toBe('terminal');
   });
+  it('skips injected assistant context and bounds the last real assistant cause', () => {
+    // risk: private recalled context is exposed as a fabricated worker failure.
+    const cause = policy.failureCause({ messages: [
+      { role: 'assistant', content: `real worker output ${ 'x'.repeat(3_000) }` },
+      { role: 'user', content: 'contract reminder' },
+      { role: 'assistant', content: '<observational_memory>private recalled context</observational_memory>' },
+    ] });
+    expect(cause).toContain('real worker output');
+    expect(cause).not.toContain('private recalled context');
+    expect(cause).toHaveLength(2_000);
+  });
   it('reminds exactly once, then reports a typed failure carrying the real last output', () => {
     // risk: agent death is misreported as fabricated provider failure
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false })).toBe('remind');
