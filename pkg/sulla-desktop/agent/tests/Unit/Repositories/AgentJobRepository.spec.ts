@@ -59,8 +59,8 @@ dbDescribe('AgentJobRepository', () => {
     queryCount = 0;
     const listed = await repository.jobsForList(25, true);
     expect(queryCount).toBe(1);
-    expect(listed.filter(item => item.status === 'running').map(item => item.jobId)).toContain('bounded-active');
-    expect(listed.filter(item => item.status !== 'running')).toHaveLength(25);
+    expect(listed.filter(item => ['running', 'parked'].includes(item.status)).map(item => item.jobId)).toContain('bounded-active');
+    expect(listed.filter(item => !['running', 'parked'].includes(item.status))).toHaveLength(25);
   });
 
   it('detects queued or running children across multiple task threads', async() => {
