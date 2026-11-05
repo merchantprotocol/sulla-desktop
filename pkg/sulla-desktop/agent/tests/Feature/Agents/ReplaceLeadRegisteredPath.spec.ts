@@ -4,7 +4,7 @@
 
 import '../../Support/TestHomeEnv';
 import {tmpdir} from 'node:os';
-import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
+import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 
 vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 import {TestDatabase} from '../../Support/TestDatabase';
@@ -14,13 +14,11 @@ vi.mock('../../../services/DecisionService',()=>({decisionService:{requiresAppro
 const runtimeEntries=new Map<string,any>();
 vi.mock('../../../services/GraphRegistry',()=>({GraphRegistry:{get:(threadId:string)=>runtimeEntries.get(threadId)??null}}));
 
-let launchCount=0;
 let failAfterPersist=false;
 vi.mock('../../../tools/agents/spawn_agent',async()=>{
  class ProcessBoundarySpawnAgentWorker {
   async runValidated(input:any,state:any){
    if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
-   launchCount++;
    const {postgresClient}=await import('../../../database/PostgresClient');
    const jobId=`replacement-${String(input.tasks[0].label).split(':').slice(-2).join('-')}`;
    const existing=await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE job_id=$1',[jobId]);
@@ -44,9 +42,9 @@ suite('agents/replace_lead registered production path',()=>{
   const {postgresClient}=await import('../../../database/PostgresClient');await postgresClient.initialize();await postgresClient.query(`SET search_path TO "${database.schema}", public`);
   const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>manifest.name==='replace_lead'));
   runtimeEntries.set(owner.threadId,{state:{metadata:{wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}}});
+  await database.query('TRUNCATE agent_lead_replacements,agent_job_custody_audit,agent_job_custody,agent_job_checkins,agent_job_messages,agent_inbox_messages,agent_job_result_history,agent_jobs CASCADE');
  },60_000);
  afterAll(async()=>database.dispose());
- beforeEach(async()=>{launchCount=0;failAfterPersist=false;await database.query('TRUNCATE agent_lead_replacements,agent_job_custody_audit,agent_job_custody,agent_job_checkins,agent_job_messages,agent_inbox_messages,agent_job_result_history,agent_jobs CASCADE');});
 
  async function seedLead(suffix:string,leadStatus='error',children=3){
   const leadId=`lead-${suffix}`;const leadThread=`old-lead-${suffix}`;
@@ -56,25 +54,20 @@ suite('agents/replace_lead registered production path',()=>{
  }
  async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
 
- it('H3 hands three running children to the new lead through manifest, loader, registry, and BaseTool.call',async()=>{
+ it('covers handoff, retry idempotency, caller authorization, missing tasks, and disabled agents',async()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
   const {leadId}=await seedLead('h3');const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);expect((result as any).result).toMatchObject({ok:true});
   const replacement=(result as any).result.replacement;const prompt=(result as any).result.prompt;expect(prompt).toContain('Your team: 3 workers');expect(prompt).toContain('Worker 1');
   const custody=await database.query<any>(`SELECT job_id,owner_thread_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`);expect(custody).toHaveLength(3);expect(custody.every(row=>row.owner_thread_id===replacement.threadId)).toBe(true);
   for(let index=0;index<3;index++)await database.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,'coding-manager-sol','worker','contract','done',$4::jsonb)`,[`return-h3-${index}`,owner.channel,replacement.threadId,JSON.stringify({jobId:`child-h3-${index}`,taskIndex:0})]);
   expect(await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE 'return-h3-%'`)).toEqual(Array.from({length:3},()=>({receiver_thread_id:replacement.threadId})));
- });
 
- it('retries a partial process failure without launching a second replacement or duplicating audit/wrap-up claims',async()=>{
-  // risk: duplicate agents/side effects — retry after a persisted launch must converge on one replacement.
-  const {leadId}=await seedLead('retry');failAfterPersist=true;expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);failAfterPersist=false;
-  const retried=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(retried.success).toBe(true);expect(await database.query(`SELECT * FROM agent_jobs WHERE job_id LIKE 'replacement-%'`)).toHaveLength(1);expect(await database.query(`SELECT * FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
- });
+  // risk: authorization/operations — peers and invalid targets must not mutate another lead.
+  const {leadId:refusedLead}=await seedLead('refuse');const peer=await call({jobId:refusedLead,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(String(peer.result??peer.error)).toContain('coding-manager-sol');
+  expect((await call({jobId:'missing',taskIndex:7,agentId:'coding-manager-sol'})).success).toBe(false);const disabled=await call({jobId:refusedLead,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(String(disabled.result)).toContain('enabled agent');
 
- it('refuses a peer naming the owner and rejects nonexistent tasks and disabled replacement agents',async()=>{
-  // risk: authorization/operations — peers and invalid targets must not mutate custody.
-  const {leadId}=await seedLead('refuse');const peer=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(String(peer.result??peer.error)).toContain('coding-manager-sol');
-  const missing=await call({jobId:'missing',taskIndex:7,agentId:'coding-manager-sol'});expect(missing.success).toBe(false);expect(String(missing.result)).toContain('not found');
-  const disabled=await call({jobId:leadId,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(String(disabled.result)).toContain('enabled agent');expect(await database.query('SELECT * FROM agent_job_custody')).toHaveLength(0);
+  // risk: duplicate agents/side effects — a persisted launch retry must converge on one replacement.
+  const {leadId:retryLead}=await seedLead('retry');failAfterPersist=true;expect((await call({jobId:retryLead,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);failAfterPersist=false;
+  expect((await call({jobId:retryLead,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);expect(await database.query(`SELECT * FROM agent_jobs WHERE job_id LIKE 'replacement-%' AND parent_thread_id=$1`,[owner.threadId])).toHaveLength(2);expect(await database.query(`SELECT * FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[retryLead])).toHaveLength(1);
  });
 });
