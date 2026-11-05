@@ -11,6 +11,10 @@ describe('AgentJobLivenessPolicy', () => {
     // risk: orchestration liveness — a fresh worker must not be reaped before it can report.
     expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 60_000 })).toBe(false);
   });
+  it('keeps the Live Agents quiet classifier clear for a one-minute-old job without a check-in', () => {
+    // risk: orchestration liveness — the renderer must use this shared policy rather than its old eight-minute threshold.
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 60_000 })).toBe(false);
+  });
   it('classifies a no-check-in job as stalled after the grace and stall thresholds', () => {
     // risk: orchestration liveness — genuinely abandoned workers still need attention.
     expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 11 * 60_000 })).toBe(true);
