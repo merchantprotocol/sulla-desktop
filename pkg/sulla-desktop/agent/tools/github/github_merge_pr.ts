@@ -56,7 +56,11 @@ export class GitHubMergePRWorker extends BaseTool {
       });
 
       if (!response.data.merged) {
-        return { successBoolean: false, responseString: `Merge refused: ${ response.data.message }` };
+        const message = response.data.message || 'GitHub refused the merge.';
+        const draftHint = /draft/i.test(message)
+          ? ' Draft pull requests cannot be merged; run `sulla github/ready_pr {"owner":"<owner>","repo":"<repo>","pull_number":<pull_number>}` first.'
+          : '';
+        return { successBoolean: false, responseString: `Merge refused: ${ message }${ draftHint }` };
       }
       return {
         successBoolean: true,

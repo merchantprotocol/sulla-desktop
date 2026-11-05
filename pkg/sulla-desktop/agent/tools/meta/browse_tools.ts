@@ -5,6 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { toolRegistry } from '../registry';
+import { ToolSearchRanker, type ToolSearchCandidate } from './ToolSearchRanker';
 
 /**
  * BrowseToolsWorker — read-only tool discovery.
@@ -62,6 +63,10 @@ const INVOCATION_PREAMBLE = [
 export class BrowseToolsWorker extends BaseTool {
   name = '';
   description = '';
+
+  constructor(private readonly searchRanker = new ToolSearchRanker()) {
+    super();
+  }
 
   // ────────────────────────────────────────────────────────────────
   // Formatting helpers
@@ -146,42 +151,34 @@ export class BrowseToolsWorker extends BaseTool {
     const { category, query } = input;
 
     const allCategories = toolRegistry.getCategories();
-    const connectedIntegrations = await this.getConnectedIntegrations();
-
     // ── Query mode: filter tools by keyword ──
     if (query) {
-      const q = (query as string).toLowerCase();
-      const matchedLines: string[] = [];
-      let matchCount = 0;
-      for (const cat of allCategories) {
-        const names = toolRegistry.getToolNamesForCategory(cat)
-          .filter(n => !EXCLUDED_TOOLS.has(n));
-        const matches = names.filter((name) => {
-          if (name.toLowerCase().includes(q)) return true;
-          const desc = toolRegistry.getToolDescription(name);
-          return desc?.toLowerCase().includes(q);
-        });
-        if (matches.length > 0) {
-          matchedLines.push('');
-          matchedLines.push(`## ${ cat }`);
-          for (const name of matches) {
-            matchedLines.push(this.formatToolLine(name, cat));
-          }
-          matchCount += matches.length;
-        }
-      }
-      if (matchCount === 0) {
+      const candidates: ToolSearchCandidate[] = allCategories.flatMap(cat => toolRegistry.getToolNamesForCategory(cat)
+        .filter(name => !EXCLUDED_TOOLS.has(name))
+        .map(name => ({ name, description: toolRegistry.getToolDescription(name) || '', category: cat })));
+      const matches = this.searchRanker.rank(candidates, query as string);
+      if (matches.length === 0) {
         const available = allCategories.join(', ');
         return {
           successBoolean: false,
           responseString: `No tools found matching "${ query }". Available categories: ${ available }`,
         };
       }
+      const matchedLines: string[] = [];
+      for (const match of matches) {
+        if (matchedLines[matchedLines.length - 1] !== `## ${ match.category }`) {
+          matchedLines.push('');
+          matchedLines.push(`## ${ match.category }`);
+        }
+        matchedLines.push(this.formatToolLine(match.name, match.category));
+      }
       return {
         successBoolean: true,
-        responseString: `${ INVOCATION_PREAMBLE }\n\nFound ${ matchCount } tools matching "${ query }":\n${ matchedLines.join('\n') }`,
+        responseString: `${ INVOCATION_PREAMBLE }\n\nFound ${ matches.length } tools matching "${ query }":\n${ matchedLines.join('\n') }`,
       };
     }
+
+    const connectedIntegrations = await this.getConnectedIntegrations();
 
     // ── Category mode: show one category in detail ──
     if (category) {
