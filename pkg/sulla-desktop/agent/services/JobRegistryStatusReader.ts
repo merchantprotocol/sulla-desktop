@@ -22,3 +22,15 @@ export class JobRegistryStatusReader implements AgentJobStatusReader {
     }
   }
 }
+
+/** Read-only richer state used by workspace retention, including parked-child protection. */
+export class WorkspaceJobRegistryStateReader {
+  constructor(private readonly jobs: { getJob(jobId: string): Promise<{ status: string; finishedAt?: number | null; waitingOnChildren?: number } | undefined | null> }) {}
+
+  async state(jobId: string): Promise<{ status: string; finishedAt?: number | null; waitingOnChildren?: number } | undefined> {
+    try {
+      const job = await this.jobs.getJob(jobId);
+      return job ? { status: job.status, finishedAt: job.finishedAt, waitingOnChildren: job.waitingOnChildren } : undefined;
+    } catch { return undefined; }
+  }
+}
