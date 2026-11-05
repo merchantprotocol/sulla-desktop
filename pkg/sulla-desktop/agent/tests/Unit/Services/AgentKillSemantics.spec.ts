@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+import { tmpdir } from 'node:os';
+
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
+vi.mock('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send: vi.fn() }) }));
 import { AgentTurnStopper } from '../../../services/AgentTurnStopper';
 import { AgentKillService } from '../../../services/AgentKillService';
 import { AgentCompletionRecoveryService, CompletionDeliveryPolicy } from '../../../services/AgentCompletionRecoveryService';
