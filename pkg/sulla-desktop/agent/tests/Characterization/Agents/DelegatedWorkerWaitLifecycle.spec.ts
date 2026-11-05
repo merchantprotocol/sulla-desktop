@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { TestDatabase } from '../../Support/TestDatabase';
 import { ReturnResultWorker } from '../../../tools/agents/return_result';
 import { SpawnAgentWorker } from '../../../tools/agents/spawn_agent';
-import { AgentWaitWorker } from '../../../tools/agents/wait';
+import { AgentWaitRequest } from '../../../services/AgentWaitRequest';
 import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
 vi.mock('../../../services/ModelProviderService', () => ({
@@ -50,9 +50,6 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
       return this.runValidated(input as any);
     }
   }
-  class WaitHarness extends AgentWaitWorker {
-    runHarness(threadId: string, jobId: string, input: unknown) { this.setState({ metadata: { threadId, delegatedJobId: jobId } } as any); return this._validatedCall(input); }
-  }
   class ReturnHarness extends ReturnResultWorker {
     runHarness(threadId: string) { this.setState({ metadata: { threadId } } as any); return this._validatedCall({ result: { ok: true }, summary: 'done' }); }
   }
@@ -75,7 +72,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     }) as any);
     vi.spyOn(GraphRegistry, 'get').mockImplementation((id: string) => id === threadId ? { graph, state } as any : null);
     const response = JSON.parse((await new SpawnHarness().runHarness({
-      tasks: [{ agentId: 'codex-sol-worker', label: 'waiter', prompt: 'wait repeatedly' }], async: true,
+      tasks: [{ agentId: 'codex-sol-worker', label: 'waiter', prompt: 'wait repeatedly', contract: { name: 'wait-result', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } }, additionalProperties: false } } }], async: true,
     })).responseString!);
     return { jobId: response.jobId as string, graph, state, threadId: () => threadId };
   };
@@ -84,8 +81,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     // risk: a second long wait is mistaken for a missing contract and kills a healthy worker
     const run = await launch(async(state, threadId, call) => {
       if (call <= 2) {
-        const result = await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: `park-${ call }` });
-        expect(result.successBoolean).toBe(true);
+        await waits.parking.park(state.metadata.delegatedJobId, 0, AgentWaitRequest.create(14_400, `park-${ call }`));
         state.messages.push({ role: 'assistant', content: `scheduled park ${ call }`, tool_calls: [{ name: 'agents/wait' }] });
         return;
       }
@@ -109,8 +105,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     const run = await launch(async(state, threadId, call) => {
       if (call === 1) { state.messages.push({ role: 'assistant', content: 'not ready yet' }); return; }
       if (call === 2) {
-        const result = await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: 'reminder-wait' });
-        expect(result.successBoolean).toBe(true);
+        await waits.parking.park(state.metadata.delegatedJobId, 0, AgentWaitRequest.create(14_400, 'reminder-wait'));
         state.messages.push({ role: 'assistant', content: 'waiting after reminder', tool_calls: [{ name: 'agents/wait' }] });
         return;
       }
@@ -127,7 +122,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
   it('cancels a scheduled wait when the task is stopped and never leaves it claimable', async() => {
     // risk: a stopped task is resurrected by its old timer
     const run = await launch(async(state, threadId) => {
-      await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: 'stop-me' });
+      await waits.parking.park(state.metadata.delegatedJobId, 0, AgentWaitRequest.create(14_400, 'stop-me'));
       state.messages.push({ role: 'assistant', content: 'parked until stopped', tool_calls: [{ name: 'agents/wait' }] });
     });
     await vi.waitFor(async() => expect(await waits.repository.pending(run.jobId, 0)).not.toBeNull(), { timeout: 2_000, interval: 10 });

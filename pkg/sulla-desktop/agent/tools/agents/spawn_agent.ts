@@ -656,7 +656,7 @@ export class SpawnAgentWorker extends BaseTool {
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
-          taskResult = status !== 'blocked'
+          taskResult = contract.schema && status !== 'blocked'
             ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(settlementPolicy.failureCause(finalState)).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
