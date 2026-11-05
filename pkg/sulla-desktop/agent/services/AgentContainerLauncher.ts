@@ -1437,7 +1437,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           const failure = new Error(unexpectedFailureReason);
           await launcher.settleFailure(
             containerId, containerName, failure,
-            { clean: () => cleanupContainerResources(runtime, undefined, secretDir, undefined, undefined, []).then(() => undefined) },
+            { clean: () => cleanupContainerResources(runtime, undefined, secretDir, providerFiles, undefined, []).then(() => undefined) },
             failureDiagnosticLogger,
             'persistent lifecycle exit',
           );
