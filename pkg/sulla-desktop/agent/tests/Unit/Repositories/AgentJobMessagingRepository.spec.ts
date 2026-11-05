@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AgentJobMessagingRepository } from '../../../app/Repositories/AgentJobMessagingRepository';
 import { AgentJobRepository } from '../../../app/Repositories/AgentJobRepository';
+import { BlockerEscalationService } from '../../../services/BlockerEscalationService';
+import { AgentCompletionInbox } from '../../../services/AgentCompletionInbox';
 import { TestDatabase } from '../../Support/TestDatabase';
 
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
@@ -42,5 +44,24 @@ dbDescribe('AgentJobMessagingRepository', () => {
     expect(await messages.pendingMessagesForThread('message-thread')).toEqual([]);
     const [{ delivered_at: secondDelivery }] = await database.query<{ delivered_at: Date }>('SELECT delivered_at FROM agent_job_messages WHERE id = $1', [queued.id]);
     expect(secondDelivery.getTime()).toBe(firstDelivery.getTime());
+  });
+
+  it('delivers one parent notice for a new blocker and suppresses an identical repeat', async() => {
+    // risk: orchestration liveness — a worker question must wake its direct manager exactly once.
+    await jobs.insertJob({ jobId: 'blocker-escalation', status: 'running', createdAt: Date.now(),
+      finishedAt: null, taskCount: 1, results: [], visibility: 'hidden', parentChannel: 'sulla-desktop', parentThreadId: 'manager-thread',
+      tasks: [{ agentId: 'worker', label: 'database lane', prompt: 'work', status: 'running', threadId: 'blocker-thread' }] });
+    const inbox = new AgentCompletionInbox();
+    const dispatches: string[] = [];
+    inbox.registerIdleDispatcher((_channel, threadId) => dispatches.push(threadId));
+    const escalation = new BlockerEscalationService(messages, inbox);
+
+    await escalation.record('blocker-thread', { step: 'blocked', summary: 'Need a decision', blockers: ['Which schema should I use?'] });
+    await escalation.record('blocker-thread', { step: 'blocked', summary: 'Still need a decision', blockers: ['Which schema should I use?'] });
+
+    expect(dispatches).toEqual(['manager-thread']);
+    const notices = inbox.take('sulla-desktop', 'manager-thread');
+    expect(notices).toHaveLength(1);
+    expect(inbox.format(notices)).toContain('[Blocker from database lane (job blocker-escalation task 0)] Which schema should I use? — answer with agents/send_job_message');
   });
 });

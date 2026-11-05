@@ -18,6 +18,7 @@ describe('WorkerPromptBuilder', () => {
     expect(prompt).toContain('sulla agents/wait');
     expect(prompt).toContain('[Message from orchestrator]');
     expect(prompt).toContain('report_progress blockers');
+    expect(prompt).toContain("sulla agents/report_progress - <<'JSON'");
     expect(prompt).not.toContain('Promise');
   });
 });
