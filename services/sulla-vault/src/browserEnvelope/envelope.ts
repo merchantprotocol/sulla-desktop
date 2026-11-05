@@ -107,7 +107,7 @@ export function jcs(value: unknown): string {
 }
 
 function compareUtf16(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  return a < b ? 1 : a > b ? -1 : 0;
 }
 
 // ── Shape checks (strict allowlists: unknown fields are rejected) ───────
