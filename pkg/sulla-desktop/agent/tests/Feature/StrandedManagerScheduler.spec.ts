@@ -52,9 +52,14 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     episodes = new StrandedEpisodeRepository(new PostgresConnection(client));
   }, 60_000);
   afterAll(async() => database.dispose());
+  const persistManager = async(id: string): Promise<void> => {
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility)
+      VALUES ($1, 'parked', 1, 'sulla-desktop', 'grandparent-thread', now() - interval '1 hour', $2::jsonb, 'hidden') ON CONFLICT DO NOTHING`,
+    [id, JSON.stringify([{ agentId: 'manager', label: 'Manager', prompt: 'work', status: 'parked', threadId: 'manager-thread', startedAt: now - 60 * 60_000 })]);
+  };
 
   it('lets two schedulers enqueue one notice and persists delivery outside agent_jobs JSON', async() => {
-    const id = `concurrent-${ Date.now() }`; const fleet = new FakeFleet([manager(id), child(id)]); const inbox = new AgentCompletionInbox();
+    const id = `concurrent-${ Date.now() }`; await persistManager(id); const fleet = new FakeFleet([manager(id), child(id)]); const inbox = new AgentCompletionInbox();
     const schedulerA = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     const schedulerB = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     expect((await Promise.all([schedulerA.tick(), schedulerB.tick()])).reduce((sum, value) => sum + value, 0)).toBe(1);
@@ -64,10 +69,10 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
   });
 
   it('retries after dispatcher failure and after restart between persistence and enqueue', async() => {
-    const id = `retry-${ Date.now() }`; const fleet = new FakeFleet([manager(id), child(id)]); const failing = new FailingOnceDispatcher();
+    const id = `retry-${ Date.now() }`; await persistManager(id); const fleet = new FakeFleet([manager(id), child(id)]); const failing = new FailingOnceDispatcher();
     const first = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, failing);
     expect(await first.tick()).toBe(0); expect(await first.tick()).toBe(1); expect(failing.calls).toBe(2);
-    const restartId = `${ id }-restart`; const [candidate] = new StrandedManagerDetector(() => now).detect([manager(restartId), child(restartId)]);
+    const restartId = `${ id }-restart`; await persistManager(restartId); const [candidate] = new StrandedManagerDetector(() => now).detect([manager(restartId), child(restartId)]);
     await episodes.insertPending(candidate);
     const inbox = new AgentCompletionInbox();
     const restarted = new StrandedManagerScheduler(new FakeFleet([]) as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
@@ -75,14 +80,14 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
   });
 
   it('serializes deferred ticks, honours future waits and live activity, and alerts a changed episode once', async() => {
-    const deferredId = `deferred-${ Date.now() }`; const dispatcher = new DeferredDispatcher();
+    const deferredId = `deferred-${ Date.now() }`; await persistManager(deferredId); const dispatcher = new DeferredDispatcher();
     const scheduler = new StrandedManagerScheduler(new FakeFleet([manager(deferredId), child(deferredId)]) as never, new StrandedManagerDetector(() => now), episodes, dispatcher);
     const first = scheduler.tick(); const second = scheduler.tick(); await dispatcher.entered; dispatcher.resolve();
     expect(await first).toBe(1); expect(await second).toBe(1); expect(dispatcher.maxActive).toBe(1);
     const waitingId = `${ deferredId }-waiting`; const active: ManagerActivitySource = { isActive: () => true };
     expect(new StrandedManagerDetector(() => now).detect([manager(waitingId, { wakeAt: iso(-60_000) }), child(waitingId)])).toEqual([]);
     expect(new StrandedManagerDetector(() => now, active).detect([manager(waitingId), child(waitingId)])).toEqual([]);
-    const changedId = `${ deferredId }-changed`; const fleet = new FakeFleet([manager(changedId), child(changedId)]); const inbox = new AgentCompletionInbox();
+    const changedId = `${ deferredId }-changed`; await persistManager(changedId); const fleet = new FakeFleet([manager(changedId), child(changedId)]); const inbox = new AgentCompletionInbox();
     const changed = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     expect(await changed.tick()).toBe(1); fleet.jobs = [manager(changedId), child(changedId, 'new', { returnedAt: iso(11 * 60_000), finishedAt: iso(11 * 60_000) })];
     expect(await changed.tick()).toBe(1); expect(await changed.tick()).toBe(0);
