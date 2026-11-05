@@ -262,7 +262,7 @@ describe('AgentDetailFeed', () => {
     // risk: activity continuity — completion of the prior thread must not disable the new thread feed.
     const finalFetch = new Deferred<AgentConversationDetail>();
     const clearTimer = vi.fn();
-    const setTimer = vi.fn(() => 7 as ReturnType<typeof setInterval>);
+    const setTimer = vi.fn(() => 7 as unknown as ReturnType<typeof setInterval>);
     const snapshots: FeedSnapshot[] = [];
     const invoke = vi.fn()
       .mockResolvedValueOnce(detail([{ kind: 'event', ts: '1', text: 'old', offset: 1 }]))
