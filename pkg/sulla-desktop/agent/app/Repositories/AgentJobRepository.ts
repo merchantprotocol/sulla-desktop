@@ -47,6 +47,10 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
+  async updateTaskCompletions(jobId: string, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks), JSON.stringify(results)]);
+  }
+
   async jobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL ORDER BY created_at ASC`, [parentThreadId]);
     return rows.map(row => this.map(row));
@@ -122,7 +126,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async complete(job: AgentJob): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
   }
 
   async markCompletionDelivered(jobId: string): Promise<void> {
@@ -130,7 +134,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async pendingCompletions(): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE status = 'completed' AND completion_delivered_at IS NULL AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY finished_at ASC`);
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE (tasks @? '$[*] ? (@.completion != null)' OR (status = 'completed' AND completion_delivered_at IS NULL)) AND parent_channel IS NOT NULL AND parent_thread_id IS NOT NULL ORDER BY COALESCE(finished_at, created_at) ASC`);
     return rows.map(row => this.map(row));
   }
 

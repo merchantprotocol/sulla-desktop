@@ -23,8 +23,11 @@ export async function recoverPendingAgentCompletions(): Promise<void> {
       if (inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) continue;
       inFlight.add(job.jobId);
       try {
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, {
-          jobId: job.jobId, results: job.results,
+        job.tasks.forEach((task, taskIndex) => {
+          const result = task.completion ?? job.results[taskIndex];
+          if (result && !task.completionDeliveredAt) {
+            enqueueAgentCompletion(job.parentChannel!, job.parentThreadId!, { jobId: job.jobId, taskIndex, results: [result] });
+          }
         });
       } catch (error) {
         console.warn(`[AgentCompletionRecovery] delivery failed for ${ job.jobId }; will retry:`, error);
