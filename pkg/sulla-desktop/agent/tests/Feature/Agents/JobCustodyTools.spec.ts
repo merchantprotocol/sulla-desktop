@@ -1,11 +1,16 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import {afterAll,beforeAll,describe,expect,it} from 'vitest';
+import {tmpdir} from 'node:os';
+import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {agentToolManifests} from '../../../tools/agents/manifests';
 import type {BaseTool} from '../../../tools/base';
 const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
+
+// The registered catalog reaches AgentContainerLauncher, whose production
+// Electron import is unavailable in the headless Node test runner.
+vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
 
 class RegisteredCustodyTool {
   async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job',input:any,metadata:any){
