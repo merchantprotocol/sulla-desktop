@@ -122,6 +122,18 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('stop_agent_job',{jobId:stale.jobId,reason:'owner stop'},newMeta)).toMatchObject({success:true});
   });
 
+
+  it('Stop follows single-task custody while untouched tasks retain their original owner',async()=>{
+    // risk: cross-task cancellation; guards JobStopService.stopTask task-scoped custody lookup
+    const stamp=Date.now();await registry.createJob([{agentId:'task-new',label:'N',prompt:'manage',status:'running',threadId:`task-new-${stamp}`}],'root','root-thread',{parentAgentId:'root'});
+    const oldMeta={wsChannel:'task-old',agentId:'task-old',threadId:`task-old-${stamp}`,subAgentDepth:1};const newMeta={wsChannel:'task-new',agentId:'task-new',threadId:`task-new-${stamp}`,subAgentDepth:1};
+    const job=await registry.createJob([{agentId:'worker-a',label:'A',prompt:'work',status:'running',threadId:`task-worker-a-${stamp}`},{agentId:'worker-b',label:'B',prompt:'work',status:'running',threadId:`task-worker-b-${stamp}`}],'task-old',`task-old-${stamp}`,{parentAgentId:'task-old'});
+    expect(await tools.call('reassign_job',{jobId:job.jobId,taskIndex:1,to:`task-new-${stamp}`,reason:'move one task'},oldMeta)).toMatchObject({success:true});
+    const stale=await tools.call('stop_agent_job',{jobId:job.jobId,taskIndex:1,reason:'stale task stop'},oldMeta);expect(stale.success).toBe(false);expect(JSON.stringify(stale)).toContain('task-new');
+    expect(await tools.call('stop_agent_job',{jobId:job.jobId,taskIndex:1,reason:'new owner task stop'},newMeta)).toMatchObject({success:true});
+    expect(await tools.call('stop_agent_job',{jobId:job.jobId,taskIndex:0,reason:'original owner task stop'},oldMeta)).toMatchObject({success:true});
+  });
+
   it('break-it refuses dead, nonexistent, and ambiguous destinations without mutation',async()=>{
     // risk: orphaned custody; guards CustodyDestinationResolver positive unique-live resolution
     const stamp=Date.now();const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:`break-worker-${stamp}`}],'break-owner',`break-owner-${stamp}`,{parentAgentId:'break-owner'});
