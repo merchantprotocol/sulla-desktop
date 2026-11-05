@@ -7,7 +7,8 @@ export type StopAttribution = { agentId: string; threadId: string } | { system: 
 export class StopAttributionFormatter {
   format(stoppedBy: StopAttribution | undefined, reason: string | undefined): string {
     if (!stoppedBy) return '';
-    const actor = stoppedBy === 'human' ? 'human' : 'system' in stoppedBy ? stoppedBy.system : `${ stoppedBy.agentId } (${ stoppedBy.threadId })`;
+    if (stoppedBy === 'human') return `Killed by human — ${ reason || 'unspecified' }`;
+    const actor = 'system' in stoppedBy ? stoppedBy.system : `${ stoppedBy.agentId } (${ stoppedBy.threadId })`;
     return `Stopped by ${ actor } — ${ reason || 'unspecified' }`;
   }
 }

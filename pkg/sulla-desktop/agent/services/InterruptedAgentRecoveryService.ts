@@ -15,9 +15,11 @@ export class InterruptedAgentRecoveryService {
     private readonly resume: (job: AgentJob, taskIndex: number) => Promise<void>,
     private readonly failed: (job: AgentJob, reason: string) => void,
     private readonly maxResumes = 2,
+    private readonly launchesPaused: () => Promise<boolean> = async() => (await import('./AgentLaunchPauseService')).agentLaunchPauseService.isPaused(),
   ) {}
 
   async recover(): Promise<void> {
+    if (await this.launchesPaused()) return;
     const claimed = await this.jobs.claimInterruptedJobs(this.maxResumes);
     for (const job of claimed.exhausted) this.failed(job, job.error ?? 'runtime restart recovery limit exceeded');
     for (const job of claimed.resumable) {

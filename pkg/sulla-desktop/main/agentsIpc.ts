@@ -61,6 +61,7 @@ export interface AgentsListResponse {
     parentTitle?:   string;
     stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
     stopReason?: string;
+    killedByHuman: boolean;
     tasks: {
       taskIndex:      number;
       agentId:        string;
@@ -321,6 +322,29 @@ export function initAgentsIpc(): void {
     const { StopPrincipal } = await import('@pkg/agent/app/ValueObjects/StopPrincipal');
     const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from Live Agents');
     return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+  });
+
+
+  ipcMain.handle('agents:kill-tree', async(_event, threadId: string) => {
+    if (!threadId) return { ok: false, killedJobs: 0, error: 'A thread is required.' };
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.killTree(threadId);
+  });
+
+  ipcMain.handle('agents:kill-all-switch:get', async() => {
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.switchState();
+  });
+
+  ipcMain.handle('agents:kill-all-switch:set', async(_event, on: boolean) => {
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.setSwitch(on === true);
+  });
+
+  ipcMain.handle('agents:thread-live-children', async(_event, threadId: string) => {
+    if (!threadId) return { count: 0 };
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return { count: await agentKillService.liveDescendantCount(threadId) };
   });
 
   ipcMain.handle('agents:conversations', async(_event, channel: string, limit = 50, offset = 0): Promise<AgentConversationSummary[]> => {
@@ -624,6 +648,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         error: job.error,
         stoppedBy: job.stoppedBy,
         stopReason: job.stopReason,
+        killedByHuman: job.stoppedBy === 'human',
         parentChannel: job.parentChannel,
         parentThreadId: job.parentThreadId,
         parentAgentId: job.parentAgentId,
