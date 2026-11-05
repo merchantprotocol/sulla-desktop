@@ -22,6 +22,7 @@ import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessRe
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydrationCoordinator';
+import { AgentShutdownController } from '@pkg/agent/services/AgentShutdownController';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
 import { StrandedManagerLifecycle } from '@pkg/agent/app/Services/StrandedManagerLifecycle';
@@ -227,6 +228,7 @@ export function initAgentsIpc(): void {
   runtimeRehydration.start();
   agentLivenessReconciler.start();
   strandedManagerLifecycle.start();
+  new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
