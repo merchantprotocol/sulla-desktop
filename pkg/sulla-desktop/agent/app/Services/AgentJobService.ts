@@ -10,8 +10,9 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobAbortScope } from './JobAbortScope';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
+import { StopPrincipal } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
-import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService) { super(); this.runtime.start(); }
 async createJob(
@@ -78,10 +79,10 @@ releaseJobWatcher(jobId: string): void {
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
 /** Compatibility accessor for single-task jobs. */
 getJobAbortSignal(jobId: string): AbortSignal | undefined { return this.getTaskAbortSignal(jobId, 0); }
-abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
+abortJob(jobId: string, principal: StopPrincipalValue = StopPrincipal.system('legacy'), reason = 'stop requested'): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }
-async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
+async stopJobCascade(jobId: string, principal: StopPrincipalValue = StopPrincipal.system('legacy'), reason = 'stop requested'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
 async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
   const job = await this.getJob(jobId); const task = job?.tasks[taskIndex];
   if (task?.status !== 'stopped') return undefined;
@@ -214,6 +215,13 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
   return this.taskLocator.findTaskByThread(threadId);
+}
+
+async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
+  const refreshed = await this.repository.job(jobId);
+  if (refreshed) { this.runtime.jobs.set(jobId, refreshed); this.states.touch(); }
+  return recorded;
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
