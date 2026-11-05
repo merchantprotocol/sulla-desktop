@@ -55,6 +55,17 @@ suite('AgentJobCustodyRepository',()=>{
    expect((await adoption).ok).toBe(true);await Promise.all([workerReturn,managerReturn]);
    const rows=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id=ANY($1)`,[[workerResult,managerContract]]);expect(rows).toHaveLength(2);expect(rows.filter(row=>row.message_id===workerResult)).toEqual([{message_id:workerResult,receiver_thread_id:manager.threadId}]);expect(rows.filter(row=>row.message_id===managerContract)).toEqual([{message_id:managerContract,receiver_thread_id:target.threadId}]);
  });
+ it('commits deterministic owner notices and worker manager-change messages with custody',async()=>{ // risk: durable handoff notification loss
+   const id=`custody-notices-${Date.now()}`;await createJob(id,2);const instance=service();expect((await move(instance,id)).ok).toBe(true);
+   const notices=await database.query<any>(`SELECT message_id,receiver_thread_id,delivered_at FROM agent_inbox_messages WHERE message_id LIKE $1 ORDER BY message_id`,[`custody:${id}:job:1:%`]);
+   expect(notices).toEqual([
+     {message_id:`custody:${id}:job:1:new`,receiver_thread_id:target.threadId,delivered_at:null},
+     {message_id:`custody:${id}:job:1:old`,receiver_thread_id:'old-thread',delivered_at:null},
+   ]);
+   const workerMessages=await database.query<any>(`SELECT id,task_index,message FROM agent_job_messages WHERE id LIKE $1 ORDER BY task_index`,[`custody:${id}:job:1:worker:%`]);
+   expect(workerMessages).toHaveLength(2);expect(workerMessages.map(row=>row.task_index)).toEqual([0,1]);expect(workerMessages.every(row=>row.message.includes('new-agent/new-channel'))).toBe(true);
+   const restarted=service();expect(await restarted.resolveOwner(id)).toMatchObject(target);expect(await database.query(`SELECT message_id FROM agent_inbox_messages WHERE message_id LIKE $1`,[`custody:${id}:job:1:%`])).toHaveLength(2);
+ });
  it('survives new repository instances and never re-addresses an acknowledged row',async()=>{ // risk: restart replay
    const id=`custody-restart-${Date.now()}`;await createJob(id);const delivered=`delivered-${Date.now()}`;await database.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,delivered_at) VALUES($1,'old-channel','old-thread','old-agent','worker','contract','done',$2::jsonb,now())`,[delivered,JSON.stringify({messageId:delivered,jobId:id})]);await move(service(),id);const restarted=service();expect(await restarted.resolveOwner(id)).toMatchObject(target);expect(await restarted.history(id)).toHaveLength(1);expect((await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id=$1`,[delivered]))[0].receiver_thread_id).toBe('old-thread');
  });
