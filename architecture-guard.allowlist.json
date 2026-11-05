@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1127,
+  "entries": 1126,
   "files": {
     "background.ts": {
       "rules": {
@@ -3682,12 +3682,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/pages/chat/components/subagent/SubAgentRail.vue": {
-      "rules": {
-        "long-file": 429
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/pages/chat/composables/useArtifactMentions.ts": {
       "rules": {
         "mutable-state": 1,
@@ -5003,7 +4997,7 @@
       "rules": {
         "long-file": 3769,
         "mutable-state": 1,
-        "raw-sql": 77
+        "raw-sql": 15
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
