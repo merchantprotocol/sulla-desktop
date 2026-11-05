@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { emitSubAgentExchange } from './jobExchange';
 import { BaseTool, ToolResponse } from '../base';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
@@ -50,8 +51,15 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
       if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);
       await safeFinishDelegationByRef(jobId, { outcome: 'failed', detail: 'stopped by parent' });
     }
-    // Intentional stops are visible through job inspection only. Emitting a
-    // stopped exchange here would wake the parent that the human just killed.
+    const killedByHuman = principal.kind === 'human';
+    await Promise.all((job?.tasks ?? []).map((task, currentTaskIndex) => taskIndex !== undefined && currentTaskIndex !== taskIndex ? Promise.resolve() : emitSubAgentExchange(
+      job.parentChannel, job.parentThreadId, {
+        direction: 'from_agent', agentId: task.agentId, label: task.label,
+        summary: killedByHuman ? `${ task.label } was killed by human` : `${ task.label } was stopped`,
+        detail: killedByHuman ? 'Killed by human. Its result will not be delivered.' : `Stop requested for job ${ jobId } before the sub-agent finished.`,
+        status: 'stopped', jobId, taskIndex: currentTaskIndex, conversationId: task.threadId,
+      },
+    )));
     return {
       successBoolean: true,
       responseString: `Stop requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}. The targeted sub-agent(s) will unwind at their next step.`,

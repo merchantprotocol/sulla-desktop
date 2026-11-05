@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+import { AgentTurnStopper } from '../../../services/AgentTurnStopper';
 import { AgentKillService } from '../../../services/AgentKillService';
 import { AgentCompletionRecoveryService, CompletionDeliveryPolicy } from '../../../services/AgentCompletionRecoveryService';
 import { InterruptedAgentRecoveryService } from '../../../services/InterruptedAgentRecoveryService';
@@ -48,9 +49,20 @@ describe('intentional kill semantics', () => {
     // risk: runaway nested fleet survives a human kill
     const jobs = [job('child', 'root', 'child-thread'), job('grandchild', 'child-thread', 'grandchild-thread')];
     const stopped: string[] = [];
-    const service = new AgentKillService({ allJobs: async() => jobs }, async(id) => { stopped.push(id); return 'stopped'; }, vi.fn().mockResolvedValue(undefined));
+    const turnStopper = { stop: vi.fn().mockResolvedValue(undefined) };
+    const service = new AgentKillService({ allJobs: async() => jobs }, async(id) => { stopped.push(id); return 'stopped'; }, vi.fn().mockResolvedValue(undefined), turnStopper, vi.fn().mockResolvedValue(undefined));
     await expect(service.killTree('root')).resolves.toEqual({ ok: true, killedJobs: 2 });
     expect(stopped).toEqual(['child', 'grandchild']);
+  });
+
+
+  it('stops the parent turn on its owning channel without a proactive message', async() => {
+    // risk: a non-default manager channel survives Kill Tree
+    const send = vi.fn().mockResolvedValue(undefined);
+    const stopper = new AgentTurnStopper({ send });
+    await stopper.stop('coding-manager', 'parent-thread');
+    expect(send).toHaveBeenCalledWith('coding-manager', { type: 'stop_run', data: { threadId: 'parent-thread' } });
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it('skips restart recovery while launches are paused', async() => {
