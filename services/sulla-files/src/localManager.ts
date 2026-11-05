@@ -1650,7 +1650,7 @@ export class LocalFilesManager {
         entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
         entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
         entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
-      const collection = (await client.query('SELECT system_area FROM collections WHERE id=$1', [collectionId])).rows[0] ?? {};
+      const collection = entry.collection ?? {};
       const replicatedLifecycle = this.publicationLifecyclePolicy.sanitizeReplication({
         collection, path:entry.file.path, createdByType:entry.version.created_by_type,
         lifecycle:{ publication_status:entry.version.publication_status ?? 'draft', published_at:entry.version.published_at ?? null, published_by:entry.version.published_by ?? null },
