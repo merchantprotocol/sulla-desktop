@@ -1,3 +1,8 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
@@ -32,7 +37,7 @@ describe('HTML viewer path and focus business logic', () => {
     const root = { classList: new FakeClassList() };
     const first = new FakeControl();
     const second = new FakeControl();
-    const controller = new Controller({ root, controls: [first, second], toast: () => {}, redraw: () => {} });
+    const controller = new Controller({ root, controls: [first, second], toast: () => {}, redraw: () => {}, schedule: callback => callback() });
     controller.toggle();
     expect(root.classList.contains('focus')).toBe(true);
     expect(first.classList.contains('on')).toBe(true);
@@ -42,4 +47,20 @@ describe('HTML viewer path and focus business logic', () => {
     expect(first.title).toBe('Hide editing tools');
     expect(second.attributes.get('aria-pressed')).toBe('false');
   });
+
+  it('selects a failure toast when copy fails and copies the full path on success', async () => {
+    const Action = internals.PathCopyAction;
+    const failureToasts: string[] = [];
+    const failure = new Action({ clipboard: new internals.ClipboardService({ navigatorRef: null, documentRef: null }), toast: (message: string) => failureToasts.push(message) });
+    expect(await failure.copy('Projects/site/index.html')).toBe(false);
+    expect(failureToasts).toEqual(["Couldn't copy the path"]);
+
+    let copiedPath = '';
+    const successToasts: string[] = [];
+    const success = new Action({ clipboard: new internals.ClipboardService({ navigatorRef: { clipboard: { writeText: async (value: string) => { copiedPath = value; } } }, documentRef: null }), toast: (message: string) => successToasts.push(message) });
+    expect(await success.copy('Projects/site/index.html')).toBe(true);
+    expect(copiedPath).toBe('Projects/site/index.html');
+    expect(successToasts).toEqual(['Path copied']);
+  });
+
 });

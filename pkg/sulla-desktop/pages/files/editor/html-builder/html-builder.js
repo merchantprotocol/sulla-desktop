@@ -41,17 +41,27 @@
   }
 
   class FocusModeController {
-    constructor({root, controls, toast, redraw}) {
+    constructor({root, controls, toast, redraw, schedule}) {
       this.root = root; this.controls = controls; this.toast = toast; this.redraw = redraw;
+      this.schedule = schedule || globalThis.setTimeout.bind(globalThis);
     }
     isFocused() { return this.root.classList.contains('focus'); }
     setFocused(value, announce = true) {
       const focused = Boolean(value); this.root.classList.toggle('focus', focused);
       this.controls.forEach(control => { if (!control) return; control.classList.toggle('on', focused); control.setAttribute('aria-pressed', String(focused)); control.title = focused ? 'Show editing tools' : 'Hide editing tools'; });
-      setTimeout(this.redraw, 250);
+      this.schedule(this.redraw, 250);
       if (focused && announce) this.toast('Focus on · move to the top edge or press F to bring the bar back');
     }
     toggle() { this.setFocused(!this.isFocused()); }
+  }
+
+  class PathCopyAction {
+    constructor({clipboard, toast}) { this.clipboard = clipboard; this.toast = toast; }
+    async copy(path) {
+      const copied = await this.clipboard.copy(path);
+      this.toast(copied ? 'Path copied' : "Couldn't copy the path");
+      return copied;
+    }
   }
 
   function scanTagEnd(source, start) {
@@ -275,7 +285,7 @@
       <button class="shb-wb-ib" disabled title="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
       <button class="shb-wb-ib" disabled title="Forward"><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
       <button class="shb-wb-ib" id="pReload" title="Reload (⌘R)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
-      <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl" class="shb-wb-path" title=""></span><button class="shb-wb-url-copy" id="pCopy" title="Copy path" aria-label="Copy path"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1"/></svg></button><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
+      <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl" class="shb-wb-path" title=""><bdi dir="ltr"></bdi></span><button class="shb-wb-url-copy" id="pCopy" title="Copy path" aria-label="Copy path"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1"/></svg></button><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
       ${options.onOpenInBrowser ? '<button class="shb-wb-ib" id="pOpen" title="Open in a Sulla browser tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>' : ''}
       <button class="shb-wb-ib" id="pTools" title="Hide editing tools" aria-label="Hide editing tools" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     </div>
@@ -1736,7 +1746,7 @@
       })
     }
     // focus
-    const focusController = new FocusModeController({root: rootEl, controls: [$('bFocus'), $('pTools')], toast, redraw: draw});
+    const focusController = new FocusModeController({root: rootEl, controls: [$('bFocus'), $('pTools')], toast, redraw: draw, schedule: (callback, delay) => globalThis.setTimeout(callback, delay)});
     function toggleFocus() { focusController.toggle(); }
     $('bFocus').onclick = toggleFocus;
     $('pTools').onclick = toggleFocus;
@@ -2093,8 +2103,9 @@
     if (options.onRename) $('fname').value = fileName();
     else $('fname').textContent = fileName();
     const clipboard = new ClipboardService();
-    const copyPath = () => { void clipboard.copy(filePath).then(() => toast('Path copied')); };
-    $('pUrl').textContent = filePath;
+    const copyAction = new PathCopyAction({clipboard, toast});
+    const copyPath = () => { void copyAction.copy(filePath); };
+    $('pUrl').firstElementChild.textContent = filePath;
     $('pUrl').title = filePath;
     $('pUrl').onclick = event => { if (window.getSelection?.().toString()) return; copyPath(); };
     $('pCopy').onclick = copyPath;
@@ -2197,7 +2208,7 @@
       },
       setFilePath(path) {
         filePath = new FilePathPresenter({filePath: path, fileName: fileName()}).resolve();
-        $('pUrl').textContent = filePath; $('pUrl').title = filePath;
+        $('pUrl').firstElementChild.textContent = filePath; $('pUrl').title = filePath;
       },
       setPeers(peers) {
         const box = host.querySelector('.shb-wb-pres');
@@ -2230,7 +2241,8 @@
       injectDocument,
       FilePathPresenter,
       ClipboardService,
-      FocusModeController
+      FocusModeController,
+      PathCopyAction
     }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

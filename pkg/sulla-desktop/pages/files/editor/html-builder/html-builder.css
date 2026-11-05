@@ -171,7 +171,6 @@
   direction: rtl;
   text-align: left;
   text-overflow: ellipsis;
-  unicode-bidi: plaintext;
   user-select: text;
 }
 
