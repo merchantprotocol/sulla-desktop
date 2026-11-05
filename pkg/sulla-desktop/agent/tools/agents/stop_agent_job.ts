@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
-import { emitSubAgentExchange } from './jobExchange';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
@@ -51,21 +50,8 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
       if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);
       await safeFinishDelegationByRef(jobId, { outcome: 'failed', detail: 'stopped by parent' });
     }
-    await Promise.all((job?.tasks ?? []).map((task, currentTaskIndex) => taskIndex !== undefined && currentTaskIndex !== taskIndex ? Promise.resolve() : emitSubAgentExchange(
-      job?.parentChannel,
-      job?.parentThreadId,
-      {
-        direction: 'from_agent',
-        agentId: task.agentId,
-        label: task.label,
-        summary: `${ task.label } was stopped`,
-        detail: `Stop requested for job ${ jobId } before the sub-agent finished.`,
-        status: 'stopped',
-        jobId,
-        taskIndex: currentTaskIndex,
-        conversationId: task.threadId,
-      },
-    )));
+    // Intentional stops are visible through job inspection only. Emitting a
+    // stopped exchange here would wake the parent that the human just killed.
     return {
       successBoolean: true,
       responseString: `Stop requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}. The targeted sub-agent(s) will unwind at their next step.`,

@@ -177,6 +177,9 @@ export class JobCompletionDelivery {
 
   async deliver(job: AgentJob, results: AgentJobResult[], taskIndex = 0, failureReason?: string): Promise<boolean> {
     const terminal = this.terminalNotice(job, taskIndex, failureReason);
+    // Intentional stops are audit state, not completions. Never notify or wake
+    // the parent; the repository marks them consumed before runtime abort.
+    if (terminal?.status === 'stopped' && terminal.stoppedBy) return true;
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;

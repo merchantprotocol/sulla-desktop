@@ -18,11 +18,12 @@ export class JobStopService extends Service {
     const job = this.runtime.jobs.get(jobId);
     if (!job) return 'not-found';
     if (!['running', 'parked'].includes(job.status)) return 'already-finished';
-    this.runtime.abortScopes.get(jobId)?.abortJob();
     job.status = 'stopped'; job.finishedAt = this.clock.now().getTime();
     job.tasks = job.tasks.map(task => ['running', 'queued', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: job.finishedAt! } : task);
     job.stoppedBy = StopPrincipal.attribution(principal); job.stopReason = reason;
-    void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason));
+    // Persist the terminal state before aborting. Provider teardown can report a
+    // container failure synchronously; the repository guard must already see stopped.
+    void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason)).then(() => this.runtime.abortScopes.get(jobId)?.abortJob());
     return 'stopped';
   }
 
