@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { randomUUID } from 'node:crypto';
+
 import { Repository } from '@sulla/foundation';
 
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
@@ -61,8 +63,64 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         AND (tasks -> $2::int) ->> 'completionDeliveredAt' IS NULL`, [jobId, taskIndex, deliveredAt]);
   }
 
-  async updateTaskCompletions(jobId: string, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks), JSON.stringify(results)]);
+  async updateTaskCompletions(jobId: string, taskIndex: number, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
+    const task = tasks[taskIndex];
+    const generation = task?.generation ?? 1;
+    await this.connection.run(`WITH history AS (
+      INSERT INTO agent_job_result_history
+        (job_id, task_index, generation, task_status, result, completion, summary, returned_at, finished_at, completion_delivered_at)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7,
+        CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END,
+        CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END,
+        CASE WHEN $10::bigint IS NULL THEN NULL ELSE to_timestamp($10 / 1000.0) END)
+      ON CONFLICT (job_id, task_index, generation) DO UPDATE SET
+        task_status = EXCLUDED.task_status, result = EXCLUDED.result, completion = EXCLUDED.completion,
+        summary = EXCLUDED.summary, returned_at = EXCLUDED.returned_at, finished_at = EXCLUDED.finished_at,
+        completion_delivered_at = EXCLUDED.completion_delivered_at, recorded_at = now()
+    ) UPDATE agent_jobs SET tasks = $11::jsonb, results = $12::jsonb WHERE job_id = $1`,
+    [jobId, taskIndex, generation, task?.status ?? 'error', JSON.stringify(task?.result ?? null),
+      JSON.stringify(task?.completion ?? results[taskIndex] ?? null), task?.summary ?? null, task?.returnedAt ?? null,
+      task?.finishedAt ?? null, task?.completionDeliveredAt ?? null, JSON.stringify(tasks), JSON.stringify(results)]);
+  }
+
+  /** Atomically archive the settled generation and claim exactly one reopened generation. */
+  async claimReopen(jobId: string, taskIndex: number, expectedGeneration: number): Promise<{ generation: number; leaseId: string } | undefined> {
+    const leaseId = randomUUID();
+    // Seed legacy generation state separately. PostgreSQL data-modifying CTEs
+    // share one snapshot, so an UPDATE cannot see a row inserted by a sibling
+    // CTE in the same statement. This insert is idempotent and changes no claim.
+    await this.connection.run(`INSERT INTO agent_job_task_reopens (job_id, task_index, generation, reopen_count)
+      SELECT $1, $2, COALESCE((tasks -> $2::int ->> 'generation')::int, 1),
+        COALESCE((tasks -> $2::int ->> 'reopenCount')::int, 0)
+      FROM agent_jobs WHERE job_id = $1 AND (tasks -> $2::int) IS NOT NULL
+      ON CONFLICT (job_id, task_index) DO NOTHING`, [jobId, taskIndex]);
+    const rows = await this.connection.select(`WITH current_task AS (
+      SELECT job_id, tasks -> $2::int AS task
+      FROM agent_jobs WHERE job_id = $1 FOR UPDATE
+    ), eligible AS (
+      SELECT current_task.task, state.generation, state.reopen_count
+      FROM current_task JOIN agent_job_task_reopens state ON state.job_id = $1 AND state.task_index = $2
+      WHERE current_task.task->>'status' IN ('completed', 'blocked')
+        AND state.generation = $3 AND state.reopen_count < 5 AND state.lease_id IS NULL
+    ), history AS (
+      INSERT INTO agent_job_result_history
+        (job_id, task_index, generation, task_status, result, completion, summary, returned_at, finished_at, completion_delivered_at)
+      SELECT $1, $2, generation, task->>'status', task->'result', task->'completion', task->>'summary',
+        CASE WHEN task->>'returnedAt' IS NULL THEN NULL ELSE to_timestamp((task->>'returnedAt')::bigint / 1000.0) END,
+        CASE WHEN task->>'finishedAt' IS NULL THEN NULL ELSE to_timestamp((task->>'finishedAt')::bigint / 1000.0) END,
+        CASE WHEN task->>'completionDeliveredAt' IS NULL THEN NULL ELSE to_timestamp((task->>'completionDeliveredAt')::bigint / 1000.0) END
+      FROM eligible ON CONFLICT (job_id, task_index, generation) DO NOTHING RETURNING generation
+    ), claimed AS (
+      UPDATE agent_job_task_reopens r SET generation = r.generation + 1, reopen_count = r.reopen_count + 1,
+        lease_id = $4, lease_acquired_at = now(), updated_at = now()
+      FROM eligible WHERE r.job_id = $1 AND r.task_index = $2 AND r.generation = $3 AND r.lease_id IS NULL
+      RETURNING r.generation, r.reopen_count, r.lease_id
+    ) UPDATE agent_jobs j SET status = 'running', finished_at = NULL, completion_delivered_at = NULL,
+      tasks = jsonb_set(j.tasks, ARRAY[$2::text],
+        ((j.tasks -> $2::int) - 'result' - 'summary' - 'returnedAt' - 'completion' - 'completionDeliveredAt' - 'finishedAt') ||
+        jsonb_build_object('status', 'running', 'generation', claimed.generation, 'reopenCount', claimed.reopen_count, 'reopenLeaseId', claimed.lease_id), false)
+      FROM claimed WHERE j.job_id = $1 RETURNING claimed.generation, claimed.lease_id`, [jobId, taskIndex, expectedGeneration, leaseId]);
+    return rows[0] ? { generation: Number(rows[0].generation), leaseId: String(rows[0].lease_id) } : undefined;
   }
 
   async recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined> {

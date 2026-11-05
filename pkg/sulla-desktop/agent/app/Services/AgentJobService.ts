@@ -247,7 +247,7 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
     threadId: result.threadId || job.tasks[taskIndex].threadId,
     finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
     completion: result };
-  await this.persist(this.repository.updateTaskCompletions(jobId, job.tasks, job.results));
+  await this.persist(this.repository.updateTaskCompletions(jobId, taskIndex, job.tasks, job.results));
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
