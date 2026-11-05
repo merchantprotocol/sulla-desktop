@@ -57,7 +57,7 @@
         @click="emit('select', legacyCard(node.row))"
       >
         <i class="sd-status-dot" /><strong>{{ node.row.label }}</strong><time>{{ elapsed(node.row) }}</time>
-        <span><b>{{ agentName(node.row.agentId) }}</b> · {{ node.row.lastCheckinSummary || node.row.stateReason || stateLabel(node.row) }}<template v-if="contractLabel(node.row)"> · {{ contractLabel(node.row) }}</template></span>
+        <span><b>{{ agentName(node.row.agentId) }}</b> · {{ node.row.lastCheckinSummary || node.row.stateReason || stateLabel(node.row) }}<template v-if="contractLabel(node.row)"> · {{ contractLabel(node.row) }}</template><template v-if="stopAttribution(node.row)"><br>{{ stopAttribution(node.row) }}</template></span>
         <em
           class="sd-state-chip"
           :title="node.row.stateReason || undefined"
@@ -124,6 +124,7 @@ function age(value: string): string { const seconds = Math.max(0, Math.floor((no
 function elapsed(row: AgentStateRow): string { const start = row.startedAt ? Date.parse(row.startedAt) : now.value; const end = row.endedAt ? Date.parse(row.endedAt) : now.value; const seconds = Math.max(0, Math.floor((end - start) / 1000)); return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m` }
 function agentName(id: string | null): string { return (id || 'Agent').split('-').map(part => ({ codex: 'Codex', sol: 'Sol', luna: 'Luna' }[part] || part.charAt(0).toUpperCase() + part.slice(1))).join(' ') }
 function contractLabel(row: AgentStateRow): string { const contract = legacyCards.value.get(row.key)?.contract; return contract && contract !== 'result' ? contract : '' }
+function stopAttribution(row: AgentStateRow): string { return legacyCards.value.get(row.key)?.stopAttribution || '' }
 function legacyKey(row: AgentStateRow): string { return `${ row.visibility === 'tab' ? 'tab' : 'job' }:${ row.jobId }:${ row.taskIndex }` }
 function legacyCard(row: AgentStateRow): ThreadAgentCard { const existing = legacyCards.value.get(row.key); const status: ThreadAgentCard['status'] = ['working', 'queued', 'quiet', 'blocked'].includes(row.state) ? 'running' : row.state === 'lost' ? 'failed' : row.state; return { jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId || 'agent', label: row.label, status, createdAt: row.startedAt ? Date.parse(row.startedAt) : now.value, finishedAt: row.endedAt ? Date.parse(row.endedAt) : null, conversationId: row.threadId || undefined, lastActivity: row.lastCheckinSummary || row.stateReason || row.state, lastActivityAt: row.lastCheckinAt ? Date.parse(row.lastCheckinAt) : now.value, kind: row.visibility === 'tab' ? 'tab' : 'job', contract: existing?.contract || 'result', agentTab: row.visibility === 'tab' && row.threadId ? { contractId: row.key, threadId: row.threadId, agentName: row.label, parentAgentId: 'orchestrator', depth: row.depth } : undefined } }
 async function refreshMetadata(): Promise<void> {

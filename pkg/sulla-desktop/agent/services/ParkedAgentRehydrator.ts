@@ -5,6 +5,7 @@
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { failJob } from '../tools/agents/jobRegistry';
 import { agentDefinitionService } from './AgentDefinitionService';
+import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
 
@@ -19,6 +20,7 @@ export class ParkedAgentRehydrator {
     private readonly definitions: AgentDefinitionReader,
     private readonly fail: (jobId: string, error: string) => Promise<void>,
     private readonly notifyFailure: (job: AgentJob, error: string) => void,
+    private readonly taskStatusPolicy = new AgentJobTaskStatusPolicy(),
   ) {}
 
   async isTerminalDelegatedThread(threadId: string): Promise<boolean> {
@@ -26,7 +28,7 @@ export class ParkedAgentRehydrator {
     if (!job) return false;
     if (['stopped', 'failed', 'completed'].includes(job.status)) return true;
     const task = job.tasks.find(candidate => candidate.threadId === threadId);
-    return Boolean(task && ['completed', 'blocked', 'error', 'stopped'].includes(task.status));
+    return Boolean(task && this.taskStatusPolicy.isTerminal(task.status));
   }
 
   /**

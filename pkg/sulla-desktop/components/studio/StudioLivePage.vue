@@ -113,9 +113,12 @@
       <template v-else>
         <div class="tb">
           <h1>Live Agents</h1><span>Every agent running on this desktop right now, grouped by root chat.</span><div class="acts">
-            <span class="st ok"><i />streaming · updated {{ age(client.snapshot.value.generatedAt) }}</span>
+            <label class="kill-switch"><input type="checkbox" :checked="killController.switchOn.value" :disabled="killController.busy.value" @change="requestSwitchChange"><span>Kill All</span></label><span class="st ok"><i />streaming · updated {{ age(client.snapshot.value.generatedAt) }}</span>
           </div>
         </div>
+        <div v-if="killController.switchOn.value" class="kill-banner"><b>All agent launches paused</b><span>Turn off Kill All to allow new launches.</span></div>
+        <p v-if="killController.notice.value" class="action-feedback ok-text">{{ killController.notice.value }}</p>
+        <p v-if="killController.error.value" class="action-feedback error-text">{{ killController.error.value }}</p>
         <div class="stats">
           <div class="card stat">
             <div class="lbl">
@@ -147,7 +150,7 @@
           class="card group"
         >
           <div class="group-head">
-            <span class="fi blue">◉</span><div><b>{{ groupName(group.tree) }}</b><small> · root chat · {{ elapsed(group.tree[0]?.row.startedAt || null) }}</small></div>
+            <span class="fi blue">◉</span><div><b>{{ groupName(group.tree) }}</b><small> · root chat · {{ elapsed(group.tree[0]?.row.startedAt || null) }}</small></div><button v-if="rootLiveCount(group.rootThreadId)" class="btn sm danger" type="button" @click.stop="killConfirmRoot = group.rootThreadId">Kill all</button>
           </div><div
             v-for="node in flatten(group.tree)"
             :key="node.row.key"
@@ -254,6 +257,8 @@
         </div>
       </div>
     </div>
+    <div v-if="killConfirmRoot" class="overlay" @click.self="killConfirmRoot = null"><div class="card modal compact"><h2>Kill this agent tree?</h2><p>The live agents in this root chat will stop and their results won't be delivered.</p><div class="modal-actions"><button class="btn" type="button" @click="killConfirmRoot = null">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="confirmKillRoot">Kill all</button></div></div></div>
+    <div v-if="confirmSwitchOn" class="overlay" @click.self="confirmSwitchOn = false"><div class="card modal compact"><h2>Kill every live agent?</h2><p>This pauses all agent launches and prevents results from waking parent chats.</p><div class="modal-actions"><button class="btn" type="button" @click="confirmSwitchOn = false">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="enableKillSwitch">Kill all and pause</button></div></div></div>
   </div>
 </template>
 
@@ -268,11 +273,12 @@ import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjec
 import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
 import type { AgentStateRow, AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { LiveAgentsKillController } from './LiveAgentsKillController';
 
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
-const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const detail = ref<AgentConversationDetail | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); let clockTimer: ReturnType<typeof setInterval> | undefined;
+const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const detail = ref<AgentConversationDetail | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
 const builder = computed(() => new AgentTreeBuilder(client.snapshot.value.rows));
 const groups = computed(() => builder.value.groups());
 const filteredGroups = computed(() => { const q = search.value.trim().toLowerCase(); if (!q) return groups.value; return groups.value.flatMap(group => { const matching = flatten(group.tree).filter(node => [node.row.label, node.row.agentId, node.row.lastCheckinSummary].some(value => value?.toLowerCase().includes(q))); return matching.length ? [{ ...group, tree: matching.map(node => ({ ...node, children: [] })) }] : [] }) });
@@ -282,6 +288,10 @@ function flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] { return build
 function groupName(tree: readonly AgentTreeNode[]): string { return tree[0]?.row.label || 'Agent run' }
 function pendingKey(action: 'message' | 'stop', row: AgentStateRow): string { return `${ action }:${ action === 'stop' ? row.jobId : row.key }` }
 function isPending(action: 'message' | 'stop', row: AgentStateRow): boolean { return pending.value.has(pendingKey(action, row)) }
+function rootLiveCount(rootThreadId: string): number { return client.snapshot.value.rows.filter(row => row.rootThreadId === rootThreadId && liveStates.has(row.state)).length }
+function requestSwitchChange(event: Event): void { const on = (event.target as HTMLInputElement).checked; if (on) confirmSwitchOn.value = true; else void killController.setSwitch(false) }
+async function enableKillSwitch(): Promise<void> { if (await killController.setSwitch(true)) confirmSwitchOn.value = false }
+async function confirmKillRoot(): Promise<void> { const root = killConfirmRoot.value; if (root && await killController.killTree(root)) killConfirmRoot.value = null }
 async function loadDetail(): Promise<void> { if (!selected.value?.threadId) { detail.value = null; return } detailLoading.value = true; try { detail.value = await ipcRenderer.invoke('agents:conversation', selected.value.threadId) } catch { detail.value = null } finally { detailLoading.value = false } }
 function selectRow(row: AgentStateRow): void { selected.value = row; actionError.value = ''; loadDetail().catch(() => undefined) }
 async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
@@ -302,7 +312,7 @@ watch(() => client.snapshot.value, snapshot => {
   if (messageTarget.value) messageTarget.value = current.get(messageTarget.value.key) ?? null;
   if (stopTarget.value) stopTarget.value = current.get(stopTarget.value.key) ?? null;
 });
-onMounted(() => { clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); });
+onMounted(() => { void killController.loadSwitch(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); });
 </script>
 
 <style scoped lang="scss">

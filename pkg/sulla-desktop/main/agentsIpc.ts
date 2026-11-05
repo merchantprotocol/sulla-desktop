@@ -16,6 +16,7 @@
 // agents:conversation reads one conversation's JSONL message log.
 
 import { ipcMain } from 'electron';
+import { StopAttributionFormatter } from '@pkg/agent/app/Formatters/StopAttributionFormatter';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
 
@@ -58,6 +59,9 @@ export interface AgentsListResponse {
     parentThreadId?: string;
     parentAgentId?: string;
     parentTitle?:   string;
+    stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+    stopReason?: string;
+    killedByHuman: boolean;
     tasks: {
       taskIndex:      number;
       agentId:        string;
@@ -162,6 +166,7 @@ export interface ThreadAgentCard {
   kind:           'job' | 'tab';
   /** Return contract name; 'result' is the default contract. */
   contract:       string;
+  stopAttribution?: string;
   /** Present for tab cards: what the renderer needs to focus or reopen the tab. */
   agentTab?: {
     contractId:    string;
@@ -313,8 +318,32 @@ export function initAgentsIpc(): void {
   ipcMain.handle('agents:stop-job', async(_event, jobId: string) => {
     if (!jobId) return { ok: false, error: 'A job is required.' };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
-    const result = await stopAgentJob(jobId);
+    const { StopPrincipal } = await import('@pkg/agent/app/ValueObjects/StopPrincipal');
+    const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from Live Agents');
     return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+  });
+
+
+  ipcMain.handle('agents:kill-tree', async(_event, threadId: string) => {
+    if (!threadId) return { ok: false, killedJobs: 0, error: 'A thread is required.' };
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.killTree(threadId);
+  });
+
+  ipcMain.handle('agents:kill-all-switch:get', async() => {
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.switchState();
+  });
+
+  ipcMain.handle('agents:kill-all-switch:set', async(_event, on: boolean) => {
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return agentKillService.setSwitch(on === true);
+  });
+
+  ipcMain.handle('agents:thread-live-children', async(_event, threadId: string) => {
+    if (!threadId) return { count: 0 };
+    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
+    return { count: await agentKillService.liveDescendantCount(threadId) };
   });
 
   ipcMain.handle('agents:conversations', async(_event, channel: string, limit = 50, offset = 0): Promise<AgentConversationSummary[]> => {
@@ -392,6 +421,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
   ]);
   const jobs = await getJobsForParentThread(parentThreadId);
   const logsDir = resolveSullaLogsDir();
+  const stopFormatter = new StopAttributionFormatter();
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
@@ -433,6 +463,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
         ? 'tab'
         : 'job',
       contract: task.contract?.name ?? 'result',
+      stopAttribution: stopFormatter.format(job.stoppedBy, job.stopReason),
       ...(isTab && task.threadId
         ? {
             agentTab: {
@@ -539,8 +570,8 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     // per task on each 3s poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
     const allJobs = (await getAllJobs()).filter(job => {
-      if (job.status === 'completed' || job.status === 'stopped') return false;
-      if (job.status === 'failed') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
+      if (job.status === 'completed') return false;
+      if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
     });
     const definitions = await agentDefinitionService.list();
@@ -614,6 +645,9 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         finishedAt: job.finishedAt,
         taskCount: job.taskCount,
         error: job.error,
+        stoppedBy: job.stoppedBy,
+        stopReason: job.stopReason,
+        killedByHuman: job.stoppedBy === 'human',
         parentChannel: job.parentChannel,
         parentThreadId: job.parentThreadId,
         parentAgentId: job.parentAgentId,
