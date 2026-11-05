@@ -160,7 +160,7 @@ export async function emitProactiveCompletion(
 export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
 
-  constructor(jobs: OrphanedChildJobStore, private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'>) {
+  constructor(jobs: OrphanedChildJobStore, private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'|'withOwner'>) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
   }
 
@@ -181,11 +181,12 @@ export class JobCompletionDelivery {
     // Intentional stops are audit state, not completions. Never notify or wake
     // the parent; the repository marks them consumed before runtime abort.
     if (terminal?.status === 'stopped' && terminal.stoppedBy) return true;
-    const owner = await this.custody?.resolveOwner(job.jobId, taskIndex);
-    if (owner && owner.version > 0) {
-      await emitProactiveCompletion(owner.channel, job.jobId, results, failureReason, owner.threadId, terminal);
-      return wakeParentGraph(owner.channel, owner.threadId, job.jobId, results, failureReason, taskIndex, terminal);
-    }
+    const movedDelivery=await this.custody?.withOwner(job.jobId,taskIndex,async(_client,owner)=>{
+      if(owner.version===0)return undefined;
+      await emitProactiveCompletion(owner.channel,job.jobId,results,failureReason,owner.threadId,terminal);
+      return wakeParentGraph(owner.channel,owner.threadId,job.jobId,results,failureReason,taskIndex,terminal);
+    });
+    if(movedDelivery!==undefined)return movedDelivery;
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;

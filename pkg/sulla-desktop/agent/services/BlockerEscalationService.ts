@@ -23,7 +23,7 @@ export class BlockerEscalationService extends Service {
   constructor(
     private readonly messaging: AgentJobMessagingRepository,
     private readonly inbox: ParentNoticeInbox,
-    private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'>,
+    private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'|'withOwner'>,
   ) { super(); }
 
   async record(threadId: string, input: {
@@ -37,17 +37,15 @@ export class BlockerEscalationService extends Service {
     if (!receipt?.blockersChanged || receipt.checkin.blockers.length === 0) return receipt;
 
     const { target, checkin } = receipt;
-    const owner=await this.custody?.resolveOwner(target.jobId,target.taskIndex) ?? (target.parentThreadId?{channel:target.parentChannel??'sulla-desktop',threadId:target.parentThreadId}:undefined);
-    if (!owner) return receipt;
     const blockers = checkin.blockers.join('; ');
     const label = target.label ?? `task ${ target.taskIndex }`;
-    this.inbox.enqueue(owner.channel, owner.threadId, {
-      jobId: target.jobId,
-      taskIndex: target.taskIndex,
-      results: [],
-      notice: `[Blocker from ${ label } (job ${ target.jobId } task ${ target.taskIndex })] ${ blockers } — answer with agents/send_job_message`,
-      dedupeKey: `blocker:${ target.jobId }:${ target.taskIndex }:${ JSON.stringify(checkin.blockers) }`,
+    const enqueue=(owner:{channel:string;threadId:string})=>this.inbox.enqueue(owner.channel,owner.threadId,{
+      jobId:target.jobId,taskIndex:target.taskIndex,results:[],
+      notice:`[Blocker from ${label} (job ${target.jobId} task ${target.taskIndex})] ${blockers} — answer with agents/send_job_message`,
+      dedupeKey:`blocker:${target.jobId}:${target.taskIndex}:${JSON.stringify(checkin.blockers)}`,
     });
+    if(this.custody){await this.custody.withOwner(target.jobId,target.taskIndex,async(_client,owner)=>{enqueue(owner);});}
+    else if(target.parentThreadId)enqueue({channel:target.parentChannel??'sulla-desktop',threadId:target.parentThreadId});
     return receipt;
   }
 }
