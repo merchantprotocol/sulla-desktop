@@ -34,8 +34,8 @@ export class AgentJobResultHistoryRepository extends Repository<AgentJobModel> {
   async forTask(jobId: string, taskIndex: number): Promise<AgentJobResultHistoryRecord[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_job_result_history
       WHERE job_id = $1 AND task_index = $2 ORDER BY generation`, [jobId, taskIndex]);
-    return rows.map(row => ({ jobId: row.job_id, taskIndex: Number(row.task_index), generation: Number(row.generation),
-      taskStatus: row.task_status, result: row.result ?? undefined, completion: row.completion ?? undefined,
-      summary: row.summary ?? undefined }));
+    return rows.map(row => ({ jobId: String(row.job_id), taskIndex: Number(row.task_index), generation: Number(row.generation),
+      taskStatus: String(row.task_status) as AgentJobTask['status'], result: row.result ?? undefined,
+      completion: row.completion as AgentJobResult | undefined, summary: row.summary == null ? undefined : String(row.summary) }));
   }
 }
