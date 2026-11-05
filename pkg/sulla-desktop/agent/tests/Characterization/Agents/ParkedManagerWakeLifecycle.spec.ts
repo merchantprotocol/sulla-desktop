@@ -7,11 +7,19 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { TestDatabase } from '../../Support/TestDatabase';
 import { ReportProgressWorker } from '../../../tools/agents/report_progress';
 import { sendJobMessage } from '../../../tools/agents/send_job_message';
+import { ReturnResultWorker } from '../../../tools/agents/return_result';
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
   getBackendGraphWebSocketService: () => ({ wakeParkedAgent }),
 }));
+
+class ReturnResultHarness extends ReturnResultWorker {
+  runHarness(threadId: string, input: unknown) {
+    this.setState({ metadata: { threadId } } as any);
+    return this._validatedCall(input);
+  }
+}
 
 class ReportProgressHarness extends ReportProgressWorker {
   runHarness(threadId: string, input: unknown) {
@@ -346,4 +354,37 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await agentJobProvider.jobs.job(stopped.jobId))?.status).toBe('stopped');
     expect((await agentJobProvider.jobs.job(failed.jobId))?.status).toBe('failed');
   });
+  it('i) refuses a manager contract while queued, running, or parked children remain', async() => {
+    // risk: accepting a manager's final contract while it still owns live
+    // children makes its thread terminal, so their later results can never
+    // wake the manager that is responsible for integrating them.
+    const managerThreadId = 'return-i-manager-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      'sulla-desktop', 'return-i-root-thread',
+    );
+    const firstChild = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'worker-a', prompt: 'build a', status: 'running', threadId: 'return-i-child-a', depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    );
+    const secondChild = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'worker-b', prompt: 'build b', status: 'parked', threadId: 'return-i-child-b', depth: 2 }],
+      'coding-manager-sol', managerThreadId,
+    );
+
+    const worker = new ReturnResultHarness();
+    const refused = await worker.runHarness(managerThreadId, { status: 'completed', summary: 'PARKED', output: {} });
+
+    expect(refused).toEqual({
+      successBoolean: false,
+      responseString: 'you have 2 running children; park by ending your turn, or stop them first',
+    });
+    expect((await registry.getJob(manager.jobId))?.tasks[0].returnedAt).toBeUndefined();
+
+    await registry.completeJob(firstChild.jobId, [{ label: 'worker-a', status: 'completed', output: 'done', threadId: 'return-i-child-a' }]);
+    registry.abortJob(secondChild.jobId);
+    const accepted = await worker.runHarness(managerThreadId, { status: 'completed', summary: 'done', output: {} });
+    expect(accepted.successBoolean).toBe(true);
+  });
+
 });
