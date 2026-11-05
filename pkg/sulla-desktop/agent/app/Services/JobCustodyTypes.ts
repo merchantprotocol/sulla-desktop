@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+import type { VerifiedCustodyActor } from './CustodyCallerVerifier';
 
 export interface CustodyOwner { channel: string; threadId: string; agentId: string }
 export type CustodyActor = { kind:'human' } | ({ kind:'agent' } & CustodyOwner);

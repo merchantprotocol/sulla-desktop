@@ -34,7 +34,8 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     return {queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
   });
   if(!locked)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
-  if('forbidden' in locked)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${locked.forbidden.agentId} (${locked.forbidden.channel}/${locked.forbidden.threadId}).`};
+  const forbidden='forbidden' in locked?locked.forbidden:undefined;
+  if(forbidden)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${forbidden.agentId} (${forbidden.channel}/${forbidden.threadId}).`};
   const queued=locked.queued;
   if (queued.length === 0) {
     return {
