@@ -873,9 +873,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const existing = await this.userRepository.findActiveKdf<{ kdf: {
       password?: { salt?: string; parameters?: { memoryBytes: number; operations: number } };
       salt?: string; parameters?: { memoryBytes: number; operations: number };
-    } }>(
-      'SELECT kdf FROM users WHERE disabled_at IS NULL LIMIT 1',
-    );
+    } }>();
     const storedKdf = existing.rows[0]?.kdf;
     const passwordKdf = storedKdf?.password?.salt
       ? storedKdf.password

@@ -129,9 +129,11 @@ describe.sequential('vault Postgres repositories',()=>{
     await integration.upsert(fx.user,'github','primary');
     await integration.upsert(fx.user,'github','secondary');
     await expect(integration.findActive<{active_account_id:string}>(fx.user,'github')).resolves.toMatchObject({rows:[{active_account_id:'secondary'}]});
+    const migrationItem='40000000-0000-4000-8000-000000000010';
+    await new PostgresVaultItemRepository(database.db).insertAgentIntegrationItem([migrationItem,fx.user,'apiKey',{ciphertext:'migration'},{ciphertext:'key'},{mode:'agents',level:'autofill',agents:[],sites:[]},'legacy/account']);
     const migration=new PostgresVaultMigrationRepository(database.db);
     const batch=await migration.start<{id:string}>('fingerprint-a');
-    await migration.addRow(['integration_value',1,'fingerprint-a',fx.ids[0]]);
+    await migration.addRow(['integration_value',1,'fingerprint-a',migrationItem]);
     await migration.commit(batch.rows[0].id,1,0);
     await expect(migration.findCommitted<{imported_count:number}>('fingerprint-a')).resolves.toMatchObject({rows:[expect.objectContaining({imported_count:1})]});
     const sync=new PostgresVaultSyncStateRepository(database.db);
