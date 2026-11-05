@@ -7,7 +7,7 @@ import { StopAgentJobWorker } from '../../tools/agents/stop_agent_job';
 import { TestDatabase } from '../Support/TestDatabase';
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 class StopAgentJobHarness extends StopAgentJobWorker {
-  invoke(state: any, input: unknown) { this.setState(state); return this._validatedCall(input); }
+  runValidated(state: any, input: unknown) { this.setState(state); return this._validatedCall(input); }
 }
 dbDescribe('AgentJobService state machine with real Postgres', () => {
   const database = new TestDatabase();
@@ -134,7 +134,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     // risk: authorization — a child can otherwise kill the manager supervising it.
     const parent = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'own', status: 'running', threadId: 'manager-owner-thread' }], 'sulla-desktop', 'root-owner-thread', { parentAgentId: 'sulla-desktop' });
     const worker = new StopAgentJobHarness();
-    const refusal = await worker.invoke({ metadata: { threadId: 'child-worker-thread', routedAgentId: 'codex-sol-worker' } }, { jobId: parent.jobId });
+    const refusal = await worker.runValidated({ metadata: { threadId: 'child-worker-thread', routedAgentId: 'codex-sol-worker' } }, { jobId: parent.jobId });
     expect(refusal.successBoolean).toBe(false);
     expect(refusal.responseString).toContain('owned by sulla-desktop');
     expect((await registry.getJob(parent.jobId))?.status).toBe('running');
@@ -144,7 +144,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     // risk: auditability — optional input must not persist an ambiguous placeholder.
     const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: 'reason-child-thread' }], 'manager', 'reason-owner-thread', { parentAgentId: 'manager' });
     const worker = new StopAgentJobHarness();
-    const stopped = await worker.invoke({ metadata: { threadId: 'reason-owner-thread', routedAgentId: 'manager' } }, { jobId: child.jobId });
+    const stopped = await worker.runValidated({ metadata: { threadId: 'reason-owner-thread', routedAgentId: 'manager' } }, { jobId: child.jobId });
     expect(stopped.successBoolean).toBe(true);
     expect((await registry.getJob(child.jobId))?.stopReason).toBe('agent request (no reason given)');
   });
