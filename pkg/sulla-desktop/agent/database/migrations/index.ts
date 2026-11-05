@@ -14,6 +14,7 @@ import { up as up_0148, down as down_0148 } from './0148_agent_job_stop_attribut
 import { up as up_0149, down as down_0149 } from './0149_agent_task_waits';
 import { up as up_0150, down as down_0150 } from './0150_create_agent_inbox';
 import { up as up_0151, down as down_0151 } from './0151_agent_task_reopen_foundation';
+import { up as up_0153, down as down_0153 } from './0153_agent_job_custody';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -280,4 +281,5 @@ export const migrationsRegistry = [
   { name: '0149_agent_task_waits', up: up_0149, down: down_0149 },
   { name: '0150_create_agent_inbox', up: up_0150, down: down_0150 },
   { name: '0151_agent_task_reopen_foundation', up: up_0151, down: down_0151 },
+  { name: '0153_agent_job_custody', up: up_0153, down: down_0153 },
 ] as const;
