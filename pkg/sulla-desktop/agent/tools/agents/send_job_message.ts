@@ -31,13 +31,12 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if(caller){
       const same=caller.threadId===owner.threadId;
       const unchanged=snapshot?.threadId===owner.threadId&&snapshot.version===owner.version;
-      if(!same&&!(unchanged&&snapshotAncestor))return {forbidden:owner} as const;
+      if(!same&&!(unchanged&&snapshotAncestor))return {kind:'forbidden',owner} as const;
     }
-    return {queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
+    return {kind:'queued',queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
   });
   if(!locked)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
-  const forbidden='forbidden' in locked?locked.forbidden:undefined;
-  if(forbidden)return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${forbidden.agentId} (${forbidden.channel}/${forbidden.threadId}).`};
+  if(locked.kind==='forbidden')return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${locked.owner.agentId} (${locked.owner.channel}/${locked.owner.threadId}).`};
   const queued=locked.queued;
   if (queued.length === 0) {
     return {
