@@ -13,9 +13,10 @@ const owner={channel:'sulla-desktop',threadId:'parent-thread',agentId:'coding-ma
 const actor={kind:'agent' as const,...owner};
 class ReplaceLeadHarness {
  readonly moves:any[]=[]; readonly wrapped:any[]=[];
- readonly custody={authorizeManagement:vi.fn(async()=>undefined),resolveOwner:vi.fn(async()=>({...owner,jobId:'lead',taskIndex:0,version:1,changedAt:new Date()})),history:vi.fn(),move:vi.fn(async(input:any)=>{this.moves.push(input);return input.to.threadId===owner.threadId?{ok:false,code:'no-op',message:'unchanged',current:owner}:{ok:true,previous:owner,current:{...input.to,jobId:input.jobId,taskIndex:input.taskIndex,version:2,changedAt:new Date()}}})};
- readonly snapshot:any={lead:{jobId:'lead',status:'failed',tasks:[{label:'Lead',prompt:'Ship F-5',status:'error',threadId:'old-lead'}]},taskIndex:0,checkins:[{step:'push',summary:'PR https://github.test/pull/7 head abcdef1',blockers:[]}],messages:[{message:'Fix CI'}],inbox:[{kind:'contract',payload:{summary:'worker done'}}],children:Array.from({length:3},(_,i)=>({jobId:`child-${i}`,status:'running',results:[],tasks:[{label:`Worker ${i+1}`,status:'running',threadId:`worker-${i}`}]}))};
- readonly packets={recordReplacementAudit:vi.fn(async()=>{}),assemble:vi.fn(async()=>({prompt:'# Lead replacement handoff\n## Your team: 3 workers\n- Worker 1 — running; heads: abcdef1\n- Worker 2 — running\n- Worker 3 — running',snapshot:this.snapshot}))};
+ readonly operation:any={oldJobId:'lead',oldTaskIndex:0,childProgress:{},auditDone:false,wrapUpDone:false};
+ readonly custody={authorizeReplacement:vi.fn(async()=>undefined),resolveOwner:vi.fn(async()=>({...owner,jobId:'lead',taskIndex:0,version:1,changedAt:new Date()})),withOwner:vi.fn(async(_jobId:any,_taskIndex:any,callback:any)=>callback({query:vi.fn()}, {...owner,jobId:'lead',taskIndex:0,version:1,changedAt:new Date()})),history:vi.fn(),move:vi.fn(async(input:any)=>{this.moves.push(input);return input.to.threadId===owner.threadId?{ok:false,code:'no-op',message:'unchanged',current:owner}:{ok:true,previous:owner,current:{...input.to,jobId:input.jobId,taskIndex:input.taskIndex,version:2,changedAt:new Date()}}})};
+ readonly snapshot:any={lead:{jobId:'lead',status:'failed',tasks:[{label:'Lead',prompt:'Ship F-5',status:'error',threadId:'old-lead'}]},taskIndex:0,checkins:[{step:'push',summary:'PR https://github.test/pull/7 head abcdef1',blockers:[]}],messages:[{message:'Fix CI'}],inbox:[{kind:'contract',payload:{summary:'worker done'}}],completions:[],children:Array.from({length:3},(_,i)=>({job:{jobId:`child-${i}`,status:'running',results:[],tasks:[{label:`Worker ${i+1}`,status:'running',threadId:`worker-${i}`}]},taskIndex:0}))};
+ readonly packets={operation:vi.fn(async()=>this.operation),saveOperation:vi.fn(async()=>{}),recordReplacementAudit:vi.fn(async()=>{}),assemble:vi.fn(async()=>({prompt:'# Lead replacement handoff\n## Your team: 3 workers\n- Worker 1 — running; heads: abcdef1\n- Worker 2 — running\n- Worker 3 — running',snapshot:this.snapshot}))};
  readonly launcher={launchReplacement:vi.fn(async()=>({jobId:'replacement',taskIndex:0,threadId:'new-lead'}))};
  readonly messaging={targetsForJob:vi.fn(async()=>[{jobId:'lead',taskIndex:0}]),queueMessage:vi.fn(async()=>({}))};
  readonly wrapUp={request:vi.fn(async(...args:any[])=>{this.wrapped.push(args)})};
@@ -54,13 +55,13 @@ describe('agents/replace_lead',()=>{
  });
  it('refuses a peer before launching and names the live owner',async()=>{
    // risk: authorization — peers cannot replace an actively owned lead.
-   const h=new ReplaceLeadHarness(); h.custody.authorizeManagement.mockResolvedValueOnce({ok:false,code:'forbidden',message:'Custody belongs to coding-manager-sol (sulla-desktop/parent-thread).',current:owner} as any);
+   const h=new ReplaceLeadHarness(); h.custody.authorizeReplacement.mockResolvedValueOnce({ok:false,code:'forbidden',message:'Custody belongs to coding-manager-sol (sulla-desktop/parent-thread).',current:owner} as any);
    const result=await h.service.replace({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol',actor:{kind:'agent',channel:'peer',threadId:'peer-thread',agentId:'peer-lead'}});
    expect(result).toEqual(expect.objectContaining({ok:false,code:'forbidden',message:expect.stringContaining('coding-manager-sol')})); expect(h.launcher.launchReplacement).not.toHaveBeenCalled();
  });
  it('reports nonexistent tasks and disabled replacement agents without moving children',async()=>{
    // risk: operations — invalid targets must fail before custody changes.
-   const missing=new ReplaceLeadHarness(); (missing.custody.resolveOwner as any).mockResolvedValueOnce(undefined); expect((await missing.service.replace({jobId:'missing',taskIndex:9,agentId:'coding-manager-sol',actor})).message).toContain('not found');
+   const missing=new ReplaceLeadHarness(); missing.packets.assemble.mockResolvedValueOnce(undefined as any); expect((await missing.service.replace({jobId:'missing',taskIndex:9,agentId:'coding-manager-sol',actor})).message).toContain('not found');
    const disabled=new ReplaceLeadHarness(); disabled.launcher.launchReplacement.mockRejectedValueOnce(new Error('no enabled agent definition exists'));
    expect((await disabled.service.replace({jobId:'lead',taskIndex:0,agentId:'disabled-agent',actor})).message).toContain('enabled agent'); expect(disabled.moves).toHaveLength(0);
  });
