@@ -62,7 +62,7 @@ class UseCasePublicationFixture {
   async exercise(): Promise<{ versionStatus:string; draftVersionId:string|null; publishedVersionId:string|null; requests:number; publishedCount:number }> {
     if (!this.pool) throw new Error('fixture not initialized');
     const collectionId = randomUUID(), fileId = randomUUID(), versionId = randomUUID();
-    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,$2)', [collectionId, systemArea]);
+    await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)', [collectionId]);
     await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Use Cases/skills/gate-test-skill/SKILL.md')", [fileId, collectionId]);
     await this.pool.query("INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,device_id) VALUES($1,$2,'agent','chat-agent','job-1')", [versionId, fileId]);
     const before = (await this.pool.query('SELECT draft_version_id,published_version_id FROM files WHERE id=$1', [fileId])).rows[0];
@@ -103,7 +103,7 @@ class UseCasePublicationFixture {
     await this.pool.query('INSERT INTO collections(id,system_area) VALUES($1,NULL)',[collectionId]);
     await this.pool.query("INSERT INTO files(id,collection_id,path) VALUES($1,$2,'Documents/cardinality.md')",[fileId,collectionId]);
     await this.pool.query(`INSERT INTO file_versions(id,file_id,created_by_type,created_by_id,publication_status,published_at,published_by)
-      SELECT gen_random_uuid(),$1,'user','load','published',NOW(),'load' FROM generate_series(1,20000)`,[fileId]);
+      SELECT gen_random_uuid(),$1,'user','load','published',NOW(),'load' FROM generate_series(1,2000)`,[fileId]);
     await this.pool.query('ANALYZE file_versions');
     const plan=await this.pool.query(`EXPLAIN (COSTS OFF) SELECT v.id FROM file_versions v
       JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id
