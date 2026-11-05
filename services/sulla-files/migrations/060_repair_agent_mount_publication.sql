@@ -47,7 +47,7 @@ BEGIN
   ELSE NEW.major_version:=latest_major; NEW.minor_version:=latest_minor+1; END IF;
   IF NEW.publication_status IS NULL THEN
     NEW.publication_status:=CASE WHEN NOT target.require_approval AND EXISTS (SELECT 1 FROM collections c WHERE c.id=target.collection_id AND c.system_area='sulla' AND (target.path LIKE 'Memory/%' OR target.path LIKE 'Projects/%')) THEN 'published'
-      WHEN NEW.created_by_type IN ('agent','agent-run') OR target.require_approval THEN 'draft' ELSE 'published' END;
+      WHEN NEW.created_by_type='agent-run' OR (NEW.created_by_type='agent' AND target.path LIKE 'Use Cases/%') OR target.require_approval THEN 'draft' ELSE 'published' END;
   END IF;
   IF NEW.deleted THEN NEW.publication_status:='superseded'; END IF;
   RETURN NEW;
