@@ -230,3 +230,13 @@ class VaultSyncV3Impl {
 }
 
 export const VaultSyncV3 = new VaultSyncV3Impl();
+
+export {
+  CloudVaultSyncHttpTransport,
+  VaultSyncErrorMapper,
+  VaultSyncHttpError,
+  type VaultSyncAuthHeaderProvider,
+  type VaultSyncHttpClient,
+  type VaultSyncSignature,
+  type VaultSyncErrorCode,
+} from './transport';
