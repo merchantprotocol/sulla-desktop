@@ -105,7 +105,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     // Resolve who owns that thread with the real, Postgres-backed rehydrator —
     // the only stand-in is the static agent-definition lookup.
-    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
+    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.states, definitions, registry.failJob, () => {});
     const identity = await rehydrator.resolve('wake-a-manager-thread');
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0 });
     expect(identity?.job.jobId).toBe(manager.jobId);
@@ -323,7 +323,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const resumed: Array<{ jobId: string; taskIndex: number }> = [];
     const failed: string[] = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(job, taskIndex) => { resumed.push({ jobId: job.jobId, taskIndex }) },
       (job) => { failed.push(job.jobId) },
       2,
@@ -411,7 +411,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // A fresh recovery service bound straight to the repository models a cold restart.
     const resumed: Array<{ jobId: string; taskIndex: number }> = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(resumedJob, taskIndex) => { resumed.push({ jobId: resumedJob.jobId, taskIndex }) },
       () => {},
       2,
@@ -444,7 +444,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     // The task-level rehydrator must find the manager's own task as parked,
     // independent of the job's rollup status staying 'running'.
-    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
+    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.states, definitions, registry.failJob, () => {});
     const identity = await rehydrator.resolve('multi-g-manager-thread');
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 1 });
     expect(identity?.job.jobId).toBe(manager.jobId);
@@ -469,7 +469,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     const resumed: string[] = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(resumedJob) => { resumed.push(resumedJob.jobId) },
       () => {},
       2,

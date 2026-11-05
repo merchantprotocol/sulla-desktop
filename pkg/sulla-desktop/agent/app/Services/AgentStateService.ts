@@ -126,7 +126,7 @@ export class AgentStateService {
       const exhaustedLimit = (candidate.restartResumeCount ?? 0) >= maxResumes;
       const changed = await this.mutateJob(candidate.jobId, current => current.status !== 'running' || current.visibility === 'tab' ? undefined
         : exhaustedLimit ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
-          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 });
+          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 }, undefined, false);
       if (changed) (exhaustedLimit ? exhausted : resumable).push(changed);
     }
     return { resumable, exhausted };
@@ -167,7 +167,7 @@ export class AgentStateService {
   }
 
   async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped'): Promise<string[]> {
-    const jobs = (await this.store.cascadeJobs(jobId)).sort((left, right) => left.createdAt - right.createdAt || left.jobId.localeCompare(right.jobId));
+    const jobs = await this.store.cascadeJobs(jobId);
     const finishedAt = Date.now(); const stoppedIds: string[] = [];
     for (const job of jobs) {
       const stopped = await this.mutateJob(job.jobId, current => {
