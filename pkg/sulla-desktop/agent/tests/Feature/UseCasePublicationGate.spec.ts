@@ -2,11 +2,18 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { Pool } from 'pg';
+
+import { createApp } from '../../../../../../services/sulla-files/src/app.js';
+import { issueCapabilityToken } from '../../../../../../services/sulla-files/src/auth.js';
+import { migrate } from '../../../../../../services/sulla-files/src/db.js';
+import { LocalFilesManager } from '../../../../../../services/sulla-files/src/localManager.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 class UseCasePublicationFixture {
@@ -173,5 +180,116 @@ describeWithDatabase('Use Case publication gate', () => {
     if (!fixture) throw new Error('fixture unavailable');
     const result = await fixture.createVersion('Use Cases/log.txt', 'agent', 'logs');
     expect(result).toMatchObject({ versionStatus:'published', draftVersionId:null });
+  });
+});
+
+
+class ProductionFilesFixture {
+  private readonly schema = `use_case_paths_${ randomUUID().replaceAll('-', '') }`;
+  private readonly signingKey = Buffer.alloc(32, 7);
+  private readonly userId = 'publication-test-user';
+  private readonly admin:Pool;
+  private pool?:Pool;
+  private server?:Server;
+  private baseUrl='';
+  private root='';
+  private manager?:LocalFilesManager;
+  private collectionId='';
+
+  constructor(private readonly url:string) { this.admin=new Pool({connectionString:url}) }
+
+  async initialize():Promise<void> {
+    await this.admin.query(`CREATE SCHEMA "${this.schema}"`);
+    this.pool=new Pool({connectionString:this.url,options:`-csearch_path=${this.schema},public`});
+    await migrate(this.pool);
+    this.root=await mkdtemp(join(tmpdir(),'sulla-use-case-paths-'));
+    const filesRoot=join(this.root,'files'); const chunkRoot=join(this.root,'chunks');
+    await mkdir(filesRoot,{recursive:true}); await mkdir(chunkRoot,{recursive:true});
+    const keyring={unlocked:true,keys:async()=>({data:Buffer.alloc(32,1),dedup:Buffer.alloc(32,2)})};
+    const config:any={port:0,databaseUrl:this.url,chunkRoot,dataRoot:this.root,filesRoot,caseInsensitiveRoot:false,
+      capabilitySigningKey:this.signingKey,mode:'desktop',deviceId:'local-device',userId:this.userId,cloudUrl:'',paused:true,modelDir:this.root,
+      fuseExperiment:true,keyring,fileRoots:[{id:'default',name:'Files',path:filesRoot,syncMode:'local',paused:true,exclusions:[],primary:true}]};
+    this.collectionId=randomUUID();
+    await this.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source)
+      VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE)`,[this.collectionId,this.userId]);
+    await this.pool.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')",[this.collectionId,this.userId]);
+    this.manager=new LocalFilesManager(this.pool,config);
+    (this.manager as any).rootCollections.set('default',this.collectionId);
+    const app=createApp(this.pool,config,this.manager);
+    this.server=createServer(app); await new Promise<void>(resolve=>this.server!.listen(0,'127.0.0.1',resolve));
+    const address=this.server.address(); if (!address || typeof address==='string') throw new Error('test server did not bind');
+    this.baseUrl=`http://127.0.0.1:${address.port}`;
+  }
+
+  private token(agent:boolean):string { return issueCapabilityToken({sub:this.userId,device_id:'test-device',scopes:['files/*'],...(agent?{agent_id:'test-agent',job_id:'test-job'}:{})},this.signingKey) }
+  private async request(path:string,init:RequestInit,agent:boolean):Promise<any> {
+    const response=await fetch(`${this.baseUrl}${path}`,{...init,headers:{authorization:`Bearer ${this.token(agent)}`,...(agent?{'x-sulla-actor':'test-agent:test-job'}:{}),...(init.headers??{})}});
+    const body=await response.json().catch(()=>({})); if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`); return body;
+  }
+
+  async bufferedDraft():Promise<any> {
+    const created=await this.request(`/v1/fuse/files?collectionId=${this.collectionId}&path=${encodeURIComponent('Use Cases/skills/real-path/SKILL.md')}`,
+      {method:'POST',headers:{'content-type':'text/markdown'},body:'# real path'},true);
+    return (await this.pool!.query(`SELECT f.*,v.publication_status FROM files f JOIN file_versions v ON v.id=f.current_version_id WHERE f.id=$1`,[created.id])).rows[0];
+  }
+
+  async streamingDraft(file:any):Promise<any> {
+    const bytes=Buffer.from('# streamed path');
+    await this.request(`/v1/fuse/files/${file.id}/content/stream`,{method:'PUT',headers:{'content-type':'application/octet-stream','content-length':String(bytes.length),
+      'if-match':`"${file.current_version_id}"`,'x-sulla-source-hash':createHash('sha256').update('# real path').digest('hex')},body:bytes},true);
+    return (await this.pool!.query(`SELECT f.*,v.publication_status FROM files f JOIN file_versions v ON v.id=f.current_version_id WHERE f.id=$1`,[file.id])).rows[0];
+  }
+
+  async approve(file:any):Promise<any> {
+    const requested=await this.request(`/v1/files/${file.id}/versions/${file.current_version_id}/publish-request`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'functional gate test'})},true);
+    await this.request(`/v1/files/publish-requests/${requested.id}/approve`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'},false);
+    return (await this.pool!.query(`SELECT f.published_version_id,v.publication_status,v.published_at,v.published_by FROM files f JOIN file_versions v ON v.id=f.published_version_id WHERE f.id=$1`,[file.id])).rows[0];
+  }
+
+  async replicationCases():Promise<any> {
+    const logsId=randomUUID();
+    await this.pool!.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,system_area)
+      VALUES($1,$2,'Logs','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,'logs')`,[logsId,this.userId]);
+    (this.manager as any).rootCollections.set('default',logsId);
+    const replicate=async(input:{id:string;path:string;status:string;publishedAt:string|null;publishedBy:string|null;collection?:any})=>{
+      const fileId=randomUUID(); const target=join(this.root,'files',input.path); await mkdir(resolve(target,'..'),{recursive:true}); await writeFile(target,'');
+      const entry:any={op:'put',syncAuthority:{canMaterialize:true},manifest:{hash:createHash('sha256').update(JSON.stringify({ids:[],size:0})).digest('hex'),chunk_ids:[],total_size:0},
+        file:{id:fileId,collection_id:logsId,path:input.path,created_by_type:'agent-run',created_by_id:'remote',mime:'text/plain',size:0,lifecycle_generation:0},
+        version:{id:input.id,file_id:fileId,chunk_collection_id:logsId,parent_version_id:null,manifest_hash:null,size:0,deleted:false,created_by_type:'agent-run',created_by_id:'remote',created_at:new Date().toISOString(),message:'remote',device_id:'older-peer',publication_status:input.status,published_at:input.publishedAt,published_by:input.publishedBy},
+        ...(input.collection===undefined?{}:{collection:input.collection})};
+      entry.manifest.hash=createHash('sha256').update(JSON.stringify({ids:entry.manifest.chunk_ids,size:0})).digest('hex'); entry.version.manifest_hash=entry.manifest.hash;
+      await (this.manager as any).pull(entry); await (this.manager as any).pull(entry);
+      return (await this.pool!.query('SELECT f.draft_version_id,f.published_version_id,v.publication_status,v.published_at,v.published_by FROM files f JOIN file_versions v ON v.id=$1 WHERE f.id=$2',[input.id,fileId])).rows[0];
+    };
+    const oldPeer=await replicate({id:randomUUID(),path:'Use Cases/log.txt',status:'published',publishedAt:null,publishedBy:null});
+    const malformed=await replicate({id:randomUUID(),path:'Use Cases/functions/x/function.yaml',status:'published',publishedAt:null,publishedBy:null,collection:{system_area:null}});
+    const approved=await replicate({id:randomUUID(),path:'Use Cases/functions/y/function.yaml',status:'published',publishedAt:new Date().toISOString(),publishedBy:'human-reviewer',collection:{system_area:null}});
+    return {oldPeer,malformed,approved};
+  }
+
+  async dispose():Promise<void> { if(this.server) await new Promise<void>((resolve,reject)=>this.server!.close(error=>error?reject(error):resolve())); await this.manager?.close(); await this.pool?.end(); await this.admin.query(`DROP SCHEMA IF EXISTS "${this.schema}" CASCADE`); await this.admin.end(); if(this.root) await rm(this.root,{recursive:true,force:true}) }
+}
+
+describeWithDatabase('Use Case publication production paths',()=>{
+  const fixture=new ProductionFilesFixture(databaseUrl); beforeAll(()=>fixture.initialize(),120_000); afterAll(()=>fixture.dispose(),30_000);
+  let buffered:any; let streamed:any;
+  it('buffers an agent mount write as a draft through the FUSE route',async()=>{
+    // risk: permissions — removing app.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
+    buffered=await fixture.bufferedDraft(); expect(buffered.publication_status).toBe('draft'); expect(buffered.draft_version_id).toBe(buffered.current_version_id); expect(buffered.published_version_id).toBeNull();
+  });
+  it('streams an agent mount write as a draft through insertStreamingUpload',async()=>{
+    // risk: permissions — removing streamingUpload.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
+    streamed=await fixture.streamingDraft(buffered); expect(streamed.publication_status).toBe('draft'); expect(streamed.draft_version_id).toBe(streamed.current_version_id); expect(streamed.published_version_id).toBeNull();
+  });
+  it('requests and approves publication through the real lifecycle routes',async()=>{
+    // risk: authorization — only the human approval path may activate an agent draft.
+    const approved=await fixture.approve(streamed); expect(approved).toMatchObject({publication_status:'published',published_by:'publication-test-user'}); expect(approved.published_at).toBeTruthy(); expect(approved.published_version_id).toBe(streamed.current_version_id);
+  });
+  it('sanitizes replication with local old-peer policy and is idempotent',async()=>{
+    // risk: replication integrity — local logs policy must survive absent peer metadata while canonical malformed publications remain gated.
+    const result=await fixture.replicationCases();
+    expect(result.oldPeer).toMatchObject({publication_status:'published'}); expect(result.oldPeer.published_version_id).toBeTruthy();
+    expect(result.malformed).toMatchObject({publication_status:'draft',published_version_id:null}); expect(result.malformed.draft_version_id).toBeTruthy();
+    expect(result.approved).toMatchObject({publication_status:'published',published_by:'human-reviewer'}); expect(result.approved.published_at).toBeTruthy();
   });
 });
