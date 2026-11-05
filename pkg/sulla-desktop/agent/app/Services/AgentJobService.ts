@@ -249,7 +249,7 @@ async failJob(jobId: string, error: string): Promise<void> {
   if (this.states.hasPendingTerminalWrite(jobId)) return;
   this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
   await this.states.mutateJob(jobId, current => ['completed','stopped'].includes(current.status) ? undefined : { ...current, status: 'failed', finishedAt: current.finishedAt ?? this.clock.now().getTime(), error,
-    tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'error', finishedAt: this.clock.now().getTime(),
+    tasks: current.tasks.map(task => ['running','queued','parked','error'].includes(task.status) ? { ...task, status: 'error', finishedAt: this.clock.now().getTime(),
       completion: task.completion ?? { label: task.label ?? task.agentId, status: 'error', output: error, threadId: task.threadId ?? '', contract: task.contract?.name ?? 'result' } } : task) });
 }
 
