@@ -34,7 +34,7 @@ jobs:
         run: node --test scripts/check-bundled-files-parity.test.mjs
       - name: Fetch PR base (allowlist may only shrink)
         if: github.event_name == 'pull_request'
-        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
       - name: Architecture guard
         env:
           GUARD_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
