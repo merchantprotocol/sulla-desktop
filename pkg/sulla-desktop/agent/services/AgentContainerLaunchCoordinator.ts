@@ -6,6 +6,7 @@
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import type { SullaFilesBindPlan, SullaFilesBindPlanner } from './SullaFilesMountHealthProbe';
 import type { IdempotentRetry } from './AgentContainerStartupRetry';
+import { ContainerFailureSettlement, type ContainerFailureCleaner, type ContainerFailureDiagnosticLogger, type ContainerFailureSettlementResult } from './ContainerFailureSettlement';
 
 export interface ActiveLaunchRegistry {
   register(containerId: string): void;
@@ -62,6 +63,22 @@ export class AgentContainerLaunchCoordinator {
 
   async removeNormal(containerId: string): Promise<void> {
     try { await this.runtime.remove(containerId, true) } finally { this.activeContainers?.unregister(containerId) }
+  }
+
+  async settleFailure(
+    containerId: string,
+    originalName: string,
+    failure: unknown,
+    cleaner: ContainerFailureCleaner,
+    logger: ContainerFailureDiagnosticLogger,
+    context: string,
+  ): Promise<ContainerFailureSettlementResult<FailedContainerRecord>> {
+    return await new ContainerFailureSettlement(
+      cleaner,
+      { retain: () => this.retainFailure(containerId, originalName, failure) },
+      logger,
+      context,
+    ).settle(failure);
   }
 
   async retainFailure(containerId: string, originalName: string, failure: unknown): Promise<FailedContainerRecord> {
