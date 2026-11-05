@@ -113,7 +113,8 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
       state.messages.push({ role: 'assistant', content: 'done after manager message' });
     });
     await vi.waitFor(async() => expect((await waits.repository.pending(run.jobId, 0))?.reason).toBe('message-wait'), { timeout: 2_000, interval: 10 });
-    const backend = (await import('../../../services/BackendGraphWebSocketService')).getBackendGraphWebSocketService();
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const backend = Object.create(BackendGraphWebSocketService.prototype) as BackendGraphWebSocketService;
     expect(await backend.wakeParkedAgent('codex-sol-worker', run.threadId(), 'manager says continue', 'codex-sol-worker')).toBe(true);
     await vi.waitFor(async() => expect((await registry.getJob(run.jobId))?.status).toBe('completed'), { timeout: 2_000, interval: 10 });
     expect(await waits.repository.claim(run.jobId, 0)).toBeNull();

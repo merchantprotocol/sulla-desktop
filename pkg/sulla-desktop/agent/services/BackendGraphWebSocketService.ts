@@ -148,7 +148,7 @@ export class BackendGraphWebSocketService {
     // The worker can persist its wait just before spawn_agent registers the
     // in-process waiter. Keep this wake on the same graph: inject now and
     // latch the wake for waitForWake() to consume once settlement begins.
-    if ((delegated?.state.metadata as any)?.delegatedRunActive) {
+    if (delegated && (delegated.state.metadata as any)?.delegatedRunActive) {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
