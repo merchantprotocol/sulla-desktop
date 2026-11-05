@@ -5,6 +5,7 @@
 import type { Clock } from '@sulla/foundation';
 import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
 import { JobCustodyAuthorityPolicy } from './JobCustodyAuthorityPolicy';
+import type { VerifiedCustodyActor } from './CustodyCallerVerifier';
 import type { CustodyAuditRecord,CustodyChangeNotifier,CustodyMoveInput,CustodyMoveResult,CustodyRecord,CustodyTransactionClient,JobCustodyPort } from './JobCustodyTypes';
 
 export class JobCustodyService implements JobCustodyPort {
@@ -20,6 +21,6 @@ export class JobCustodyService implements JobCustodyPort {
     return result;
   }
   resolveOwner(jobId:string,taskIndex?:number):Promise<CustodyRecord|undefined>{return this.repository.resolveOwner(jobId,taskIndex);}
-  withOwner<T>(jobId:string,taskIndex:number|undefined,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{return this.repository.withCustodyLock(jobId,taskIndex,operation);}
+  withOwner<T>(jobId:string,taskIndex:number|undefined,_actor:VerifiedCustodyActor,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{return this.repository.withCustodyLock(jobId,taskIndex,operation);}
   history(jobId:string):Promise<CustodyAuditRecord[]>{return this.repository.history(jobId);}
 }
