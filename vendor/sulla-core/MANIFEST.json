@@ -1,0 +1,19 @@
+{
+  "sourceRepository": "https://github.com/merchantprotocol/sulla-core",
+  "sourceRef": "4bf92d133ce6f09a329c168e77d2c5ec9fab175c",
+  "sourceCommit": "4bf92d133ce6f09a329c168e77d2c5ec9fab175c",
+  "packages": [
+    {
+      "package": "@sulla/foundation",
+      "version": "0.1.0",
+      "file": "sulla-foundation-0.1.0-4bf92d1.tgz",
+      "sha256": "9bf68774363077242b615c84fa0a78ef0f020ec0eae242ee5033a36978ccc9ca"
+    },
+    {
+      "package": "@sulla/domain",
+      "version": "0.1.0",
+      "file": "sulla-domain-0.1.0-4bf92d1.tgz",
+      "sha256": "cdf63169867fe72872f6478c292f5b50dd9fb15c3bc74e9958323f94d5886e9d"
+    }
+  ]
+}

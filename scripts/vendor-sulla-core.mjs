@@ -3,10 +3,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 /**
- * Rebuilds the vendored @sulla/foundation tarball from a sulla-core git ref.
+ * Rebuilds the vendored @sulla/foundation and @sulla/domain tarballs from a sulla-core git ref.
  *
  * CI in this repo cannot read the private sulla-core repository, so the package is
- * committed as an `npm pack` tarball under vendor/sulla-core/ and referenced from
+ * committed as `npm pack` tarballs under vendor/sulla-core/ and referenced from
  * package.json as `file:vendor/sulla-core/sulla-foundation-<version>-<sha>.tgz`.
  *
  * Usage:
@@ -14,9 +14,8 @@
  *     <ref>    a sulla-core tag or commit (e.g. v0.1.0 or origin/main)
  *     clone    defaults to ../sulla-core
  *
- * Afterwards: update the "@sulla/foundation" path in package.json to the printed
- * tarball name, delete the previous tarball, run `yarn install --ignore-scripts`
- * and commit package.json, yarn.lock and the new tarball together.
+ * Afterwards: update the file dependencies in package.json and yarn.lock to the
+ * printed tarball names, then commit them with MANIFEST.json and the tarballs.
  */
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, createHash, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,8 +34,7 @@ class CoreVendor {
     const sourceCommit = this.git(['rev-parse', `${this.ref}^{commit}`]).trim();
     const shortSha = sourceCommit.slice(0, 7);
     const checkout = mkdtempSync(join(tmpdir(), 'sulla-core-vendor-'));
-    const packed = mkdtempSync(join(tmpdir(), 'sulla-core-pack-'));
-    this.git(['worktree', 'add', '--detach', checkout, sha]);
+    this.git(['worktree', 'add', '--detach', checkout, sourceCommit]);
     try {
       const packages = [
         { name: '@sulla/foundation', directory: 'foundation', file: `sulla-foundation-0.1.0-${shortSha}.tgz` },
@@ -56,18 +54,21 @@ class CoreVendor {
           rmSync(packDir, { recursive: true, force: true });
         }
       }
-      const manifest = packages.map(({ name, file }) => ({
-        package: name,
-        version: '0.1.0',
+      const manifest = {
+        sourceRepository: 'https://github.com/merchantprotocol/sulla-core',
+        sourceRef: this.ref,
         sourceCommit,
-        file,
-        sha256: createHash('sha256').update(readFileSync(join(this.destination, file))).digest('hex'),
-      }));
+        packages: packages.map(({ name, file }) => ({
+          package: name,
+          version: '0.1.0',
+          file,
+          sha256: createHash('sha256').update(readFileSync(join(this.destination, file))).digest('hex'),
+        })),
+      };
       writeFileSync(join(this.destination, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-      console.log(`vendored ${this.ref} (${sourceCommit}) -> ${manifest.map(({ file }) => file).join(', ')}`);
+      console.log(`vendored ${this.ref} (${sourceCommit}) -> ${manifest.packages.map(({ file }) => file).join(', ')}`);
     } finally {
       this.git(['worktree', 'remove', '--force', checkout]);
-      rmSync(packed, { recursive: true, force: true });
     }
   }
 

@@ -7,9 +7,38 @@
   resolved "https://registry.npmjs.org/7zip-bin/-/7zip-bin-5.2.0.tgz"
   integrity sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A==
 
-"@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz":
+"@noble/ciphers@^2.0.1":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.4.0.tgz"
+  integrity sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==
+
+"@noble/curves@^2.0.1":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@noble/curves/-/curves-2.4.0.tgz"
+  integrity sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==
+  dependencies:
+    "@noble/hashes" "2.4.0"
+
+"@noble/hashes@2.4.0", "@noble/hashes@^2.0.1":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz"
+  integrity sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
+
+"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.1.0-4bf92d1.tgz":
   version "0.1.0"
-  resolved "file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz#46a50a615737d9ca356c55bad579ac9e457eacfe"
+  resolved "file:vendor/sulla-core/sulla-domain-0.1.0-4bf92d1.tgz#ad000ba18140a6535a332311b066d98aa30f6806"
+  integrity sha512-WHyBbMffU02SOagMPuqC8+YlO6SYnbEbPcR1D5Mamy/o07HSZeIQ2rA5ymVAoZ9FdYwNWLSyowxVdTMlvgG6pA==
+  dependencies:
+    "@noble/ciphers" "^2.0.1"
+    "@noble/curves" "^2.0.1"
+    "@noble/hashes" "^2.0.1"
+    "@sulla/foundation" "0.1.0"
+    fflate "^0.8.3"
+    zod "^3.25.0"
+
+"@sulla/foundation@0.1.0", "@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.0-4bf92d1.tgz":
+  version "0.1.0"
+  resolved "file:vendor/sulla-core/sulla-foundation-0.1.0-4bf92d1.tgz#46a50a615737d9ca356c55bad579ac9e457eacfe"
   integrity sha512-9dIJCcP/B5otyOByl082e5B8fKM/UkHfvqmTlyI0YF0loQ+DcgRsugJ4er3L57wwo0Pvhi5miFc219agiJSpMw==
   dependencies:
     zod "^3.25.0"
@@ -8440,6 +8469,11 @@ floating-vue@5.2.2:
     "@floating-ui/dom" "~1.1.1"
     vue-resize "^2.0.0-alpha.1"
 
+fflate@^0.8.3:
+  version "0.8.3"
+  resolved "https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz#bc27d8eb30343d4d512abb03480202ce65d825fc"
+  integrity sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==
+
 follow-redirects@^1.0.0, follow-redirects@^1.15.11:
   version "1.15.11"
   resolved "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz"
@@ -14964,7 +14998,7 @@ zod-to-json-schema@^3.25.1:
   resolved "https://registry.yarnpkg.com/zod-to-json-schema/-/zod-to-json-schema-3.25.1.tgz#7f24962101a439ddade2bf1aeab3c3bfec7d84ba"
   integrity sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA==
 
-zod@3.25.76, "zod@^3.25 || ^4.0":
+zod@3.25.76, "zod@^3.25 || ^4.0", zod@^3.25.0:
   version "3.25.76"
   resolved "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz"
   integrity sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==
