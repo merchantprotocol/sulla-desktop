@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** Persisted compact check-in fields shared by fleet presenters. */
 export interface FleetCheckinView {
   step: string;
   summary: string;
