@@ -20,8 +20,10 @@ import {
   type AgentPolicy, type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type SyncEnvelope, type SyncHead, type SyncRecord } from './envelope.js';
-import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
+import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from './VaultSyncContracts.js';
+import type { VaultSyncEnvelope as SyncEnvelope } from './VaultSyncEnvelope.js';
+import { VaultSyncExportMapper, type LocalAccountRow, type LocalRecoveryRow } from './VaultSyncExportMapper.js';
+import { VaultSyncRuntime } from './VaultSyncRuntime.js';
 import { ensureSyncSchema } from './schema.js';
 
 import type { Database } from '../db.js';
@@ -119,6 +121,7 @@ function responseBody(body: unknown): any {
 
 export class CloudVaultSyncRunner {
   private envelope: SyncEnvelope | null = null;
+  private readonly exportMapper = new VaultSyncExportMapper();
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -130,7 +133,7 @@ export class CloudVaultSyncRunner {
   ) {}
 
   private async env(): Promise<SyncEnvelope> {
-    this.envelope ??= createSyncEnvelope(await loadSodium());
+    this.envelope ??= (await VaultSyncRuntime.create()).envelope;
     return this.envelope;
   }
 
@@ -436,7 +439,7 @@ export class CloudVaultSyncRunner {
     let fields;
     const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
     try {
-      fields = bundleFields(account, { vaultId, epoch: 1, bundleGeneration: 1 }, recovery);
+      fields = this.exportMapper.bundleFields(account, { vaultId, epoch: 1, bundleGeneration: 1 }, recovery);
     } catch (error) {
       throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
     }
@@ -444,7 +447,7 @@ export class CloudVaultSyncRunner {
     const items = (await this.db.query<{ id: string; revision: string; ciphertext: unknown; encrypted_item_key: unknown }>(
       `SELECT id,revision,ciphertext,encrypted_item_key FROM items WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL ORDER BY id`, [userId],
     )).rows;
-    const records = items.map(row => envelope.buildRecord(itemRecordFields(row, { vaultId, generation: 1 }), userKey));
+    const records = items.map(row => envelope.buildRecord(this.exportMapper.itemRecordFields(row, { vaultId, generation: 1 }), userKey));
     const head = envelope.buildHead({ vaultId, scope: 'personal', seq: 1, records, prevHeadMac: '' }, userKey);
     const body = Buffer.from(JSON.stringify({ bundle, scope: 'personal', records, head }));
     const serverOp: ServerOp = replace ? 'replace' : 'create';
@@ -468,7 +471,9 @@ export class CloudVaultSyncRunner {
     let fields;
     const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
     try {
-      fields = bundleFields(account, { vaultId: state.vault_id, epoch: num(state.epoch), bundleGeneration: num(state.bundle_generation) + 1 }, recovery);
+      fields = this.exportMapper.bundleFields(
+        account, { vaultId: state.vault_id, epoch: num(state.epoch), bundleGeneration: num(state.bundle_generation) + 1 }, recovery,
+      );
     } catch (error) {
       throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
     }
@@ -497,9 +502,10 @@ export class CloudVaultSyncRunner {
       const base = prior ? num(prior.generation) : 0;
       let record: SyncRecord | null = null;
       if (!row.deleted_at && (!prior || prior.deleted || num(prior.local_revision) !== num(row.revision))) {
-        record = envelope.buildRecord(itemRecordFields(row, { vaultId: state.vault_id, generation: base + 1 }), userKey);
+        record = envelope.buildRecord(this.exportMapper.itemRecordFields(row, { vaultId: state.vault_id, generation: base + 1 }), userKey);
       } else if (row.deleted_at && prior && !prior.deleted) {
-        record = envelope.buildRecord(tombstoneFields(row.id, { vaultId: state.vault_id, generation: base + 1 }), userKey);
+        const ids = { vaultId: state.vault_id, generation: base + 1 };
+        record = envelope.buildRecord(this.exportMapper.tombstoneFields(row.id, ids), userKey);
       }
       if (!record) continue;
       writes.push({ id: row.id, baseGeneration: base, record });

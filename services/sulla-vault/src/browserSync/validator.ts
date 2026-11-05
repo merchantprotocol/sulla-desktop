@@ -3,21 +3,14 @@
 
 // Strict request checks for the vault-origin API. The server holds no key, so
 // it can't check a MAC; it checks shape instead. The field allowlists come from
-// browserEnvelope/envelope.ts (the TypeScript twin of the browser's
+// browserEnvelope/VaultSyncShape.ts (the TypeScript twin of the browser's
 // sync-envelope.js), so a body the browser couldn't verify is never stored.
 // On top of that: the record must belong to this vault and scope, counters must
 // line up, sizes are capped, and any key that only ever appears in decrypted
 // items is refused at any depth, so a buggy client can't park a password here.
 
-import {
-  checkBundleShape,
-  checkHeadShape,
-  checkRecordShape,
-  EnvelopeError,
-  type SyncBundle,
-  type SyncHead,
-  type SyncRecord,
-} from '../browserEnvelope/envelope.js';
+import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from '../browserEnvelope/VaultSyncContracts.js';
+import { VaultSyncShape } from '../browserEnvelope/VaultSyncShape.js';
 
 export const LIMITS = Object.freeze({
   recordBytes:     64 * 1024,
@@ -26,6 +19,8 @@ export const LIMITS = Object.freeze({
   createRecords:   2_000,
   bundleBytes:     16 * 1024,
 });
+
+const SYNC_SHAPE: VaultSyncShape = new VaultSyncShape();
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -91,7 +86,7 @@ function shape<T>(check: (value: unknown) => void, value: unknown, reason: strin
 
 export function validateBundle(value: unknown, vaultId: string, vaultUserId: string): SyncBundle {
   refusePlaintext(value);
-  const bundle = shape<SyncBundle>(checkBundleShape, value, 'bundle');
+  const bundle = shape<SyncBundle>((input) => SYNC_SHAPE.checkBundle(input), value, 'bundle');
   if (bundle.vaultId !== vaultId || bundle.vaultUserId !== vaultUserId) throw new InvalidBody('bundle_ids');
   if (JSON.stringify(bundle).length > LIMITS.bundleBytes) throw new InvalidBody('bundle_size', 413);
   return bundle;
@@ -99,14 +94,14 @@ export function validateBundle(value: unknown, vaultId: string, vaultUserId: str
 
 export function validateRecord(value: unknown, vaultId: string, scope: string): SyncRecord {
   refusePlaintext(value);
-  const record = shape<SyncRecord>(checkRecordShape, value, 'record');
+  const record = shape<SyncRecord>((input) => SYNC_SHAPE.checkRecord(input), value, 'record');
   if (record.vaultId !== vaultId || record.scope !== scope) throw new InvalidBody('record_ids');
   if (JSON.stringify(record).length > LIMITS.recordBytes) throw new InvalidBody('record_size', 413);
   return record;
 }
 
 export function validateHead(value: unknown, vaultId: string, scope: string): SyncHead {
-  const head = shape<SyncHead>(checkHeadShape, value, 'head');
+  const head = shape<SyncHead>((input) => SYNC_SHAPE.checkHead(input), value, 'head');
   if (head.vaultId !== vaultId || head.scope !== scope) throw new InvalidBody('head_ids');
   return head;
 }

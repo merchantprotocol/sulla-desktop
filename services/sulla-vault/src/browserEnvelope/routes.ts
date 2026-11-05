@@ -10,7 +10,7 @@
 
 import type express from 'express';
 
-import { EnvelopeError } from './envelope.js';
+import { EnvelopeError } from './VaultSyncContracts.js';
 import { CloudSyncError, type CloudVaultSyncRunner, type SyncOp } from './syncRunner.js';
 
 const OPS = new Set<SyncOp>(['enable', 'replace', 'commit', 'rewrap', 'pause', 'resume', 'delete']);

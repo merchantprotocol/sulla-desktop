@@ -11,8 +11,10 @@
 // rights (direct or through a group, owners and admins implicitly) for a
 // collection scope. A scope the caller can't read is reported as not found.
 
-import { bundleFields } from '../browserEnvelope/exportBuilder.js';
-import { jcs, type SyncBundle } from '../browserEnvelope/envelope.js';
+import { CanonicalJson } from '@sulla/domain';
+
+import { EnvelopeError, type BundleFields, type SyncBundle } from '../browserEnvelope/VaultSyncContracts.js';
+import { VaultSyncExportMapper } from '../browserEnvelope/VaultSyncExportMapper.js';
 
 import type { Queryable } from '../db.js';
 
@@ -141,15 +143,20 @@ export async function expectedBundleFields(
   );
   const account = result.rows[0];
   if (!account) return null;
-  return bundleFields(account, { vaultId, epoch, bundleGeneration });
+  return new VaultSyncExportMapper().bundleFields(account, { vaultId, epoch, bundleGeneration });
 }
 
 /** True when the browser's bundle carries exactly the account's wrapped keys and KDF. */
-export function bundleMatchesAccount(bundle: SyncBundle, expected: ReturnType<typeof bundleFields>): boolean {
+export function bundleMatchesAccount(bundle: SyncBundle, expected: BundleFields): boolean {
   const { format: _format, v: _v, mac: _mac, ...fields } = bundle;
   void _format;
   void _v;
   void _mac;
-  return jcs(fields) === jcs(expected);
+  const canonical = new CanonicalJson();
+  try {
+    return canonical.stringify(fields) === canonical.stringify(expected);
+  } catch (error) {
+    throw EnvelopeError.fromDomain(error);
+  }
 }
 
