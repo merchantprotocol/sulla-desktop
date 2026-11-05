@@ -7,6 +7,9 @@ import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/contain
 import type { SullaFilesBindPlan, SullaFilesBindPlanner } from './SullaFilesMountHealthProbe';
 import type { IdempotentRetry } from './AgentContainerStartupRetry';
 import { ContainerFailureSettlement, type ContainerFailureCleaner, type ContainerFailureDiagnosticLogger, type ContainerFailureSettlementResult } from './ContainerFailureSettlement';
+import { InfrastructureFailureClassifier } from './InfrastructureFailureClassifier';
+
+export interface WorkerLaunchPreflight { assertLaunchAllowed(): Promise<void> }
 
 export interface ActiveLaunchRegistry {
   register(containerId: string): void;
@@ -36,13 +39,22 @@ export interface FailedContainerRecord {
 
 /** Coordinates the failure-sensitive Docker operations shared by both launcher entry points. */
 export class AgentContainerLaunchCoordinator {
+  private preflightPromise?: Promise<void>;
+
   constructor(
     private readonly runtime: ContainerRuntimeDriver,
     private readonly retry: IdempotentRetry,
     private readonly files: SullaFilesBindPlanner,
     private readonly reporter: AgentLaunchJobReporter,
     private readonly activeContainers?: ActiveLaunchRegistry,
+    private readonly preflight?: WorkerLaunchPreflight,
+    private readonly failureClassifier = new InfrastructureFailureClassifier(),
   ) {}
+
+  async assertLaunchAllowed(): Promise<void> {
+    this.preflightPromise ??= this.preflight?.assertLaunchAllowed() ?? Promise.resolve();
+    await this.preflightPromise;
+  }
 
   async filesPlan(): Promise<SullaFilesBindPlan> {
     const plan = await this.files.plan();
@@ -51,13 +63,23 @@ export class AgentContainerLaunchCoordinator {
   }
 
   async create(spec: ContainerSpec): Promise<string> {
-    const id = await this.runtime.create({ ...spec, autoRemove: false });
+    await this.assertLaunchAllowed();
+    let id: string;
+    try {
+      id = await this.runtime.create({ ...spec, autoRemove: false });
+    } catch (error) {
+      throw this.classifyFailure(error);
+    }
     this.activeContainers?.register(id);
     return id;
   }
 
   async start(containerId: string, delaysMs: readonly number[], onRetry?: (message: string) => void): Promise<void> {
-    await this.retry.run(() => this.runtime.start(containerId), delaysMs, 'agent container start', onRetry);
+    try {
+      await this.retry.run(() => this.runtime.start(containerId), delaysMs, 'agent container start', onRetry);
+    } catch (error) {
+      throw this.classifyFailure(error);
+    }
     this.activeContainers?.unregister(containerId);
   }
 
@@ -96,6 +118,10 @@ export class AgentContainerLaunchCoordinator {
     } finally {
       this.activeContainers?.unregister(containerId);
     }
+  }
+
+  classifyFailure(failure: unknown, lastLogLines?: string): unknown {
+    return this.failureClassifier.classify({ error: failure, lastLogLines }) ?? failure;
   }
 
   private diagnosticRuntime(): AgentContainerDiagnosticRuntime {

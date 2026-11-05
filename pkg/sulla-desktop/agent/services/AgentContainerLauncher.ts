@@ -1028,6 +1028,10 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
+  const composition = getChatCompletionsServer().getAgentContainerLaunchComposition();
+  const runtime = composition.runtime;
+  const launcher = composition.create((run.state.metadata as { threadId?: string }).threadId);
+  await launcher.assertLaunchAllowed();
   const image = await ensureAgentImage().catch((error) => {
     throw new AgentLaunchError('Sulla is still loading its assistant', true, (error as Error)?.message ?? String(error));
   });
@@ -1036,9 +1040,6 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     throw new AgentLaunchError('Sulla is still starting its tools', true, (error as Error)?.message ?? String(error));
   });
   log.info('[AgentContainer] Host relay ready');
-  const composition = getChatCompletionsServer().getAgentContainerLaunchComposition();
-  const runtime = composition.runtime;
-  const launcher = composition.create((run.state.metadata as { threadId?: string }).threadId);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
   const lifecycleAbort = new AbortController();
@@ -1474,6 +1475,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       get closed() { return closePromise !== undefined || lifecycleAbort.signal.aborted; },
     };
   } catch (error) {
+    error = launcher.classifyFailure(error);
     lifecycleAbort.abort();
     if (renewTimer) clearInterval(renewTimer);
     if (livenessTimer) clearInterval(livenessTimer);
@@ -1511,11 +1513,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
-  const image = await ensureAgentImage();
-  await ensureHostRelay(image);
   const composition = getChatCompletionsServer().getAgentContainerLaunchComposition();
   const runtime = composition.runtime;
   const launcher = composition.create((run.state.metadata as { threadId?: string }).threadId);
+  await launcher.assertLaunchAllowed();
+  const image = await ensureAgentImage();
+  await ensureHostRelay(image);
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
@@ -1805,6 +1808,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       proc.stdin.write(`${ JSON.stringify({ type: 'start', prompt: run.prompt }) }\n`, () => {});
     });
   } catch (error) {
+    error = launcher.classifyFailure(error);
     unregisterRuntime?.();
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
