@@ -33,6 +33,8 @@ import {
   updateJobTask,
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
+import { agentTaskWaitRepository } from '../../services/AgentWaitServices';
+import { MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
@@ -614,6 +616,24 @@ export class SpawnAgentWorker extends BaseTool {
           }));
         }
 
+        // A leaf worker may explicitly park itself with agents/wait. The DB
+        // record is truth; the in-process waiter only accelerates delivery.
+        const pendingWait = activityJobId ? await agentTaskWaitRepository.pending(activityJobId, index) : null;
+        if (!returned && pendingWait && activityJobId && jobAbortSignal?.aborted !== true) {
+          subState.metadata.delegatedRunActive = false;
+          await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
+          if (!jobAbortSignal?.aborted) {
+            returned = await returnedTask();
+            if (!returned) {
+              await agentJobLifecycle.resume(activityJobId, index);
+              subState.metadata.delegatedRunActive = true;
+              this.turnPreparer.prepare(subState);
+              finalState = await executeGraph();
+              returned = await returnedTask();
+            }
+          }
+        }
+
         // A caller schema means free text is not an answer: remind once, but
         // only after the manager has no open child dependency left.
         if (!returned && contract.schema && taskAbortSignal?.aborted !== true) {
@@ -628,7 +648,7 @@ export class SpawnAgentWorker extends BaseTool {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
           taskResult = contract.schema && status !== 'blocked'
-            ? { label, status: 'error', output: `failed: no_contract — ${ label } ended without returning its "${ contract.name }" contract.\n\nLast message:\n${ text }`, threadId, contract: contract.name }
+            ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(text).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
 
