@@ -201,10 +201,14 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     const runGate = new Promise<void>(resolve => { release = resolve; });
     const childState: any = {
       metadata: { wsChannel: 'codex-sol-worker', options: {}, agent: {} },
-      messages: [{ role: 'assistant', content: 'built through real spawn path' }],
+      messages: [],
     };
     vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({
-      graph: { execute: vi.fn(async() => { await runGate; return childState; }) },
+      graph: { execute: vi.fn(async() => {
+        await runGate;
+        childState.messages.push({ role: 'assistant', content: 'built through real spawn path' });
+        return childState;
+      }) },
       state: childState,
     } as any);
 
