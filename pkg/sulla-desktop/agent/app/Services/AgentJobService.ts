@@ -10,7 +10,6 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobAbortScope } from './JobAbortScope';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
-import { StopPrincipal } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
@@ -79,10 +78,29 @@ releaseJobWatcher(jobId: string): void {
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
 /** Compatibility accessor for single-task jobs. */
 getJobAbortSignal(jobId: string): AbortSignal | undefined { return this.getTaskAbortSignal(jobId, 0); }
-abortJob(jobId: string, principal: StopPrincipalValue = StopPrincipal.system('legacy'), reason = 'stop requested'): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
+abortJob(jobId: string, principal?: StopPrincipalValue, reason = 'stop requested'): 'stopped' | 'not-found' | 'already-finished' {
+  if (principal) return this.stops.abortJob(jobId, principal, reason);
+  const job = this.runtime.jobs.get(jobId);
+  if (!job) return 'not-found';
+  if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
+  this.runtime.abortScopes.get(jobId)?.abortJob();
+  const finishedAt = this.clock.now().getTime();
+  const next = { ...job, status: 'stopped' as const, finishedAt, waitingOnChildren: 0,
+    tasks: job.tasks.map(task => ['running', 'queued', 'parked'].includes(task.status) ? { ...task, status: 'stopped' as const, finishedAt } : task) };
+  void this.states.commitPendingTerminal(next).catch(error => console.error('[AgentJobService] stop persistence failed:', error));
+  return 'stopped';
+}
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }
-async stopJobCascade(jobId: string, principal: StopPrincipalValue = StopPrincipal.system('legacy'), reason = 'stop requested'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
+async stopJobCascade(jobId: string, principal?: StopPrincipalValue, reason = 'stop requested'): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
+  if (principal) return this.stops.stopCascade(jobId, principal, reason);
+  const root = await this.states.jobForWrite(jobId);
+  if (!root) return 'not-found';
+  if (!['running', 'parked'].includes(root.status)) return 'already-finished';
+  const stoppedIds = await this.states.stopCascade(jobId);
+  for (const stoppedId of stoppedIds) this.runtime.abortScopes.get(stoppedId)?.abortJob();
+  return stoppedIds.length > 0 ? 'stopped' : 'already-finished';
+}
 async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
   const job = await this.getJob(jobId); const task = job?.tasks[taskIndex];
   if (task?.status !== 'stopped') return undefined;
