@@ -4,15 +4,17 @@
 import {Pool,type PoolClient} from 'pg';
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import {AgentJobCustodyRepository} from '../../../app/Repositories/AgentJobCustodyRepository';
-import {JobCustodyAuthorityPolicy,type CustodyLineagePort,type CustodyOwnerLivenessPort} from '../../../app/Services/JobCustodyAuthorityPolicy';
+import {JobCustodyAuthorityPolicy,TopLevelHumanSessionAuthorityRule,type CustodyLineagePort,type CustodyOwnerLivenessPort} from '../../../app/Services/JobCustodyAuthorityPolicy';
 import {JobCustodyService} from '../../../app/Services/JobCustodyService';
-import {VerifiedCustodyActor} from '../../../app/Services/CustodyCallerVerifier';
+import {CustodyCallerVerifier,VerifiedCustodyActor,type TopLevelConversationRegistry} from '../../../app/Services/CustodyCallerVerifier';
 import {NoopCustodyChangeNotifier,type CustodyOwner} from '../../../app/Services/JobCustodyTypes';
 import {TestDatabase} from '../../Support/TestDatabase';
 
 class PgDatabase { constructor(private readonly pool:Pool){} async query<T=any>(sql:string,values:unknown[]=[]):Promise<T[]>{return (await this.pool.query(sql,values)).rows;} async transaction<T>(callback:(client:PoolClient)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query('BEGIN');const result=await callback(client);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}} }
 class Alive implements CustodyOwnerLivenessPort {async status(){return 'alive' as const;}}
 class NoCycles implements CustodyLineagePort {async isAncestor(){return false;}async wouldCreateCycle(){return false;}}
+class RegisteredConversations implements TopLevelConversationRegistry {constructor(private readonly entries:Set<string>){}async isRegisteredTopLevel(channel:string,threadId:string,agentId:string){return this.entries.has(`${channel}/${threadId}/${agentId}`);}}
+class EmptyTaskLocator {async findTaskByThread(){return undefined;}}
 class FixedClock {constructor(private readonly value:Date){}now(){return this.value;}}
 const target:CustodyOwner={channel:'new-channel',threadId:'new-thread',agentId:'new-agent'};
 const database=new TestDatabase(); const suite=TestDatabase.available()?describe:describe.skip; let pool:Pool;
@@ -25,6 +27,13 @@ suite('AgentJobCustodyRepository',()=>{
  beforeAll(async()=>{await database.initialize();pool=new Pool({connectionString:database.appUrl()});}); afterAll(async()=>{await pool?.end();await database.dispose();});
  it('allows exactly one of two concurrent adopts and writes one audit row',async()=>{ // risk: concurrent ownership split
    const id=`custody-concurrent-${Date.now()}`;await createJob(id);const [a,b]=await Promise.all([move(service(),id),move(service(),id)]);expect([a.ok,b.ok].filter(Boolean)).toHaveLength(1);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
+ });
+ it('allows only a positively verified top-level chat to adopt from a live top-level owner and audits it',async()=>{ // risk: spoofed cross-chat custody theft
+   const id=`custody-verified-top-level-${Date.now()}`;await createJob(id);const conversations=new RegisteredConversations(new Set(['caller-channel/caller-thread/caller-agent','old-channel/old-thread/old-agent']));const verifier=new CustodyCallerVerifier(new EmptyTaskLocator() as any,conversations);const verified=await verifier.verify({wsChannel:'caller-channel',threadId:'caller-thread',agentId:'caller-agent',subAgentDepth:0});const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any);const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles(),new TopLevelHumanSessionAuthorityRule(conversations)),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
+   expect(await instance.move({jobId:id,to:target,actor:verified,reason:'verified cross-chat adoption'})).toMatchObject({ok:true});expect((await instance.history(id))[0]).toMatchObject({reason:'verified cross-chat adoption',actor:{kind:'agent',threadId:'caller-thread'}});
+ });
+ it('forbids fabricated and delegated callers from the live-owner top-level exception',async()=>{ // risk: fabricated principal
+   for(const [suffix,conversations,context] of [['unregistered',new RegisteredConversations(new Set(['old-channel/old-thread/old-agent'])),{wsChannel:'fake',threadId:'never-registered',agentId:'fake',subAgentDepth:0}],['delegated',new RegisteredConversations(new Set(['caller-channel/caller-thread/caller-agent','old-channel/old-thread/old-agent'])),{wsChannel:'caller-channel',threadId:'caller-thread',agentId:'caller-agent',subAgentDepth:1}] ] as const){const id=`custody-${suffix}-${Date.now()}`;await createJob(id);const actor=await new CustodyCallerVerifier(new EmptyTaskLocator() as any,conversations).verify(context);const instance=new JobCustodyService(new AgentJobCustodyRepository(new PgDatabase(pool) as any),new JobCustodyAuthorityPolicy(new Alive(),new NoCycles(),new TopLevelHumanSessionAuthorityRule(conversations)),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);expect(await instance.move({jobId:id,to:target,actor,reason:'must refuse'})).toMatchObject({ok:false,code:'forbidden'});expect(await instance.history(id)).toHaveLength(0);}
  });
  it('documents that a producer bypassing withOwner can commit a stale receiver',async()=>{ // risk: lost or duplicate contract
    const id=`custody-return-${Date.now()}`;await createJob(id);const messageId=`contract-${Date.now()}`;const returning=await pool.connect();await returning.query('BEGIN');
