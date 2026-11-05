@@ -38,7 +38,7 @@ export class CloudAgentStateProjection {
       ? !Number.isInteger(taskIndex) || !job.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])
       : !job.tasks.some(task => agentJobProvider.states.isLive(job, task)))) return { ok: false, error: 'agent_not_found' };
     if (body.type === 'agent.stop') {
-      const result = await stopAgentJob(jobId);
+      const result = await stopAgentJob(jobId, { kind: 'human' });
       return { ok: result.successBoolean, message: result.responseString };
     }
     if (body.type === 'agent.message') {

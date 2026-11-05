@@ -348,7 +348,7 @@ export function initAgentsIpc(): void {
       ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
     };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
-    const result = await stopAgentJob(jobId);
+    const result = await stopAgentJob(jobId, { kind: 'human' });
     return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 

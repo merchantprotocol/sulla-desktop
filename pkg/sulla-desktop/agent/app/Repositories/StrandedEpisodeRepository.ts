@@ -25,7 +25,7 @@ export class StrandedEpisodeRepository {
     return rows.map(row => ({ managerJobId: String(row.manager_job_id), managerTaskIndex: Number(row.manager_task_index),
       stateKey: String(row.state_key), parentChannel: String(row.parent_channel), parentThreadId: String(row.parent_thread_id),
       label: String(row.label), reason: String(row.reason), reasonKind: String(row.state_key).includes(':result-not-woken:') ? 'result-not-woken' : 'parked-without-live-children',
-      detectedAt: new Date(row.created_at).getTime(), attempts: Number(row.attempts) }));
+      detectedAt: Date.parse(String(row.created_at)), attempts: Number(row.attempts) }));
   }
 
   async markAttempt(stateKey: string): Promise<void> {
