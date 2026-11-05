@@ -109,7 +109,7 @@ describe.sequential('vault Postgres repositories',()=>{
   it('finds only the active vault user and updates that user password wrap', async()=>{ // risk: disabled-account authentication
     const disabled='10000000-0000-4000-8000-000000000099';
     await database.seed(disabled,'20000000-0000-4000-8000-000000000099');
-    await database.db.query('UPDATE users SET disabled_at=now() WHERE id=$1',[fx.user]);
+    await database.db.query('UPDATE users SET disabled_at=now() WHERE id<>$1',[disabled]);
     const users=new PostgresVaultUserRepository(database.db);
     await expect(users.findActive<{id:string}>()).resolves.toMatchObject({rows:[expect.objectContaining({id:disabled})]});
     await database.db.query('UPDATE users SET disabled_at=NULL WHERE id=$1',[fx.user]);
