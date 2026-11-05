@@ -5,7 +5,7 @@
 "@electric-sql/pglite@0.5.15":
   version "0.5.15"
   resolved "https://registry.yarnpkg.com/@electric-sql/pglite/-/pglite-0.5.15.tgz#f2cf2ef90b2667f576070402b92bcc9d8d9d9732"
-  integrity sha512-ERZWgaRTxueGV4cvL1tfpAOzFCWTXoUtbCBqnf2FhHDVs/so9eAKaanvrwWF9Dntx7BYsmFQujVQ0/B4S8Mmiw==
+  integrity sha512-9BwJS8l+lUmM1YDUzO8aNz9skhtzZn4HkGMj7eF430ELYyeCSDJEo/N0BqcC2Cpc/GLfmF6jUyAnRrXw7DDSWQ==
 
 "7zip-bin@~5.2.0":
   version "5.2.0"
@@ -31,7 +31,7 @@
 
 "@sulla/domain@file:vendor/sulla-core/sulla-domain-0.2.1.tgz":
   version "0.2.1"
-  resolved "file:vendor/sulla-core/sulla-domain-0.2.1.tgz#c02355dfe0ed797c097c112ef63d5075ff44fd35"
+  resolved "file:vendor/sulla-core/sulla-domain-0.2.1.tgz#f91df9ccbb7bb484678085011ec69f6a069ff3f4"
   integrity sha512-YWQlsXjyoobkv4dg73O+uYNsyWWMx9dyWgrh8j8OCMPeVHxLQWnKNOfIjzCHiIuKEjQaEUkzvhfHdRdY7iwZ6Q==
   dependencies:
     "@noble/ciphers" "^2.0.1"
