@@ -97,6 +97,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children, '[]'::jsonb AS results,
+      stopped_by, stop_reason,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
       'taskId', task->>'taskId', 'status', task->>'status', 'visibility', task->>'visibility',
       'startedAt', task->'startedAt', 'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',

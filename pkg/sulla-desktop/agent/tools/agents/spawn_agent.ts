@@ -33,6 +33,7 @@ import {
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
+import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
   delegationSituation,
   delegationTaskId,
@@ -347,7 +348,7 @@ export class SpawnAgentWorker extends BaseTool {
     }, async() => {
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
       return !getBackendGraphWebSocketService().hasActiveRun(SULLA_DESKTOP_CHANNEL_ID, childThreadId);
-    });
+    }, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
     registerJobWatcher(job.jobId, stopWatch);
 
     try {
@@ -732,7 +733,7 @@ export class SpawnAgentWorker extends BaseTool {
         console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
         await emitProactiveCompletion(parentChannel, job.jobId, [], message, parentThreadId);
         await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message, -1);
-      });
+      }, async() => false, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
 
       // Launch in background — do not await
       executeAll()
@@ -775,7 +776,7 @@ export class SpawnAgentWorker extends BaseTool {
     // Stopping a dead job hands its tasks back even if the hung call never returns.
     stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
       if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
-    });
+    }, async() => false, { createdAt: syncJob.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(jobId)).some(item => item.latestCheckin !== null) });
     let results: AgentJobResult[];
     try {
       results = await executeAll();

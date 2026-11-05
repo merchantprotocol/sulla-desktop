@@ -10,7 +10,7 @@ import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
 
-export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'unspecified'): Promise<ToolResponse> {
+export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'agent request (no reason given)'): Promise<ToolResponse> {
   if (!jobId) {
     return {
       successBoolean: false,
@@ -86,6 +86,6 @@ export class StopAgentJobWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const metadata = this.state?.metadata;
     const caller = StopPrincipal.agent(metadata && (resolveAgentIdentity(metadata) || metadata.routedAgentId), metadata?.threadId);
-    return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '', caller, typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim() : 'unspecified');
+    return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '', caller, typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim() : 'agent request (no reason given)');
   }
 }

@@ -15,6 +15,10 @@ describe('AgentJobLivenessPolicy', () => {
     // risk: orchestration liveness — the renderer must use this shared policy rather than its old eight-minute threshold.
     expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 60_000 })).toBe(false);
   });
+  it('applies the ten-minute no-check-in floor even when a watcher is configured for one minute', () => {
+    // risk: orchestration liveness — local watcher settings must not reap a fresh spawn.
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 2 * 60_000, stallMs: 60_000 })).toBe(false);
+  });
   it('classifies a no-check-in job as stalled after the grace and stall thresholds', () => {
     // risk: orchestration liveness — genuinely abandoned workers still need attention.
     expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 11 * 60_000 })).toBe(true);

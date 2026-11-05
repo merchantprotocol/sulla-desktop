@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
+import { StopAgentJobWorker } from '../../tools/agents/stop_agent_job';
 import { TestDatabase } from '../Support/TestDatabase';
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
+class StopAgentJobHarness extends StopAgentJobWorker {
+  call(state: any, input: unknown) { this.setState(state); return this._validatedCall(input); }
+}
 dbDescribe('AgentJobService state machine with real Postgres', () => {
   const database = new TestDatabase();
   let registry: typeof import('../../tools/agents/jobRegistry');
@@ -62,6 +66,10 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
     expect((await registry.getJob(child.jobId))?.status).toBe('stopped');
     expect((await registry.getJob(grandchild.jobId))?.status).toBe('stopped');
+    expect((await registry.getJob(child.jobId))?.stoppedBy).toBe('human');
+    expect((await registry.getJob(child.jobId))?.stopReason).toBe('test stop');
+    expect((await registry.getJob(grandchild.jobId))?.stoppedBy).toBe('human');
+    expect((await registry.getJob(grandchild.jobId))?.stopReason).toBe('test stop');
     expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
   });
   it('acknowledges completion delivery once even when retried', async() => {
@@ -120,6 +128,25 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     registry.abortJob(watcherJob.jobId, StopPrincipal.system('DeadRunWatcher'), 'dead run: no activity 30m');
     expect((await registry.getJob(watcherJob.jobId))?.stoppedBy).toEqual({ system: 'DeadRunWatcher' });
     expect((await registry.getJob(watcherJob.jobId))?.stopReason).toBe('dead run: no activity 30m');
+  });
+
+  it('refuses a worker stopping its parent and names the owner through worker metadata', async() => {
+    // risk: authorization — a child can otherwise kill the manager supervising it.
+    const parent = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'own', status: 'running', threadId: 'manager-owner-thread' }], 'sulla-desktop', 'root-owner-thread', { parentAgentId: 'sulla-desktop' });
+    const worker = new StopAgentJobHarness();
+    const refusal = await worker.call({ metadata: { threadId: 'child-worker-thread', routedAgentId: 'codex-sol-worker' } }, { jobId: parent.jobId });
+    expect(refusal.successBoolean).toBe(false);
+    expect(refusal.responseString).toContain('owned by sulla-desktop');
+    expect((await registry.getJob(parent.jobId))?.status).toBe('running');
+  });
+
+  it('uses a concrete agent reason when stop_agent_job omits reason', async() => {
+    // risk: auditability — optional input must not persist an ambiguous placeholder.
+    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: 'reason-child-thread' }], 'manager', 'reason-owner-thread', { parentAgentId: 'manager' });
+    const worker = new StopAgentJobHarness();
+    const stopped = await worker.call({ metadata: { threadId: 'reason-owner-thread', routedAgentId: 'manager' } }, { jobId: child.jobId });
+    expect(stopped.successBoolean).toBe(true);
+    expect((await registry.getJob(child.jobId))?.stopReason).toBe('agent request (no reason given)');
   });
 
 });
