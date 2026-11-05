@@ -23,7 +23,7 @@ export class OrphanedChildResultService {
     if (!child.parentThreadId) return null;
     const ownership = await this.jobs.findTaskByThread(child.parentThreadId);
     const owner = ownership?.job;
-    if (!owner || !['completed', 'failed', 'stopped'].includes(owner.status)) return null;
+    if (!owner || (owner.status !== 'completed' && owner.status !== 'failed' && owner.status !== 'stopped')) return null;
 
     const notice: OrphanedChildNotice = {
       childJobId: child.jobId,
