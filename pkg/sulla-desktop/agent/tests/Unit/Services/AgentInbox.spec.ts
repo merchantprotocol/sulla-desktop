@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { AgentInbox, type AgentInboxClaim, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from '../../../services/AgentInbox';
+import { AgentInbox, type AgentInboxClaim, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxScheduler, type AgentInboxTarget } from '../../../services/AgentInbox';
 
 class MemoryInboxRepository implements AgentInboxRepository {
   readonly rows = new Map<string, { entry: AgentInboxEntry; delivered: boolean; owner?: string; leaseExpiresAt?: number }>();
@@ -17,9 +17,13 @@ class MemoryInboxRepository implements AgentInboxRepository {
   async pendingTargets(): Promise<AgentInboxTarget[]> { return [...this.rows.values()].filter(r=>!r.delivered&&!r.owner).map(r=>r.entry.target).filter((v,i,a)=>a.findIndex(x=>x.channel===v.channel&&x.threadId===v.threadId)===i); }
 }
 class RecordingDelivery {
-  running=false; batches:string[]=[]; receipt:AgentInboxDeliveryReceipt='accepted'; onWake?:()=>void|Promise<void>;
+  running=false; batches:string[]=[]; delivered:string[]=[]; receipt:AgentInboxDeliveryReceipt='accepted'; onWake?:()=>void|Promise<void>;
   isRunning():boolean{return this.running;}
-  async wake(_target:AgentInboxTarget,batch:string):Promise<AgentInboxDeliveryReceipt>{this.batches.push(batch);await this.onWake?.();return this.receipt;}
+  async wake(_target:AgentInboxTarget,batch:string,entries:AgentInboxEntry[]):Promise<AgentInboxDeliveryReceipt>{this.batches.push(batch);this.delivered.push(...entries.map(({envelope})=>envelope.ids.messageId));await this.onWake?.();return this.receipt;}
+}
+class ManualScheduler implements AgentInboxScheduler {
+  readonly callbacks:(()=>void)[]=[];
+  schedule(callback:()=>void):void { this.callbacks.push(callback); }
 }
 const entry=(id:string,body=id):AgentInboxEntry=>({target:{channel:'sulla-desktop',threadId:'receiver-thread',agentId:'sulla-desktop'},envelope:{from:'mobile-relay',kind:'peer',body,ids:{messageId:id,threadId:'sender-thread'}}});
 
@@ -60,6 +64,14 @@ describe('AgentInbox',()=>{
     const inbox=new AgentInbox(repository,delivery);const first=inbox.receive(entry('first','first batch'));await new Promise(resolve=>setImmediate(resolve));
     expect(await inbox.receive(entry('late','late batch'))).toBe('queued');expect(delivery.batches).toHaveLength(1);finishFirst();expect(await first).toBe('delivered');
     expect(maxActive).toBe(1);expect(delivery.batches).toEqual(['[Peer message from mobile-relay]\nfirst batch','[Peer message from mobile-relay]\nlate batch']);
+  });
+  it('hands off after the drain cap so repeated late arrivals are all delivered in order',async()=>{ // risk: late-message loss
+    const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();const scheduler=new ManualScheduler();let active=0;let maxActive=0;let nextLate=0;
+    delivery.onWake=async()=>{active++;maxActive=Math.max(maxActive,active);if(nextLate<10)await repository.enqueue(entry(`late-${++nextLate}`));active--;};
+    await repository.enqueue(entry('first'));const inbox=new AgentInbox(repository,delivery,undefined,8,30_000,scheduler);
+    await inbox.flush(entry('first').target);
+    while(scheduler.callbacks.length){scheduler.callbacks.shift()!();await new Promise(resolve=>setImmediate(resolve));}
+    expect(delivery.delivered).toEqual(['first',...Array.from({length:10},(_,index)=>`late-${index+1}`)]);expect(maxActive).toBe(1);expect(scheduler.callbacks).toHaveLength(0);
   });
   it('deduplicates a repeated messageId',async()=>{ // risk: idempotency
     const delivery=new RecordingDelivery();delivery.running=true;const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);expect(await inbox.receive(entry('same'))).toBe('queued');expect(await inbox.receive(entry('same'))).toBe('duplicate');

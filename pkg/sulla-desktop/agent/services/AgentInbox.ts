@@ -23,6 +23,11 @@ export interface AgentInboxDeliveryPolicy {
   isRunning(target: AgentInboxTarget): boolean;
   wake(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt>;
 }
+export interface AgentInboxScheduler { schedule(callback: () => void): void }
+
+class ImmediateAgentInboxScheduler implements AgentInboxScheduler {
+  schedule(callback: () => void): void { setImmediate(callback); }
+}
 
 /** Durable, leased, deduplicated mailbox. It never interrupts an active receiver. */
 export class AgentInbox {
@@ -32,6 +37,7 @@ export class AgentInbox {
     private readonly runGuard = new ReceiverRunGuard(),
     private readonly maxDrainTurns = 8,
     private readonly leaseRenewIntervalMs = 30_000,
+    private readonly scheduler: AgentInboxScheduler = new ImmediateAgentInboxScheduler(),
   ) {}
 
   async receive(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
@@ -80,7 +86,15 @@ export class AgentInbox {
       return delivered;
     } finally {
       reservation.release();
+      const pendingTargets = await this.repository.pendingTargets();
+      if (pendingTargets.some(pending => this.isSameTarget(pending, target))) {
+        this.scheduler.schedule(() => { void this.flush(target); });
+      }
     }
+  }
+
+  private isSameTarget(left: AgentInboxTarget, right: AgentInboxTarget): boolean {
+    return left.channel === right.channel && left.threadId === right.threadId;
   }
 
   async replayPending(): Promise<number> {
