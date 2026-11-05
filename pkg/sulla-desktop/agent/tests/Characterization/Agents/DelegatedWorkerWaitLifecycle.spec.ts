@@ -51,7 +51,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     }
   }
   class WaitHarness extends AgentWaitWorker {
-    runHarness(threadId: string, input: unknown) { this.setState({ metadata: { threadId } } as any); return this._validatedCall(input); }
+    runHarness(threadId: string, jobId: string, input: unknown) { this.setState({ metadata: { threadId, delegatedJobId: jobId } } as any); return this._validatedCall(input); }
   }
   class ReturnHarness extends ReturnResultWorker {
     runHarness(threadId: string) { this.setState({ metadata: { threadId } } as any); return this._validatedCall({ result: { ok: true }, summary: 'done' }); }
@@ -84,7 +84,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     // risk: a second long wait is mistaken for a missing contract and kills a healthy worker
     const run = await launch(async(state, threadId, call) => {
       if (call <= 2) {
-        const result = await new WaitHarness().runHarness(threadId, { seconds: 14_400, reason: `park-${ call }` });
+        const result = await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: `park-${ call }` });
         expect(result.successBoolean).toBe(true);
         state.messages.push({ role: 'assistant', content: `scheduled park ${ call }`, tool_calls: [{ name: 'agents/wait' }] });
         return;
@@ -109,7 +109,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     const run = await launch(async(state, threadId, call) => {
       if (call === 1) { state.messages.push({ role: 'assistant', content: 'not ready yet' }); return; }
       if (call === 2) {
-        const result = await new WaitHarness().runHarness(threadId, { seconds: 14_400, reason: 'reminder-wait' });
+        const result = await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: 'reminder-wait' });
         expect(result.successBoolean).toBe(true);
         state.messages.push({ role: 'assistant', content: 'waiting after reminder', tool_calls: [{ name: 'agents/wait' }] });
         return;
@@ -127,7 +127,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
   it('cancels a scheduled wait when the task is stopped and never leaves it claimable', async() => {
     // risk: a stopped task is resurrected by its old timer
     const run = await launch(async(state, threadId) => {
-      await new WaitHarness().runHarness(threadId, { seconds: 14_400, reason: 'stop-me' });
+      await new WaitHarness().runHarness(threadId, state.metadata.delegatedJobId, { seconds: 14_400, reason: 'stop-me' });
       state.messages.push({ role: 'assistant', content: 'parked until stopped', tool_calls: [{ name: 'agents/wait' }] });
     });
     await vi.waitFor(async() => expect(await waits.repository.pending(run.jobId, 0)).not.toBeNull(), { timeout: 2_000, interval: 10 });
