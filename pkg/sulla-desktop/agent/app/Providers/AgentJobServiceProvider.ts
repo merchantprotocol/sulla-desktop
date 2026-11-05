@@ -55,7 +55,7 @@ export class AgentJobServiceProvider {
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage);
     this.custodyActors = new CustodyActorResolver();
     const receivers = new DurableAgentInboxReceiverResolver(this.jobs, () => undefined);
-    this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receivers);
+    this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receivers, async channel => (await import('../../services/GraphRegistry')).GraphRegistry.findThreadByChannel(channel));
     const custodyNotifier = new CustodyChangeNotificationService(this.jobs, this.messaging, completionInboxStore);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore, this.custody);
