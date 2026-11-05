@@ -1,0 +1,77 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import http from 'node:http';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createApp } from '../../../../../../services/sulla-vault/src/app';
+
+import type { VaultConfig } from '../../../../../../services/sulla-vault/src/config';
+import type { Database } from '../../../../../../services/sulla-vault/src/db';
+import type { LocalVaultAuthority } from '../../../../../../services/sulla-vault/src/localAuthority';
+
+class EnrollmentRouteFixture {
+  private server: http.Server | null = null;
+  readonly commitCalls: unknown[] = [];
+
+  async start(): Promise<string> {
+    const database = { query: async() => ({ rows: [], rowCount: 0 }) } as unknown as Database;
+    const authority = {
+      commitVaultEnrollment: async(...args: unknown[]) => {
+        this.commitCalls.push(args);
+        return { committed: true };
+      },
+    } as unknown as LocalVaultAuthority;
+    const config: VaultConfig = {
+      mode: 'desktop',
+      port: 0,
+      databaseUrl: 'postgresql://synthetic/unused',
+      jwtSecret: 'j'.repeat(64),
+      extensionOrigins: [],
+      bootstrapServiceId: 'sulla-desktop-bootstrap',
+      bootstrapServiceToken: 'bootstrap_' + 'a'.repeat(64),
+      controlServiceId: 'sulla-desktop-control',
+      controlServiceToken: 'control_' + 'b'.repeat(64),
+      approvalServiceId: 'sulla-desktop-approval',
+      approvalServiceToken: 'approval_' + 'c'.repeat(64),
+      brokerServiceId: 'sulla-tools',
+      brokerServiceToken: 'broker_' + 'd'.repeat(64),
+      filesServiceId: 'sulla-files',
+      filesServiceToken: 'files_' + 'e'.repeat(64),
+    };
+    this.server = http.createServer(createApp(database, config, { localAuthority: authority }));
+    await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve));
+    const address = this.server.address();
+    if (!address || typeof address === 'string') throw new Error('test server did not bind');
+    return `http://127.0.0.1:${ address.port }`;
+  }
+
+  async stop(): Promise<void> {
+    if (!this.server) return;
+    await new Promise<void>((resolve, reject) => this.server!.close(error => error ? reject(error) : resolve()));
+    this.server = null;
+  }
+}
+
+describe('Vault enrollment routes', () => {
+  let fixture: EnrollmentRouteFixture | undefined;
+  afterEach(async() => fixture?.stop());
+
+  it('rejects an empty enrollment commit body without invoking authority logic', async() => {
+    // risk: malformed enrollment input must not become an internal error or mutate encrypted state
+    fixture = new EnrollmentRouteFixture();
+    const baseUrl = await fixture.start();
+
+    const response = await fetch(`${ baseUrl }/v1/broker/sulla-cloud/enrollment-commit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'requestId is required' });
+    expect(fixture.commitCalls).toEqual([]);
+  });
+});
