@@ -8,6 +8,17 @@ import { DEPS_FILES, RUNTIME_URLS } from './constants';
 import { materializeStoredFunctionInGuest, removeGuestFunctionMaterialization } from './guestFunctionMaterialization';
 import { FunctionBrowserInvocation } from '../../services/FunctionBrowserInvocation';
 
+export class FunctionTimeoutParser {
+  parse(value: unknown): number {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value);
+    if (typeof value !== 'string') return 60_000;
+    const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)$/i);
+    if (!match) return 60_000;
+    const factors: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+    return Number(match[1]) * factors[match[2].toLowerCase()];
+  }
+}
+
 async function runtimePost(url: string, body: unknown): Promise<any> {
   // The runtime containers start on first use and stop when idle; hold the
   // runtime for the whole request so the idle reaper never stops it mid-call.
@@ -261,7 +272,11 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
   lines.push(`Step ${ invokeStep } — Invoking with inputs:\n${ inputSummary }`);
 
   let invokeResult: any;
-  const browserInvocation = new FunctionBrowserInvocation(`direct-${ slug }-${ Date.now() }`, manifest);
+  const browserInvocation = new FunctionBrowserInvocation(
+    `direct-${ slug }-${ Date.now() }`,
+    manifest,
+    new FunctionTimeoutParser().parse(spec.timeout),
+  );
   try {
     const browserEnv = await browserInvocation.environment();
     const env = { ...integrationEnv, ...browserEnv };
