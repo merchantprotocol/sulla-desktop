@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ACTING_NATIVE_TOOL_DENYLIST, BASE_DISALLOWED_TOOLS, ClaudeToolPolicy, DELEGATED_NATIVE_TOOL_DENYLIST, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST } from '../../../languagemodels/claudeToolPolicy';
+import { ACTING_NATIVE_TOOL_DENYLIST, BASE_DISALLOWED_TOOLS, ClaudeToolPolicy, DELEGATED_NATIVE_TOOL_DENYLIST, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST } from '../../languagemodels/claudeToolPolicy';
 
 describe('delegated Claude native-tool policy', () => {
   const policy = new ClaudeToolPolicy();
