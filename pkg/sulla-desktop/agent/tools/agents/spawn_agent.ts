@@ -615,8 +615,13 @@ export class SpawnAgentWorker extends BaseTool {
         while (activityJobId && taskAbortSignal?.aborted !== true) {
           const openChildren = await agentJobLifecycle.openChildren(threadId);
           const pendingWait = await agentWaitProvider.repository.pending(activityJobId, index);
+          // A timer/message can claim the durable wait before this turn reaches
+          // settlement. The task's parked state remains authoritative during
+          // that race, so consume the queued wake instead of fabricating a
+          // missing-contract failure.
+          const taskStillParked = (await getJob(activityJobId))?.tasks[index]?.status === 'parked';
           const settlement = settlementPolicy.decide({
-            returned: Boolean(returned), openChildren, pendingWait: Boolean(pendingWait), reminderSent,
+            returned: Boolean(returned), openChildren, pendingWait: Boolean(pendingWait) || taskStillParked, reminderSent,
           });
           if (settlement === 'terminal' || settlement === 'fail') break;
 

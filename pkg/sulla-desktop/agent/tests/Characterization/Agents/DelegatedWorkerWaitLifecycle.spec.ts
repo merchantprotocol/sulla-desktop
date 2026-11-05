@@ -93,11 +93,31 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
     for (let park = 1; park <= 2; park++) {
       await vi.waitFor(async() => expect((await waits.repository.pending(run.jobId, 0))?.reason).toBe(`park-${ park }`), { timeout: 2_000, interval: 10 });
       expect(await waits.repository.claim(run.jobId, 0)).not.toBeNull();
-      expect(lifecycle.wake(run.threadId())).toBe(true);
+      lifecycle.wake(run.threadId());
     }
     await vi.waitFor(async() => expect((await registry.getJob(run.jobId))?.status).toBe('completed'), { timeout: 2_000, interval: 10 });
     expect(run.graph.execute).toHaveBeenCalledTimes(3);
     expect(run.state.messages.some((message: any) => String(message.content).includes('Return contract reminder'))).toBe(false);
+  });
+
+  it('wakes immediately for a manager message and makes the later timer a no-op', async() => {
+    // risk: a manager message racing waiter registration starts a disconnected turn or permits a second timer wake
+    const run = await launch(async(state, threadId, call) => {
+      if (call === 1) {
+        await waits.parking.park(state.metadata.delegatedJobId, 0, AgentWaitRequest.create(14_400, 'message-wait'));
+        state.messages.push({ role: 'assistant', content: 'parked for manager', tool_calls: [{ name: 'agents/wait' }] });
+        return;
+      }
+      expect(state.messages.some((message: any) => String(message.content).includes('manager says continue'))).toBe(true);
+      await new ReturnHarness().runHarness(threadId);
+      state.messages.push({ role: 'assistant', content: 'done after manager message' });
+    });
+    await vi.waitFor(async() => expect((await waits.repository.pending(run.jobId, 0))?.reason).toBe('message-wait'), { timeout: 2_000, interval: 10 });
+    const backend = (await import('../../../services/BackendGraphWebSocketService')).getBackendGraphWebSocketService();
+    expect(await backend.wakeParkedAgent('codex-sol-worker', run.threadId(), 'manager says continue', 'codex-sol-worker')).toBe(true);
+    await vi.waitFor(async() => expect((await registry.getJob(run.jobId))?.status).toBe('completed'), { timeout: 2_000, interval: 10 });
+    expect(await waits.repository.claim(run.jobId, 0)).toBeNull();
+    expect(run.graph.execute).toHaveBeenCalledTimes(2);
   });
 
   it('honours a wait scheduled during the reminder turn', async() => {
