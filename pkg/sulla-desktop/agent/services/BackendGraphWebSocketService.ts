@@ -36,6 +36,7 @@ import { abortJob, getJobsForParentThread, markTaskCompletionDelivered } from '.
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -162,7 +163,7 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor() {
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
   }
@@ -865,11 +866,7 @@ export class BackendGraphWebSocketService {
         resumeNodeId !== 'output';
 
       // Reset execution counters for this run (but NOT messages — those accumulate)
-      state.metadata.consecutiveSameNode = 0;
-      state.metadata.iterations = 0;
-      (state.metadata as any).agentLoopCount = 0;
-      state.metadata.cycleComplete = false;
-      state.metadata.waitingForUser = false;
+      this.turnPreparer.prepare(state);
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       // Front-door repair channels stay in the VM during the staged rollout,

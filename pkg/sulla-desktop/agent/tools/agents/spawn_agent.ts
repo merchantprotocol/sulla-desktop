@@ -46,6 +46,7 @@ import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
+import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -120,6 +121,10 @@ export class SpawnAgentWorker extends BaseTool {
 
   /** Code-only switch for visible tabs. Agents can't set it: tool input never reaches it. */
   allowVisibleTabs = false;
+
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
+    super();
+  }
 
   /** Reuse the canonical spawn path from compatibility wrappers. */
   public runValidated(input: any, state?: any): Promise<ToolResponse> {
@@ -571,8 +576,28 @@ export class SpawnAgentWorker extends BaseTool {
           if (returned) break;
           await agentJobLifecycle.resume(activityJobId, index);
           subState.metadata.delegatedRunActive = true;
+          const wakeInput = subState.messages[subState.messages.length - 1];
+          const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
+          this.turnPreparer.prepare(subState);
           finalState = await executeGraph();
           returned = await returnedTask();
+          if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
+            // A released parked runner must consume its injected input. Retry
+            // once after an explicit fresh-turn preparation before surfacing
+            // an internal lifecycle failure (never a misleading provider error).
+            this.turnPreparer.prepare(subState);
+            finalState = await executeGraph();
+            returned = await returnedTask();
+            if (!returned && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
+              const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
+              const completionIds = Array.isArray(wakeInput?.metadata?.completionEntries)
+                ? wakeInput.metadata.completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',')
+                : 'none';
+              const error = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
+              console.error(`[spawn_agent] ${ error }`);
+              throw new Error(error);
+            }
+          }
         }
 
         // A caller schema means free text is not an answer: remind once, but

@@ -97,10 +97,13 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     let managerThreadId = '';
     let workerJobId = '';
     const workerThreadId = 'in-process-wake-worker-thread';
-    const fakeState: any = { metadata: { wsChannel: 'coding-manager-sol', options: {}, agent: {} }, messages: [] };
+    const fakeState: any = { metadata: { wsChannel: 'coding-manager-sol', options: {}, agent: {}, cycleComplete: false }, messages: [] };
     const executeCalls: number[] = [];
     const fakeGraph = {
       execute: vi.fn(async() => {
+        // Match Graph.execute's real stale-cycle behavior. Without the
+        // production fresh-turn preparer, a wake returns immediately here.
+        if (fakeState.metadata.cycleComplete) return fakeState;
         executeCalls.push(executeCalls.length + 1);
         if (executeCalls.length === 1) {
           // The manager's own first turn: spawns an async worker (its own
@@ -112,6 +115,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
             'coding-manager-sol', managerThreadId,
           );
           workerJobId = worker.jobId;
+          fakeState.metadata.cycleComplete = true;
           return fakeState;
         }
         // Woken for its second turn with the worker's completion already in
@@ -120,6 +124,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
         const rr = new ReturnResultHarness();
         const result = await rr.runHarness(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
+        fakeState.metadata.cycleComplete = true;
         return fakeState;
       }),
     };
