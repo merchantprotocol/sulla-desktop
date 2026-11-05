@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 100
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
       # Parity walks history from HEAD to the pinned sulla-tools commit. Run it
       # before the depth=1 base fetch below, which marks the base tip shallow
       # and cuts the merge commit's history, so every PR failed this check.
@@ -34,7 +34,7 @@ jobs:
         run: node --test scripts/check-bundled-files-parity.test.mjs
       - name: Fetch PR base (allowlist may only shrink)
         if: github.event_name == 'pull_request'
-        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
       - name: Architecture guard
         env:
           GUARD_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
