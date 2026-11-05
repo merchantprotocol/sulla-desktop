@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** No backfill: task row -> job row -> immutable agent_jobs.parent_* is the resolver fallback for existing and future jobs. */
 export const up = `
   CREATE TABLE IF NOT EXISTS agent_job_custody (
     job_id TEXT NOT NULL REFERENCES agent_jobs(job_id) ON DELETE CASCADE,
