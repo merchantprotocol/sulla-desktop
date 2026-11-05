@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
+import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
 import { TestDatabase } from '../Support/TestDatabase';
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 dbDescribe('AgentJobService state machine with real Postgres', () => {
@@ -89,5 +91,29 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.evictSettledTerminalJobs(0)).not.toContain(parked.jobId);
     expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
     expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
+  });
+
+  it('reconciles a stale running task through Postgres, cache, and the renderer snapshot', async() => {
+    // risk: a dead process remains actionable because durable and cached liveness disagree
+    const jobId = `stale-state-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now() - interval '10 minutes', $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
+      agentId: 'worker', label: 'Stale worker', prompt: 'work', status: 'running', startedAt: Date.now() - 600_000,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: () => false,
+      container: async() => false,
+      lastCheckin: async() => null,
+    });
+
+    await reconciler.reconcile();
+
+    const [durable] = await database.query<{ status: string; tasks: Array<{ status: string }> }>(
+      'SELECT status, tasks FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+    expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+    const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
+    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });
 });
