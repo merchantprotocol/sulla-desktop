@@ -53,7 +53,7 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
     }
     const killedByHuman = principal.kind === 'human';
     await Promise.all((job?.tasks ?? []).map((task, currentTaskIndex) => taskIndex !== undefined && currentTaskIndex !== taskIndex ? Promise.resolve() : emitSubAgentExchange(
-      job.parentChannel, job.parentThreadId, {
+      job?.parentChannel, job?.parentThreadId, {
         direction: 'from_agent', agentId: task.agentId, label: task.label,
         summary: killedByHuman ? `${ task.label } was killed by human` : `${ task.label } was stopped`,
         detail: killedByHuman ? 'Killed by human. Its result will not be delivered.' : `Stop requested for job ${ jobId } before the sub-agent finished.`,

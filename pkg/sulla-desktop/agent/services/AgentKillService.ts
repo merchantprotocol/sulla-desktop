@@ -5,7 +5,7 @@
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { StopPrincipal } from '../app/ValueObjects/StopPrincipal';
 import { stopAgentTab } from './AgentTabOpener';
-import { AgentTurnStopper } from './AgentTurnStopper';
+import { AgentTurnStopper, type TurnStopper } from './AgentTurnStopper';
 import { emitSubAgentExchange } from '../tools/agents/jobExchange';
 import { SULLA_DESKTOP_CHANNEL_ID } from './ChatAgentRouting';
 import { agentLaunchPauseService, type AgentLaunchPauseState } from './AgentLaunchPauseService';
@@ -21,7 +21,7 @@ export class AgentKillService {
     private readonly jobs: KillJobStore = agentJobProvider.jobs,
     private readonly stopTree: StopTree = agentJobProvider.service.stopJobCascade.bind(agentJobProvider.service),
     private readonly tabStopper: (threadId: string, reason: string) => Promise<void> = stopAgentTab,
-    private readonly turnStopper = new AgentTurnStopper(),
+    private readonly turnStopper: TurnStopper = new AgentTurnStopper(),
     private readonly publishExchange: typeof emitSubAgentExchange = emitSubAgentExchange,
   ) {}
 
