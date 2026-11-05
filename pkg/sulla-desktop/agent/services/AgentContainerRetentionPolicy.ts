@@ -18,6 +18,9 @@ export const AGENT_WORKLOAD_VALUE = 'agent';
 const AGENT_WORKLOAD_LABEL_FILTER = `${ AGENT_WORKLOAD_LABEL }=${ AGENT_WORKLOAD_VALUE }`;
 
 const PROTECTED_STATUSES = ['running', 'paused', 'restarting', 'removing'] as const;
+const LIVE_JOB_STATUSES = ['running', 'parked', 'queued', 'waitingOnChildren'] as const;
+const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'stopped', 'cancelled'] as const;
+const UNKNOWN_OWNER_ORPHAN_AGE_MS = 24 * 60 * 60 * 1_000;
 
 export interface DiskSpaceProbe { freeBytes(): Promise<number>; }
 export interface Clock { now(): number; }
@@ -229,18 +232,17 @@ export class ContainerRetentionPolicy {
         const expiresAt = Number(labels['com.sulla.expires-at']);
         const expired = Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= nowSeconds;
         const jobId = String(labels['com.sulla.job-id'] ?? '');
-        let terminal = false;
-        if (jobId && this.jobs) {
-          try {
-            const status = await this.jobs.status(jobId);
-            terminal = !!status && ['completed', 'failed', 'stopped', 'cancelled'].includes(status);
-          } catch { terminal = false }
-        }
-        if (expired || (!persistent && terminal)) {
-          await this.remove(container, expired ? 'expired' : 'terminal-owner', removed, errors, true);
+        const ownerStatus = await this.readOwnerStatus(jobId);
+        if (!persistent && (expired || this.isTerminal(ownerStatus))) {
+          const reason: RemovalReason = expired ? 'expired' : 'terminal-owner';
+          if (await this.mayRemoveAgentOwned(container, jobId, nowSeconds * 1_000)) {
+            await this.remove(container, reason, removed, errors);
+          }
           continue;
         }
-        if (!persistent) candidates.push({ container, labels });
+        if (!persistent && this.ownerCanBeReaped(ownerStatus, container, nowSeconds * 1_000)) {
+          candidates.push({ container, labels });
+        }
       } catch (error) {
         errors.push({ stage: 'inspect', id: String(listedId), message: errorMessage(error) });
       }
@@ -250,12 +252,44 @@ export class ContainerRetentionPolicy {
       let free = await this.disk.freeBytes();
       candidates.sort((a, b) => a.container.createdAtMs - b.container.createdAtMs);
       while (free < this.config.minFreeDiskBytes && candidates.length) {
-        await this.remove(candidates.shift()!.container, 'pressure', removed, errors, true);
+        const victim = candidates.shift()!;
+        const jobId = String(victim.labels['com.sulla.job-id'] ?? '');
+        if (await this.mayRemoveAgentOwned(victim.container, jobId, this.clock.now())) {
+          await this.remove(victim.container, 'pressure', removed, errors);
+        }
         free = await this.disk.freeBytes();
       }
     } catch (error) {
       errors.push({ stage: 'disk-probe', message: errorMessage(error) });
     }
+  }
+
+  private async readOwnerStatus(jobId: string): Promise<string | undefined> {
+    if (!jobId || !this.jobs) return undefined;
+    try { return await this.jobs.status(jobId) } catch { return undefined }
+  }
+
+  private isTerminal(status: string | undefined): boolean {
+    return !!status && (TERMINAL_JOB_STATUSES as readonly string[]).includes(status);
+  }
+
+  private ownerCanBeReaped(status: string | undefined, container: DescribedContainer, now: number): boolean {
+    if (status && (LIVE_JOB_STATUSES as readonly string[]).includes(status)) return false;
+    if (this.isTerminal(status)) return now - container.createdAtMs > this.config.createdGraceMs;
+    return now - container.createdAtMs > UNKNOWN_OWNER_ORPHAN_AGE_MS && !PROTECTED_STATUSES.includes(container.status as any);
+  }
+
+  /** Re-inspects both container and owner immediately before rm; every uncertainty retains the container. */
+  private async mayRemoveAgentOwned(container: DescribedContainer, jobId: string, now: number): Promise<boolean> {
+    if (this.guard.isActive(container.id)) return false;
+    let current: DescribedContainer;
+    try {
+      const details = await this.runtime.inspect(container.id);
+      if (details?.Config?.Labels?.['com.sulla.owner'] !== 'agent') return false;
+      current = this.describe(container.id, details);
+    } catch { return false }
+    if (this.guard.isActive(current.id) || (PROTECTED_STATUSES as readonly string[]).includes(current.status)) return false;
+    return this.ownerCanBeReaped(await this.readOwnerStatus(jobId), current, now);
   }
 
   private hasAgentWorkloadLabel(details: any): boolean {
