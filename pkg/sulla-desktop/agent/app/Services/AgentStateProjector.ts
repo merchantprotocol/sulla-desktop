@@ -4,6 +4,9 @@
 
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '../../../shared/agentState/AgentStateSnapshot';
+
+/** Derived presentation state. Durable task status remains the lifecycle contract. */
+export type AgentViewStatus = AgentRowState;
 import type { AgentStateService } from './AgentStateService';
 
 export interface AgentTaskCheckin { createdAt: number; summary: string; blockers: string[]; }
@@ -48,9 +51,8 @@ export class AgentStateProjector {
     return { version: this.states.version, generatedAt: new Date(now).toISOString(), rows };
   }
 
-  private resolveState(job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null, now: number): AgentRowState {
+  private resolveState(job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null, now: number): AgentViewStatus {
     if (job.status === 'stopped' || task.status === 'stopped') return 'stopped';
-    if (task.status === 'lost') return 'lost';
     if (job.status === 'failed' || task.status === 'error') return job.error?.startsWith('lost:') ? 'lost' : 'failed';
     if (task.status === 'completed') return 'done';
     if (task.status === 'parked') return 'parked';
@@ -60,7 +62,7 @@ export class AgentStateProjector {
     if (now - lastActivityAt > this.config.quietAfterMs) return 'quiet';
     return 'working';
   }
-  private reason(state: AgentRowState, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
+  private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
     if (state === 'blocked') return checkin?.blockers.join('; ') || task.summary || 'Blocked';
     if (state === 'quiet') return 'No recent check-in';
     if (['failed', 'lost', 'stopped'].includes(state)) return job.error || task.summary || state;

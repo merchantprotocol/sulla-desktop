@@ -30,7 +30,7 @@ describe('authoritative live agent state', () => {
     const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     expect(await reconciler.reconcile()).toBe(1);
     expect(cache.jobs.get('stale')?.status).toBe('failed');
-    expect(store.durable.get('stale')?.tasks[0].status).toBe('lost');
+    expect(store.durable.get('stale')?.tasks[0].status).toBe('error');
     const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot();
     expect(snapshot.rows[0]).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });

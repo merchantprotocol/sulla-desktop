@@ -30,7 +30,8 @@ export class AgentLivenessReconciler {
       if (this.clock() - lastActivityAt < this.config.lostAfterMs) continue;
       const reason = `lost: no live graph or container and no activity for ${ this.config.lostAfterMs }ms`;
       const finishedAt = this.clock();
-      await this.states.transition(job.jobId, taskIndex, { status: 'lost', summary: reason, finishedAt },
+      // TODO(F-1): switch to persisted 'lost' once F-1 merges.
+      await this.states.transition(job.jobId, taskIndex, { status: 'error', summary: reason, finishedAt },
         { error: reason, finishedAt, waitingOnChildren: 0 });
       lost++;
     }
