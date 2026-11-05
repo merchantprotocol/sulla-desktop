@@ -96,7 +96,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
     let managerThreadId = '';
     let workerJobId = '';
-    const workerThreadId = 'in-process-wake-worker-thread';
+    const workerThreadIds = ['in-process-wake-worker-0', 'in-process-wake-worker-1'];
     const fakeState: any = { metadata: { wsChannel: 'coding-manager-sol', options: {}, agent: {}, cycleComplete: false }, messages: [] };
     const executeCalls: number[] = [];
     const fakeGraph = {
@@ -111,16 +111,18 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
           // the same way it would land) and ends its turn without returning
           // its own contract — the exact shape the blocker describes.
           const worker = await registry.createJob(
-            [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: workerThreadId, depth: 2 }],
+            workerThreadIds.map((threadId, index) => ({ agentId: 'codex-sol-worker', label: `worker-${ index }`, prompt: 'build', status: 'running', threadId, depth: 2 })),
             'coding-manager-sol', managerThreadId,
           );
           workerJobId = worker.jobId;
           fakeState.metadata.cycleComplete = true;
           return fakeState;
         }
-        // Woken for its second turn with the worker's completion already in
-        // its own messages: it returns its OWN contract, the exact call a
-        // real manager makes once it has what it was waiting for.
+        // The first child wake is a real follow-up turn, then the manager
+        // parks again while its sibling remains open. The second wake returns
+        // the manager's own contract.
+        fakeState.metadata.cycleComplete = true;
+        if (executeCalls.length === 2) return fakeState;
         const rr = new ReturnResultHarness();
         const result = await rr.runHarness(managerThreadId, { result: { ok: true }, summary: 'epic done' });
         if (!result.successBoolean) throw new Error(`return_result failed: ${ result.responseString }`);
@@ -149,12 +151,11 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     await vi.waitFor(() => expect(agentJobLifecycle.hasLiveWaiter(managerThreadId)).toBe(true), { timeout: 2_000, interval: 10 });
     expect((await registry.getJob(managerJobId))?.status).toBe('parked');
 
-    // The worker finishes — the exact sequence return_result.ts runs for a
-    // hidden child: record the return, complete the job, deliver the wake.
-    await registry.recordTaskReturn(workerJobId, 0, { result: { built: true }, status: 'completed' });
-    const workerResults = [{ label: 'worker', status: 'completed' as const, output: 'built', threadId: workerThreadId }];
-    await registry.completeJob(workerJobId, workerResults);
-    expect(await jobDelivery.deliverJobCompletion(await registry.getJob(workerJobId) as any, workerResults)).toBe(true);
+    // Task zero settles while task one remains open: per-task delivery wakes
+    // immediately and must not wait for the sibling.
+    const firstResult = { label: 'worker-0', status: 'completed' as const, output: 'built-0', threadId: workerThreadIds[0] };
+    await registry.recordTaskCompletion(workerJobId, 0, firstResult);
+    expect(await jobDelivery.wakeParentGraph('coding-manager-sol', managerThreadId, workerJobId, [firstResult], undefined, 0)).toBe(true);
 
     // Simulate the idle-dispatcher firing (instead of waiting its real 2s
     // coalesce timer) — the exact method the real constructor wires to the
@@ -165,10 +166,22 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     // The manager's own in-process loop resumed and ran its second turn
     // itself — not a disconnected dispatchToAgent turn.
     await vi.waitFor(() => expect(executeCalls).toEqual([1, 2]), { timeout: 2_000, interval: 10 });
+    await vi.waitFor(() => expect(agentJobLifecycle.hasLiveWaiter(managerThreadId)).toBe(true), { timeout: 2_000, interval: 10 });
+    expect((await registry.getJob(managerJobId))?.status).toBe('parked');
+
+    // Task one settles later and causes a distinct second follow-up turn.
+    const secondResult = { label: 'worker-1', status: 'completed' as const, output: 'built-1', threadId: workerThreadIds[1] };
+    await registry.recordTaskCompletion(workerJobId, 1, secondResult);
+    await registry.completeJob(workerJobId, [firstResult, secondResult]);
+    expect(await jobDelivery.wakeParentGraph('coding-manager-sol', managerThreadId, workerJobId, [secondResult], undefined, 1)).toBe(true);
+    (service as any).handleCompletionWake('coding-manager-sol', managerThreadId);
+    await vi.waitFor(() => expect(executeCalls).toEqual([1, 2, 3]), { timeout: 2_000, interval: 10 });
 
     // The injected completion content actually reached the manager's own
     // live state before its second turn ran.
-    expect(fakeState.messages.some((m: any) => typeof m.content === 'string' && m.content.includes(workerJobId) && m.content.includes('built'))).toBe(true);
+    expect(fakeState.messages.filter((m: any) => typeof m.content === 'string' && m.content.includes(workerJobId))).toHaveLength(2);
+    expect(fakeState.messages.some((m: any) => typeof m.content === 'string' && m.content.includes('built-0'))).toBe(true);
+    expect(fakeState.messages.some((m: any) => typeof m.content === 'string' && m.content.includes('built-1'))).toBe(true);
 
     // The waiter is gone — released exactly once, not leaked.
     expect(agentJobLifecycle.hasLiveWaiter(managerThreadId)).toBe(false);
@@ -190,6 +203,61 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
       return completions;
     }, { timeout: 2_000, interval: 10 });
 
-    expect(fakeGraph.execute).toHaveBeenCalledTimes(2);
+    expect((await registry.getJob(workerJobId))?.tasks.map((task: any) => Boolean(task.completionDeliveredAt))).toEqual([true, true]);
+    expect((await registry.getJob(managerJobId))?.error).toBeFalsy();
+    expect(fakeGraph.execute).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports a specific internal lifecycle error when a completion wake is still unconsumed after its retry', async() => {
+    // risk: a stale/no-op wake is mislabeled as a provider failure, hiding the
+    // job and completion input needed to diagnose the lifecycle defect.
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager-sol', run_location: 'vm' } as any);
+    let managerThreadId = '';
+    let workerJobId = '';
+    const fakeState: any = { metadata: { wsChannel: 'coding-manager-sol', options: {}, agent: {}, cycleComplete: false }, messages: [] };
+    let realTurns = 0;
+    const fakeGraph = {
+      execute: vi.fn(async() => {
+        if (fakeState.metadata.cycleComplete) return fakeState;
+        realTurns++;
+        if (realTurns === 1) {
+          const worker = await registry.createJob(
+            [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: 'o13-worker', depth: 2 }],
+            'coding-manager-sol', managerThreadId,
+          );
+          workerJobId = worker.jobId;
+        }
+        fakeState.metadata.cycleComplete = true;
+        return fakeState;
+      }),
+    };
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation((async(_channel: string, threadId: string) => {
+      managerThreadId = threadId;
+      fakeState.metadata.threadId = threadId;
+      return { graph: fakeGraph, state: fakeState };
+    }) as any);
+    vi.spyOn(GraphRegistry, 'get').mockImplementation((threadId: string) =>
+      (threadId === managerThreadId ? { graph: fakeGraph, state: fakeState } as any : null));
+
+    const launch = JSON.parse((await new SpawnHarness().runHarness('o13-parent', 'sulla-desktop', {
+      tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic' }], async: true,
+    })).responseString!);
+    await vi.waitFor(() => expect(agentJobLifecycle.hasLiveWaiter(managerThreadId)).toBe(true), { timeout: 2_000, interval: 10 });
+
+    const result = { label: 'worker', status: 'completed' as const, output: 'built', threadId: 'o13-worker' };
+    await registry.recordTaskCompletion(workerJobId, 0, result);
+    await registry.completeJob(workerJobId, [result]);
+    await jobDelivery.wakeParentGraph('coding-manager-sol', managerThreadId, workerJobId, [result], undefined, 0);
+    (bareInstance() as any).handleCompletionWake('coding-manager-sol', managerThreadId);
+
+    await vi.waitFor(async() => {
+      const job = await registry.getJob(launch.jobId);
+      expect(job?.status).toBe('failed');
+    }, { timeout: 2_000, interval: 10 });
+    const failed = await registry.getJob(launch.jobId);
+    expect(failed?.error).toContain(`job=${ launch.jobId }`);
+    expect(failed?.error).toContain('wake=sub_agent_completion');
+    expect(failed?.error).toContain(`unconsumedCompletionJobs=${ workerJobId }`);
+    expect(failed?.error).not.toContain('Worker stopped before answering');
   });
 });
