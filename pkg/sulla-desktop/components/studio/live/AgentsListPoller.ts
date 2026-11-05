@@ -5,11 +5,13 @@
 
 import type { AgentsListResponse } from '@pkg/main/agentsIpc';
 import type { VisibilitySource } from './AgentDetailFeed';
+import { RefreshSequencer } from './RefreshSequencer';
 
 type TimerHandle = ReturnType<typeof setInterval>;
 
 export class AgentsListPoller {
   private timer: TimerHandle | undefined;
+  private readonly refreshSequencer = new RefreshSequencer();
 
   constructor(
     private readonly invoke: (channel: string) => Promise<unknown>,
@@ -42,12 +44,14 @@ export class AgentsListPoller {
 
   async refresh(): Promise<void> {
     if (this.visibility.hidden) return;
-    try {
-      this.onData(await this.invoke('agents:list') as AgentsListResponse);
-      this.onAvailability(true);
-    } catch {
-      this.onAvailability(false);
-    }
+    await this.refreshSequencer.request(
+      async() => await this.invoke('agents:list') as AgentsListResponse,
+      data => {
+        this.onData(data);
+        this.onAvailability(true);
+      },
+      () => this.onAvailability(false),
+    );
   }
 
   private readonly handleVisibilityChange = (): void => {

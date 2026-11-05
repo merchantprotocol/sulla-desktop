@@ -283,6 +283,28 @@ describe('AgentDetailFeed', () => {
     feed.dispose();
   });
 
+  it('coalesces overlapping refreshes without duplicating or regressing entries', async() => {
+    // risk: activity accuracy — a slow older detail response must not overwrite the newest requested view.
+    const stale = new Deferred<AgentConversationDetail>();
+    const current = new Deferred<AgentConversationDetail>();
+    const snapshots: FeedSnapshot[] = [];
+    const invoke = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise);
+    const feed = new AgentDetailFeed(invoke, new FakeVisibilitySource(), setInterval, clearInterval, snapshot => snapshots.push(snapshot));
+
+    feed.select('thread-1');
+    const overlapping = feed.refresh();
+    expect(invoke).toHaveBeenCalledTimes(1);
+
+    stale.resolve(detail([{ kind: 'event', ts: '1', text: 'stale', offset: 10 }]));
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    current.resolve(detail([{ kind: 'event', ts: '2', text: 'current', offset: 20 }]));
+    await overlapping;
+
+    expect(entryTexts(snapshots.at(-1))).toEqual(['current']);
+    expect(snapshots.at(-1)?.detail?.entries).toHaveLength(1);
+    feed.dispose();
+  });
+
   it('pauses while hidden and refreshes immediately when visible', async() => {
     // risk: resource usage — hidden pages must not poll, but returning users need fresh activity.
     const visibility = new FakeVisibilitySource();

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { AgentConversationDetail } from '@pkg/main/agentsIpc';
+import { RefreshSequencer } from './RefreshSequencer';
 
 type ConversationEntry = AgentConversationDetail['entries'][number];
 export type FeedEntry = ConversationEntry & { readonly feedSequence: number };
@@ -30,6 +31,7 @@ export class AgentDetailFeed {
   private generation = 0;
   private nextSequence = 1;
   private finishing = false;
+  private refreshSequencer = new RefreshSequencer();
 
   constructor(
     private readonly invoke: IpcInvoker,
@@ -49,6 +51,7 @@ export class AgentDetailFeed {
     this.firstLoad = true;
     this.nextSequence = 1;
     this.finishing = false;
+    this.refreshSequencer = new RefreshSequencer();
     this.generation += 1;
     this.emit(false);
     if (this.threadId) this.start();
@@ -83,7 +86,14 @@ export class AgentDetailFeed {
 
     this.finishing = true;
     await this.refresh();
-    if (generation === this.generation && threadId === this.threadId) this.stop();
+    if (this.finishing && generation === this.generation && threadId === this.threadId) this.stop();
+  }
+
+  resume(): void {
+    if (!this.threadId) return;
+    this.finishing = false;
+    this.start();
+    if (!this.visibility.hidden) void this.refresh();
   }
 
   async refresh(): Promise<void> {
@@ -94,19 +104,21 @@ export class AgentDetailFeed {
     const showLoading = this.firstLoad;
 
     if (showLoading) this.emit(true);
-    try {
-      const incoming = await this.invoke('agents:conversation', threadId) as AgentConversationDetail;
-
-      if (generation !== this.generation || threadId !== this.threadId) return;
-      this.detail = this.mergeDetail(incoming);
-      this.firstLoad = false;
-      this.emit(false);
-    } catch {
-      if (generation !== this.generation || threadId !== this.threadId) return;
-      if (showLoading) this.detail = null;
-      this.firstLoad = false;
-      this.emit(false);
-    }
+    await this.refreshSequencer.request(
+      async() => await this.invoke('agents:conversation', threadId) as AgentConversationDetail,
+      incoming => {
+        if (generation !== this.generation || threadId !== this.threadId) return;
+        this.detail = this.mergeDetail(incoming);
+        this.firstLoad = false;
+        this.emit(false);
+      },
+      () => {
+        if (generation !== this.generation || threadId !== this.threadId) return;
+        if (showLoading) this.detail = null;
+        this.firstLoad = false;
+        this.emit(false);
+      },
+    );
   }
 
   private mergeDetail(incoming: AgentConversationDetail): FeedDetail {
