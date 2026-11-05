@@ -34,9 +34,8 @@ export class AgentFleetProjectionService {
   async list(request: AgentFleetRequest): Promise<FleetObject[]> {
     const all = await this.states.jobs();
     const index = new AgentLineageIndex(all);
-    const scoped = request.scope === 'mine'
-      ? index.descendants(this.requiredCaller(request.callerThreadId))
-      : all;
+    const scoped = all; // DELIBERATE BREAK: prove cross-chat isolation tests fail
+    if (request.scope === 'mine') this.requiredCaller(request.callerThreadId);
     const selected = this.bound(scoped, request.limit, request.includeFinished);
     const telemetry = await this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId));
     return this.project(selected, all, telemetry, false);
