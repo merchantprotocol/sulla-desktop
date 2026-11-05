@@ -30,13 +30,17 @@ export class HiddenAgentTaskRunner implements ReopenableTaskRunner {
   }
 }
 
-/** Process-local custody of the reusable executor for a persisted hidden task. */
-export class HiddenAgentTaskRunnerRegistry {
+/** Instance-owned execution custody with a reconstructible fresh-session fallback. */
+export class HiddenTaskExecutionService {
   private readonly runners = new Map<string, ReopenableTaskRunner>();
 
+  constructor(private readonly freshExecution: HiddenTaskExecution) {}
+
   register(jobId: string, taskIndex: number, runner: ReopenableTaskRunner): void { this.runners.set(this.key(jobId, taskIndex), runner); }
-  find(jobId: string, taskIndex: number): ReopenableTaskRunner | undefined { return this.runners.get(this.key(jobId, taskIndex)); }
+  hasRegistered(jobId: string, taskIndex: number): boolean { return this.runners.has(this.key(jobId, taskIndex)); }
+  async run(input: ReopenableTaskRun & { jobId: string }): Promise<AgentJobResult> {
+    const runner = this.runners.get(this.key(input.jobId, input.taskIndex));
+    return runner ? runner.run(input) : this.freshExecution.execute(input);
+  }
   private key(jobId: string, taskIndex: number): string { return `${ jobId }:${ taskIndex }`; }
 }
-
-export const hiddenAgentTaskRunnerRegistry = new HiddenAgentTaskRunnerRegistry();

@@ -17,6 +17,7 @@ import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { BlockerEscalationService } from '../../services/BlockerEscalationService';
+import { HiddenTaskExecutionService } from '../../services/HiddenAgentTaskRunner';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -26,10 +27,17 @@ export class AgentJobServiceProvider {
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
+  readonly hiddenTaskExecution: HiddenTaskExecutionService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
+    this.hiddenTaskExecution = new HiddenTaskExecutionService({ execute: async(input) => {
+      const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+      await getBackendGraphWebSocketService().flushAgentInbox({ channel: input.task.agentId, threadId: input.threadId, agentId: input.task.agentId });
+      const task = (await this.jobs.job(input.jobId))?.tasks[input.taskIndex];
+      return task?.completion ?? { label: input.task.label, status: task?.status === 'blocked' ? 'blocked' : 'error', output: task?.summary ?? 'Reopened task ended without a contract result.', threadId: input.threadId };
+    } });
     this.messaging = new AgentJobMessagingRepository(connection);
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();

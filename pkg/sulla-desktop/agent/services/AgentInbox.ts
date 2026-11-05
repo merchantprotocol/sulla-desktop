@@ -40,6 +40,10 @@ export class AgentInbox {
     private readonly scheduler: AgentInboxScheduler = new ImmediateAgentInboxScheduler(),
   ) {}
 
+  async enqueue(entry: AgentInboxEntry): Promise<'duplicate' | 'queued'> {
+    return await this.repository.enqueue(entry) ? 'queued' : 'duplicate';
+  }
+
   async receive(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
     const inserted = await this.repository.enqueue(entry);
     if (!inserted) return 'duplicate';

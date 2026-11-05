@@ -76,7 +76,6 @@ export class ReturnResultWorker extends BaseTool {
         summary,
         status: status === 'failed' ? 'error' : status,
       });
-      if (task.reopenLeaseId) await agentJobProvider.jobs.releaseReopenLease(job.jobId, taskIndex, currentGeneration, task.reopenLeaseId);
     } catch (err) {
       return { successBoolean: false, responseString: (err as Error).message };
     }

@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { randomUUID } from 'node:crypto';
-import type { Clock } from '@sulla/foundation';
 import type { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import type { AgentJobResultHistoryRepository } from '../Repositories/AgentJobResultHistoryRepository';
 import { AgentTaskReopenPolicy, type AgentTaskReopenRefusalReason } from '../ValueObjects/AgentTaskReopenPolicy';
 import type { AgentInbox, AgentInboxEntry } from '../../services/AgentInbox';
-import type { HiddenAgentTaskRunnerRegistry } from '../../services/HiddenAgentTaskRunner';
+import type { HiddenTaskExecutionService } from '../../services/HiddenAgentTaskRunner';
 import type { AgentJobResult } from '../../tools/agents/jobRegistry';
 
 export type AgentTaskReopenOutcome =
@@ -25,9 +24,8 @@ export class AgentTaskReopenService {
   constructor(
     private readonly jobs: AgentJobRepository,
     private readonly history: AgentJobResultHistoryRepository,
-    private readonly inbox: Pick<AgentInbox, 'receive'>,
-    private readonly runners: HiddenAgentTaskRunnerRegistry,
-    private readonly clock: Clock,
+    private readonly inbox: Pick<AgentInbox, 'enqueue'>,
+    private readonly execution: HiddenTaskExecutionService,
     private readonly settlement: AgentTaskReopenSettlement,
     private readonly policy = new AgentTaskReopenPolicy(),
   ) {}
@@ -36,7 +34,7 @@ export class AgentTaskReopenService {
     const job = await this.jobs.job(jobId);
     const task = job?.tasks[taskIndex];
     if (!job || !task) return { reopened: false, reason: 'not_found' };
-    const runner = this.runners.find(jobId, taskIndex);
+    const fallback = !this.execution.hasRegistered(jobId, taskIndex);
     const generation = task.generation ?? 1;
     const decision = this.policy.decide(task.status, task.reopenCount ?? 0, Boolean(task.reopenLeaseId));
     if (!decision.allowed) return { reopened: false, reason: decision.reason };
@@ -48,25 +46,27 @@ export class AgentTaskReopenService {
     if (!claim) {
       const current = (await this.jobs.job(jobId))?.tasks[taskIndex];
       if (current?.status === 'running' && (current.generation ?? 1) > generation) {
-        await this.inbox.receive(this.entry(jobId, taskIndex, current.threadId, current.agentId, current.generation ?? generation + 1, message, managerAgentId));
+        await this.inbox.enqueue(this.entry(jobId, taskIndex, current.threadId, current.agentId, current.generation ?? generation + 1, message, managerAgentId));
         return { reopened: true, generation: current.generation ?? generation + 1, joined: true };
       }
       return { reopened: false, reason: 'already_reopening' };
     }
 
-    const feedback = runner ? message : this.fallbackPrompt(task.prompt, task.result, message);
+    const feedback = fallback ? this.fallbackPrompt(task.prompt, task.result, message) : message;
     const entry = this.entry(jobId, taskIndex, task.threadId, task.agentId, claim.generation, feedback, managerAgentId);
-    if (!runner) {
-      await this.inbox.receive(entry);
-      return { reopened: true, generation: claim.generation, fallback: true };
+    try {
+      // The feedback must be durable before execution can observe this generation.
+      await this.inbox.enqueue(entry);
+    } catch (error) {
+      await this.settlement.fail(jobId, taskIndex, error as Error, claim.generation);
+      await this.jobs.releaseReopenLease(jobId, taskIndex, claim.generation, claim.leaseId);
+      throw error;
     }
-    const run = runner.run({ task: { ...task, generation: claim.generation }, taskIndex, threadId: task.threadId ?? '', generation: claim.generation });
-    await this.inbox.receive(entry);
+    const run = this.execution.run({ jobId, task: { ...task, generation: claim.generation }, taskIndex, threadId: task.threadId ?? '', generation: claim.generation });
     void run.then(result => this.settlement.settle(jobId, taskIndex, result, claim.generation))
       .catch(error => this.settlement.fail(jobId, taskIndex, error as Error, claim.generation))
       .finally(() => this.jobs.releaseReopenLease(jobId, taskIndex, claim.generation, claim.leaseId));
-    void this.clock.now();
-    return { reopened: true, generation: claim.generation };
+    return { reopened: true, generation: claim.generation, ...(fallback ? { fallback: true } : {}) };
   }
 
   private entry(jobId: string, taskIndex: number, threadId: string | undefined, agentId: string, generation: number, message: string, managerAgentId: string): AgentInboxEntry {

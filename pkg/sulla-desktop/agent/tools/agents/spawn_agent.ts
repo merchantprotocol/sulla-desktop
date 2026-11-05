@@ -55,7 +55,8 @@ import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
-import { HiddenAgentTaskRunner, hiddenAgentTaskRunnerRegistry } from '../../services/HiddenAgentTaskRunner';
+import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -852,7 +853,7 @@ export class SpawnAgentWorker extends BaseTool {
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       activityJobId = job.jobId;
-      for (let index = 0; index < tasks.length; index++) hiddenAgentTaskRunnerRegistry.register(job.jobId, index, taskRunner);
+      for (let index = 0; index < tasks.length; index++) agentJobProvider.hiddenTaskExecution.register(job.jobId, index, taskRunner);
       for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(job.jobId, index)!;
 
       // A job whose whole agent tree goes silent is dead: stop it (which hands

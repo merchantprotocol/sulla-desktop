@@ -13,9 +13,7 @@ import { AgentTaskReopenService, type AgentTaskReopenSettlement } from '../../ap
 import { AgentJobResultHistoryRepository } from '../../app/Repositories/AgentJobResultHistoryRepository';
 import { DesktopPostgresConnection } from '../../app/Database/DesktopPostgresConnection';
 import { postgresClient } from '../../database/PostgresClient';
-import { SystemClock } from '@sulla/foundation';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
-import { hiddenAgentTaskRunnerRegistry } from '../../services/HiddenAgentTaskRunner';
 import type { AgentJobResult } from './jobRegistry';
 
 class ReopenedTaskSettlement implements AgentTaskReopenSettlement {
@@ -69,9 +67,8 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         const reopen = new AgentTaskReopenService(
           agentJobProvider.jobs,
           new AgentJobResultHistoryRepository(new DesktopPostgresConnection(postgresClient)),
-          { receive: entry => backend.receiveAgentInbox(entry) },
-          hiddenAgentTaskRunnerRegistry,
-          new SystemClock(),
+          { enqueue: entry => backend.enqueueAgentInbox(entry) },
+          agentJobProvider.hiddenTaskExecution,
           new ReopenedTaskSettlement(),
         );
         const outcome = await reopen.reopen(jobId, taskIndex, message, job.parentAgentId ?? job.parentChannel ?? 'manager');

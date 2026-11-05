@@ -121,8 +121,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async releaseReopenLease(jobId: string, taskIndex: number, generation: number, leaseId: string): Promise<boolean> {
-    const row = await this.connection.first(`UPDATE agent_job_task_reopens SET lease_id = NULL, lease_acquired_at = NULL, updated_at = now()
-      WHERE job_id = $1 AND task_index = $2 AND generation = $3 AND lease_id = $4 RETURNING job_id`,
+    const row = await this.connection.first(`WITH released AS (
+      UPDATE agent_job_task_reopens SET lease_id = NULL, lease_acquired_at = NULL, updated_at = now()
+      WHERE job_id = $1 AND task_index = $2 AND generation = $3 AND lease_id = $4 RETURNING job_id
+    ) UPDATE agent_jobs j SET tasks = jsonb_set(j.tasks, ARRAY[$2::text], (j.tasks -> $2::int) - 'reopenLeaseId', false)
+      FROM released WHERE j.job_id = released.job_id RETURNING j.job_id`,
     [jobId, taskIndex, generation, leaseId]);
     return Boolean(row);
   }
