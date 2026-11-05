@@ -24,7 +24,7 @@ export class JobCustodyAuthorityPolicy {
     if(this.same(current,input.actor)) return undefined;
     if(await this.lineage.isAncestor(input.actor.threadId,current.threadId)) return undefined;
     const ownerStatus=await this.liveness.status(current);
-    if(['terminal','lost','stranded'].includes(ownerStatus)) return undefined;
+    if(['terminal','lost','stranded','missing','unknown'].includes(ownerStatus)) return undefined;
     return this.refuse('forbidden',`Custody belongs to ${current.agentId} (${current.channel}/${current.threadId}).`,current);
   }
   private same(left:CustodyOwner,right:CustodyOwner):boolean{return left.channel===right.channel&&left.threadId===right.threadId&&left.agentId===right.agentId;}
