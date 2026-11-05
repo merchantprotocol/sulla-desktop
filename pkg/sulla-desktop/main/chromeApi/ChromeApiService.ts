@@ -394,7 +394,10 @@ export class ChromeApiService implements ChromeApi {
             if (!check) {
               check = props.requestGuard!(details.url);
               pendingChecks.set(details.url, check);
-              void check.finally(() => pendingChecks.delete(details.url));
+              void check.then(
+                () => pendingChecks.delete(details.url),
+                () => pendingChecks.delete(details.url),
+              );
             }
             void check.then(() => callback({ cancel: false }), () => callback({ cancel: true }));
           });

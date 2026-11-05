@@ -4,14 +4,13 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 import type { FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
 import { buildWrapper, classifyCode } from '../tools/browser/exec';
-import { getChromeApi } from '@pkg/main/chromeApi';
+import type { ChromeApi } from '@pkg/main/chromeApi';
 const EVALUATION_TIMEOUT_MS = 15_000;
 const MAX_RESULT_BYTES = 1024 * 1024;
-type ChromeApi = ReturnType<typeof getChromeApi>;
 export class DesktopFunctionBrowserAdapter implements FunctionBrowserAdapter {
   private readonly tabIds = new Map<string, string>();
   private readonly navigationGuards = new Map<string, { validate: (url: string) => Promise<void>; listener: (details: { tabId: string; url: string }) => void }>();
-  constructor(private readonly chrome: ChromeApi = getChromeApi(), private readonly evaluationTimeoutMs = EVALUATION_TIMEOUT_MS, private readonly maxResultBytes = MAX_RESULT_BYTES) {}
+  constructor(private readonly chrome: ChromeApi, private readonly evaluationTimeoutMs = EVALUATION_TIMEOUT_MS, private readonly maxResultBytes = MAX_RESULT_BYTES) {}
   async open(assetId: string, url: string, validateNavigation: (url: string) => Promise<void>): Promise<void> {
     const tab = await this.chrome.tabs.create({ url, hidden: true, requestGuard: validateNavigation, denyPopups: true }); this.tabIds.set(assetId, tab.id);
     let violation: Error | null = null;
