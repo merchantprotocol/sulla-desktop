@@ -6,12 +6,12 @@
 import { emitSubAgentExchange } from './jobExchange';
 import { BaseTool, ToolResponse } from '../base';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
-import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
+import { getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
 
 export interface StopAgentJobOptions { taskIndex?: number; mode?: 'hard' | 'wrap_up'; gracePeriodSeconds?: number }
-export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'agent request (no reason given)', options: StopAgentJobOptions = {}): Promise<ToolResponse> {
+export async function stopAgentJob(jobId: string, principal: StopPrincipalValue | undefined, reason = 'agent request (no reason given)', options: StopAgentJobOptions = {},callerMetadata?:Record<string,any>): Promise<ToolResponse> {
   if (!jobId) {
     return {
       successBoolean: false,
@@ -24,15 +24,15 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
   const taskIndex = options.taskIndex;
   if (taskIndex !== undefined && (!Number.isInteger(taskIndex) || taskIndex < 0)) return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
   if (options.mode === 'wrap_up') {
-    const authorization = await authorizeJobStop(jobId, principal);
-    if (authorization.outcome === 'forbidden') return { successBoolean: false, responseString: `Cannot stop job "${ jobId }": it is owned by ${ authorization.owner?.agentId ?? 'another agent' }.` };
-    if (authorization.outcome === 'not-found') return { successBoolean: false, responseString: `Job "${ jobId }" not found.` };
     const targets = taskIndex === undefined ? (job?.tasks ?? []).map((_, index) => index) : [taskIndex];
     const stoppedBy = StopPrincipal.attribution(principal);
     const who = stoppedBy === 'human' ? 'human' : 'agentId' in stoppedBy ? stoppedBy.agentId : stoppedBy.system;
     const message = `[Stop requested by ${ who }] Finish your current step and return your contract now with what you have`;
     const graceSeconds = Math.max(1, options.gracePeriodSeconds ?? 120);
-    await agentJobProvider.wrapUp.request(jobId, targets, principal, reason, graceSeconds, message);
+    const {sendJobMessage}=await import('./send_job_message');
+    const sent=await sendJobMessage({jobId,...(taskIndex===undefined?{}:{taskIndex}),message},callerMetadata);
+    if(!sent.successBoolean)return sent;
+    await agentJobProvider.wrapUp.request(jobId, targets, principal, reason, graceSeconds, message,true);
     return { successBoolean: true, responseString: `Wrap-up requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}; it has ${ graceSeconds } seconds to return before hard stop.` };
   }
   const outcome = taskIndex === undefined
@@ -104,6 +104,6 @@ export class StopAgentJobWorker extends BaseTool {
       taskIndex: input.taskIndex === undefined ? undefined : Number(input.taskIndex),
       mode: input.mode === 'wrap_up' ? 'wrap_up' : 'hard',
       gracePeriodSeconds: input.gracePeriodSeconds === undefined ? undefined : Number(input.gracePeriodSeconds),
-    });
+    },metadata);
   }
 }
