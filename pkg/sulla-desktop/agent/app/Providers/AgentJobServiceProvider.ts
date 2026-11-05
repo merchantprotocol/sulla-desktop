@@ -12,12 +12,14 @@ import { JobRecoveryService } from '../Services/JobRecoveryService';
 import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
 import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { postgresClient } from '../../database/PostgresClient';
+import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
   readonly messaging: AgentJobMessagingRepository;
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
+  readonly delivery: JobCompletionDelivery;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -28,6 +30,7 @@ export class AgentJobServiceProvider {
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator);
+    this.delivery = new JobCompletionDelivery(this.service);
   }
 }
 

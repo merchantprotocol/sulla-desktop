@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1127,
+  "entries": 1126,
   "files": {
     "background.ts": {
       "rules": {
@@ -1249,12 +1249,6 @@
     "pkg/sulla-desktop/agent/tools/agents/cloudProjection/index.ts": {
       "rules": {
         "procedural-module": 3
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/tools/agents/jobDelivery.ts": {
-      "rules": {
-        "procedural-module": 6
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },

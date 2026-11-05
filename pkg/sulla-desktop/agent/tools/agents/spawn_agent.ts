@@ -11,7 +11,7 @@ import {
   normalizeContract,
   type AgentContractSpec,
 } from './contract';
-import { emitProactiveCompletion, returnedJobResult, wakeParentGraph } from './jobDelivery';
+import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
 import { threadSlug } from './threadSlug';
 import {
@@ -346,8 +346,7 @@ export class SpawnAgentWorker extends BaseTool {
       console.warn(`[spawn_agent] Tab job ${ job.jobId } ${ message }`);
       await stopAgentTab(childThreadId, `No agent activity while working (${ reason }). The parent was told and can relaunch.`);
       await safeFinishDelegationByRef(job.jobId, { outcome: 'failed', detail: message });
-      await emitProactiveCompletion(parentChannel, job.jobId, [], message, parentThreadId);
-      await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message, -1);
+      await deliverJobCompletion(job, [], -1, message);
     }, async() => {
       const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
       return !getBackendGraphWebSocketService().hasActiveRun(SULLA_DESKTOP_CHANNEL_ID, childThreadId);
@@ -729,8 +728,8 @@ export class SpawnAgentWorker extends BaseTool {
       if (activityJobId) {
         await recordTaskCompletion(activityJobId, index, result);
         const failureReason = result.status === 'error' ? result.output : undefined;
-        await emitProactiveCompletion(parentChannel, activityJobId, [result], failureReason, parentThreadId);
-        await wakeParentGraph(parentChannel, parentThreadId, activityJobId, [result], failureReason, index);
+        const settledJob = await getJob(activityJobId);
+        if (settledJob) await deliverJobCompletion(settledJob, [result], index, failureReason);
       }
       return result;
     };
@@ -761,8 +760,8 @@ export class SpawnAgentWorker extends BaseTool {
         stoppedAsDead = true;
         const message = `dead run: ${ reason }; job stopped`;
         console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
-        await emitProactiveCompletion(parentChannel, job.jobId, [], message, parentThreadId);
-        await wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], message, -1);
+        const stoppedJob = await getJob(job.jobId);
+        if (stoppedJob) await deliverJobCompletion(stoppedJob, [], -1, message);
       });
 
       // Launch in background — do not await
@@ -778,8 +777,8 @@ export class SpawnAgentWorker extends BaseTool {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
           if (stoppedAsDead) return;
-          await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message, parentThreadId);
-          wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message, -1);
+          const failedJob = await getJob(job.jobId);
+          if (failedJob) await deliverJobCompletion(failedJob, [], -1, (err as Error).message);
         })
         .finally(async() => { stopDeadRunWatch(); });
 
