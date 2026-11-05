@@ -20,6 +20,17 @@ export class StrandedEpisodeRepository {
     return rows.length === 1;
   }
 
+
+  async reconcile(managerRefs: Set<string>, candidates: StrandedManagerCandidate[]): Promise<void> {
+    const active = new Map(candidates.map(candidate => [`${ candidate.managerJobId }#${ candidate.managerTaskIndex }`, candidate.stateKey]));
+    for (const ref of managerRefs) {
+      const split = ref.lastIndexOf('#');
+      const jobId = ref.slice(0, split); const taskIndex = Number(ref.slice(split + 1)); const stateKey = active.get(ref);
+      await this.connection.run(`DELETE FROM agent_stranded_episodes WHERE manager_job_id = $1 AND manager_task_index = $2 AND ($3::text IS NULL OR state_key <> $3)`,
+        [jobId, taskIndex, stateKey ?? null]);
+    }
+  }
+
   async pending(): Promise<PendingStrandedEpisode[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' ORDER BY created_at, state_key`);
     return rows.map(row => ({ managerJobId: String(row.manager_job_id), managerTaskIndex: Number(row.manager_task_index),

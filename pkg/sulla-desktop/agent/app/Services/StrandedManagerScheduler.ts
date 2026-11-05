@@ -34,7 +34,9 @@ export class StrandedManagerScheduler {
 
   private async runTick(): Promise<number> {
     const jobs = await this.fleet.supervisionCandidates();
-    for (const candidate of this.detector.detect(jobs)) await this.episodes.insertPending(candidate);
+    const candidates = this.detector.detect(jobs);
+    await this.episodes.reconcile(this.detector.managerRefs(jobs), candidates);
+    for (const candidate of candidates) await this.episodes.insertPending(candidate);
     let delivered = 0;
     for (const episode of await this.episodes.pending()) {
       await this.episodes.markAttempt(episode.stateKey);

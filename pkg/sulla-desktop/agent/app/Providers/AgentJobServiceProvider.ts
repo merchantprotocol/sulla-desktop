@@ -46,9 +46,10 @@ export class AgentJobServiceProvider {
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime);
     const titles = new ConversationTitleRepository(connection);
-    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles);
+    const strandedEpisodes = new StrandedEpisodeRepository(connection);
+    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes);
     this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(),
-      new StrandedEpisodeRepository(connection), new StrandedManagerAlertService(completionInboxStore));
+      strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
