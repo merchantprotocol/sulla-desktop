@@ -320,18 +320,11 @@ export function createSyncEnvelope(sodium: Sodium) {
   /** Open the bundle-v2 recovery wrap. The recovery key and user key never leave the caller. */
   function unlockRecovery(bundle: unknown, recoveryKey: string): Uint8Array {
     checkBundleShape(bundle);
-    if (bundle.v !== 2) throw new EnvelopeError('recovery_missing', 'This vault has no recovery wrap');
-    const recoveryMasterKey = deriveMasterKey(recoveryKey, bundle.recovery!.kdf);
-    let userKey: Uint8Array;
     try {
-      userKey = open(bundle.recovery!.encryptedUserKey, recoveryMasterKey, 'sulla:recovery-user-key:v1');
-    } catch {
-      throw new EnvelopeError('wrong_recovery_key', 'Wrong recovery key');
-    } finally {
-      recoveryMasterKey.fill(0);
+      return runtime.codec.unlockBundleWithRecovery(bundle as VaultBundle, recoveryKey);
+    } catch (error) {
+      throwDomainError(error);
     }
-    try { verifyBundle(bundle, userKey) } catch (error) { userKey.fill(0); throw error }
-    return userKey;
   }
 
   function contentHash(record: Pick<SyncRecord, 'deleted' | 'kind' | 'item' | 'encryptedName'>): string {
