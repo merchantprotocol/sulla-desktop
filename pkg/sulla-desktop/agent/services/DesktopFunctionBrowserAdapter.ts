@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-import type { FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
+import { FunctionBrowserOpenFailedError, type FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
 import { buildWrapper, classifyCode } from '../tools/browser/exec';
 import type { ChromeApi } from '@pkg/main/chromeApi';
 const EVALUATION_TIMEOUT_MS = 15_000;
@@ -28,7 +28,10 @@ export class DesktopFunctionBrowserAdapter implements FunctionBrowserAdapter {
       }
       const finalTab = await this.chrome.tabs.get(tab.id); if (!finalTab?.url) throw new Error('browser final URL unavailable');
       await validateNavigation(finalTab.url); if (violation) throw violation;
-    } catch (error) { await this.close(assetId).catch(() => undefined); throw error }
+    } catch (error) {
+      try { await this.close(assetId) } catch { throw new FunctionBrowserOpenFailedError(assetId, error) }
+      throw error;
+    }
   }
   async evaluate(assetId: string, code: string): Promise<unknown> {
     const tabId = this.requireTabId(assetId); const classified = classifyCode(code);

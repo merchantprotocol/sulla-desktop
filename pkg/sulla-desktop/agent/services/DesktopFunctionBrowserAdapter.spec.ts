@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../tools/browser/exec', () => ({ classifyCode: (code: string) => ({ form: 'expression', code }), buildWrapper: (code: string) => code }));
 import { DesktopFunctionBrowserAdapter } from './DesktopFunctionBrowserAdapter';
+import { FunctionBrowserOpenFailedError } from './FunctionBrowserCapabilityService';
 class Event {
   listeners: Array<(details:any)=>void>=[];
   addListener(listener:(details:any)=>void) { this.listeners.push(listener) }
@@ -51,5 +52,10 @@ describe('DesktopFunctionBrowserAdapter',()=>{
     await adapter.close('a');
     expect(chrome.webNavigation.onBeforeNavigate.listeners).toHaveLength(0);
     expect(chrome.webNavigation.onCommitted.listeners).toHaveLength(0);
+  });
+  it('reports the created asset when open fails and its own cleanup also fails',async()=>{ // risk: orphan privileged tab
+    const chrome=new ChromeHarness(); chrome.currentUrl='http://127.0.0.1'; chrome.removeFailures=1; const adapter=new DesktopFunctionBrowserAdapter(chrome as any);
+    const opening=adapter.open('created-asset','https://example.com',async()=>{throw new Error('unsafe-network-target')});
+    await expect(opening).rejects.toMatchObject<Partial<FunctionBrowserOpenFailedError>>({name:'FunctionBrowserOpenFailedError',assetId:'created-asset'});
   });
 });

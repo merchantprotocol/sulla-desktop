@@ -1,13 +1,13 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BrowserUrlPolicy, type BrowserDnsResolver } from './BrowserUrlPolicy';
-import { FunctionBrowserCapabilityService, type FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
+import { FunctionBrowserCapabilityService, FunctionBrowserOpenFailedError, type FunctionBrowserAdapter } from './FunctionBrowserCapabilityService';
 class Resolver implements BrowserDnsResolver { constructor(private readonly values: Record<string, string[]> = {}) {} async lookup(host: string): Promise<Array<{address:string}>> { return (this.values[host] ?? ['93.184.216.34']).map(address => ({ address })) } }
 class RecordingBrowser implements FunctionBrowserAdapter {
-  readonly openTabs = new Set<string>(); closeFailures = 0; redirect: string | null = null; openGate: Promise<void> | null = null;
-  async open(assetId: string, _url: string, validate: (url:string)=>Promise<void>): Promise<void> { this.openTabs.add(assetId); if (this.openGate) await this.openGate; if (this.redirect) await validate(this.redirect) }
+  readonly openTabs = new Set<string>(); closeFailures = 0; redirect: string | null = null; openGate: Promise<void> | null = null; failOpenAfterCreate = false;
+  async open(assetId: string, _url: string, validate: (url:string)=>Promise<void>): Promise<void> { this.openTabs.add(assetId); if (this.openGate) await this.openGate; if (this.failOpenAfterCreate) throw new FunctionBrowserOpenFailedError(assetId, new Error('open failed')); if (this.redirect) await validate(this.redirect) }
   async evaluate(_assetId: string, code: string): Promise<unknown> { return { code } }
   async close(assetId: string): Promise<void> { if (this.closeFailures-- > 0) throw new Error('transient'); this.openTabs.delete(assetId) }
 }
@@ -64,5 +64,28 @@ describe('FunctionBrowserCapabilityService', () => {
     expect(h.service.pendingCleanupCount).toBe(1); expect(h.browser.openTabs.size).toBe(1);
     h.timers[1](); await Promise.resolve(); expect(h.service.pendingCleanupCount).toBe(1);
     h.timers[2](); await Promise.resolve(); expect(h.service.pendingCleanupCount).toBe(0); expect(h.browser.openTabs.size).toBe(0);
+  });
+  it('retains an adapter-reported failed open during overlapping invalidation until scheduled cleanup succeeds',async()=>{ // risk: orphan privileged tab
+    const h=new Harness(); let release!:()=>void; h.browser.openGate=new Promise<void>(resolve=>{release=resolve}); h.browser.failOpenAfterCreate=true;
+    const {token}=h.service.mint('x',{enabled:true,allowedOrigins:[]}); const opening=h.service.open(token,'https://example.com'); await Promise.resolve();
+    const invalidating=h.service.invalidate(token); h.browser.closeFailures=1; release();
+    await invalidating; await expect(opening).rejects.toThrow('open failed'); expect(h.service.pendingCleanupCount).toBe(1); expect(h.browser.openTabs.size).toBe(1);
+    h.timers[1](); await Promise.resolve(); expect(h.service.pendingCleanupCount).toBe(0); expect(h.browser.openTabs.size).toBe(0);
+  });
+  it('shutdown backs off through the scheduler and completes after eventual cleanup success',async()=>{ // risk: shutdown hot-loop
+    const h=new Harness(); const delays:number[]=[]; const callbacks:Array<()=>void>=[]; let now=0;
+    const service=new FunctionBrowserCapabilityService(h.browser,()=>now,()=>`token-${++h.tokenNumber}`,new BrowserUrlPolicy(new Resolver()),(callback,delay)=>{callbacks.push(callback);delays.push(delay);return callbacks.length as any},()=>undefined);
+    const {token}=service.mint('x',{enabled:true,allowedOrigins:[]}); await service.open(token,'https://example.com'); h.browser.closeFailures=3; await service.invalidate(token);
+    const shuttingDown=service.shutdown(); for(let index=0;index<10;index++) await Promise.resolve(); expect(delays.at(-1)).toBe(100); expect(h.browser.closeFailures).toBe(1);
+    now+=100; callbacks.at(-1)!(); for(let index=0;index<10;index++) await Promise.resolve(); expect(delays.at(-1)).toBe(200);
+    now+=200; callbacks.at(-1)!(); await shuttingDown; expect(service.pendingCleanupCount).toBe(0); expect(delays.slice(-2)).toEqual([100,200]);
+  });
+  it('shutdown returns at its deadline after scheduled backoff for permanent failures',async()=>{ // risk: shutdown hang
+    const h=new Harness(); const scheduled:Array<{callback:()=>void;delay:number}>=[]; let now=0;
+    const service=new FunctionBrowserCapabilityService(h.browser,()=>now,()=>`token-${++h.tokenNumber}`,new BrowserUrlPolicy(new Resolver()),(callback,delay)=>{scheduled.push({callback,delay});return scheduled.length as any},()=>undefined);
+    const {token}=service.mint('x',{enabled:true,allowedOrigins:[]}); await service.open(token,'https://example.com'); h.browser.closeFailures=Number.MAX_SAFE_INTEGER; await service.invalidate(token);
+    const logged=vi.spyOn(console,'error').mockImplementation(()=>undefined); const shuttingDown=service.shutdown(); const drainDelays:number[]=[];
+    for(let attempt=0;attempt<6;attempt++){ for(let index=0;index<10;index++) await Promise.resolve(); const timer=scheduled.at(-1)!; drainDelays.push(timer.delay); now+=timer.delay; timer.callback() }
+    await shuttingDown; expect(now).toBe(5_000); expect(drainDelays).toEqual([100,200,400,800,1600,1900]); expect(service.pendingCleanupCount).toBe(1); expect(logged).toHaveBeenCalledWith('Browser tab cleanup deadline reached',expect.objectContaining({assetIds:expect.any(Array)})); logged.mockRestore();
   });
 });

@@ -9,6 +9,14 @@ import { BrowserUrlPolicy } from './BrowserUrlPolicy';
 const DEFAULT_TTL_MS = 60_000;
 const MAX_TTL_MS = 10 * 60_000;
 const TTL_GRACE_MS = 5_000;
+const SHUTDOWN_CLEANUP_DEADLINE_MS = 5_000;
+
+export class FunctionBrowserOpenFailedError extends Error {
+  constructor(public readonly assetId: string, public readonly originalError: unknown) {
+    super('browser open failed and its tab could not be cleaned up', { cause: originalError });
+    this.name = 'FunctionBrowserOpenFailedError';
+  }
+}
 
 export interface FunctionBrowserAdapter {
   open(assetId: string, url: string, validateNavigation: (url: string) => Promise<void>): Promise<void>;
@@ -34,6 +42,7 @@ class BrowserTabCleanupRegistry {
     private readonly browser: FunctionBrowserAdapter,
     private readonly schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>,
     private readonly cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void,
+    private readonly now: () => number,
   ) {}
 
   retain(assetId: string): void {
@@ -47,9 +56,18 @@ class BrowserTabCleanupRegistry {
   async drain(): Promise<void> {
     for (const timer of this.timers.values()) this.cancelSchedule(timer);
     this.timers.clear();
-    while (this.pending.size > 0) {
+    const deadline = this.now() + SHUTDOWN_CLEANUP_DEADLINE_MS;
+    let attempt = 0;
+    while (this.pending.size > 0 && this.now() < deadline) {
       for (const assetId of [...this.pending.keys()]) await this.tryClose(assetId, false);
+      if (this.pending.size === 0) return;
+      const remaining = deadline - this.now();
+      if (remaining <= 0) break;
+      const delay = Math.min(100 * (2 ** attempt), 5_000, remaining);
+      await new Promise<void>(resolve => { this.schedule(resolve, delay) });
+      attempt += 1;
     }
+    if (this.pending.size > 0) console.error('Browser tab cleanup deadline reached', { assetIds: [...this.pending.keys()] });
   }
 
   private scheduleRetry(assetId: string): void {
@@ -111,7 +129,7 @@ export class FunctionBrowserCapabilityService {
     private readonly urlPolicy = new BrowserUrlPolicy(),
     private readonly schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = setTimeout,
     private readonly cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void = clearTimeout,
-  ) { this.cleanupRegistry = new BrowserTabCleanupRegistry(browser, schedule, cancelSchedule) }
+  ) { this.cleanupRegistry = new BrowserTabCleanupRegistry(browser, schedule, cancelSchedule, now) }
 
   get pendingCleanupCount(): number { return this.cleanupRegistry.size }
 
@@ -144,7 +162,15 @@ export class FunctionBrowserCapabilityService {
     const assetId = `function_${ capability.invocationId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-40) }_${ tabId }`;
     const pending = this.browser.open(assetId, parsed.toString(), async candidate => { await this.validateUrl(candidate, capability.allowedOrigins) });
     capability.pendingOpens.add(pending);
-    try { await pending } finally { capability.pendingOpens.delete(pending) }
+    try {
+      await pending;
+    } catch (error) {
+      if (error instanceof FunctionBrowserOpenFailedError) {
+        try { await this.browser.close(error.assetId) } catch { this.cleanupRegistry.retain(error.assetId) }
+        throw error.originalError;
+      }
+      throw error;
+    } finally { capability.pendingOpens.delete(pending) }
     if (capability.revoked || this.capabilities.get(token) !== capability || this.now() >= capability.expiresAt) {
       await this.closeWithRetryRetention(capability, tabId, assetId);
       throw new FunctionBrowserCapabilityError('expired');
