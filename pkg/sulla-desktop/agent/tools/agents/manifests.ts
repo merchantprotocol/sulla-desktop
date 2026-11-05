@@ -117,6 +117,9 @@ export const agentToolManifests: ToolManifest[] = [
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
+      taskIndex: { type: 'number', optional: true, description: 'Stop only this zero-based task; omit to stop the whole job and descendants.' },
+      mode: { type: 'string', optional: true, enum: ['hard', 'wrap_up'], description: 'wrap_up asks for a partial contract before hard-aborting after the grace period.' },
+      gracePeriodSeconds: { type: 'number', optional: true, description: 'Wrap-up grace period in seconds (default 120).' },
       reason: { type: 'string', optional: true, description: 'Why the job is being stopped; recorded in the job audit trail.' },
     },
     operationTypes: ['execute'],
