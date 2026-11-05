@@ -16,7 +16,10 @@ class ProcessRunner {
     const remaining = deadline - this.clock.now();
     if (remaining <= 0) throw new Error('TEST_BUDGET_EXCEEDED');
     await new Promise((resolve, reject) => {
-      const child = this.spawnProcess(command, args, { detached: true, stdio: 'inherit' });
+      const child = this.spawnProcess(command, args, { detached: true, stdio: ['inherit', 'pipe', 'pipe'] });
+      let diagnostic = '';
+      const forward = (stream, target) => stream?.on('data', chunk => { const text = String(chunk); diagnostic = `${diagnostic}${text}`.slice(-8_000); target.write(text) });
+      forward(child.stdout, process.stdout); forward(child.stderr, process.stderr);
       let finished = false;
       const timer = setTimeout(() => {
         if (finished) return;
@@ -29,7 +32,11 @@ class ProcessRunner {
         finished = true;
         clearTimeout(timer);
         if (code === 0) resolve();
-        else reject(new Error(`${ command } exited ${ code ?? signal }`));
+        else {
+          const escaped = diagnostic.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+          this.output.error(`::error title=${ command } failed::${ escaped }`);
+          reject(new Error(`${ command } exited ${ code ?? signal }`));
+        }
       });
     });
   }
@@ -94,8 +101,8 @@ class PerPrTestRunner {
       if (files.length > 0) {
         const changedSpecs = files.filter(file => file.endsWith('.spec.ts'));
         const selection = this.requiresSmoke(files)
-          ? ['run', '--config', 'vitest.agent.config.mts', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
-          : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts'];
+          ? ['run', '--config', 'vitest.agent.config.mts', '--reporter=default', '--reporter=github-actions', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
+          : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts', '--reporter=default', '--reporter=github-actions'];
         this.output.log(this.requiresSmoke(files) ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
         await this.processRunner.run('yarn', ['vitest', ...selection], deadline);
       }
