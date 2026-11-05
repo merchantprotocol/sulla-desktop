@@ -208,6 +208,21 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(new AgentTeamRollupProjector(() => Date.now()).project(fresh).get(`${ manager.jobId }#0`)?.unprocessedResults).toBe(0);
   });
 
+  it('serializes stop attribution in list and detail after a repository reload', async() => {
+    // risk: audit attribution disappears from supervision after the process cache is cold.
+    const job = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'work', status: 'running', threadId: `stop-reload-${ Date.now() }` }]);
+    await registry.stopJobCascade(job.jobId, StopPrincipal.human(), 'operator requested');
+    const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+    agentJobProvider.runtime.evictSettledTerminalJobs(0);
+
+    const check = new CheckAgentJobsHarness();
+    const detail = JSON.parse((await check.call({ jobId: job.jobId })).responseString!);
+    const list = JSON.parse((await check.call({ scope: 'all', includeFinished: true, limit: 100 })).responseString!);
+    const listed = list.jobs.find((item: { jobId: string }) => item.jobId === job.jobId);
+    expect(detail).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });
+    expect(listed).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });
+  });
+
   it('excludes dismissed jobs from global list reads', async() => {
     // risk: dismissed work resurfaces in the global agent directory
     const job = await registry.createJob([

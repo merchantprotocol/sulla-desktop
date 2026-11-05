@@ -13,7 +13,7 @@ class InMemoryAgentStateStore implements AgentStateStore {
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
-  async stopCascade(jobId: string): Promise<string[]> { const job = this.durable.get(jobId); if (!job) return []; this.durable.set(jobId, { ...job, status: 'stopped', tasks: job.tasks.map(task => ({ ...task, status: 'stopped' })) }); return [jobId]; }
+  async cascadeJobs(jobId: string): Promise<AgentJob[]> { const job = this.durable.get(jobId); return job ? [structuredClone(job)] : []; }
   async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { this.durable.set(job.jobId, structuredClone(job)); return true; }
 }
 class EmptyTelemetry { async latest(): Promise<null> { return null; } }
@@ -68,6 +68,18 @@ describe('authoritative live agent state', () => {
     expect(store.durable.get('contradiction')?.status).toBe('failed');
     const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot();
     expect(snapshot.rows[0]).toMatchObject({ state: 'failed', canMessage: false, canStop: false });
+  });
+
+  it('keeps a terminal error result failed while tolerating a stale error task with a completed result', async() => {
+    // risk: result payload persistence races can either hide a real worker failure or fail a completed worker
+    const failedResult = { label: 'Worker', status: 'error' as const, output: 'missing contract', threadId: 'failed-thread' };
+    const completedResult = { label: 'Worker', status: 'completed' as const, output: 'done', threadId: 'completed-thread' };
+    const failed = job('failed-result', [task({ status: 'error', completion: failedResult })]);
+    const completed = job('completed-result', [task({ status: 'error', completion: completedResult })]);
+    const { states } = harness([failed, completed]);
+    const derived = await states.jobs();
+    expect(derived.find(candidate => candidate.jobId === 'failed-result')?.status).toBe('failed');
+    expect(derived.find(candidate => candidate.jobId === 'completed-result')?.status).toBe('completed');
   });
 
   it('shows an inactive task as quiet before the longer lost threshold', async() => {

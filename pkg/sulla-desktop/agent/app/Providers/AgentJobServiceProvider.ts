@@ -22,8 +22,8 @@ import { RunActivityManagerActivitySource, type RunActivityReader } from '../Ser
 import { JobStopService } from '../Services/JobStopService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
-import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
+import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 
@@ -54,10 +54,10 @@ export class AgentJobServiceProvider {
       strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
+    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
-    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops);
+    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);
     this.delivery = new JobCompletionDelivery(this.service);
   }
 }
