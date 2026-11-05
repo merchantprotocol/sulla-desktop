@@ -38,7 +38,7 @@ describe('agents/replace_lead',()=>{
  });
  it('reports exactly which children moved after a partial re-parent failure',async()=>{
    // risk: retry safety — operators need an exact partial-move receipt.
-   const h=new ReplaceLeadHarness(); h.custody.move.mockImplementation(async(input:any)=>{h.moves.push(input);if(input.jobId==='child-1')return {ok:false,code:'version-conflict',message:'retry'};return input.to.threadId===owner.threadId?{ok:false,code:'no-op',message:'unchanged'}:{ok:true,previous:owner,current:{...input.to,jobId:input.jobId,taskIndex:input.taskIndex,version:2,changedAt:new Date()}}});
+   const h=new ReplaceLeadHarness(); (h.custody.move as any).mockImplementation(async(input:any)=>{h.moves.push(input);if(input.jobId==='child-1')return {ok:false,code:'version-conflict',message:'retry'};return input.to.threadId===owner.threadId?{ok:false,code:'no-op',message:'unchanged'}:{ok:true,previous:owner,current:{...input.to,jobId:input.jobId,taskIndex:input.taskIndex,version:2,changedAt:new Date()}}});
    const result=await h.service.replace({jobId:'lead',taskIndex:0,agentId:'coding-manager-sol',actor});
    expect(result.ok).toBe(false); expect(result.moved.map((x:any)=>x.jobId)).toEqual(['child-0','child-2']); expect(result.failed).toEqual([expect.objectContaining({jobId:'child-1',error:'retry'})]);
  });
