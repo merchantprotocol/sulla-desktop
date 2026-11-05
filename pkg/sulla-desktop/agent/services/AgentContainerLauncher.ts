@@ -12,7 +12,7 @@ import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
-import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
+import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
 import { buildContainerProviderKillScript } from './containerProviderKill';
 import {
@@ -339,6 +339,29 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (label) args.push('--filter', `label=${ label }`);
     const output = (await guestExec(args)).stdout.trim();
     return output ? output.split('\n').map(line => JSON.parse(line)) : [];
+  }
+}
+
+/** Reconstructs live bindings from Docker's durable agent-container labels. */
+export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
+  constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver()) {}
+  async liveBindings(): Promise<AgentContainerRuntimeBinding[]> {
+    const containers = await this.runtime.list('com.sulla.workload=agent');
+    const bindings: AgentContainerRuntimeBinding[] = [];
+    for (const container of containers) {
+      const details = await this.runtime.inspect(container.ID ?? container.Id ?? container.Names);
+      if (details?.State?.Running !== true && details?.State?.Status !== 'running') continue;
+      const labels = details?.Config?.Labels ?? {};
+      if (!labels['com.sulla.job-id'] || !labels['com.sulla.subject'] || !labels['com.sulla.device-id']) continue;
+      bindings.push({
+        podId: details.Name?.replace(/^\//, '') ?? container.Names,
+        subject: labels['com.sulla.subject'], orgId: labels['com.sulla.org-id'] || undefined,
+        agentId: labels['com.sulla.agent-id'] || undefined, jobId: labels['com.sulla.job-id'],
+        threadId: labels['com.sulla.thread-id'] || undefined, deviceId: labels['com.sulla.device-id'],
+        workspacePath: details?.Config?.WorkingDir ?? '',
+      });
+    }
+    return bindings;
   }
 }
 
@@ -1226,6 +1249,10 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         'com.sulla.agent-id':       agentId,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
+        'com.sulla.subject':        subject,
+        'com.sulla.org-id':         metadata.orgId ?? '',
+        'com.sulla.thread-id':      metadata.threadId ?? '',
+        'com.sulla.device-id':      deviceId,
         'com.sulla.capability-jti': capabilityJti,
         'com.sulla.capability-exp': String(capabilityExpiresAt),
       },
@@ -1573,6 +1600,10 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
+        'com.sulla.subject':        subject,
+        'com.sulla.org-id':         metadata.orgId ?? '',
+        'com.sulla.thread-id':      metadata.threadId ?? '',
+        'com.sulla.device-id':      deviceId,
         'com.sulla.capability-jti': capabilityJti,
         'com.sulla.capability-exp': String(capabilityExpiresAt),
       },

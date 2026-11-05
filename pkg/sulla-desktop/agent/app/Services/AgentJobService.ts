@@ -186,32 +186,30 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 }
 /** Persist one settled task before its siblings finish. */
 async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobResult): Promise<void> {
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  if (!job?.tasks[taskIndex]) return;
-  job.results[taskIndex] = result;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex],
-    status: result.status,
-    threadId: result.threadId || job.tasks[taskIndex].threadId,
-    finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
-    completion: result };
-  await this.states.commit(job);
+  await this.states.update(jobId, job => {
+    if (!job.tasks[taskIndex]) return job;
+    job.results[taskIndex] = result;
+    job.tasks[taskIndex] = { ...job.tasks[taskIndex],
+      status: result.status,
+      threadId: result.threadId || job.tasks[taskIndex].threadId,
+      finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
+      completion: result };
+    return job;
+  });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
 async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> {
-  const source = await this.states.jobForWrite(jobId);
-  const job = source ? structuredClone(source) : undefined;
-  if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
-  job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
-  if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
-  await this.states.commit(job);
+  await this.states.update(jobId, job => {
+    if (!job.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return job;
+    job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
+    if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
+    return job;
+  });
 
 }
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
-  const source = await this.states.jobForWrite(jobId);
-  if (!source || source.completionDeliveredAt) return;
-  await this.states.commit({ ...source, completionDeliveredAt: this.clock.now().getTime() });
+  await this.states.update(jobId, source => source.completionDeliveredAt ? source : { ...source, completionDeliveredAt: this.clock.now().getTime() });
 }
 
 /** Read completed reports whose graph wake was not durably acknowledged. */

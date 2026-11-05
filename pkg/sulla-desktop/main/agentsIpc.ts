@@ -20,7 +20,8 @@ import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvid
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
-import { awaitAgentContainerRuntimeRehydration, probeAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
@@ -214,7 +215,8 @@ const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, age
 export function initAgentsIpc(): void {
   // Do not decide a container is gone until the supervisor's bounded rebind
   // window has closed. Every state read awaits this same readiness promise.
-  const bootReconciliation = awaitAgentContainerRuntimeRehydration().then(() => agentLivenessReconciler.reconcile());
+  configureAgentContainerRuntimeSupervisor(new GuestAgentContainerRuntimeSupervisor());
+  const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
   agentStatePublisher.register();

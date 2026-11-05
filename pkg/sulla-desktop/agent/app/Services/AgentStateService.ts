@@ -15,6 +15,25 @@ export interface AgentStateStore {
 export interface AgentStateCache { jobs: Map<string, AgentJob>; }
 export type AgentStateChangeListener = (version: number) => void;
 
+/** Instance-owned serialization for read/modify/write operations on one job. */
+export class AgentJobMutationQueue {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async run<T>(jobId: string, mutation: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(jobId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve });
+    const tail = previous.catch(() => undefined).then(() => current);
+    this.tails.set(jobId, tail);
+    await previous.catch(() => undefined);
+    try { return await mutation() }
+    finally {
+      release();
+      if (this.tails.get(jobId) === tail) this.tails.delete(jobId);
+    }
+  }
+}
+
 /** Sole write-through owner for durable and process-local agent state. */
 export class AgentStateService {
   private versionValue: number;
@@ -23,7 +42,8 @@ export class AgentStateService {
   private readonly pendingTerminalWrites = new Set<string>();
   private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
-  constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now) {
+  constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now,
+    private readonly mutations = new AgentJobMutationQueue()) {
     this.versionValue = now();
   }
 
@@ -101,8 +121,10 @@ export class AgentStateService {
   }
 
   async update(jobId: string, mutate: (current: AgentJob) => AgentJob): Promise<AgentJob | undefined> {
-    const current = await this.jobForWrite(jobId); if (!current) return undefined;
-    const next = this.withDerivedStatus(mutate(structuredClone(current))); await this.commit(next); return next;
+    return this.mutations.run(jobId, async() => {
+      const current = await this.jobForWrite(jobId); if (!current) return undefined;
+      const next = this.withDerivedStatus(mutate(structuredClone(current))); await this.commitUnsafe(next); return next;
+    });
   }
 
   async transition(jobId: string, taskIndex: number, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob> = {}): Promise<AgentJob | undefined> {
@@ -125,6 +147,10 @@ export class AgentStateService {
 
   touch(): void { this.emitChange(); }
   async commit(job: AgentJob): Promise<void> {
+    await this.mutations.run(job.jobId, () => this.commitUnsafe(job));
+  }
+
+  private async commitUnsafe(job: AgentJob): Promise<void> {
     const next = this.withDerivedStatus(job);
     try { await this.store.replaceState(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); }
     finally { this.pendingTerminalWrites.delete(next.jobId); }
