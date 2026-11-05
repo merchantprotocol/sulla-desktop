@@ -27,6 +27,7 @@ export class ReplaceLeadService {
    }); if(!locked)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`}; ({operation,owner}=locked);}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    const launched={jobId:operation.replacementJobId,taskIndex:operation.replacementTaskIndex,threadId:operation.replacementThreadId};
    const replacementOwner:CustodyOwner={channel:owner.channel,threadId:launched.threadId,agentId:input.agentId};
+   const oldLeadThread=packet.snapshot.lead.tasks[input.taskIndex]?.threadId??owner.threadId;
    const moved:any[]=[]; const failed:any[]=[];
    const moveChildren=async(children:any[])=>{for(const {job:child,taskIndex} of children){const key=`${child.jobId}:${taskIndex}`; if(operation.childProgress[key]?.moved){if(!moved.some(x=>x.jobId===child.jobId&&x.taskIndex===taskIndex))moved.push({jobId:child.jobId,taskIndex});continue;}
      const result=await this.custody.move({jobId:child.jobId,taskIndex,to:replacementOwner,actor:input.actor,reason:`re-parented by replace_lead from ${input.jobId}:${input.taskIndex}`});
@@ -35,12 +36,12 @@ export class ReplaceLeadService {
    await moveChildren(packet.snapshot.children);
    // Re-enumerate under the old lead's custody lock. Children adopted during the first pass
    // must move before wrap-up can be claimed.
-   await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async client=>{await moveChildren(await this.packets.listDirectChildren(owner.threadId,client));await this.packets.saveOperation(client,operation);});
+   await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async client=>{await moveChildren(await this.packets.listDirectChildren(oldLeadThread,client));await this.packets.saveOperation(client,operation);});
    const actor=input.actor.agentId; const audit=`replaced by ${launched.jobId} by ${actor}${input.note?.trim()?`: ${input.note.trim()}`:''}`;
    if(failed.length===0){
      const claimedAudit=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.claimAudit(client,operation,audit));
      if(claimedAudit){const target=(await this.messaging.targetsForJob(input.jobId,input.taskIndex))[0];if(target)await this.messaging.queueMessage(target,`[Lead replacement] ${audit}`);}
-     const remaining=await this.packets.listDirectChildren(owner.threadId);
+     const remaining=await this.packets.listDirectChildren(oldLeadThread);
      const outside=remaining.filter(({job,taskIndex}:any)=>!operation.childProgress[`${job.jobId}:${taskIndex}`]?.moved);
      if(outside.length){await moveChildren(outside);await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.saveOperation(client,operation));}
      if(failed.length===0){const claim=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.claimWrapUp(client,operation));if(claim){await this.wrapUp.request(input.jobId,input.taskIndex,input.actor,audit);await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.finishWrapUp(client,operation));}}
