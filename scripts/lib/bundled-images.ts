@@ -44,7 +44,7 @@ const LAYER_TYPES = [
 const ACCEPT = [...INDEX_TYPES, ...MANIFEST_TYPES].join(', ');
 
 /** The parts scripts/fetch-bundled-assets.ts embeds. */
-export const BUNDLE_PARTS = ['images', 'whisper', 'audio'] as const;
+export const BUNDLE_PARTS = ['images', 'whisper', 'agent-desktop', 'audio'] as const;
 export type BundlePart = typeof BUNDLE_PARTS[number];
 
 /** Parts SULLA_BUNDLE_SKIP turns off. */
@@ -53,7 +53,7 @@ export function skippedParts(value = process.env.SULLA_BUNDLE_SKIP): Set<BundleP
 
   if (words.some(word => ['1', 'all', 'true'].includes(word))) return new Set(BUNDLE_PARTS);
   for (const word of words) {
-    if (!(BUNDLE_PARTS as readonly string[]).includes(word)) throw new Error(`SULLA_BUNDLE_SKIP: unknown part "${ word }" (use all, images, whisper or audio)`);
+    if (!(BUNDLE_PARTS as readonly string[]).includes(word)) throw new Error(`SULLA_BUNDLE_SKIP: unknown part "${ word }" (use all, images, whisper, agent-desktop or audio)`);
   }
 
   return new Set(words as BundlePart[]);

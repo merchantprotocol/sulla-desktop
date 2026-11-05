@@ -10,12 +10,12 @@ import { RetentionConfig } from '@pkg/agent/services/AgentContainerRetentionPoli
 import { ActiveAgentContainerRegistry } from '@pkg/agent/services/AgentContainerComposition';
 
 class FailingListRuntime implements ContainerRuntimeDriver {
-  listCalls = 0;
+  readonly listFilters: Array<string | undefined> = [];
   create(_spec: ContainerSpec): Promise<string> { throw new Error('unused') }
   start(): Promise<void> { throw new Error('unused') }
   inspect(): Promise<any> { throw new Error('unused') }
   remove(): Promise<void> { throw new Error('non-agent containers must never be removed') }
-  list(): Promise<any[]> { this.listCalls++; return Promise.reject(new Error('docker unavailable')) }
+  list(filter?: string): Promise<any[]> { this.listFilters.push(filter); return Promise.reject(new Error('docker unavailable')) }
 }
 
 class FakeTimer {
@@ -51,7 +51,7 @@ describe('AgentContainerRetentionBootstrap', () => {
     bootstrap.start();
     bootstrap.start();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(runtime.listCalls).toBe(1);
+    expect(runtime.listFilters).toEqual(['com.sulla.owner=agent', 'com.sulla.workload=agent']);
     expect(timer.callbacks).toHaveLength(1);
     bootstrap.dispose();
     expect(timer.cleared).toBe(1);
