@@ -18,4 +18,3 @@ export const agentWakeScheduler = new AgentWakeScheduler(agentTaskWaitRepository
     `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer' });
 });
 export const agentTaskParkingService = new AgentTaskParkingService(agentTaskWaitRepository, parkJobTask, agentWakeScheduler);
-void agentWakeScheduler.start().catch(error => console.error('[AgentWakeScheduler] startup rehydration failed:', error));
