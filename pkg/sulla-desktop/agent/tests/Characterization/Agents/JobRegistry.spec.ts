@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
 import { TestDatabase } from '../../Support/TestDatabase';
 import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
@@ -89,16 +90,18 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     await registry.recordTaskReturn(job.jobId, 0, { result: { answer: 42 }, summary: 'done', status: 'completed' });
     await expect(registry.recordTaskReturn(job.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('already returned');
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stop', prompt: 'work', status: 'running' }]);
-    expect(registry.abortJob(stopped.jobId)).toBe('stopped');
-    expect(registry.getJobAbortSignal(stopped.jobId)?.aborted).toBe(true);
-    expect(registry.abortJob(stopped.jobId)).toBe('already-finished');
-    expect(registry.abortJob('missing')).toBe('not-found');
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
+    expect(registry.getTaskAbortSignal(stopped.jobId, 0)?.aborted).toBe(true);
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
+    expect(registry.abortJob('missing', StopPrincipal.human(), 'test stop')).toBe('not-found');
     await expect(registry.recordTaskReturn(stopped.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('no longer accepts');
   });
 
   it('delivers a durable completion at most once', async() => {
     const job = await registry.createJob([{ agentId: 'worker', label: 'complete', prompt: 'work', status: 'running' }], 'parent', 'completion-parent');
-    await registry.completeJob(job.jobId, [{ label: 'complete', status: 'completed', output: 'ok', threadId: 'child' }]);
+    const result = { label: 'complete', status: 'completed' as const, output: 'ok', threadId: 'child' };
+    await registry.recordTaskCompletion(job.jobId, 0, result);
+    await registry.completeJob(job.jobId, [result]);
     expect((await registry.getPendingCompletions()).map(item => item.jobId)).toContain(job.jobId);
     await registry.markCompletionDelivered(job.jobId);
     await registry.markCompletionDelivered(job.jobId);
