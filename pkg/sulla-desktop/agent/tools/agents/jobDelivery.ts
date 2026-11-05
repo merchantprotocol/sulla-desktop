@@ -18,7 +18,7 @@ import { contractResultOutput, contractReturnStatus, normalizeContract } from '.
 
 import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
 
-const orphanedChildResults = new OrphanedChildResultService(agentJobProvider.jobs);
+const orphanedChildResults = new OrphanedChildResultService(agentJobProvider.service);
 
 /** A returned contract as the job result the parent reads. */
 export function returnedJobResult(task: AgentJobTask, label: string, threadId: string): AgentJobResult {

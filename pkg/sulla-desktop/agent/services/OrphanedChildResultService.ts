@@ -2,8 +2,12 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { AgentJobRepository } from '../app/Repositories/AgentJobRepository';
 import type { AgentJob, AgentJobResult, OrphanedChildNotice } from '../tools/agents/jobRegistry';
+
+export interface OrphanedChildJobStore {
+  findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined>;
+  appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<void>;
+}
 
 export interface OrphanedChildCapture {
   notice: OrphanedChildNotice;
@@ -12,11 +16,12 @@ export interface OrphanedChildCapture {
 
 /** Redirects late child results without ever reopening their finished manager. */
 export class OrphanedChildResultService {
-  constructor(private readonly jobs: AgentJobRepository) {}
+  constructor(private readonly jobs: OrphanedChildJobStore) {}
 
   async capture(child: AgentJob, results: AgentJobResult[], taskIndex: number): Promise<OrphanedChildCapture | null> {
     if (!child.parentThreadId) return null;
-    const owner = await this.jobs.findByTaskThread(child.parentThreadId);
+    const ownership = await this.jobs.findTaskByThread(child.parentThreadId);
+    const owner = ownership?.job;
     if (!owner || !['completed', 'failed', 'stopped'].includes(owner.status)) return null;
 
     const notice: OrphanedChildNotice = {
