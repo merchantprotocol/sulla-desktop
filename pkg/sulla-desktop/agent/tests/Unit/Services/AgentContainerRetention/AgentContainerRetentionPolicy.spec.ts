@@ -37,6 +37,8 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
   readonly removedIds: string[] = [];
   readonly removeForceFlags: Array<boolean | undefined> = [];
   listError: Error | null = null;
+  /** Label filters whose listing fails, so one pass can fail while the other succeeds. */
+  failingListLabels = new Set<string>();
   inspectErrorIds = new Set<string>();
   removeErrorIds = new Set<string>();
   /** When true, `list()` ignores the label filter — simulates a driver whose `ps --filter` can't be trusted. */
@@ -50,6 +52,7 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
 
   async list(label?: string): Promise<any[]> {
     if (this.listError) throw this.listError;
+    if (label && this.failingListLabels.has(label)) throw new Error(`docker ps --filter label=${ label } failed`);
     const [key, value] = (label ?? '').split('=');
     return [...this.containers.values()]
       .filter(c => this.ignoreListFilter || !label || c.labels[key] === value)
@@ -126,7 +129,10 @@ describe('ContainerRetentionPolicy', () => {
 
     const report = await policy.enforce();
 
-    expect(report.errors).toEqual([{ stage: 'list', message: 'docker ps failed' }]);
+    expect(report.errors).toEqual([
+      { stage: 'agent-owner-list', message: 'docker ps failed' },
+      { stage: 'list', message: 'docker ps failed' },
+    ]);
     expect(report.removed).toEqual([]);
     expect(report.keptCount).toBe(0);
     expect(runtime.removedIds).toEqual([]);
@@ -376,4 +382,18 @@ describe('ContainerRetentionPolicy', () => {
     expect(runtime.get('postgres')).toBeDefined();
   });
 
+  it('still enforces failed-container retention when the agent-owner listing fails', async() => {
+    // risk: one broken temporary-container listing silently disables the age/count/disk cleanup of failed containers
+    const clock = new FakeClock();
+    const runtime = new FakeContainerRuntimeDriver();
+    runtime.failingListLabels.add('com.sulla.owner=agent');
+    runtime.add(agentContainer({ id: 'old-failed', finishedAt: new Date(clock.current - 25 * HOUR_MS).toISOString() }));
+    const { policy } = buildPolicy({ runtime, clock, config: new RetentionConfig({ maxAgeMs: 24 * HOUR_MS }) });
+
+    const report = await policy.enforce();
+
+    expect(report.errors).toEqual([{ stage: 'agent-owner-list', message: 'docker ps --filter label=com.sulla.owner=agent failed' }]);
+    expect(report.removed).toEqual([{ id: 'old-failed', name: 'old-failed', reason: 'age' }]);
+    expect(runtime.get('old-failed')).toBeUndefined();
+  });
 });
