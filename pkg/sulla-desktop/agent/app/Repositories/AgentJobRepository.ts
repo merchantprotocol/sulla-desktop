@@ -71,7 +71,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked', 'failed')`, [jobId, JSON.stringify(tasks)]);
   }
 
   /** Acknowledge one consumed task without reopening terminal rows to general task mutation. */

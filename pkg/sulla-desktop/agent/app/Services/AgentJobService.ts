@@ -140,7 +140,11 @@ async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
 async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
   const job = await this.states.mutateJob(jobId, current => {
-    if (current.status === 'completed' || current.status === 'failed') return undefined;
+    if (current.status === 'completed') return undefined;
+    if (current.status === 'failed') return { ...current, results, tasks: current.tasks.map((task, index) => {
+      const result = results[index]; return !result ? task : { ...task, status: 'error', threadId: result.threadId || task.threadId,
+        finishedAt: task.finishedAt ?? this.clock.now().getTime(), completion: task.completion ?? result };
+    }) };
     if (current.status === 'stopped') return { ...current, results, tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() } : task) };
     const failed = results.find(result => result.status === 'error');
     return { ...current, status: failed ? 'failed' : 'completed', finishedAt: this.clock.now().getTime(), results, error: failed?.output,
