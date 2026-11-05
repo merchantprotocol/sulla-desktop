@@ -2,7 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { CustodyActor, CustodyMoveResult, CustodyOwner, CustodyRecord } from './JobCustodyTypes';
+import type { TopLevelConversationRegistry, VerifiedCustodyActor } from './CustodyCallerVerifier';
+import type { CustodyMoveResult, CustodyOwner, CustodyRecord } from './JobCustodyTypes';
 
 export type CustodyOwnerLiveness = 'alive'|'parked'|'terminal'|'lost'|'stranded'|'missing'|'unknown';
 export interface CustodyOwnerLivenessPort { status(owner: CustodyOwner): Promise<CustodyOwnerLiveness> }
@@ -10,12 +11,14 @@ export interface CustodyLineagePort {
   isAncestor(ancestorThreadId:string, descendantThreadId:string):Promise<boolean>;
   wouldCreateCycle(jobId:string, taskIndex:number|undefined, destinationThreadId:string):Promise<boolean>;
 }
-export interface TopLevelHumanSessionAuthorityPort { allows(actor:CustodyActor,current:CustodyOwner):Promise<boolean> }
-export interface CustodyAuthorityInput { jobId:string; taskIndex?:number; current:CustodyRecord; destination:CustodyOwner; actor:CustodyActor }
+export interface TopLevelHumanSessionAuthorityPort { allows(actor:VerifiedCustodyActor,current:CustodyOwner):Promise<boolean> }
+export interface CustodyAuthorityInput { jobId:string; taskIndex?:number; current:CustodyRecord; destination:CustodyOwner; actor:VerifiedCustodyActor }
 
 export class TopLevelHumanSessionAuthorityRule implements TopLevelHumanSessionAuthorityPort {
-  constructor(private readonly isDelegatedThread:(threadId:string)=>Promise<boolean>){}
-  async allows(actor:CustodyActor,current:CustodyOwner):Promise<boolean>{return actor.kind==='agent'&&!await this.isDelegatedThread(actor.threadId)&&!await this.isDelegatedThread(current.threadId);}
+  constructor(private readonly conversations:TopLevelConversationRegistry){}
+  async allows(actor:VerifiedCustodyActor,current:CustodyOwner):Promise<boolean>{
+    return actor.kind==='agent'&&actor.scope==='top-level'&&await this.conversations.isRegisteredTopLevel(current.channel,current.threadId,current.agentId);
+  }
 }
 
 export class JobCustodyAuthorityPolicy {

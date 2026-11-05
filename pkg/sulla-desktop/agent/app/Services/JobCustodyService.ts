@@ -5,12 +5,14 @@
 import type { Clock } from '@sulla/foundation';
 import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
 import { JobCustodyAuthorityPolicy } from './JobCustodyAuthorityPolicy';
+import type { VerifiedCustodyActor } from './CustodyCallerVerifier';
 import type { CustodyAuditRecord,CustodyChangeNotifier,CustodyMoveInput,CustodyMoveResult,CustodyRecord,CustodyTransactionClient,JobCustodyPort } from './JobCustodyTypes';
 
 export class JobCustodyService implements JobCustodyPort {
   constructor(private readonly repository:AgentJobCustodyRepository,private readonly policy:JobCustodyAuthorityPolicy,private readonly notifier:CustodyChangeNotifier,private readonly clock:Clock){}
   authorizeReplacement(current:CustodyRecord,actor:import('./JobCustodyTypes').CustodyActor):Promise<CustodyMoveResult|undefined>{return this.policy.authorizeReplacement(current,actor);}
   async move(input:CustodyMoveInput):Promise<CustodyMoveResult>{
+    input.actor.assertVerified();
     const changedAt=this.clock.now();
     const snapshot=await this.repository.resolveOwner(input.jobId,input.taskIndex);
     if(!snapshot)return {ok:false,code:'not-found',message:`Job ${input.jobId} was not found.`};
@@ -21,6 +23,6 @@ export class JobCustodyService implements JobCustodyPort {
     return result;
   }
   resolveOwner(jobId:string,taskIndex?:number):Promise<CustodyRecord|undefined>{return this.repository.resolveOwner(jobId,taskIndex);}
-  withOwner<T>(jobId:string,taskIndex:number|undefined,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{return this.repository.withCustodyLock(jobId,taskIndex,operation);}
+  withOwner<T>(jobId:string,taskIndex:number|undefined,actor:VerifiedCustodyActor,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{actor.assertVerified();return this.repository.withCustodyLock(jobId,taskIndex,operation);}
   history(jobId:string):Promise<CustodyAuditRecord[]>{return this.repository.history(jobId);}
 }
