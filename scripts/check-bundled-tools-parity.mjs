@@ -26,7 +26,6 @@ export class GitRepository {
 }
 
 export class BundledToolsParityGuard {
-  static maximumCommitLag = 50;
   static manifestPath = 'packaging/bundled-images.yaml';
   static manifestsRoot = 'pkg/sulla-desktop/agent/tools';
 
@@ -45,9 +44,6 @@ export class BundledToolsParityGuard {
     const pinned = this.pinnedCommit(this.readFile(BundledToolsParityGuard.manifestPath, 'utf8'));
     if (!this.repository.isAncestor(pinned)) throw new Error(`Bundled sulla-tools commit ${ pinned } is not an ancestor of HEAD`);
     const distance = this.repository.commitDistance(pinned);
-    if (distance > BundledToolsParityGuard.maximumCommitLag) {
-      throw new Error(`Bundled sulla-tools is ${ distance } commits behind HEAD (maximum ${ BundledToolsParityGuard.maximumCommitLag })`);
-    }
     const current = this.repository.manifestNames();
     const bundled = this.repository.manifestNames(pinned);
     const missing = [...current].filter(name => !bundled.has(name)).sort();

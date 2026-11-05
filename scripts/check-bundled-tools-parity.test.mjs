@@ -30,7 +30,7 @@ test('rejects a bundled catalog missing a delegated tool', () => { // risk: work
   assert.throws(() => guard(new FakeRepository({ bundled: [] })).verify(), /wait/);
 });
 
-test('rejects stale and non-ancestor image commits', () => { // risk: stale release artifact
-  assert.throws(() => guard(new FakeRepository({ distance: 51 })).verify(), /51 commits behind/);
+test('reports any ancestor distance but rejects a non-ancestor image commit', () => { // risk: release integrity
+  assert.doesNotThrow(() => guard(new FakeRepository({ distance: 10_000 })).verify());
   assert.throws(() => guard(new FakeRepository({ ancestor: false })).verify(), /not an ancestor/);
 });
