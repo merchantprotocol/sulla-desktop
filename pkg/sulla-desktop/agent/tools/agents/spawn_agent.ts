@@ -34,7 +34,7 @@ import {
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { agentTaskWaitRepository } from '../../services/AgentWaitServices';
-import { MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
+import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
@@ -619,7 +619,9 @@ export class SpawnAgentWorker extends BaseTool {
         // A leaf worker may explicitly park itself with agents/wait. The DB
         // record is truth; the in-process waiter only accelerates delivery.
         const pendingWait = activityJobId ? await agentTaskWaitRepository.pending(activityJobId, index) : null;
-        if (!returned && pendingWait && activityJobId && jobAbortSignal?.aborted !== true) {
+        const settlementPolicy = new DelegatedTurnSettlementPolicy();
+        const initialSettlement = settlementPolicy.decide({ returned: Boolean(returned), openChildren: 0, pendingWait: Boolean(pendingWait), reminderSent: false });
+        if (initialSettlement === 'wait_park' && pendingWait && activityJobId && jobAbortSignal?.aborted !== true) {
           subState.metadata.delegatedRunActive = false;
           await agentJobLifecycle.waitForWake(threadId, jobAbortSignal);
           if (!jobAbortSignal?.aborted) {
@@ -636,7 +638,8 @@ export class SpawnAgentWorker extends BaseTool {
 
         // A caller schema means free text is not an answer: remind once, but
         // only after the manager has no open child dependency left.
-        if (!returned && contract.schema && taskAbortSignal?.aborted !== true) {
+if (!returned && contract.schema && taskAbortSignal?.aborted !== true &&
+          settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false }) === 'remind') {
           subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
           finalState = await executeGraph();
           returned = await returnedTask();
@@ -648,7 +651,7 @@ export class SpawnAgentWorker extends BaseTool {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
           taskResult = contract.schema && status !== 'blocked'
-            ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(text).message }`, threadId, contract: contract.name }
+            ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(settlementPolicy.failureCause(finalState)).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
 

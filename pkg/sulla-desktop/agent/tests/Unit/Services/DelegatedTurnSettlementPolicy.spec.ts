@@ -16,5 +16,6 @@ describe('DelegatedTurnSettlementPolicy', () => {
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true })).toBe('fail');
     const error = new MissingContractAfterReminderError('assistant stopped after reminder');
     expect(error.code).toBe('missing_contract_after_reminder'); expect(error.message).toContain('assistant stopped'); expect(error.message).not.toContain('provider failure');
+    expect(policy.failureCause({ messages: [{ role: 'assistant', content: 'real last text' }, { role: 'user', content: 'reminder' }] })).toBe('real last text');
   });
 });

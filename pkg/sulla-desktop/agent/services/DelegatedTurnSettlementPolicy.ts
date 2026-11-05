@@ -10,6 +10,15 @@ export class DelegatedTurnSettlementPolicy {
     if (input.pendingWait) return 'wait_park';
     return input.reminderSent ? 'fail' : 'remind';
   }
+
+  failureCause(finalState: any): string {
+    const messages = Array.isArray(finalState?.messages) ? [...finalState.messages].reverse() : [];
+    const assistant = messages.find((message: any) => message?.role === 'assistant');
+    if (!assistant) return '(no assistant output was recorded)';
+    const content = typeof assistant.content === 'string' ? assistant.content.trim() : JSON.stringify(assistant.content ?? '');
+    const toolCalls = assistant.tool_calls ?? assistant.toolCalls;
+    return toolCalls ? `${ content || '(empty assistant text)' }\nTool call: ${ JSON.stringify(toolCalls) }` : (content || '(empty assistant text)');
+  }
 }
 export class MissingContractAfterReminderError extends Error {
   readonly code = 'missing_contract_after_reminder';
