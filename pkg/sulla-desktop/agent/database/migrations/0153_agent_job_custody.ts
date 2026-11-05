@@ -21,7 +21,7 @@ export const up = `
 
   CREATE TABLE IF NOT EXISTS agent_job_custody_audit (
     id BIGSERIAL PRIMARY KEY,
-    job_id TEXT NOT NULL REFERENCES agent_jobs(job_id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
     task_index INTEGER CHECK (task_index IS NULL OR task_index >= 0),
     from_channel TEXT NOT NULL,
     from_thread_id TEXT NOT NULL,
