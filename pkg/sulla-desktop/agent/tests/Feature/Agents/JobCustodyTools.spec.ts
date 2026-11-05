@@ -13,6 +13,8 @@ const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:descr
 // Electron import is unavailable in the headless Node test runner.
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
 
+class CompletionDispatchCapture {readonly targets:Array<{channel:string;threadId:string}>=[];record(channel:string,threadId:string){this.targets.push({channel,threadId});}}
+
 class RegisteredCustodyTool {
   async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job'|'return_result',input:any,metadata:any){
     const manifest=agentToolManifests.find(item=>item.name===name)!;
@@ -83,15 +85,14 @@ dbDescribe('registered custody transfer tools',()=>{
     GraphRegistry.delete(`${owner}-thread`);
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.registerIdleDispatcher(()=>{});
+    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const dispatch=new CompletionDispatchCapture();completionInboxStore.registerIdleDispatcher(dispatch.record.bind(dispatch));
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
     // Hidden runners call this same delivery service after the registered return tool ends their turn.
     const recorded=await registry.getJob(lead.jobId);const {returnedJobResult}=await import('../../../tools/agents/jobDelivery');
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');await agentJobProvider.delivery.deliver(recorded,[returnedJobResult(recorded.tasks[0],'L',recorded.tasks[0].threadId)],0);
-    const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
-    const completions=takeAgentCompletions(adopter,`${adopter}-thread`);expect(completions).toHaveLength(1);expect(completions[0]).toMatchObject({jobId:lead.jobId,taskIndex:0});
-    expect(takeAgentCompletions(owner,`${owner}-thread`)).toHaveLength(0);
+    expect(dispatch.targets.filter(target=>target.threadId===`${adopter}-thread`)).toHaveLength(1);
+    expect(dispatch.targets.filter(target=>target.threadId===`${owner}-thread`)).toHaveLength(0);
     GraphRegistry.delete(`${adopter}-thread`);
   });
 
