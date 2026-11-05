@@ -124,9 +124,10 @@ export async function emitProactiveCompletion(
       const done = results.filter(r => r.status === 'completed').length;
       const blocked = results.filter(r => r.status === 'blocked').length;
       const errored = results.filter(r => r.status === 'error').length;
+      const stopped = results.filter(r => r.status === 'stopped').length;
       const labels = results.map(r => r.label).slice(0, 3).join(', ');
-      headline = errored > 0 || blocked > 0
-        ? `Background agents finished — ${ done } done, ${ blocked } blocked, ${ errored } failed`
+      headline = errored > 0 || blocked > 0 || stopped > 0
+        ? `Background agents finished — ${ done } done, ${ blocked } blocked, ${ errored } failed, ${ stopped } stopped`
         : `Background agents finished — ${ done }/${ results.length } complete`;
       body = results.length === 1
         ? `Task "${ results[0].label }" is ready. Check \`check_agent_jobs("${ jobId }")\` for the full result.`

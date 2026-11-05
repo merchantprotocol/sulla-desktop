@@ -119,6 +119,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
       'replay-parent', 'replay-parent-thread',
     );
     const results = [{ label: 'replay', status: 'completed' as const, output: 'done', threadId: '' }];
+    await registry.recordTaskCompletion(job.jobId, 0, results[0]);
     await registry.completeJob(job.jobId, results);
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(job.jobId) as any, results)).toBe(true);
     expect((await registry.getPendingCompletions()).map(j => j.jobId)).toContain(job.jobId);
@@ -173,13 +174,86 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await restartedProvider.jobs.job(consumed.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
     expect((await restartedProvider.jobs.job(unconsumed.jobId))?.tasks[0].completionDeliveredAt).toBeUndefined();
     const pending = await restartedProvider.service.getPendingCompletions();
-    expect(pending.find(job => job.jobId === consumed.jobId)?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
+    expect(pending.map(job => job.jobId)).not.toContain(consumed.jobId);
     expect(pending.map(job => job.jobId)).toContain(unconsumed.jobId);
 
     inbox.clearCompletionInboxes();
     await recovery.recoverPendingAgentCompletions();
     const recovered = inbox.takeAgentCompletions('terminal-ack-parent', 'terminal-ack-parent-thread');
     expect(recovered.map(item => item.jobId)).toEqual([unconsumed.jobId]);
+  });
+
+  it('b3) does not recover a completed legacy job whose job-level acknowledgement predates per-task acknowledgements', async() => {
+    // risk: upgrades replay every historical contract because old rows have
+    // only completion_delivered_at and no task.completionDeliveredAt.
+    const job = await registry.createJob(
+      [{ agentId: 'worker', label: 'legacy', prompt: 'work', status: 'running' }],
+      'legacy-parent', 'legacy-parent-thread',
+    );
+    const result = { label: 'legacy', status: 'completed' as const, output: 'handled before upgrade', threadId: '' };
+    await registry.recordTaskCompletion(job.jobId, 0, result);
+    await registry.completeJob(job.jobId, [result]);
+    await registry.markCompletionDelivered(job.jobId);
+
+    const persisted = await agentJobProvider.jobs.job(job.jobId);
+    expect(persisted?.completionDeliveredAt).toEqual(expect.any(Number));
+    expect(persisted?.tasks[0].completionDeliveredAt).toBeUndefined();
+    expect((await registry.getPendingCompletions()).map(item => item.jobId)).not.toContain(job.jobId);
+
+    await recovery.recoverPendingAgentCompletions();
+    expect(inbox.takeAgentCompletions('legacy-parent', 'legacy-parent-thread')).toEqual([]);
+  });
+
+  it.each(['failed', 'stopped'] as const)('b4) writes the job acknowledgement for a %s job after every task is acknowledged', async(status) => {
+    // risk: terminal status gates discard the durable job acknowledgement,
+    // causing failed and stopped results to replay after every restart.
+    const job = await registry.createJob(
+      [{ agentId: 'worker', label: status, prompt: 'work', status: 'running' }],
+      `${ status }-parent`, `${ status }-parent-thread`,
+    );
+    const result = { label: status, status: 'error' as const, output: `${ status } result`, threadId: '' };
+    await registry.recordTaskCompletion(job.jobId, 0, result);
+    if (status === 'failed') {
+      await registry.completeJob(job.jobId, [result]);
+    } else {
+      const persisted = (await agentJobProvider.jobs.job(job.jobId))!;
+      await agentJobProvider.jobs.stop(job.jobId, persisted.tasks, { system: 'test' }, 'test stop');
+      await agentJobProvider.jobs.saveStoppedResults(job.jobId, [result], persisted.tasks);
+    }
+
+    const consumingProvider = new AgentJobServiceProvider();
+    await consumingProvider.service.markTaskCompletionDelivered(job.jobId, 0);
+    const acknowledged = await consumingProvider.jobs.job(job.jobId);
+    expect(acknowledged?.status).toBe(status);
+    expect(acknowledged?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
+    expect(acknowledged?.completionDeliveredAt).toEqual(expect.any(Number));
+    expect((await consumingProvider.service.getPendingCompletions()).map(item => item.jobId)).not.toContain(job.jobId);
+  });
+
+  it('b5) recovers only the unacknowledged task in a two-task job and recovers nothing after its acknowledgement', async() => {
+    // risk: a partial parent turn either duplicates the consumed sibling or
+    // loses the sibling that has not entered a parent turn yet.
+    const job = await registry.createJob([
+      { agentId: 'worker', label: 'first', prompt: 'one', status: 'running' },
+      { agentId: 'worker', label: 'second', prompt: 'two', status: 'running' },
+    ], 'partial-parent', 'partial-parent-thread');
+    const results = [
+      { label: 'first', status: 'completed' as const, output: 'one', threadId: '' },
+      { label: 'second', status: 'completed' as const, output: 'two', threadId: '' },
+    ];
+    await registry.recordTaskCompletion(job.jobId, 0, results[0]);
+    await registry.recordTaskCompletion(job.jobId, 1, results[1]);
+    await registry.completeJob(job.jobId, results);
+    await registry.markTaskCompletionDelivered(job.jobId, 0);
+
+    await recovery.recoverPendingAgentCompletions();
+    const recovered = inbox.takeAgentCompletions('partial-parent', 'partial-parent-thread');
+    expect(recovered.map(item => item.taskIndex)).toEqual([1]);
+
+    await registry.markTaskCompletionDelivered(job.jobId, 1);
+    expect((await registry.getPendingCompletions()).map(item => item.jobId)).not.toContain(job.jobId);
+    await recovery.recoverPendingAgentCompletions();
+    expect(inbox.takeAgentCompletions('partial-parent', 'partial-parent-thread')).toEqual([]);
   });
 
   it('c) send_job_message wakes a parked manager without acking before consumption, then its progress and return stay on the same job and wake its parent', async() => {

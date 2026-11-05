@@ -26,6 +26,7 @@ import {
   markCompletionDelivered,
   markTaskCompletionDelivered,
   recordTaskCompletion,
+  stoppedTaskResult,
   MAX_SUBAGENT_DEPTH,
   registerJobWatcher,
   releaseJobWatcher,
@@ -656,7 +657,12 @@ export class SpawnAgentWorker extends BaseTool {
         await agentWaitProvider.cancel(activityJobId!, index);
         taskAbortSignal?.removeEventListener('abort', cancelScheduledWait);
 
-        if (returned) {
+        const stoppedResult = activityJobId
+          ? await stoppedTaskResult(activityJobId, index, label, threadId)
+          : undefined;
+        if (stoppedResult) {
+          taskResult = stoppedResult;
+        } else if (returned) {
           taskResult = returnedJobResult(returned, label, threadId);
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
@@ -678,7 +684,7 @@ export class SpawnAgentWorker extends BaseTool {
             label,
             summary: taskResult.status === 'completed' ? `${ label } finished` : `${ label } is ${ taskResult.status }`,
             detail: taskResult.output,
-            status: taskResult.status === 'completed' ? 'done' : 'failed',
+            status: taskResult.status === 'completed' ? 'done' : taskResult.status === 'stopped' ? 'stopped' : 'failed',
             jobId: activityJobId,
             taskIndex: index,
             conversationId: threadId,
@@ -698,8 +704,11 @@ export class SpawnAgentWorker extends BaseTool {
           }
           return taskResult;
         }
-        const output = `Error: ${ (err as Error).message }`;
-        const stopped = taskAbortSignal?.aborted === true;
+        const stoppedResult = activityJobId
+          ? await stoppedTaskResult(activityJobId, index, label, threadId)
+          : undefined;
+        const output = stoppedResult?.output ?? `Error: ${ (err as Error).message }`;
+        const stopped = Boolean(stoppedResult) || taskAbortSignal?.aborted === true;
         await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `${ stopped ? 'stopped' : 'error' }: ${ output }` });
         if (activityJobId) {
           await updateJobTask(activityJobId, index, { status: stopped ? 'stopped' : 'error', threadId, finishedAt: Date.now() });
@@ -715,7 +724,7 @@ export class SpawnAgentWorker extends BaseTool {
             conversationId: threadId,
           });
         }
-        taskResult = {
+        taskResult = stoppedResult ?? {
           label,
           status:   'error',
           output,

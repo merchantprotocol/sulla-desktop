@@ -124,7 +124,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'stop_agent_job',
-    description: 'Kill switch for a running delegated job, hidden or tab. Hidden: fires the job\'s abort signal, which cascades to every sub-agent it spawned, unwinding them cooperatively (an in-flight LLM/tool call finishes first). Tab: stops the tab\'s live turn and closes its contract. Use when a job was misfired, duplicated, stalled, or is no longer needed; check_agent_jobs afterwards confirms it settled as \'stopped\'.',
+    description: 'Stop one task or a whole delegated job. Pass taskIndex to target one task; omit it to stop every running task in the job. mode "hard" aborts cooperatively after the current LLM/tool call, while mode "wrap_up" first asks the target for a partial contract and hard-stops it after the grace period. Use for misfired, duplicate, stalled, or obsolete work; check_agent_jobs confirms settlement as \'stopped\'.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
