@@ -53,6 +53,17 @@ class LivePageFixture {
     this.list.jobs[0].tasks[0].status = 'completed';
   }
 
+  responseWithLabel(label: string): AgentsListResponse {
+    return {
+      ...this.list,
+      jobs: this.list.jobs.map(job => ({
+        ...job,
+        label,
+        tasks: job.tasks.map(task => ({ ...task, label })),
+      })),
+    };
+  }
+
   install(): void {
     invoke.mockImplementation(async(channel: string) => {
       if (channel === 'agents:list') return this.list;
@@ -128,6 +139,61 @@ describe('StudioLivePage activity refresh', () => {
     await vi.advanceTimersByTimeAsync(6_000);
     await flushPromises();
     expect(fixture.conversationReads).toBe(readsAfterFinalFetch);
+    wrapper.unmount();
+  });
+
+  it('applies every overlapping slow list response once it resolves', async() => {
+    // risk: activity continuity — polling must not starve when each request takes longer than the interval.
+    const fixture = new LivePageFixture();
+    const responses = [new Deferred<AgentsListResponse>(), new Deferred<AgentsListResponse>(), new Deferred<AgentsListResponse>()];
+    let listReads = 0;
+
+    invoke.mockImplementation(async(channel: string) => {
+      if (channel === 'agents:list') return responses[listReads++].promise;
+      throw new Error(`Unexpected IPC channel: ${ channel }`);
+    });
+
+    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(listReads).toBe(3);
+
+    responses[0].resolve(fixture.responseWithLabel('First response'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('First response');
+
+    responses[1].resolve(fixture.responseWithLabel('Second response'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('Second response');
+
+    responses[2].resolve(fixture.responseWithLabel('Third response'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('Third response');
+    wrapper.unmount();
+  });
+
+  it('applies an earlier response before a later response when it resolves first', async() => {
+    // risk: activity continuity — valid responses must update the visible fleet in resolution order.
+    const fixture = new LivePageFixture();
+    const first = new Deferred<AgentsListResponse>();
+    const second = new Deferred<AgentsListResponse>();
+    let listReads = 0;
+
+    invoke.mockImplementation(async(channel: string) => {
+      if (channel === 'agents:list') return (listReads++ === 0 ? first.promise : second.promise);
+      throw new Error(`Unexpected IPC channel: ${ channel }`);
+    });
+
+    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(listReads).toBe(2);
+
+    first.resolve(fixture.responseWithLabel('First response'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('First response');
+
+    second.resolve(fixture.responseWithLabel('Second response'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('Second response');
     wrapper.unmount();
   });
 

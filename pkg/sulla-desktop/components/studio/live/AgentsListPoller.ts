@@ -49,11 +49,11 @@ export class AgentsListPoller {
     try {
       const data = await this.invoke('agents:list') as AgentsListResponse;
 
-      if (!this.refreshSequencer.isLatest(ticket)) return;
+      if (!this.refreshSequencer.tryApply(ticket)) return;
       this.onData(data);
       this.onAvailability(true);
     } catch {
-      if (this.refreshSequencer.isLatest(ticket)) this.onAvailability(false);
+      if (!this.refreshSequencer.hasAppliedNewerThan(ticket)) this.onAvailability(false);
     }
   }
 

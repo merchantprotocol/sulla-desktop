@@ -5,13 +5,20 @@
 
 export class RefreshSequencer {
   private latestRequested = 0;
+  private latestApplied = 0;
 
   next(): number {
     this.latestRequested += 1;
     return this.latestRequested;
   }
 
-  isLatest(ticket: number): boolean {
-    return ticket === this.latestRequested;
+  tryApply(ticket: number): boolean {
+    if (ticket <= this.latestApplied) return false;
+    this.latestApplied = ticket;
+    return true;
+  }
+
+  hasAppliedNewerThan(ticket: number): boolean {
+    return this.latestApplied > ticket;
   }
 }
