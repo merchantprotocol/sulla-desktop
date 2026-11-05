@@ -17,7 +17,6 @@ import { JobCustodyService } from '../Services/JobCustodyService';
 import { JobCustodyAuthorityPolicy } from '../Services/JobCustodyAuthorityPolicy';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness } from '../Services/MainCustodyOwnerLiveness';
 import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
-import { AgentJobTaskStatusPolicy } from '../../services/AgentJobTaskStatusPolicy';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
@@ -46,7 +45,7 @@ export class AgentJobServiceProvider {
     const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const graphPresence = { has: (_threadId: string) => false };
-    const liveness = new MainCustodyOwnerLiveness(taskLocator, new AgentJobTaskStatusPolicy(), graphPresence);
+    const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => !['queued', 'running', 'parked'].includes(status) }, graphPresence);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, new JobTaskCustodyLineage(this.jobs, taskLocator));
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };

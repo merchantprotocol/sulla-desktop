@@ -3,17 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
-import { AgentJobTaskStatusPolicy } from '../../services/AgentJobTaskStatusPolicy';
+import type { AgentJobTaskStatus } from '../../tools/agents/jobRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { CustodyLineagePort, CustodyOwnerLiveness, CustodyOwnerLivenessPort } from './JobCustodyAuthorityPolicy';
 import type { CustodyOwner } from './JobCustodyTypes';
 
+export interface CustodyTaskStatusClassifier { isTerminal(status:AgentJobTaskStatus):boolean }
 export interface ActiveGraphPresence { has(threadId:string):boolean }
 export interface StrandedCustodyDetector { isStranded(threadId:string):Promise<boolean> }
 export class NoopStrandedCustodyDetector implements StrandedCustodyDetector { async isStranded():Promise<boolean>{return false;} }
 
 export class MainCustodyOwnerLiveness implements CustodyOwnerLivenessPort {
-  constructor(private readonly locator:JobTaskLocator,private readonly statuses:AgentJobTaskStatusPolicy,private readonly graphs:ActiveGraphPresence,private readonly stranded:StrandedCustodyDetector=new NoopStrandedCustodyDetector()){}
+  constructor(private readonly locator:JobTaskLocator,private readonly statuses:CustodyTaskStatusClassifier,private readonly graphs:ActiveGraphPresence,private readonly stranded:StrandedCustodyDetector=new NoopStrandedCustodyDetector()){}
   async status(owner:CustodyOwner):Promise<CustodyOwnerLiveness>{
     const located=await this.locator.findTaskByThread(owner.threadId);
     if(!located) return this.graphs.has(owner.threadId)?'alive':'unknown';
