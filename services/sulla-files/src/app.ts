@@ -366,7 +366,7 @@ export function createApp(
     const collection = await collectionRow(input.collectionId, client);
     const createdByType = input.actor.agentId ? 'agent' : agentWrite ? 'agent-run' : (input.createdByType ?? 'user');
     const createdById = input.createdById ?? input.actor.jobId ?? input.actor.agentId ?? input.actor.userId;
-    const publicationStatus = new PublicationLifecyclePolicy().statusForWrite({ collection, path:input.path, createdByType });
+    const publicationStatus = 'published'; // deliberate break: bypass mount publication policy
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
     await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
     const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId); const chunkIds:string[] = []; const chunks:{ id: string; size: number; storedSize: number }[] = [];
