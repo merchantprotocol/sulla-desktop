@@ -19,18 +19,46 @@ const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
 ]);
 
+/** Host and port of the configured Postgres, so socket errors can be attributed to it (or not). */
+let databaseEndpoint: { host: string; port: number } | null = null;
+
+export function setDatabaseEndpoint(connectionString: string | undefined): void {
+  databaseEndpoint = null;
+  if (!connectionString) return;
+  try {
+    const url = new URL(connectionString);
+    databaseEndpoint = { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port) || 5432 };
+  } catch {
+    // Unparseable URL: keep the permissive classification.
+  }
+}
+
+/** Does a socket-level error (EAI_AGAIN, ECONNRESET, ...) point at Postgres rather than some other host? */
+function networkErrorTargetsDatabase(e: { hostname?: unknown; address?: unknown; port?: unknown }): boolean {
+  if (!databaseEndpoint) return true; // endpoint unknown (startup wait, tests): legacy behavior
+  if (typeof e.hostname === 'string') return e.hostname === databaseEndpoint.host;
+  if (typeof e.port === 'number' && e.port !== databaseEndpoint.port) return false;
+  if (typeof e.address === 'string' && e.port === undefined) return e.address === databaseEndpoint.host;
+  // No host/port on the error: pg reports e.g. ECONNRESET on an established pool socket this way.
+  return typeof e.port === 'number' ? e.port === databaseEndpoint.port : true;
+}
+
 /**
  * Postgres being down, restarting or still starting is expected (container
  * restarts, VM resume). Only connection-class failures are retried; real SQL
  * or migration errors still fail fast.
+ *
+ * Generic socket errors (EAI_AGAIN, ETIMEDOUT, ...) only count when they came
+ * from the Postgres connection. The same codes from an upstream fetch
+ * (Anthropic, OpenAI, Sulla Cloud) are egress failures, not a database outage.
  */
 export function isTransientDbError(error: unknown): boolean {
-  const e = error as { code?: unknown; message?: unknown; errors?: unknown[] } | null;
+  const e = error as { code?: unknown; message?: unknown; errors?: unknown[]; hostname?: unknown; address?: unknown; port?: unknown } | null;
   if (!e || typeof e !== 'object') return false;
   const code = typeof e.code === 'string' ? e.code : '';
-  if (TRANSIENT_NETWORK_CODES.has(code)) return true;
   // 57P01-3 admin shutdown / crash / cannot connect now, 08xxx connection exceptions, 53300 too many connections.
   if (/^(57P0[123]|08|53300)/.test(code)) return true;
+  if (TRANSIENT_NETWORK_CODES.has(code)) return networkErrorTargetsDatabase(e);
   if (Array.isArray(e.errors) && e.errors.length && e.errors.every(isTransientDbError)) return true;
   return typeof e.message === 'string' && /Connection terminated|connection.*(?:closed|ended)|timeout exceeded when trying to connect/i.test(e.message);
 }
@@ -97,8 +125,15 @@ export async function ensureVaultDatabase(config: VaultConfig): Promise<void> {
 }
 
 export async function connectDatabase(config: VaultConfig): Promise<Database> {
+  setDatabaseEndpoint(config.databaseUrl);
   await untilDatabaseReady('database setup', () => ensureVaultDatabase(config));
-  const db = survivePoolErrors(new Pool({ connectionString: config.databaseUrl, max: 10 }), 'vault');
+  const db = survivePoolErrors(new Pool({
+    connectionString:        config.databaseUrl,
+    max:                     10,
+    // Fail fast when the pool is starved instead of queueing callers forever.
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis:       30_000,
+  }), 'vault');
   await untilDatabaseReady('connect', () => db.query('SELECT 1'));
   return db;
 }

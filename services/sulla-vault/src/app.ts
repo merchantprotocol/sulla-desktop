@@ -25,7 +25,7 @@ import {
   initializeAccountsOnboarding,
 } from './accountsOnboarding.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
-import { UPSTREAM_RETRY_AFTER_SECONDS } from './upstreamEgress.js';
+import { UPSTREAM_RETRY_AFTER_SECONDS, describeUpstreamError, isUpstreamNetworkError, upstreamFailurePhase, upstreamFailureReason } from './upstreamEgress.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
@@ -1893,6 +1893,15 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       warnDatabaseUnavailable(error);
       response.setHeader('Retry-After', '5');
       response.status(503).json({ error: 'database_unavailable' });
+      return;
+    }
+    if (isUpstreamNetworkError(error)) {
+      // An outbound fetch (provider, Sulla Cloud) failed; Postgres is fine. Report it as the egress failure it is.
+      const detail = describeUpstreamError(error);
+      const reason = upstreamFailureReason(upstreamFailurePhase(detail.code, false), detail.code);
+      console.warn(`sulla-vault: upstream request failed (${ reason })`);
+      response.setHeader('Retry-After', String(UPSTREAM_RETRY_AFTER_SECONDS));
+      response.status(502).json({ error: 'upstream_failed', message: 'Upstream request failed', reason, retryable: true });
       return;
     }
     console.error(error);

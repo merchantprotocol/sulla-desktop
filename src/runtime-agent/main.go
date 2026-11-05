@@ -143,6 +143,7 @@ func main() {
 	go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
 	go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
 	go a.watchDocker()
+	go a.watchResolver()
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGPWR)
 	select {
@@ -267,25 +268,131 @@ func configureNetwork(l *log.Logger) {
 // server comes from the DHCP lease. If the lease had none, use the default
 // gateway, which is the DNS forwarder on Virtualization.framework's NAT.
 func ensureResolver(l *log.Logger) {
-	if b, err := os.ReadFile("/etc/resolv.conf"); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "nameserver ") {
-				l.Printf("dns: %s (from dhcp)", strings.TrimSpace(line))
-				return
-			}
+	if b, err := os.ReadFile("/etc/resolv.conf"); err == nil && resolvConfUsable(string(b)) {
+		l.Printf("dns: %s (from dhcp)", firstNameserverLine(string(b)))
+		return
+	}
+	repairResolverFromGateway(l)
+}
+
+// usableNameservers returns the nameserver addresses in a resolv.conf that can
+// actually answer from inside the guest. Loopback (127.x, ::1) is excluded: no
+// resolver listens there, so a file with only those fails every lookup (dockerd
+// logs "lookup ... on [::1]:53: connection refused").
+func usableNameservers(content string) []string {
+	var servers []string
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+		ip := net.ParseIP(fields[1])
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		servers = append(servers, fields[1])
+	}
+	return servers
+}
+
+func resolvConfUsable(content string) bool { return len(usableNameservers(content)) > 0 }
+
+func firstNameserverLine(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "nameserver ") {
+			return strings.TrimSpace(line)
 		}
 	}
+	return ""
+}
+
+// defaultGateway parses `ip -4 route show default` output.
+func defaultGateway(routeOutput string) (string, bool) {
+	fields := strings.Fields(routeOutput)
+	if len(fields) < 3 || fields[1] != "via" || net.ParseIP(fields[2]) == nil {
+		return "", false
+	}
+	return fields[2], true
+}
+
+// repairResolverFromGateway points resolv.conf at the default gateway. It
+// returns true when the file was rewritten.
+func repairResolverFromGateway(l *log.Logger) bool {
 	out, err := exec.Command("/sbin/ip", "-4", "route", "show", "default").Output()
-	fields := strings.Fields(string(out))
-	if err != nil || len(fields) < 3 || fields[1] != "via" || net.ParseIP(fields[2]) == nil {
+	gw, ok := defaultGateway(string(out))
+	if err != nil || !ok {
 		l.Printf("dns: no nameserver from dhcp and no default gateway")
-		return
+		return false
 	}
-	if err := os.WriteFile("/etc/resolv.conf", []byte("nameserver "+fields[2]+"\n"), 0644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", []byte("nameserver "+gw+"\n"), 0644); err != nil {
 		l.Printf("dns: write resolv.conf: %v", err)
+		return false
+	}
+	l.Printf("dns: nameserver %s (default gateway)", gw)
+	return true
+}
+
+// healResolver runs one self-healing pass. A resolv.conf with no usable
+// nameserver (the host changed networks and the lease went stale, or only
+// loopback is left) is rebuilt: renew the DHCP lease first, then fall back to
+// the default gateway. If the file looks fine but a lookup still fails, the
+// upstream moved, so the gateway is written when it differs. After any rewrite
+// dockerd gets SIGHUP so its embedded 127.0.0.11 resolver re-reads upstreams.
+func (a *agent) healResolver(lookup func() error) {
+	content := ""
+	if b, err := os.ReadFile("/etc/resolv.conf"); err == nil {
+		content = string(b)
+	}
+	changed := false
+	if !resolvConfUsable(content) {
+		a.log.Printf("dns: resolv.conf has no usable nameserver; repairing")
+		_ = exec.Command("/sbin/udhcpc", "-q", "-n", "-i", "eth0").Run()
+		if b, err := os.ReadFile("/etc/resolv.conf"); err == nil && resolvConfUsable(string(b)) {
+			changed = true
+		} else {
+			changed = repairResolverFromGateway(a.log)
+		}
+	} else if err := lookup(); err != nil {
+		out, _ := exec.Command("/sbin/ip", "-4", "route", "show", "default").Output()
+		gw, ok := defaultGateway(string(out))
+		current := usableNameservers(content)
+		if ok && !(len(current) == 1 && current[0] == gw) {
+			a.log.Printf("dns: lookup failed (%v); switching resolver to default gateway", err)
+			changed = repairResolverFromGateway(a.log)
+		}
+	}
+	if changed {
+		a.unitsMu.Lock()
+		cmd := a.units["dockerd"]
+		a.unitsMu.Unlock()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGHUP)
+			a.log.Printf("dns: notified dockerd of resolver change")
+		}
+	}
+}
+
+// watchResolver keeps guest DNS working across host network changes.
+func (a *agent) watchResolver() {
+	if kernelArg("sulla.network") == "off" {
 		return
 	}
-	l.Printf("dns: nameserver %s (default gateway)", fields[2])
+	lookup := func() error {
+		ctx, cancel := context.WithTimeout(a.ctx, 4*time.Second)
+		defer cancel()
+		_, err := net.DefaultResolver.LookupHost(ctx, "registry-1.docker.io")
+		return err
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.healResolver(lookup)
+		}
+	}
 }
 
 func (a *agent) reapAdopted() {
