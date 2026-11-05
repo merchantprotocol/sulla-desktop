@@ -217,10 +217,6 @@ jobs:
       - name: Install BusyBox for guest disk characterization
         if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
-      - name: Temporary related-spec duration diagnostic
-        env:
-          TEST_PR_BASE_REF: origin/${{ github.base_ref }}
-        run: node scripts/test-pr-duration-diagnostic.mjs
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
