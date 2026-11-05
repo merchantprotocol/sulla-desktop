@@ -83,6 +83,15 @@ export interface AgentJobTask {
   promotedToTab?: boolean;
 }
 
+export interface OrphanedChildNotice {
+  childJobId: string;
+  taskIndex: number;
+  managerThreadId: string;
+  managerStatus: 'completed' | 'failed' | 'stopped';
+  results: AgentJobResult[];
+  recordedAt: number;
+}
+
 export interface AgentJob {
   jobId:      string;
   status:     'running' | 'parked' | 'completed' | 'failed' | 'stopped';
@@ -101,6 +110,7 @@ export interface AgentJob {
   waitingOnChildren?: number;
   restartResumeCount?: number;
   dismissedAt?: number | null;
+  orphanedChildNotices?: OrphanedChildNotice[];
 }
 
 export interface CreateJobOptions {

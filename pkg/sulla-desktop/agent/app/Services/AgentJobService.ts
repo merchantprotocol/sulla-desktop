@@ -7,7 +7,7 @@ import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
-import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator) { super(); this.runtime.start(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
@@ -310,6 +310,14 @@ async getPendingCompletions(): Promise<AgentJob[]> {
  */
 async findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined> {
   return this.taskLocator.findTaskByThread(threadId);
+}
+
+/** Persist and mirror one deduplicated late-child notice on its terminal owner. */
+async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+  const recorded = await this.repository.appendOrphanNotice(jobId, notice);
+  const refreshed = await this.repository.job(jobId);
+  if (refreshed) this.runtime.jobs.set(jobId, refreshed);
+  return recorded;
 }
 
 /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
