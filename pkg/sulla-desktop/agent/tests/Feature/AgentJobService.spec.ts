@@ -88,6 +88,32 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(await registry.stopJobTask(job.jobId, 1, StopPrincipal.human(), 'targeted stop')).toBe('stopped');
     expect((await registry.getJob(job.jobId))?.status).toBe('stopped');
   });
+  it('settles a task stopped mid-turn with honest persisted output while its sibling keeps running', async() => {
+    // risk: lifecycle isolation — an intentional stop must not become a false missing-contract failure.
+    const job = await registry.createJob([
+      { agentId: 'worker', label: 'unaffected', prompt: 'keep working', status: 'running', threadId: 'unaffected-thread' },
+      { agentId: 'worker', label: 'stopped', prompt: 'mid-turn work', status: 'running', threadId: 'stopped-thread' },
+    ]);
+    expect(await registry.stopJobTask(job.jobId, 1, StopPrincipal.system('WrapUpGraceExpiry'), 'acceptance: hard stop one task')).toBe('stopped');
+
+    const result = await registry.stoppedTaskResult(job.jobId, 1, 'stopped', 'stopped-thread');
+    expect(result).toMatchObject({
+      status: 'stopped',
+      output: 'stopped by WrapUpGraceExpiry: acceptance: hard stop one task',
+    });
+    expect(result?.output).not.toContain('missing_contract');
+    await registry.recordTaskCompletion(job.jobId, 1, result!);
+
+    const { AgentJobRepository } = await import('../../app/Repositories/AgentJobRepository');
+    const { DesktopPostgresConnection } = await import('../../app/Database/DesktopPostgresConnection');
+    const { postgresClient } = await import('../../database/PostgresClient');
+    const persisted = await new AgentJobRepository(new DesktopPostgresConnection(postgresClient)).job(job.jobId);
+    expect(persisted?.status).toBe('running');
+    expect(persisted?.tasks[0].status).toBe('running');
+    expect(persisted?.tasks[1].status).toBe('stopped');
+    expect(persisted?.tasks[1].completion).toMatchObject(result!);
+  });
+
   it('acknowledges completion delivery once even when retried', async() => {
     // risk: duplicate irreversible side effect
     const job = await registry.createJob(0, 'parent', 'parent-thread');

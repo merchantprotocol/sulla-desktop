@@ -97,6 +97,25 @@ abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {
   return this.stops.stopTask(jobId, taskIndex, principal, reason);
 }
+/** Build the canonical result for an intentionally stopped task. */
+async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
+  const job = await this.getJob(jobId);
+  const task = job?.tasks[taskIndex];
+  if (task?.status !== 'stopped') return undefined;
+  const attribution = task.stoppedBy ?? job?.stoppedBy;
+  const stoppedBy = attribution === 'human'
+    ? 'human'
+    : attribution && 'agentId' in attribution
+      ? attribution.agentId
+      : attribution?.system ?? 'unknown';
+  return {
+    label,
+    status: 'stopped',
+    output: `stopped by ${ stoppedBy }: ${ task.stopReason ?? job?.stopReason ?? 'no reason recorded' }`,
+    threadId: threadId || task.threadId || '',
+    contract: task.contract?.name,
+  };
+}
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {
   return this.stops.authorize(jobId, principal);
 }
