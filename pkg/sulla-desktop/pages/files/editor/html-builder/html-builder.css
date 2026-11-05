@@ -164,6 +164,31 @@
   white-space: nowrap
 }
 
+.shb-wb-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+
+.shb-wb-url-copy {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.shb-wb-url-copy svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+
 .shb-wb-url b {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
   font-size: 11px;
