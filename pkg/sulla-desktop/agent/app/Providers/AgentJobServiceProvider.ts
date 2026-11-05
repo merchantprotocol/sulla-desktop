@@ -14,6 +14,8 @@ import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
 import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { JobStopService } from '../Services/JobStopService';
 import { JobCustodyService } from '../Services/JobCustodyService';
+import { CustodyCallerVerifier } from '../Services/CustodyCallerVerifier';
+import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
 import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
@@ -32,6 +34,7 @@ export class AgentJobServiceProvider {
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
   readonly custody: JobCustodyService;
+  readonly custodyCallerVerifier: CustodyCallerVerifier;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -46,7 +49,9 @@ export class AgentJobServiceProvider {
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const graphPresence = { matches: async(owner: { channel:string; threadId:string; agentId:string }) => { const { GraphRegistry } = await import('../../services/GraphRegistry'); const entry=GraphRegistry.get(owner.threadId); if(!entry)return false; const metadata=entry.state.metadata as any; return String(metadata.wsChannel??'')===owner.channel&&String(metadata.agentId??metadata.agent?.id??metadata.wsChannel??'')===owner.agentId; } };
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => !['queued', 'running', 'parked'].includes(status) }, graphPresence, new MainStrandedOwnerDetector(taskLocator,this.jobs));
-    const topLevelSessions=new TopLevelHumanSessionAuthorityRule(async threadId=>Boolean(await taskLocator.findTaskByThread(threadId)));
+    const topLevelConversations=new GraphRegistryTopLevelConversationRegistry();
+    this.custodyCallerVerifier=new CustodyCallerVerifier(taskLocator,topLevelConversations);
+    const topLevelSessions=new TopLevelHumanSessionAuthorityRule(topLevelConversations);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository),topLevelSessions);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
