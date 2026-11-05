@@ -1931,10 +1931,12 @@ export class ChatCompletionsServer {
   async start(requestedPort?: number): Promise<void> {
     await this.loadApiToken();
     if (!this.containerRetention) {
-      const [{ AgentContainerRetentionBootstrap }, { GuestDockerRuntimeDriver }, { AgentContainerLaunchComposition }] = await Promise.all([
+      const [{ AgentContainerRetentionBootstrap }, { GuestDockerRuntimeDriver }, { AgentContainerLaunchComposition }, { JobRegistryStatusReader }, jobRegistry] = await Promise.all([
         import('@pkg/agent/services/AgentContainerRetentionBootstrap'),
         import('@pkg/agent/services/AgentContainerLauncher'),
         import('@pkg/agent/services/AgentContainerComposition'),
+        import('@pkg/agent/services/JobRegistryStatusReader'),
+        import('@pkg/agent/tools/agents/jobRegistry'),
       ]);
       this.containerLaunchComposition = new AgentContainerLaunchComposition(
         new GuestDockerRuntimeDriver(), getSullaFilesMountManager(), paths.sullaRuntime,
@@ -1946,10 +1948,7 @@ export class ChatCompletionsServer {
         this.containerLaunchComposition.activeContainers,
         undefined,
         undefined,
-        { status: async(jobId: string) => {
-          const registry = await import('@pkg/agent/tools/agents/jobRegistry');
-          return (await registry.getJob(jobId))?.status;
-        } },
+        new JobRegistryStatusReader(jobRegistry),
       );
       this.containerRetention.start();
     }
