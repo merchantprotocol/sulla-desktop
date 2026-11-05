@@ -10,6 +10,9 @@ import { AgentContainerLaunchCoordinator, type AgentLaunchJobReporter } from './
 import type { ActiveContainerGuard } from './AgentContainerRetentionPolicy';
 import { IdempotentRetry } from './AgentContainerStartupRetry';
 import { SullaFilesBindPlanner, SullaFilesMountHealthProbe, SullaRuntimeGuestCommandRunner, type MountAvailabilityView } from './SullaFilesMountHealthProbe';
+import { GuestDiskSpaceProbe, SullaRuntimeCommandRunner } from './GuestDiskSpaceProbe';
+import { GuestSystemLoadProbe, WorkerResourcePreflight } from './WorkerResourcePreflight';
+import { InfrastructureFailureClassifier } from './InfrastructureFailureClassifier';
 
 class DateClock implements Clock {
   now(): Date { return new Date() }
@@ -47,6 +50,7 @@ export class AgentContainerLaunchComposition {
   ) {}
 
   create(threadId?: string): AgentContainerLaunchCoordinator {
+    const resourceRunner = new SullaRuntimeCommandRunner(this.runtimeBinary);
     const probe = new SullaFilesMountHealthProbe(
       this.mountManager,
       new SullaRuntimeGuestCommandRunner(this.runtimeBinary),
@@ -58,6 +62,11 @@ export class AgentContainerLaunchComposition {
       new SullaFilesBindPlanner(probe),
       new AgentJobCheckinReporter(threadId),
       this.activeContainers,
+      new WorkerResourcePreflight(
+        new GuestDiskSpaceProbe(resourceRunner, '/mnt/data'),
+        new GuestSystemLoadProbe(resourceRunner),
+      ),
+      new InfrastructureFailureClassifier(),
     );
   }
 }

@@ -28,19 +28,34 @@ export class InfrastructureFailureResultPresenter {
 export class InfrastructureFailureClassifier {
   classify(evidence: ProcessFailureEvidence): InfrastructureFailure | undefined {
     if (evidence.error instanceof InfrastructureFailure) return evidence.error;
-    const text = [this.errorText(evidence.error), evidence.exitOutput, evidence.lastLogLines]
+    const errors = this.errorChain(evidence.error);
+    const text = [...errors.map(error => this.errorText(error)), evidence.exitOutput, evidence.lastLogLines]
       .filter(Boolean).join('\n');
-    if (this.isDiskFull(text, evidence.error)) {
+    if (errors.some(error => this.hasDiskFullCode(error)) || this.isDiskFullText(text)) {
       return new InfrastructureFailure('infrastructure: disk full', { cause: evidence.error });
     }
     return undefined;
   }
 
-  private isDiskFull(text: string, error: unknown): boolean {
+  private hasDiskFullCode(error: unknown): boolean {
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
     const errno = typeof error === 'object' && error !== null && 'errno' in error ? String(error.errno) : '';
-    return code === 'ENOSPC' || errno === 'ENOSPC' || errno === '-28' ||
-      /\bENOSPC\b|no space left on device|docker[^\n]*no space left|git[^\n]*no space left/i.test(text);
+    return code === 'ENOSPC' || errno === 'ENOSPC' || errno === '-28';
+  }
+
+  private isDiskFullText(text: string): boolean {
+    return /\bENOSPC\b|no space left on device|docker[^\n]*no space left|git[^\n]*no space left/i.test(text);
+  }
+
+  private errorChain(error: unknown): unknown[] {
+    const chain: unknown[] = [];
+    let current = error;
+    for (let depth = 0; current !== undefined && depth < 5; depth++) {
+      chain.push(current);
+      if (typeof current !== 'object' || current === null) break;
+      current = 'firstError' in current ? current.firstError : 'cause' in current ? current.cause : undefined;
+    }
+    return chain;
   }
 
   private errorText(error: unknown): string {

@@ -5,10 +5,11 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ContainerSpec } from '@pkg/runtime/containerRuntime';
-import { AgentContainerLaunchCoordinator, type AgentContainerDiagnosticRuntime, type AgentLaunchJobReporter } from '@pkg/agent/services/AgentContainerLaunchCoordinator';
+import { AgentContainerLaunchCoordinator, type AgentContainerDiagnosticRuntime, type AgentLaunchJobReporter, type WorkerLaunchPreflight } from '@pkg/agent/services/AgentContainerLaunchCoordinator';
 import { IdempotentRetry, StartupRetryError } from '@pkg/agent/services/AgentContainerStartupRetry';
 import { SullaFilesBindPlanner } from '@pkg/agent/services/SullaFilesMountHealthProbe';
 import { GuestDockerRuntimeDriver, type GuestDockerCommandExecutor } from '@pkg/agent/services/GuestDockerRuntimeDriver';
+import { InfrastructureFailure } from '@pkg/agent/services/WorkerResourcePreflight';
 
 class FakeRuntime implements AgentContainerDiagnosticRuntime {
   created: ContainerSpec[] = [];
@@ -51,19 +52,45 @@ class Harness {
   readonly runtime = new FakeRuntime();
   readonly reporter = new FakeReporter();
   available = true;
-  readonly coordinator = new AgentContainerLaunchCoordinator(
-    this.runtime,
-    new IdempotentRetry(() => Promise.resolve()),
-    new SullaFilesBindPlanner({ check: () => Promise.resolve(this.available
-      ? { available: true }
-      : { available: false, reason: 'ENOTCONN' }) }),
-    this.reporter,
-  );
+  readonly coordinator: AgentContainerLaunchCoordinator;
+
+  constructor(preflight?: WorkerLaunchPreflight) {
+    this.coordinator = new AgentContainerLaunchCoordinator(
+      this.runtime,
+      new IdempotentRetry(() => Promise.resolve()),
+      new SullaFilesBindPlanner({ check: () => Promise.resolve(this.available
+        ? { available: true }
+        : { available: false, reason: 'ENOTCONN' }) }),
+      this.reporter,
+      undefined,
+      preflight,
+    );
+  }
 
   spec(): ContainerSpec { return { name: 'sulla-agent-job-1-0', image: 'agent:latest', autoRemove: true } }
 }
 
 describe('AgentContainerLaunchCoordinator', () => {
+  it('refuses before container creation when resource preflight fails', async() => {
+    // risk: secrets and guest paths are created before a known-unhealthy launch is refused
+    const preflight: WorkerLaunchPreflight = { assertLaunchAllowed: () => Promise.reject(new InfrastructureFailure('infrastructure: disk full (1.1 GiB free, need 2.0 GiB)')) };
+    const h = new Harness(preflight);
+    await expect(h.coordinator.create(h.spec())).rejects.toMatchObject({
+      failureType: 'infrastructure',
+      message: 'infrastructure: disk full (1.1 GiB free, need 2.0 GiB)',
+    });
+    expect(h.runtime.created).toEqual([]);
+  });
+
+  it('classifies an ENOSPC container start exit as infrastructure', async() => {
+    // risk: a machine disk failure is reported as defective worker work
+    const h = new Harness();
+    h.runtime.startErrors = [Object.assign(new Error('write failed'), { code: 'ENOSPC' })];
+    await expect(h.coordinator.start('container-1', [0])).rejects.toMatchObject({
+      failureType: 'infrastructure', message: 'infrastructure: disk full',
+    });
+  });
+
   it('creates without Docker auto-remove and explicitly removes a healthy run', async() => {
     // risk: diagnostics disappear before the real start error can be read
     const h = new Harness();
