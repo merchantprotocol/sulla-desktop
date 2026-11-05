@@ -75,7 +75,9 @@ export const parkedAgentRehydrator = new ParkedAgentRehydrator(
   agentDefinitionService,
   failJob,
   (job, error) => {
-    if (!job.parentChannel || !job.parentThreadId) return;
-    void import('./AgentCompletionInbox').then(({ enqueueAgentCompletion }) => enqueueAgentCompletion(job.parentChannel!, job.parentThreadId!, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: error }));
+    void agentJobProvider.custody.withOwner(job.jobId,undefined,async(_client,owner) => {
+      const { enqueueAgentCompletion }=await import('./AgentCompletionInbox');
+      enqueueAgentCompletion(owner.channel,owner.threadId,{jobId:job.jobId,taskIndex:-1,results:[],failureReason:error});
+    });
   },
 );

@@ -42,7 +42,7 @@ suite('AgentJobCustodyRepository',()=>{
  });
  it('resolves and inserts for the new owner inside the shared producer lock',async()=>{ // risk: contract sent to stale owner
    const id=`custody-producer-${Date.now()}`;await createJob(id);const instance=service();const stale=await instance.resolveOwner(id);expect(stale?.threadId).toBe('old-thread');expect((await move(instance,id)).ok).toBe(true);const messageId=`locked-producer-${Date.now()}`;
-   await instance.withOwner(id,0,human,async(client,owner)=>{await client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','done',$5::jsonb)`,[messageId,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:0})]);});
+   await instance.withOwner(id,0,async(client,owner)=>{await client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','done',$5::jsonb)`,[messageId,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:0})]);});
    const rows=await database.query<any>(`SELECT * FROM agent_inbox_messages WHERE message_id=$1`,[messageId]);expect(rows).toHaveLength(1);expect(rows[0].receiver_thread_id).toBe(target.threadId);
  });
  it('routes a manager worker result and manager contract exactly once during adoption',async()=>{ // risk: cross-scope result loss during H8 adoption
@@ -50,8 +50,8 @@ suite('AgentJobCustodyRepository',()=>{
    expect((await instance.move({jobId:id,taskIndex:1,to:manager,actor:human,reason:'manager owns worker'})).ok).toBe(true);
    const workerResult=`worker-result-${Date.now()}`;const managerContract=`manager-contract-${Date.now()}`;
    const adoption=move(instance,id);
-   const workerReturn=instance.withOwner(id,1,human,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','worker done',$5::jsonb)`,[workerResult,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:1})]));
-   const managerReturn=instance.withOwner(id,undefined,human,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'manager','contract','manager done',$5::jsonb)`,[managerContract,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id})]));
+   const workerReturn=instance.withOwner(id,1,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'worker','contract','worker done',$5::jsonb)`,[workerResult,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id,taskIndex:1})]));
+   const managerReturn=instance.withOwner(id,undefined,async(client,owner)=>client.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids) VALUES($1,$2,$3,$4,'manager','contract','manager done',$5::jsonb)`,[managerContract,owner.channel,owner.threadId,owner.agentId,JSON.stringify({jobId:id})]));
    expect((await adoption).ok).toBe(true);await Promise.all([workerReturn,managerReturn]);
    const rows=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id=ANY($1)`,[[workerResult,managerContract]]);expect(rows).toHaveLength(2);expect(rows.filter(row=>row.message_id===workerResult)).toEqual([{message_id:workerResult,receiver_thread_id:manager.threadId}]);expect(rows.filter(row=>row.message_id===managerContract)).toEqual([{message_id:managerContract,receiver_thread_id:target.threadId}]);
  });
