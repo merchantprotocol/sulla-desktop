@@ -114,8 +114,8 @@ export class AgentDetailFeed {
     const previousIdentity = this.detail.logIdentity;
     const incomingIdentity = incoming.logIdentity;
     const logWasReplaced = previousIdentity !== undefined && incomingIdentity !== undefined && (
-      previousIdentity.ino !== incomingIdentity.ino ||
-      previousIdentity.birthtimeMs !== incomingIdentity.birthtimeMs ||
+      this.availableIdentityFieldChanged(previousIdentity.ino, incomingIdentity.ino, true) ||
+      this.availableIdentityFieldChanged(previousIdentity.birthtimeMs, incomingIdentity.birthtimeMs) ||
       incomingIdentity.size < previousIdentity.size
     );
 
@@ -125,7 +125,14 @@ export class AgentDetailFeed {
     const lastKnownOffset = knownOffsets.length === 0 ? -1 : Math.max(...knownOffsets);
     const additions = incoming.entries.filter(entry => entry.offset === undefined || entry.offset > lastKnownOffset);
 
-    return { ...incoming, entries: [...existing, ...this.append(additions)] };
+    return { ...incoming, logIdentity: incomingIdentity ?? previousIdentity, entries: [...existing, ...this.append(additions)] };
+  }
+
+  private availableIdentityFieldChanged(previous: number, incoming: number, zeroIsUnavailable = false): boolean {
+    const previousAvailable = Number.isFinite(previous) && (!zeroIsUnavailable || previous !== 0);
+    const incomingAvailable = Number.isFinite(incoming) && (!zeroIsUnavailable || incoming !== 0);
+
+    return previousAvailable && incomingAvailable && previous !== incoming;
   }
 
   private append(entries: ConversationEntry[]): FeedEntry[] {

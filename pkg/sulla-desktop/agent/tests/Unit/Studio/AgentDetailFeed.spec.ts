@@ -152,6 +152,61 @@ describe('AgentDetailFeed', () => {
     feed.dispose();
   });
 
+  it('retains log identity through a missing-log poll before replacing and appending', async() => {
+    // risk: activity continuity — a transient missing log must not freeze replacement rows below stale offsets.
+    const oldEntry = { kind: 'event' as const, ts: '1', text: 'old generation', offset: 900 };
+    const replacement = { kind: 'event' as const, ts: '2', text: 'replacement', offset: 0 };
+    const appended = { kind: 'event' as const, ts: '3', text: 'appended', offset: 30 };
+    const oldIdentity = { size: 1_000, ino: 10, birthtimeMs: 100 };
+    const replacementIdentity = { size: 30, ino: 11, birthtimeMs: 200 };
+    const missing = { ...detail([], 'thread-1'), missingLog: true };
+    const snapshots: FeedSnapshot[] = [];
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(detail([oldEntry], 'thread-1', oldIdentity))
+      .mockResolvedValueOnce(missing)
+      .mockResolvedValueOnce(detail([replacement], 'thread-1', replacementIdentity))
+      .mockResolvedValueOnce(detail([replacement, appended], 'thread-1', { ...replacementIdentity, size: 60 }))
+      .mockResolvedValueOnce(detail([replacement, appended], 'thread-1', { ...replacementIdentity, size: 60 }));
+    const feed = new AgentDetailFeed(invoke, new FakeVisibilitySource(), setInterval, clearInterval, snapshot => snapshots.push(snapshot));
+
+    feed.select('thread-1');
+    await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['old generation']));
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['old generation']);
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement']);
+    await feed.refresh();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement', 'appended']);
+    await feed.refresh();
+
+    expect(entryTexts(snapshots.at(-1))).toEqual(['replacement', 'appended']);
+    expect(snapshots.at(-1)?.loading).toBe(false);
+    feed.dispose();
+  });
+
+  it('does not replace a log when birthtime is unavailable on consecutive polls', async() => {
+    // risk: activity continuity — an unavailable birth time must not remount unchanged activity every poll.
+    const stable = { kind: 'event' as const, ts: '1', text: 'stable', offset: 10 };
+    const unavailableBirthtime = { size: 40, ino: 10, birthtimeMs: Number.NaN };
+    const snapshots: FeedSnapshot[] = [];
+    const feed = new AgentDetailFeed(
+      vi.fn().mockResolvedValue(detail([stable], 'thread-1', unavailableBirthtime)),
+      new FakeVisibilitySource(),
+      setInterval,
+      clearInterval,
+      snapshot => snapshots.push(snapshot),
+    );
+
+    feed.select('thread-1');
+    await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['stable']));
+    const sequence = snapshots.at(-1)?.detail?.entries[0]?.feedSequence;
+    await feed.refresh();
+
+    expect(entryTexts(snapshots.at(-1))).toEqual(['stable']);
+    expect(snapshots.at(-1)?.detail?.entries[0]?.feedSequence).toBe(sequence);
+    feed.dispose();
+  });
+
   it('keeps a same-identity, same-size reread unchanged', async() => {
     // risk: activity accuracy — an unchanged poll must not duplicate already rendered records.
     const entry = { kind: 'event' as const, ts: '1', text: 'stable', offset: 10 };
