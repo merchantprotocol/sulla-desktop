@@ -6,12 +6,13 @@ import type { AgentJob, AgentJobResult, OrphanedChildNotice } from '../tools/age
 
 export interface OrphanedChildJobStore {
   findTaskByThread(threadId: string): Promise<{ job: AgentJob; taskIndex: number } | undefined>;
-  appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<void>;
+  appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean>;
 }
 
 export interface OrphanedChildCapture {
   notice: OrphanedChildNotice;
   route?: { channel: string; threadId: string };
+  duplicate?: boolean;
 }
 
 /** Redirects late child results without ever reopening their finished manager. */
@@ -32,10 +33,11 @@ export class OrphanedChildResultService {
       results,
       recordedAt: Date.now(),
     };
-    await this.jobs.appendOrphanNotice(owner.jobId, notice);
+    const recorded = await this.jobs.appendOrphanNotice(owner.jobId, notice);
 
     return {
       notice,
+      ...(!recorded ? { duplicate: true } : {}),
       ...(owner.parentThreadId ? {
         route: { channel: owner.parentChannel || 'sulla-desktop', threadId: owner.parentThreadId },
       } : {}),

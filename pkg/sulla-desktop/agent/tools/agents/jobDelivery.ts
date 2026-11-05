@@ -139,7 +139,7 @@ export async function emitProactiveCompletion(
 export async function deliverJobCompletion(job: Pick<AgentJob, 'jobId' | 'parentChannel' | 'parentThreadId'>, results: AgentJobResult[], taskIndex = 0): Promise<boolean> {
   const orphan = await orphanedChildResults.capture(job as AgentJob, results, taskIndex);
   if (orphan) {
-    if (!orphan.route) return true;
+    if (orphan.duplicate || !orphan.route) return true;
     const failureReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
     return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, failureReason, taskIndex);
   }
