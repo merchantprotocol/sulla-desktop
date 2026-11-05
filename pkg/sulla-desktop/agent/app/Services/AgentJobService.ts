@@ -162,7 +162,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
 
   // Terminal verdicts are immutable. A stopped job may still settle its
   // in-flight promise afterwards, but only its partial result payload changes.
-  if (job.status === 'completed' || job.status === 'failed') return;
+  if (job.status === 'completed' || (job.status === 'failed' && job.finishedAt !== null)) return;
   if (job.status === 'stopped') {
     job.results = results;
     job.tasks = job.tasks.map(task => task.status === 'running' || task.status === 'queued' || task.status === 'parked'
