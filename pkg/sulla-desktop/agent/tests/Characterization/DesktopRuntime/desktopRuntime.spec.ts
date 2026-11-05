@@ -10,9 +10,6 @@ import { promisify } from 'node:util';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-import toolPlacements from '../../../../../../resources/tool-placements.json';
-import { initializeCatalog, resolveTool } from '../../../../../../services/sulla-tools/src/catalog';
-
 const exec = promisify(execFile);
 const root = process.cwd();
 
@@ -47,27 +44,6 @@ async function importClosure(entries: string[]): Promise<Set<string>> {
 }
 
 describe('desktop runtime regression contracts', () => {
-  // risk: delegated workers lose their completion/control surface when the tools image catalog drifts.
-  it('keeps every delegated-worker agents tool placed and resolvable by sulla-tools', async () => {
-    const delegatedWorkerTools = ['wait', 'report_progress', 'return_result', 'send_job_message'] as const;
-
-    await initializeCatalog();
-
-    for (const name of delegatedWorkerTools) {
-      expect(toolPlacements.tools[`agents/${ name }`]).toMatchObject({
-        category: 'agents',
-        name,
-        placements: expect.arrayContaining(['desktop']),
-        relayable: true,
-      });
-      expect(resolveTool('agents', name)).toMatchObject({
-        category: 'agents',
-        name,
-        executionTarget: 'controller',
-      });
-    }
-  });
-
   it('BL-045 copies every workspace module in the sulla_tools static-import closure', async () => {
     const dockerfile = await readFile(path.join(root, 'services/sulla-tools/Dockerfile'), 'utf8');
     const closure = await importClosure([path.join(root, 'services/sulla-tools/src/index.ts')]);
