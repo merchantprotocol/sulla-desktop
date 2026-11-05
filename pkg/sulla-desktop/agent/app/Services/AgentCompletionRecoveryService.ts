@@ -3,13 +3,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { Service } from '@sulla/foundation';
-import type { AgentJob } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import { AgentCompletionInboxService } from './AgentCompletionInboxService';
 
 export interface PendingCompletionSource {
-  getPendingCompletions(): Promise<AgentJob[]>;
+  getPendingCompletions?(): Promise<AgentJob[]>;
+  pendingCompletions?(): Promise<AgentJob[]>;
 }
 
+/** Decides whether a task result has already entered a parent turn. */
+export class CompletionDeliveryPolicy {
+  isDelivered(job: AgentJob, task: AgentJobTask): boolean {
+    return Boolean(task.completionDeliveredAt || job.completionDeliveredAt);
+  }
+}
+
+/** Owns restart recovery state and re-enqueues each undelivered task independently. */
 export class AgentCompletionRecoveryService extends Service {
   private recoveryPromise: Promise<void> | null = null;
   private readonly inFlight = new Set<string>();
@@ -17,6 +26,7 @@ export class AgentCompletionRecoveryService extends Service {
   constructor(
     private readonly source: PendingCompletionSource,
     private readonly inbox: AgentCompletionInboxService,
+    private readonly deliveryPolicy = new CompletionDeliveryPolicy(),
   ) {
     super();
   }
@@ -40,17 +50,25 @@ export class AgentCompletionRecoveryService extends Service {
   }
 
   private async recoverPending(): Promise<void> {
-    const jobs = await this.source.getPendingCompletions();
+    const jobs = this.source.getPendingCompletions
+      ? await this.source.getPendingCompletions()
+      : await this.source.pendingCompletions?.() ?? [];
     for (const job of jobs) await this.recoverJob(job);
   }
 
   private async recoverJob(job: AgentJob): Promise<void> {
-    if (this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) return;
+    if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) return;
     this.inFlight.add(job.jobId);
     try {
-      this.inbox.enqueue(job.parentChannel, job.parentThreadId, {
-        jobId: job.jobId,
-        results: job.results,
+      job.tasks.forEach((task, taskIndex) => {
+        const result = task.completion ?? job.results[taskIndex];
+        if (result && !this.deliveryPolicy.isDelivered(job, task)) {
+          this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, {
+            jobId: job.jobId,
+            taskIndex,
+            results: [result],
+          });
+        }
       });
     } catch (error) {
       console.warn(`[AgentCompletionRecovery] delivery failed for ${ job.jobId }; will retry:`, error);

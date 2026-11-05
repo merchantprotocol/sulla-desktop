@@ -3,31 +3,38 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { Service } from '@sulla/foundation';
-import type { AgentJobResult } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/jobRegistry';
 import { CompletionFormatter } from './CompletionFormatter';
 import { CompletionIdleDispatcher, type CompletionDispatch } from './CompletionIdleDispatcher';
-import type { CompletionTimer, CompletionTimerHandle } from './CompletionTimer';
+
+export interface AgentTerminalNotice {
+  status: 'stopped' | 'failed';
+  reason: string;
+  stoppedBy?: AgentJob['stoppedBy'] | AgentJobTask['stoppedBy'];
+}
 
 export interface PendingCompletion {
   jobId: string;
+  taskIndex: number;
   results: AgentJobResult[];
   failureReason?: string;
+  terminal?: AgentTerminalNotice;
+  notice?: string;
+  dedupeKey?: string;
 }
 
 interface CompletionInbox {
   entries: PendingCompletion[];
-  timer?: CompletionTimerHandle;
   stopped: boolean;
 }
 
+/** Owns the per-thread, per-task completion queue with no fixed delivery delay. */
 export class AgentCompletionInboxService extends Service {
   private readonly inboxes = new Map<string, CompletionInbox>();
 
   constructor(
-    private readonly timer: CompletionTimer,
     private readonly idleDispatcher: CompletionIdleDispatcher,
     private readonly formatter: CompletionFormatter,
-    private readonly coalesceMs: number,
   ) {
     super();
   }
@@ -39,15 +46,18 @@ export class AgentCompletionInboxService extends Service {
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
-    if (!inbox.entries.some(entry => entry.jobId === completion.jobId)) {
-      inbox.entries.push(completion);
-    }
+    const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
+    const duplicate = inbox.entries.some(entry =>
+      (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
+    if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
-    if (!inbox.stopped && !inbox.timer) {
-      inbox.timer = this.timer.schedule(() => this.dispatch(channel, threadId, inbox), this.coalesceMs);
-      inbox.timer.unref();
-    }
-    return true;
+    if (!inbox.stopped && !duplicate) this.idleDispatcher.dispatch(channel, threadId);
+    return !duplicate;
+  }
+
+  notifyReady(channel: string, threadId: string): void {
+    const inbox = this.inboxes.get(this.keyFor(channel, threadId));
+    if (!inbox?.stopped && inbox?.entries.length) this.idleDispatcher.dispatch(channel, threadId);
   }
 
   setStopped(channel: string, threadId: string, stopped: boolean): void {
@@ -59,9 +69,7 @@ export class AgentCompletionInboxService extends Service {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key);
     if (!inbox?.entries.length) return [];
-    if (inbox.timer) this.timer.cancel(inbox.timer);
     const entries = inbox.entries.splice(0);
-    inbox.timer = undefined;
     inbox.stopped = false;
     this.inboxes.delete(key);
     return entries;
@@ -72,11 +80,7 @@ export class AgentCompletionInboxService extends Service {
   }
 
   stop(): void {
-    for (const inbox of this.inboxes.values()) {
-      if (inbox.timer) this.timer.cancel(inbox.timer);
-      inbox.timer = undefined;
-      inbox.stopped = true;
-    }
+    for (const inbox of this.inboxes.values()) inbox.stopped = true;
   }
 
   dispose(): void {
@@ -87,11 +91,6 @@ export class AgentCompletionInboxService extends Service {
 
   pendingCount(): number {
     return Array.from(this.inboxes.values()).reduce((count, inbox) => count + inbox.entries.length, 0);
-  }
-
-  private dispatch(channel: string, threadId: string, inbox: CompletionInbox): void {
-    inbox.timer = undefined;
-    if (!inbox.stopped && inbox.entries.length) this.idleDispatcher.dispatch(channel, threadId);
   }
 
   private keyFor(channel: string, threadId: string): string {

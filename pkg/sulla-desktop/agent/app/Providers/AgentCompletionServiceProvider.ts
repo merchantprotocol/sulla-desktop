@@ -6,10 +6,8 @@ import { AgentCompletionInboxService } from '../Services/AgentCompletionInboxSer
 import { AgentCompletionRecoveryService } from '../Services/AgentCompletionRecoveryService';
 import { CompletionFormatter } from '../Services/CompletionFormatter';
 import { CompletionIdleDispatcher } from '../Services/CompletionIdleDispatcher';
-import { SystemCompletionTimer } from '../Services/CompletionTimer';
 import { getPendingCompletions } from '../../tools/agents/jobRegistry';
 
-export const COMPLETION_COALESCE_MS = 2_000;
 export const COMPLETION_RESULT_LIMIT = 8_000;
 
 export class AgentCompletionServiceProvider {
@@ -19,10 +17,8 @@ export class AgentCompletionServiceProvider {
   constructor() {
     const dispatcher = new CompletionIdleDispatcher();
     this.inbox = new AgentCompletionInboxService(
-      new SystemCompletionTimer(),
       dispatcher,
       new CompletionFormatter(COMPLETION_RESULT_LIMIT),
-      COMPLETION_COALESCE_MS,
     );
     this.recovery = new AgentCompletionRecoveryService({ getPendingCompletions }, this.inbox);
   }

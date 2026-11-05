@@ -7,56 +7,30 @@ import { AgentCompletionInboxService } from '../app/Services/AgentCompletionInbo
 import { AgentCompletionRecoveryService } from '../app/Services/AgentCompletionRecoveryService';
 import { CompletionFormatter } from '../app/Services/CompletionFormatter';
 import { CompletionIdleDispatcher } from '../app/Services/CompletionIdleDispatcher';
-import type { CompletionTimer, CompletionTimerHandle } from '../app/Services/CompletionTimer';
 
-class InertTimer implements CompletionTimer {
-  schedule(): CompletionTimerHandle {
-    return { unref: vi.fn() };
-  }
-
-  cancel(): void {}
-}
+const result = (label: string) => ({ label, status: 'completed' as const, output: label, threadId: `thread-${ label }` });
 
 describe('AgentCompletionRecoveryService', () => {
-  it('recovers deliverable jobs once and clears in-flight ownership', async() => {
-    const inbox = new AgentCompletionInboxService(
-      new InertTimer(),
-      new CompletionIdleDispatcher(),
-      new CompletionFormatter(8_000),
-      2_000,
-    );
+  it('recovers only undelivered task contracts and coalesces concurrent recovery', async() => {
+    // risk: restart recovery must neither drop nor replay task contracts.
+    const inbox = new AgentCompletionInboxService(new CompletionIdleDispatcher(), new CompletionFormatter(8_000));
     const source = {
-      getPendingCompletions: vi.fn().mockResolvedValue([
-        {
-          jobId: 'job-recovered',
-          status: 'completed',
-          createdAt: 1,
-          finishedAt: 2,
-          taskCount: 1,
-          tasks: [],
-          results: [],
-          parentChannel: 'parent',
-          parentThreadId: 'thread',
-        },
-        {
-          jobId: 'job-orphan',
-          status: 'completed',
-          createdAt: 1,
-          finishedAt: 2,
-          taskCount: 1,
-          tasks: [],
-          results: [],
-        },
-      ]),
+      getPendingCompletions: vi.fn().mockResolvedValue([{
+        jobId: 'job-recovered', status: 'completed', createdAt: 1, finishedAt: 2, taskCount: 2,
+        tasks: [
+          { completion: result('ready'), completionDeliveredAt: undefined },
+          { completion: result('already-delivered'), completionDeliveredAt: 3 },
+        ],
+        results: [result('ready'), result('already-delivered')],
+        parentChannel: 'parent', parentThreadId: 'thread',
+      }]),
     };
-    const recovery = new AgentCompletionRecoveryService(source, inbox);
+    const recovery = new AgentCompletionRecoveryService(source as any, inbox);
 
     await Promise.all([recovery.recover(), recovery.recover()]);
 
     expect(source.getPendingCompletions).toHaveBeenCalledOnce();
-    expect(inbox.take('parent', 'thread').map(entry => entry.jobId)).toEqual(['job-recovered']);
-    expect(recovery.inFlightCount()).toBe(0);
-    recovery.dispose();
+    expect(inbox.take('parent', 'thread').map(entry => entry.taskIndex)).toEqual([0]);
     expect(recovery.inFlightCount()).toBe(0);
   });
 });
