@@ -282,7 +282,7 @@ async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<voi
   if (!job?.tasks[taskIndex] || job.tasks[taskIndex].completionDeliveredAt) return;
   job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: this.clock.now().getTime() };
   if (job.tasks.every(task => task.completionDeliveredAt)) job.completionDeliveredAt = this.clock.now().getTime();
-  await this.persist(this.repository.updateTasks(jobId, job.tasks));
+  await this.persist(this.repository.markTaskCompletionDelivered(jobId, taskIndex, job.tasks[taskIndex].completionDeliveredAt!));
   if (job.completionDeliveredAt) await this.persist(this.repository.markCompletionDelivered(jobId));
 }
 /** Mark a persisted completion delivered only after the graph wake was sent. */
