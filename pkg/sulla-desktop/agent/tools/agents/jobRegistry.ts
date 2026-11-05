@@ -38,7 +38,7 @@ export type AgentJobTaskStatus = typeof AGENT_JOB_TASK_STATUSES[number];
 
 export interface AgentJobResult {
   label:    string;
-  status:   'completed' | 'blocked' | 'error';
+  status:   'completed' | 'blocked' | 'error' | 'stopped';
   output:   string;
   threadId: string;
   /** Contract name and the structured value the child returned, if it did. */

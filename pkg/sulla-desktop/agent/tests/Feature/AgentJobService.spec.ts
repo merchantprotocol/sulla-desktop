@@ -100,6 +100,8 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(result).toMatchObject({
       status: 'stopped',
       output: 'stopped by WrapUpGraceExpiry: acceptance: hard stop one task',
+      threadId: 'stopped-thread',
+      contract: 'result',
     });
     expect(result?.output).not.toContain('missing_contract');
     await registry.recordTaskCompletion(job.jobId, 1, result!);

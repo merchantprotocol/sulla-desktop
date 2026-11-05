@@ -113,7 +113,7 @@ async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadI
     status: 'stopped',
     output: `stopped by ${ stoppedBy }: ${ task.stopReason ?? job?.stopReason ?? 'no reason recorded' }`,
     threadId: threadId || task.threadId || '',
-    contract: task.contract?.name,
+    contract: task.contract?.name ?? 'result',
   };
 }
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {
