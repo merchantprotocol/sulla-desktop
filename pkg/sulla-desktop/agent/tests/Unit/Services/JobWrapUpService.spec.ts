@@ -9,10 +9,10 @@ import type { StopPrincipalValue } from '../../../app/ValueObjects/StopPrincipal
 
 class FakeTimer implements JobWrapUpTimer {
   private next = 0;
-  readonly callbacks = new Map<number, () => void>();
-  readonly cancelled: number[] = [];
-  schedule(_delay: number, callback: () => void): number { const id = ++this.next; this.callbacks.set(id, callback); return id; }
-  cancel(handle: number): void { this.cancelled.push(handle); this.callbacks.delete(handle); }
+  readonly callbacks = new Map<ReturnType<typeof setTimeout>, () => void>();
+  readonly cancelled: Array<ReturnType<typeof setTimeout>> = [];
+  schedule(_delay: number, callback: () => void): ReturnType<typeof setTimeout> { const id = ++this.next as unknown as ReturnType<typeof setTimeout>; this.callbacks.set(id, callback); return id; }
+  cancel(handle: ReturnType<typeof setTimeout>): void { this.cancelled.push(handle); this.callbacks.delete(handle); }
   elapse(): void { for (const [id, callback] of [...this.callbacks]) { this.callbacks.delete(id); callback(); } }
 }
 
