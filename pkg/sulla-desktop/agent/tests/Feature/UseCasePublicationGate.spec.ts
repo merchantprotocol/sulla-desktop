@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createHash, randomUUID } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -227,8 +227,9 @@ class ProductionFilesFixture {
 
   private token(agent:boolean):string { return issueCapabilityToken({sub:this.userId,device_id:'test-device',scopes:['files/*'],...(agent?{agent_id:'test-agent',job_id:'test-job'}:{})},this.signingKey) }
   private async request(path:string,init:RequestInit,agent:boolean):Promise<any> {
-    const response=await fetch(`${this.baseUrl}${path}`,{...init,headers:{authorization:`Bearer ${this.token(agent)}`,...(agent?{'x-sulla-actor':'test-agent:test-job'}:{}),...(init.headers??{})}});
-    const body=await response.json().catch(()=>({})); if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`); return body;
+    const url=new URL(path,this.baseUrl); const payload=typeof init.body==='string'||Buffer.isBuffer(init.body)?init.body:undefined;
+    const result=await new Promise<{status:number;body:string}>((resolve,reject)=>{const request=httpRequest(url,{method:init.method,headers:{authorization:`Bearer ${this.token(agent)}`,...(agent?{'x-sulla-actor':'test-agent:test-job'}:{}),...(init.headers??{})}},response=>{const chunks:Buffer[]=[];response.on('data',chunk=>chunks.push(Buffer.from(chunk)));response.on('end',()=>resolve({status:response.statusCode??500,body:Buffer.concat(chunks).toString('utf8')}));});request.on('error',reject);if(payload!==undefined)request.write(payload);request.end();});
+    const body=result.body?JSON.parse(result.body):{}; if(result.status<200||result.status>=300)throw new Error(`${result.status} ${JSON.stringify(body)}`); return body;
   }
 
   async bufferedDraft():Promise<any> {
@@ -252,8 +253,8 @@ class ProductionFilesFixture {
 
   async replicationCases():Promise<any> {
     const logsId=randomUUID();
-    await this.pool!.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,system_area)
-      VALUES($1,$2,'Logs','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,'logs')`,[logsId,this.userId]);
+    await this.pool!.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,system_area,explorer_path)
+      VALUES($1,$2,'Logs','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,'logs','Logs')`,[logsId,this.userId]);
     (this.manager as any).rootCollections.set('default',logsId);
     const replicate=async(input:{id:string;path:string;status:string;publishedAt:string|null;publishedBy:string|null;collection?:any})=>{
       const fileId=randomUUID(); const target=join(this.root,'files',input.path); await mkdir(resolve(target,'..'),{recursive:true}); await writeFile(target,'');
