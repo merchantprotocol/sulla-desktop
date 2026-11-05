@@ -16,6 +16,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent,
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
+import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
@@ -31,11 +32,12 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
-import { abortJob, getJobsForParentThread, markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
+import { markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -73,6 +75,11 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+
+  /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
+  private prepareFreshTurn(state: AgentGraphState): void {
+    (this.turnPreparer ?? new DelegatedTurnPreparer()).prepare(state);
+  }
   private resumeContexts = new Map<string, {
     channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
     overrideAgentId?: string; inputSource?: string;
@@ -118,8 +125,8 @@ export class BackendGraphWebSocketService {
     // disconnected new turn, which would leave this exact Promise (and its
     // eventual completeJob/deliverJobCompletion once the loop returns)
     // blocked forever.
+    const delegated = GraphRegistry.get(threadId);
     if (agentJobLifecycle.hasLiveWaiter(threadId)) {
-      const delegated = GraphRegistry.get(threadId);
       // Should not happen — the waiter and this GraphRegistry entry share the
       // same spawn_agent call's lifetime — but release the waiter either way
       // so a contradiction here cannot leak the Promise.
@@ -128,6 +135,20 @@ export class BackendGraphWebSocketService {
         agentJobLifecycle.wake(threadId);
         return false;
       }
+      injectSteer(delegated.state, {
+        id:        nextMessageId(),
+        role:      'user',
+        content:   `[Message from orchestrator]\n${ message }`,
+        timestamp: Date.now(),
+        metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
+      } as any);
+      agentJobLifecycle.wake(threadId);
+      return true;
+    }
+    // The worker can persist its wait just before spawn_agent registers the
+    // in-process waiter. Keep this wake on the same graph: inject now and
+    // latch the wake for waitForWake() to consume once settlement begins.
+    if (delegated && (delegated.state.metadata as any)?.delegatedRunActive) {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
@@ -162,7 +183,7 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor() {
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
   }
@@ -421,6 +442,7 @@ export class BackendGraphWebSocketService {
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
+    agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
   }
 
   /**
@@ -473,7 +495,6 @@ export class BackendGraphWebSocketService {
       }
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       setCompletionInboxStopped(channelId, stopThreadId, true);
-      for (const job of await getJobsForParentThread(stopThreadId)) abortJob(job.jobId);
       return;
     }
 
@@ -802,10 +823,6 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-        await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
-      }
-
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -865,11 +882,7 @@ export class BackendGraphWebSocketService {
         resumeNodeId !== 'output';
 
       // Reset execution counters for this run (but NOT messages — those accumulate)
-      state.metadata.consecutiveSameNode = 0;
-      state.metadata.iterations = 0;
-      (state.metadata as any).agentLoopCount = 0;
-      state.metadata.cycleComplete = false;
-      state.metadata.waitingForUser = false;
+      this.prepareFreshTurn(state);
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       // Front-door repair channels stay in the VM during the staged rollout,
