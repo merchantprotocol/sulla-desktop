@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
 import { TestDatabase } from '../../Support/TestDatabase';
 import { ReportProgressWorker } from '../../../tools/agents/report_progress';
@@ -169,6 +170,8 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const progress = JSON.parse((await progressWorker.runHarness('wake-c-manager-thread', { step: 'woken', summary: 'resumed after wake' })).responseString!);
     expect(progress.jobId).toBe(manager.jobId);
     expect(progress.taskIndex).toBe(0);
+    const defaultStep = JSON.parse((await progressWorker.runHarness('wake-c-manager-thread', { summary: 'Default milestone' })).responseString!);
+    expect(defaultStep.checkin.step).toBe('progress');
 
     await registry.recordTaskReturn(manager.jobId, 0, { result: { answer: 1 }, status: 'completed' });
     const results = [{ label: 'manager', status: 'completed' as const, output: 'epic done', threadId: 'wake-c-manager-thread' }];
@@ -339,7 +342,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const completed = await registry.createJob([{ agentId: 'worker', label: 'done', prompt: 'x', status: 'running', threadId: 'terminal-h-completed-thread' }]);
     await registry.completeJob(completed.jobId, [{ label: 'done', status: 'completed', output: 'ok', threadId: 'terminal-h-completed-thread' }]);
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running', threadId: 'terminal-h-stopped-thread' }]);
-    registry.abortJob(stopped.jobId);
+    registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop');
     await registry.completeJob(stopped.jobId, []);
     const failed = await registry.createJob([{ agentId: 'worker', label: 'failed', prompt: 'x', status: 'running', threadId: 'terminal-h-failed-thread' }]);
     await registry.failJob(failed.jobId, 'boom');
@@ -391,8 +394,8 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     });
     expect((await registry.getJob(manager.jobId))?.tasks[0].returnedAt).toBeUndefined();
 
-    registry.abortJob(firstChild.jobId);
-    registry.abortJob(secondChild.jobId);
+    registry.abortJob(firstChild.jobId, StopPrincipal.system('ParkedManagerWakeLifecycle'), 'clear child before manager contract');
+    registry.abortJob(secondChild.jobId, StopPrincipal.system('ParkedManagerWakeLifecycle'), 'clear child before manager contract');
     const accepted = await worker.runHarness(managerThreadId, { status: 'completed', summary: 'done', output: {} });
     expect(accepted.successBoolean).toBe(true);
   });

@@ -66,6 +66,8 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
     orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
     error: job.error,
+    stoppedBy: job.stoppedBy,
+    stopReason: job.stopReason,
     tasks: jobTaskViews(job, telemetry),
     results: job.results,
     orphanedChildNotices: job.orphanedChildNotices ?? [],
@@ -89,6 +91,8 @@ function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobT
     taskCount: job.taskCount,
     orphanedChildNoticeCount: job.orphanedChildNotices?.length ?? 0,
     elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
+    stoppedBy: job.stoppedBy,
+    stopReason: job.stopReason,
     tasks: job.tasks.map((task, taskIndex) => ({
       taskIndex,
       agentId: task.agentId,

@@ -110,6 +110,8 @@ export interface AgentJob {
   waitingOnChildren?: number;
   restartResumeCount?: number;
   dismissedAt?: number | null;
+  stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+  stopReason?: string;
   orphanedChildNotices?: OrphanedChildNotice[];
 }
 
