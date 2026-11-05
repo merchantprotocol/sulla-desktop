@@ -6,6 +6,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { DEPS_FILES, RUNTIME_URLS } from './constants';
 import { materializeStoredFunctionInGuest, removeGuestFunctionMaterialization } from './guestFunctionMaterialization';
+import { FunctionBrowserInvocation } from '../../services/FunctionBrowserInvocation';
 
 async function runtimePost(url: string, body: unknown): Promise<any> {
   // The runtime containers start on first use and stop when idle; hold the
@@ -260,15 +261,20 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
   lines.push(`Step ${ invokeStep } — Invoking with inputs:\n${ inputSummary }`);
 
   let invokeResult: any;
+  const browserInvocation = new FunctionBrowserInvocation(`direct-${ slug }-${ Date.now() }`, manifest);
   try {
+    const browserEnv = await browserInvocation.environment();
+    const env = { ...integrationEnv, ...browserEnv };
     invokeResult = await runtimePost(`${ runtimeUrl }/invoke`, {
       name: slug,
       version,
       inputs,
-      ...(Object.keys(integrationEnv).length > 0 ? { env: integrationEnv } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
     });
   } catch (err) {
     return failAndRecord('invoke', `Invocation failed: ${ (err as Error).message }`);
+  } finally {
+    await browserInvocation.close();
   }
 
   const durationMs: number = invokeResult.duration_ms ?? 0;
