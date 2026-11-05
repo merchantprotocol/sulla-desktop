@@ -27,7 +27,11 @@ dbDescribe('registered custody transfer tools',()=>{
     const {postgresClient}=await import('../../../database/PostgresClient'); await postgresClient.initialize(); await postgresClient.query(`SET search_path TO "${database.schema}", public`);
     registry=await import('../../../tools/agents/jobRegistry');
   },60_000);
-  afterAll(async()=>database.dispose());
+  afterAll(async()=>{
+    const {postgresClient}=await import('../../../database/PostgresClient');
+    await postgresClient.end();
+    await database.dispose();
+  });
 
   it('H1/H7 transfers custody through the registered manifest path and records durable notices',async()=>{
     // risk: authorization + lost contracts/blockers after a manager handoff
