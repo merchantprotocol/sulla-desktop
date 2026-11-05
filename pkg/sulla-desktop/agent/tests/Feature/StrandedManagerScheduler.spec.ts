@@ -21,10 +21,11 @@ dbDescribe('StrandedManagerScheduler with real Postgres', () => {
   let episodes: StrandedEpisodeRepository;
   beforeAll(async() => {
     await database.initialize();
-    const connection = new PostgresConnection({ query: async(sql, bindings) => {
+    const testClient = { query: async(sql: string, bindings?: readonly unknown[]) => {
       const rows = await database.query(sql, [...(bindings ?? [])]);
       return { rows, rowCount: rows.length };
-    } });
+    } } as unknown as ConstructorParameters<typeof PostgresConnection>[0];
+    const connection = new PostgresConnection(testClient);
     episodes = new StrandedEpisodeRepository(connection);
   }, 60_000);
   afterAll(async() => database.dispose());
