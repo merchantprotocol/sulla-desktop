@@ -25,6 +25,8 @@ export class VerifiedCustodyActor {
     if (token !== VERIFIED_ACTOR_TOKEN) throw new Error('Custody actors must be verified from runtime caller context.');
   }
 
+  assertVerified(): void { if (!this.#verified) throw new Error('Unverified custody actor.'); }
+
   /** Reserved for a future direct UI/IPC adapter. Agent tools must never call this factory. */
   static humanForUiIpc(): VerifiedCustodyActor {
     return new VerifiedCustodyActor('human', '', '', '', 'top-level', VERIFIED_ACTOR_TOKEN);
