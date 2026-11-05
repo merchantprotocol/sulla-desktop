@@ -428,7 +428,7 @@ export class BackendGraphWebSocketService {
     recoverPendingAgentCompletions().catch(err =>
       console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
     const interruptedRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(job, taskIndex) => {
         const task = job.tasks[taskIndex];
         const channel = job.parentChannel || 'sulla-desktop';

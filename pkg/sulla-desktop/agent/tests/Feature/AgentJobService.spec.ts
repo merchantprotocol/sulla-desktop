@@ -47,12 +47,12 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       ($1, 'running', 1, now(), '[{"agentId":"worker","status":"running","threadId":"worker-thread"}]', 'hidden'),
       ($2, 'parked', 1, now(), '[{"agentId":"manager","status":"parked","threadId":"manager-thread"}]', 'hidden')`, [hiddenId, parkedId]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    const first = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    const first = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(first.resumable.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('running');
     expect((await agentJobProvider.jobs.job(parkedId))?.status).toBe('parked');
-    await agentJobProvider.jobs.claimInterruptedJobs(2);
-    const exhausted = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    await agentJobProvider.states.claimInterruptedJobs(2);
+    const exhausted = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(exhausted.exhausted.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('failed');
   });
@@ -216,6 +216,28 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(snapshot.rows.find(row => row.jobId === job.jobId && row.taskIndex === 0)).toMatchObject({
       state: 'stopped', stoppedBy: 'human', stopReason: 'race stop', killedByHuman: true,
     });
+  });
+
+  it('preserves concurrent descendant updates while cascade stop records attribution', async() => {
+    // risk: a manager kill loses stopped-task attribution or a concurrent worker update
+    const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'cascade-race-manager' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'cascade-race-worker' }], 'manager', 'cascade-race-manager');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const stopping = registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'cascade race stop');
+    await didEnter;
+    const updating = registry.updateJobTask(child.jobId, 0, { summary: 'concurrent worker update' });
+    await updating; release(); await stopping; gate.mockRestore();
+    for (const jobId of [root.jobId, child.jobId]) {
+      const durable = await agentJobProvider.jobs.job(jobId);
+      expect(durable).toMatchObject({ status: 'stopped', stoppedBy: 'human', stopReason: 'cascade race stop' });
+      expect(durable?.tasks[0]).toMatchObject({ status: 'stopped' }); expect(durable?.tasks[0].finishedAt).toEqual(expect.any(Number));
+      expect(agentJobProvider.runtime.jobs.get(jobId)).toEqual(durable);
+    }
+    expect((await agentJobProvider.jobs.job(child.jobId))?.tasks[0].summary).toBe('concurrent worker update');
   });
 
   it('prevents stale liveness reconciliation from overwriting completion', async() => {

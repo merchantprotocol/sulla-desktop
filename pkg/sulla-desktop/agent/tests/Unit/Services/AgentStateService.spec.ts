@@ -13,7 +13,7 @@ class InMemoryAgentStateStore implements AgentStateStore {
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
-  async stopCascade(jobId: string): Promise<string[]> { const job = this.durable.get(jobId); if (!job) return []; this.durable.set(jobId, { ...job, status: 'stopped', tasks: job.tasks.map(task => ({ ...task, status: 'stopped' })) }); return [jobId]; }
+  async cascadeJobs(jobId: string): Promise<AgentJob[]> { const job = this.durable.get(jobId); return job ? [structuredClone(job)] : []; }
   async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { this.durable.set(job.jobId, structuredClone(job)); return true; }
 }
 class EmptyTelemetry { async latest(): Promise<null> { return null; } }

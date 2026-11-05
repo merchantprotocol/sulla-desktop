@@ -323,7 +323,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const resumed: Array<{ jobId: string; taskIndex: number }> = [];
     const failed: string[] = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(job, taskIndex) => { resumed.push({ jobId: job.jobId, taskIndex }) },
       (job) => { failed.push(job.jobId) },
       2,
@@ -411,7 +411,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // A fresh recovery service bound straight to the repository models a cold restart.
     const resumed: Array<{ jobId: string; taskIndex: number }> = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(resumedJob, taskIndex) => { resumed.push({ jobId: resumedJob.jobId, taskIndex }) },
       () => {},
       2,
@@ -469,7 +469,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     const resumed: string[] = [];
     const bootRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(resumedJob) => { resumed.push(resumedJob.jobId) },
       () => {},
       2,

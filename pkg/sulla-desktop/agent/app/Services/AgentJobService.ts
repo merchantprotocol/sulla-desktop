@@ -131,10 +131,12 @@ async getJobsForList(limit = 25, includeFinished = true): Promise<AgentJob[]> { 
  * this one task parks (AgentJobRepository.claimInterruptedJobs filters on
  * job-level status).
  */
-async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<void> {
-  const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'running') return;
-  await this.states.transition(jobId, taskIndex, { status: 'parked' }, { waitingOnChildren });
+async parkJobTask(jobId: string, taskIndex: number, waitingOnChildren: number): Promise<boolean> {
+  return Boolean(await this.states.mutateJob(jobId, current => current.tasks[taskIndex]?.status === 'running'
+    ? { ...current, waitingOnChildren, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, status: 'parked' } : task) }
+    : undefined));
 }
+
 async resumeParkedJob(jobId: string, taskIndex: number): Promise<void> {
   const job = await this.states.jobForWrite(jobId); if (!job || job.tasks[taskIndex]?.status !== 'parked') return;
   await this.states.transition(jobId, taskIndex, { status: 'running' }, { waitingOnChildren: 0, finishedAt: null });

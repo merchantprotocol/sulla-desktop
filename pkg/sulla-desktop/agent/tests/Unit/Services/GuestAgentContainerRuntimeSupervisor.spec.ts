@@ -29,3 +29,28 @@ describe('GuestAgentContainerRuntimeSupervisor', () => {
     await expect(hanging.liveBindings()).rejects.toThrow('timed out');
   });
 });
+
+describe('RuntimeRehydrationCoordinator', () => {
+  it('recovers readiness after a rejected inventory without losing live bindings', async() => {
+    // risk: transient Docker failure permanently disables fleet reads or marks a live container lost
+    const { RuntimeRehydrationCoordinator } = await import('../../../services/RuntimeRehydrationCoordinator');
+    const retries: Array<() => void> = []; const inventory = vi.fn()
+      .mockRejectedValueOnce(new Error('docker unavailable')).mockResolvedValueOnce(undefined);
+    const reconcile = vi.fn(async() => undefined);
+    const coordinator = new RuntimeRehydrationCoordinator(inventory, reconcile, { after: (_delay, action) => retries.push(action) }, 1, 2);
+    coordinator.start(); await vi.waitFor(() => expect(retries).toHaveLength(1));
+    await expect(coordinator.ready()).rejects.toThrow('runtime inventory pending/retrying: docker unavailable');
+    retries.shift()?.(); await vi.waitFor(() => expect(coordinator.isReady()).toBe(true));
+    await expect(coordinator.ready()).resolves.toBeUndefined(); expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers readiness when a timed-out inventory succeeds on retry', async() => {
+    // risk: a hung Docker inspect poisons readiness for the process lifetime
+    const { RuntimeRehydrationCoordinator } = await import('../../../services/RuntimeRehydrationCoordinator');
+    const retries: Array<() => void> = []; const inventory = vi.fn()
+      .mockRejectedValueOnce(new Error('Agent container inventory timed out after 10ms')).mockResolvedValueOnce(undefined);
+    const coordinator = new RuntimeRehydrationCoordinator(inventory, async() => undefined, { after: (_delay, action) => retries.push(action) }, 1, 2);
+    coordinator.start(); await vi.waitFor(() => expect(retries).toHaveLength(1)); retries.shift()?.();
+    await vi.waitFor(() => expect(coordinator.isReady()).toBe(true)); await expect(coordinator.ready()).resolves.toBeUndefined();
+  });
+});
