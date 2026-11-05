@@ -82,8 +82,52 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   function bareInstance(): InstanceType<typeof BackendGraphWebSocketService> {
     const instance = Object.create(BackendGraphWebSocketService.prototype);
     (instance as any).activeAborts = new Map();
+    (instance as any).resumeContexts = new Map();
+    (instance as any).wsService = { send: vi.fn() };
     return instance;
   }
+
+  it('redelivers an ordinary completion after graph execution fails, then acknowledges it exactly once after success', async() => {
+    // risk: ordinary dispatch acknowledges a child completion before the graph
+    // consumes it, so an exception loses the only durable wake permanently.
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager-sol', run_location: 'vm' } as any);
+    const childThread = `ordinary-ack-child-${ Date.now() }`;
+    const parentThread = `ordinary-ack-parent-${ Date.now() }`;
+    const child = await registry.createJob(
+      [{ agentId: 'codex-sol-worker', label: 'child', prompt: 'work', status: 'running', threadId: childThread }],
+      'coding-manager-sol', parentThread,
+    );
+    const result = { label: 'child', status: 'completed' as const, output: 'done', threadId: childThread };
+    await registry.recordTaskCompletion(child.jobId, 0, result);
+    const completion = { jobId: child.jobId, taskIndex: 0, results: [result] };
+    const state: any = {
+      metadata: { options: {}, agent: { runLocation: 'vm' }, cycleComplete: false },
+      messages: [], llmTools: [], nodeHistory: [],
+    };
+    let executions = 0;
+    const graph = { execute: vi.fn(async() => {
+      executions++;
+      if (executions === 1) throw new Error('fail before consuming completion');
+      state.metadata.cycleComplete = true;
+      return state;
+    }) };
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({ graph, state } as any);
+    vi.spyOn(GraphRegistry, 'get').mockReturnValue({ graph, state } as any);
+    const delivered = vi.spyOn(registry, 'markTaskCompletionDelivered');
+    const service = bareInstance();
+
+    await (service as any).dispatchToAgent(
+      'coding-manager-sol', 'sulla-desktop', 'child finished', parentThread,
+      undefined, 'coding-manager-sol', 'system',
+      { source: 'sub_agent_completion', completionEntries: [completion] },
+    );
+
+    await vi.waitFor(() => expect(graph.execute).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 10 });
+    await vi.waitFor(async() => expect((await registry.getJob(child.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number)), { timeout: 2_000, interval: 10 });
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered).toHaveBeenCalledWith(child.jobId, 0);
+    expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
+  });
 
   it('wakes the manager as itself exactly once, completes its own job, delivers exactly one completion to its parent, and leaves no waiter or Promise behind', async() => {
     // risk: a worker's completion re-enters a parked manager's thread through

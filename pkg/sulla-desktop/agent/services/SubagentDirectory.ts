@@ -16,6 +16,7 @@
 
 import { AgentJobMessagingModel, type AgentJobTaskTelemetry } from '../database/models/AgentJobMessagingModel';
 import { getJobsForParentThread, type AgentJob, type AgentJobTask } from '../tools/agents/jobRegistry';
+import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 import { RunActivity } from './RunActivity';
 
 /** An open child silent this long is flagged as stalled. */
@@ -23,6 +24,8 @@ export const SUBAGENT_STALL_MS = 15 * 60_000;
 /** A delivered, finished child stays listed this long, then drops off. */
 export const SUBAGENT_DONE_TTL_MS = 60 * 60_000;
 export const SUBAGENT_DIRECTORY_MAX_CHARS = 3000;
+
+const taskStatusPolicy = new AgentJobTaskStatusPolicy();
 
 function ago(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
@@ -44,7 +47,7 @@ function quote(text: string, max = 80): string {
 }
 
 export function isOpenAgentJobTask(job: AgentJob, task: AgentJobTask): boolean {
-  return (job.status === 'running' || job.status === 'parked') && ['running', 'queued', 'parked'].includes(task.status);
+  return (job.status === 'running' || job.status === 'parked') && taskStatusPolicy.isOpen(task.status);
 }
 
 interface ChildRow {

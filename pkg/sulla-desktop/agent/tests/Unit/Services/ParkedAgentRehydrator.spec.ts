@@ -43,6 +43,25 @@ describe('ParkedAgentRehydrator', () => {
     expect(await service.resolve('manager-thread')).toBeNull();
   });
 
+  it('treats a lost task as terminal so completion routing cannot rehydrate or dispatch it', async() => {
+    // risk: restart recovery exhausts a delegated task, but a late completion
+    // falls through the routing gate and resurrects that lost thread.
+    const lost = parkedJob();
+    lost.status = 'running';
+    lost.tasks[0].status = 'lost';
+    const definitions = { findBySlug: vi.fn(async() => ({ slug: 'coding-manager-sol' })) };
+    const service = new ParkedAgentRehydrator(
+      { findByTaskThread: async() => lost },
+      definitions,
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(await service.isTerminalDelegatedThread('manager-thread')).toBe(true);
+    expect(await service.resolve('manager-thread')).toBeNull();
+    expect(definitions.findBySlug).not.toHaveBeenCalled();
+  });
+
   it('fails visibly instead of falling back when the definition is missing', async() => {
     // risk: a parked manager wakes as default Sulla with the wrong prompt/model
     const fail = vi.fn();

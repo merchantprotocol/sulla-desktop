@@ -808,10 +808,6 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-        await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
-      }
-
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
