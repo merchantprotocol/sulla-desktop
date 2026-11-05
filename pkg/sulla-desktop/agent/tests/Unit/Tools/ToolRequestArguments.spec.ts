@@ -15,6 +15,13 @@ describe('ToolRequestArguments', () => {
     expect(ToolRequestArguments.normalize(body)).toEqual(body);
   });
 
+  it('preserves flat object params when sibling tool arguments are present', () => {
+    // risk: data accuracy — reflex tools need both object params and their required sibling arguments.
+    const body = { utterance: 'teach this', tool: 'reflex/teach', params: { url: 'https://example.test' } };
+
+    expect(ToolRequestArguments.normalize(body)).toEqual(body);
+  });
+
   it('unwraps the object envelope used by integration callers', () => {
     const argumentsBody = { sql: 'select 1', params: [] };
 

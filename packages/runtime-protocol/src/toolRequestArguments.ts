@@ -13,7 +13,12 @@ export class ToolRequestArguments {
 
     const requestBody = body as Record<string, unknown>;
     const envelope = requestBody.params;
-    if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+    if (
+      Object.keys(requestBody).length === 1 &&
+      envelope &&
+      typeof envelope === 'object' &&
+      !Array.isArray(envelope)
+    ) {
       return envelope as Record<string, unknown>;
     }
 
