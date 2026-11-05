@@ -78,9 +78,12 @@ export class AgentDetailFeed {
 
   async finish(): Promise<void> {
     if (this.finishing) return;
+    const generation = this.generation;
+    const threadId = this.threadId;
+
     this.finishing = true;
     await this.refresh();
-    this.stop();
+    if (generation === this.generation && threadId === this.threadId) this.stop();
   }
 
   async refresh(): Promise<void> {
@@ -106,45 +109,18 @@ export class AgentDetailFeed {
     }
   }
 
-  static entryKey(entry: ConversationEntry): string {
-    const entryWithId = entry as ConversationEntry & { id?: string };
-
-    if (entryWithId.id) return `id:${ entryWithId.id }`;
-    return JSON.stringify([entry.ts, entry.kind, entry.toolName ?? '', entry.text]);
-  }
-
   private mergeDetail(incoming: AgentConversationDetail): FeedDetail {
     if (!this.detail || this.detail.id !== incoming.id) return { ...incoming, entries: this.append(incoming.entries) };
     const existing = this.detail.entries;
-    const incomingKeys = incoming.entries.map(AgentDetailFeed.entryKey);
-    const existingKeys = existing.map(AgentDetailFeed.entryKey);
+    const knownOffsets = existing.flatMap(entry => entry.offset === undefined ? [] : [entry.offset]);
+    const lastKnownOffset = knownOffsets.length === 0 ? -1 : Math.max(...knownOffsets);
+    const additions = incoming.entries.filter(entry => entry.offset === undefined || entry.offset > lastKnownOffset);
 
-    // A shorter reread may be any unchanged slice of the capped tail.
-    if (this.containsOrdered(existingKeys, incomingKeys)) return { ...incoming, entries: existing };
-
-    let overlap = Math.min(existingKeys.length, incomingKeys.length);
-
-    while (overlap > 0 && !this.sameKeys(existingKeys.slice(-overlap), incomingKeys.slice(0, overlap))) overlap -= 1;
-
-    // With no overlap the source window reset or shifted beyond our retained history.
-    // Appending all incoming rows preserves readable history without losing multiplicity.
-    return { ...incoming, entries: [...existing, ...this.append(incoming.entries.slice(overlap))] };
+    return { ...incoming, entries: [...existing, ...this.append(additions)] };
   }
 
   private append(entries: ConversationEntry[]): FeedEntry[] {
     return entries.map(entry => ({ ...entry, feedSequence: this.nextSequence++ }));
-  }
-
-  private containsOrdered(existing: string[], incoming: string[]): boolean {
-    if (incoming.length === 0) return true;
-    for (let start = 0; start <= existing.length - incoming.length; start += 1) {
-      if (this.sameKeys(existing.slice(start, start + incoming.length), incoming)) return true;
-    }
-    return false;
-  }
-
-  private sameKeys(left: string[], right: string[]): boolean {
-    return left.length === right.length && left.every((key, index) => key === right[index]);
   }
 
   private emit(loading: boolean): void {

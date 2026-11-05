@@ -19,7 +19,7 @@
           <div class="card box"><h2>Activity</h2>
             <div v-if="detailLoading" class="empty">Loading activity…</div>
             <div v-else-if="!detail?.entries.length" class="empty"><b>No recorded activity</b>This run has not written any conversation events yet.</div>
-            <div v-else class="tl"><div v-for="entry in detail.entries" :key="entry.feedSequence" class="ev" :class="{ tool: entry.kind === 'tool', you: entry.kind === 'user' }"><div class="who">{{ entryWho(entry) }} · {{ clock(entry.ts) }}</div><div class="msg">{{ entry.text }}</div></div></div>
+            <div v-else class="tl"><div v-for="entry in detail.entries" :key="entry.offset ?? entry.feedSequence" class="ev" :class="{ tool: entry.kind === 'tool', you: entry.kind === 'user' }"><div class="who">{{ entryWho(entry) }} · {{ clock(entry.ts) }}</div><div class="msg">{{ entry.text }}</div></div></div>
             <p v-if="selected.finished" class="finished-label">Finished — no longer running</p>
             <form v-if="selected.canMessage" class="composer" @submit.prevent="sendMessage(selected)"><input v-model="message" placeholder="Message this agent…" aria-label="Message this agent"><button class="btn pri" type="submit" :disabled="busy || !message.trim()">{{ busy ? 'Sending…' : 'Send' }}</button></form><p v-if="actionError" class="error-text">{{ actionError }}</p>
           </div>

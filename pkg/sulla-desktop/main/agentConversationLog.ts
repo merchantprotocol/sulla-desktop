@@ -20,6 +20,8 @@ export interface AgentConversationEntry {
   ts:        string;
   text:      string;
   toolName?: string;
+  /** Byte offset of this entry's JSONL line in the source log. */
+  offset?:   number;
 }
 
 export interface AgentConversationLog {
@@ -64,17 +66,18 @@ function stringifyArgs(args: unknown): string {
 }
 
 /** Map one parsed JSONL event to a display entry, or null for noise. */
-export function toEntry(event: any): AgentConversationEntry | null {
+export function toEntry(event: any, offset?: number): AgentConversationEntry | null {
   if (!event || typeof event !== 'object') return null;
   const ts = String(event.ts ?? '');
+  const sourceIdentity = offset === undefined ? {} : { offset };
 
   switch (event.type) {
   case 'message':
     if (event.role === 'user' || event.role === 'assistant') {
-      return { kind: event.role, ts, text: String(event.content ?? '') };
+      return { kind: event.role, ts, text: String(event.content ?? ''), ...sourceIdentity };
     }
     if (event.role === 'system') {
-      return { kind: 'event', ts, text: String(event.content ?? '') };
+      return { kind: 'event', ts, text: String(event.content ?? ''), ...sourceIdentity };
     }
 
     return null;
@@ -84,15 +87,16 @@ export function toEntry(event: any): AgentConversationEntry | null {
       ts,
       toolName: String(event.toolName ?? 'tool'),
       text:     stringifyArgs(event.args),
+      ...sourceIdentity,
     };
   case 'graph_started':
-    return { kind: 'event', ts, text: `Started${ event.agentName ? ` — ${ event.agentName }` : '' }` };
+    return { kind: 'event', ts, text: `Started${ event.agentName ? ` — ${ event.agentName }` : '' }`, ...sourceIdentity };
   case 'graph_completed':
-    return { kind: 'event', ts, text: `Finished${ event.status ? ` — ${ event.status }` : '' }` };
+    return { kind: 'event', ts, text: `Finished${ event.status ? ` — ${ event.status }` : '' }`, ...sourceIdentity };
   case 'workflow_started':
-    return { kind: 'event', ts, text: `Workflow started${ event.workflowName ? ` — ${ event.workflowName }` : '' }` };
+    return { kind: 'event', ts, text: `Workflow started${ event.workflowName ? ` — ${ event.workflowName }` : '' }`, ...sourceIdentity };
   case 'workflow_completed':
-    return { kind: 'event', ts, text: `Workflow finished${ event.status ? ` — ${ event.status }` : '' }${ event.error ? ` (${ event.error })` : '' }` };
+    return { kind: 'event', ts, text: `Workflow finished${ event.status ? ` — ${ event.status }` : '' }${ event.error ? ` (${ event.error })` : '' }`, ...sourceIdentity };
   default:
     // Streaming markers, node bookkeeping, etc. — not conversation content.
     return null;
@@ -100,28 +104,35 @@ export function toEntry(event: any): AgentConversationEntry | null {
 }
 
 /** Parse JSONL text into entries. Malformed lines are skipped. */
-export function parseConversationLog(text: string, maxEntries = MAX_ENTRIES): { entries: AgentConversationEntry[]; truncated: boolean } {
-  const entries: AgentConversationEntry[] = [];
+export class ConversationLogParser {
+  parse(buffer: Buffer, sourceOffset = 0, maxEntries = MAX_ENTRIES): { entries: AgentConversationEntry[]; truncated: boolean } {
+    const entries: AgentConversationEntry[] = [];
+    let lineStart = 0;
 
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let event: unknown;
+    while (lineStart < buffer.length) {
+      const newline = buffer.indexOf(0x0A, lineStart);
+      const lineEnd = newline < 0 ? buffer.length : newline;
+      const line = buffer.toString('utf-8', lineStart, lineEnd);
 
-    try {
-      event = JSON.parse(line);
-    } catch {
-      continue;
+      if (line.trim()) {
+        try {
+          const entry = toEntry(JSON.parse(line), sourceOffset + lineStart);
+
+          if (entry) entries.push(entry);
+        } catch {
+          // Malformed lines are skipped without changing later source offsets.
+        }
+      }
+      if (newline < 0) break;
+      lineStart = newline + 1;
     }
-    const entry = toEntry(event);
 
-    if (entry) entries.push(entry);
+    return entries.length > maxEntries ? { entries: entries.slice(-maxEntries), truncated: true } : { entries, truncated: false };
   }
+}
 
-  if (entries.length > maxEntries) {
-    return { entries: entries.slice(-maxEntries), truncated: true };
-  }
-
-  return { entries, truncated: false };
+export function parseConversationLog(text: string, maxEntries = MAX_ENTRIES): { entries: AgentConversationEntry[]; truncated: boolean } {
+  return new ConversationLogParser().parse(Buffer.from(text), 0, maxEntries);
 }
 
 /** Read and parse a conversation's JSONL log, tail-capped at MAX_LOG_BYTES. */
@@ -139,12 +150,19 @@ export async function readConversationLog(file: string | null | undefined, logsD
     const buffer = Buffer.alloc(size - start);
 
     await handle.read(buffer, 0, buffer.length, start);
-    let text = buffer.toString('utf-8');
+    let completeLines = buffer;
+    let sourceOffset = start;
 
-    // A mid-file start lands inside a line — drop that partial line.
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    // A mid-file start lands inside a line — drop that partial line while
+    // retaining the absolute byte offset of every complete JSONL record.
+    if (start > 0) {
+      const firstNewline = buffer.indexOf(0x0A);
 
-    const parsed = parseConversationLog(text);
+      completeLines = firstNewline < 0 ? Buffer.alloc(0) : buffer.subarray(firstNewline + 1);
+      sourceOffset += firstNewline < 0 ? buffer.length : firstNewline + 1;
+    }
+
+    const parsed = new ConversationLogParser().parse(completeLines, sourceOffset);
 
     return { ...parsed, truncated: parsed.truncated || start > 0, missingLog: false };
   } catch {
