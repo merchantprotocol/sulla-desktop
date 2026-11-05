@@ -63,7 +63,6 @@ export class AgentFleetTreeFormatter {
   private age(iso: string): string { return `${ Math.max(0, Math.floor((this.now() - Date.parse(iso)) / 1000)) }s`; }
 
   private bound(line: FleetTreeLine): FleetTreeLine {
-    return line; // deliberate break: prove the byte-cap regression test fails
     if (this.bytes(line) <= 400) return line;
     const bounded: FleetTreeLine = { ...line, truncated: true };
     for (const key of ['label', 'step', 'pr', 'parent', 'ref', 'activityAge', 'state'] as const) {
