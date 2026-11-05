@@ -74,6 +74,17 @@ export const agentToolManifests: ToolManifest[] = [
     loader:         () => import('./return_result'),
   },
   {
+    name:        'wait',
+    description: 'Park this delegated worker durably until a timer expires or its manager sends a message, whichever happens first. End your turn immediately after it succeeds.',
+    category:    'agents',
+    schemaDef:   {
+      seconds: { type: 'number', description: 'Whole seconds to wait (10 through 14400).' },
+      reason:  { type: 'string', description: 'Why the worker is waiting; shown in job status.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./wait'),
+  },
+  {
     name:        'check_agent_jobs',
     description: 'Inspect delegated jobs. A jobId returns full detail; the bounded list returns every active job plus recent compact summaries.',
     category:    'agents',
@@ -102,7 +113,7 @@ export const agentToolManifests: ToolManifest[] = [
     description: 'Record a milestone check-in for your current delegated task (hidden worker or agent tab). Call it at meaningful milestones and at least every ~5 minutes; your parent sees it in its subagent directory.',
     category:    'agents',
     schemaDef:   {
-      step:         { type: 'string', description: 'Short milestone or phase name.' },
+      step:         { type: 'string', optional: true, description: 'Short milestone or phase name. Defaults to progress.' },
       summary:      { type: 'string', description: 'What changed or was verified since the previous check-in.' },
       filesTouched: { type: 'array', items: { type: 'string' }, optional: true, description: 'Files created or changed so far.' },
       blockers:     { type: 'array', items: { type: 'string' }, optional: true, description: 'Concrete blockers requiring orchestrator or human action.' },
@@ -117,6 +128,10 @@ export const agentToolManifests: ToolManifest[] = [
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
+      taskIndex: { type: 'number', optional: true, description: 'Stop only this zero-based task; omit to stop the whole job and descendants.' },
+      mode: { type: 'string', optional: true, enum: ['hard', 'wrap_up'], description: 'wrap_up asks for a partial contract before hard-aborting after the grace period.' },
+      gracePeriodSeconds: { type: 'number', optional: true, description: 'Wrap-up grace period in seconds (default 120).' },
+      reason: { type: 'string', optional: true, description: 'Why the job is being stopped; recorded in the job audit trail.' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./stop_agent_job'),

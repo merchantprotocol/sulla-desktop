@@ -51,6 +51,17 @@ export class JobTaskLocator extends Service {
     return found;
   }
 
+  async isAncestorThread(job: AgentJob, callerThreadId: string): Promise<boolean> {
+    let parentThread = job.parentThreadId;
+    const seen = new Set<string>();
+    while (parentThread && !seen.has(parentThread)) {
+      if (parentThread === callerThreadId) return true;
+      seen.add(parentThread);
+      parentThread = (await this.findTaskByThread(parentThread))?.job.parentThreadId;
+    }
+    return false;
+  }
+
   /** Delegation depth of a thread: 0 for a top-level chat, else its task depth. */
   async delegationDepthForThread(threadId: string | undefined): Promise<number> {
     if (!threadId) return 0;

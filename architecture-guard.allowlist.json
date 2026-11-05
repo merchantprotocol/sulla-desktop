@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1127,
+  "entries": 1125,
   "files": {
     "background.ts": {
       "rules": {
@@ -1252,12 +1252,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/agent/tools/agents/jobDelivery.ts": {
-      "rules": {
-        "procedural-module": 6
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/tools/agents/jobExchange.ts": {
       "rules": {
         "procedural-module": 1
@@ -1269,12 +1263,6 @@
         "long-file": 791
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/agent/tools/agents/workerMessaging.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/tools/applescript/applescript_audit_log.ts": {
       "rules": {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
 import { TestDatabase } from '../../Support/TestDatabase';
 import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
@@ -89,10 +90,10 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     await registry.recordTaskReturn(job.jobId, 0, { result: { answer: 42 }, summary: 'done', status: 'completed' });
     await expect(registry.recordTaskReturn(job.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('already returned');
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stop', prompt: 'work', status: 'running' }]);
-    expect(registry.abortJob(stopped.jobId)).toBe('stopped');
-    expect(registry.getJobAbortSignal(stopped.jobId)?.aborted).toBe(true);
-    expect(registry.abortJob(stopped.jobId)).toBe('already-finished');
-    expect(registry.abortJob('missing')).toBe('not-found');
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
+    expect(registry.getTaskAbortSignal(stopped.jobId, 0)?.aborted).toBe(true);
+    expect(registry.abortJob(stopped.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
+    expect(registry.abortJob('missing', StopPrincipal.human(), 'test stop')).toBe('not-found');
     await expect(registry.recordTaskReturn(stopped.jobId, 0, { result: {}, status: 'completed' })).rejects.toThrow('no longer accepts');
   });
 
@@ -129,6 +130,21 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(jobRow.results).toEqual([{ label: 'retained', status: 'completed', output: { answer: 42 }, threadId }]);
     expect(Number(checkins)).toBe(1);
     expect(Number(messages)).toBe(1);
+  });
+
+  it('serializes stop attribution in list and detail after a repository reload', async() => {
+    // risk: audit attribution disappears from supervision after the process cache is cold.
+    const job = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'work', status: 'running', threadId: `stop-reload-${ Date.now() }` }]);
+    await registry.stopJobCascade(job.jobId, StopPrincipal.human(), 'operator requested');
+    const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+    agentJobProvider.runtime.evictSettledTerminalJobs(0);
+
+    const check = new CheckAgentJobsHarness();
+    const detail = JSON.parse((await check.call({ jobId: job.jobId })).responseString!);
+    const list = JSON.parse((await check.call({ includeFinished: true, limit: 100 })).responseString!);
+    const listed = list.jobs.find((item: { jobId: string }) => item.jobId === job.jobId);
+    expect(detail).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });
+    expect(listed).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });
   });
 
   it('excludes dismissed jobs from global list reads', async() => {

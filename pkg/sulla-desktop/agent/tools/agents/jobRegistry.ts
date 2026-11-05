@@ -33,6 +33,9 @@ import type { AgentContractSpec } from './contract';
 
 export type AgentJobVisibility = 'hidden' | 'tab';
 
+export const AGENT_JOB_TASK_STATUSES = ['queued', 'running', 'parked', 'lost', 'completed', 'blocked', 'error', 'stopped'] as const;
+export type AgentJobTaskStatus = typeof AGENT_JOB_TASK_STATUSES[number];
+
 export interface AgentJobResult {
   label:    string;
   status:   'completed' | 'blocked' | 'error';
@@ -62,7 +65,7 @@ export interface AgentJobTask {
   restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
-  status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';
+  status:     AgentJobTaskStatus;
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;
@@ -81,6 +84,20 @@ export interface AgentJobTask {
   completionDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
+  stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+  stopReason?: string;
+  /** Durable leaf-worker wait details while status is parked. */
+  waitReason?: string;
+  wakeAt?: number;
+}
+
+export interface OrphanedChildNotice {
+  childJobId: string;
+  taskIndex: number;
+  managerThreadId: string;
+  managerStatus: 'completed' | 'failed' | 'stopped';
+  results: AgentJobResult[];
+  recordedAt: number;
 }
 
 export interface AgentJob {
@@ -101,6 +118,9 @@ export interface AgentJob {
   waitingOnChildren?: number;
   restartResumeCount?: number;
   dismissedAt?: number | null;
+  stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+  stopReason?: string;
+  orphanedChildNotices?: OrphanedChildNotice[];
 }
 
 export interface CreateJobOptions {
@@ -116,8 +136,10 @@ export const getJobsForParentThread = (...args: Parameters<typeof agentJobProvid
 export const dismissJobTask = (...args: Parameters<typeof agentJobProvider.service.dismissJobTask>) => agentJobProvider.service.dismissJobTask(...args);
 export const registerJobWatcher = (...args: Parameters<typeof agentJobProvider.service.registerJobWatcher>) => agentJobProvider.service.registerJobWatcher(...args);
 export const releaseJobWatcher = (...args: Parameters<typeof agentJobProvider.service.releaseJobWatcher>) => agentJobProvider.service.releaseJobWatcher(...args);
-export const getJobAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getJobAbortSignal>) => agentJobProvider.service.getJobAbortSignal(...args);
+export const getTaskAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getTaskAbortSignal>) => agentJobProvider.service.getTaskAbortSignal(...args);
 export const abortJob = (...args: Parameters<typeof agentJobProvider.service.abortJob>) => agentJobProvider.service.abortJob(...args);
+export const stopJobTask = (...args: Parameters<typeof agentJobProvider.service.stopJobTask>) => agentJobProvider.service.stopJobTask(...args);
+export const authorizeJobStop = (...args: Parameters<typeof agentJobProvider.service.authorizeJobStop>) => agentJobProvider.service.authorizeJobStop(...args);
 export const stopJobCascade = (...args: Parameters<typeof agentJobProvider.service.stopJobCascade>) => agentJobProvider.service.stopJobCascade(...args);
 export const getJob = (...args: Parameters<typeof agentJobProvider.service.getJob>) => agentJobProvider.service.getJob(...args);
 export const getAllJobs = (...args: Parameters<typeof agentJobProvider.service.getAllJobs>) => agentJobProvider.service.getAllJobs(...args);

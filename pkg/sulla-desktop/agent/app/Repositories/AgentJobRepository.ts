@@ -5,7 +5,7 @@
 import { Repository } from '@sulla/foundation';
 
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
-import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/jobRegistry';
+import type { AgentJob, AgentJobResult, AgentJobTask, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 
 export class AgentJobRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
@@ -23,6 +23,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       waitingOnChildren: Number(row.waiting_on_children) || 0,
       restartResumeCount: Number(row.restart_resume_count) || 0,
       dismissedAt: row.dismissed_at ? new Date(row.dismissed_at).getTime() : null,
+      stoppedBy: row.stopped_by === 'human' ? 'human' : (row.stopped_by?.system
+        ? { system: String(row.stopped_by.system) }
+        : row.stopped_by ? { agentId: String(row.stopped_by.agentId), threadId: String(row.stopped_by.threadId) } : undefined),
+      stopReason: row.stop_reason ?? undefined,
+      orphanedChildNotices: Array.isArray(row.orphaned_child_notices) ? row.orphaned_child_notices : [],
     };
   }
 
@@ -47,6 +52,15 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
+  /** Acknowledge one consumed task without reopening terminal rows to general task mutation. */
+  async markTaskCompletionDelivered(jobId: string, taskIndex: number, deliveredAt: number): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs
+      SET tasks = jsonb_set(tasks, ARRAY[$2::text, 'completionDeliveredAt'], to_jsonb($3::bigint), true)
+      WHERE job_id = $1
+        AND (tasks -> $2::int) IS NOT NULL
+        AND (tasks -> $2::int) ->> 'completionDeliveredAt' IS NULL`, [jobId, taskIndex, deliveredAt]);
+  }
+
   async updateTaskCompletions(jobId: string, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks), JSON.stringify(results)]);
   }
@@ -60,11 +74,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $3::jsonb, dismissed_at = CASE WHEN $4 THEN now() ELSE dismissed_at END WHERE job_id = $1 AND parent_thread_id = $2`, [jobId, parentThreadId, JSON.stringify(tasks), allDismissed]);
   }
 
-  async stop(jobId: string, tasks: AgentJobTask[]): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
+  async stop(jobId: string, tasks: AgentJobTask[], stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
   }
 
-  async stopCascade(jobId: string): Promise<string[]> {
+  async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<string[]> {
     const rows = await this.connection.select(`WITH RECURSIVE descendants AS (
       SELECT job_id, tasks FROM agent_jobs WHERE job_id = $1
       UNION ALL
@@ -72,8 +86,8 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       JOIN descendants parent ON child.parent_thread_id IN (SELECT value->>'threadId' FROM jsonb_array_elements(parent.tasks) value)
     )
     UPDATE agent_jobs target SET status = 'stopped', finished_at = now(), waiting_on_children = 0,
-      tasks = (SELECT COALESCE(jsonb_agg(CASE WHEN value->>'status' IN ('queued','running','parked') THEN value || jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint) ELSE value END), '[]'::jsonb) FROM jsonb_array_elements(target.tasks) value)
-    FROM descendants WHERE target.job_id = descendants.job_id AND target.status IN ('running','parked') RETURNING target.job_id` , [jobId]);
+      stopped_by = $2::jsonb, stop_reason = $3, tasks = (SELECT COALESCE(jsonb_agg(CASE WHEN value->>'status' IN ('queued','running','parked') THEN value || jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint) ELSE value END), '[]'::jsonb) FROM jsonb_array_elements(target.tasks) value)
+    FROM descendants WHERE target.job_id = descendants.job_id AND target.status IN ('running','parked') RETURNING target.job_id` , [jobId, JSON.stringify(stoppedBy), reason]);
     return rows.map(row => String(row.job_id));
   }
 
@@ -92,10 +106,12 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       UNION ALL
       (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
-      parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children, '[]'::jsonb AS results,
+      parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children,
+      orphaned_child_notices, stopped_by, stop_reason, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
       'taskId', task->>'taskId', 'status', task->>'status', 'visibility', task->>'visibility',
       'startedAt', task->'startedAt', 'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',
+      'waitReason', task->>'waitReason', 'wakeAt', task->'wakeAt',
       'contract', CASE WHEN task ? 'contract' THEN jsonb_build_object('name', task->'contract'->>'name') ELSE NULL END))
       FROM jsonb_array_elements(selected.tasks) AS task), '[]'::jsonb) AS tasks
       FROM selected ORDER BY created_at DESC`, [limit, includeFinished]);
@@ -117,7 +133,12 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async openChildrenForThread(threadId: string): Promise<number> {
-    const row = await this.connection.first(`SELECT count(*)::int AS count FROM agent_jobs WHERE parent_thread_id = $1 AND status IN ('running', 'parked')`, [threadId]);
+    const row = await this.connection.first(`SELECT count(*)::int AS count
+      FROM agent_jobs child
+      CROSS JOIN LATERAL jsonb_array_elements(child.tasks) AS task
+      WHERE child.parent_thread_id = $1
+        AND child.status IN ('running', 'parked')
+        AND task->>'status' IN ('queued', 'running', 'parked')`, [threadId]);
     return Number(row?.count) || 0;
   }
 
@@ -156,6 +177,13 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         AND (child.status = 'running' OR child.tasks @? '$[*] ? (@.status == "queued" || @.status == "running")')
     ) AS present`, [JSON.stringify(threadIds)]);
     return row?.present === true || row?.present === 't';
+  }
+
+  async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
+    const inserted = await this.connection.first(`UPDATE agent_jobs SET orphaned_child_notices = orphaned_child_notices || $2::jsonb
+      WHERE job_id = $1 AND NOT orphaned_child_notices @> $3::jsonb
+      RETURNING job_id`, [jobId, JSON.stringify([notice]), JSON.stringify([{ childJobId: notice.childJobId, taskIndex: notice.taskIndex }])]);
+    return Boolean(inserted);
   }
 
   async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
