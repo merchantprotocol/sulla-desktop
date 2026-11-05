@@ -22,12 +22,13 @@ export class AgentLivenessReconciler {
     const jobs = await this.states.jobsBeforeReady();
     for (const job of jobs) for (const [taskIndex, task] of job.tasks.entries()) {
       if (!['queued', 'running', 'parked', 'blocked'].includes(task.status)) continue;
-      const hasLiveChildren = task.status === 'parked' && task.threadId
-        ? jobs.some(child => child.parentThreadId === task.threadId && ['running', 'parked'].includes(child.status)) : false;
+      // Parked includes agents/wait with a durable future wake. It is an
+      // intentional dormant lifecycle state, not evidence of a lost runtime.
+      if (task.status === 'parked') continue;
       const containerLive = await this.probe.container(task);
       // Unknown means the runtime supervisor is still rebuilding bindings after
       // restart. Its bounded grace protects only the lost decision, never reads.
-      if (hasLiveChildren || this.probe.graph(task) || containerLive !== false) continue;
+      if (this.probe.graph(task) || containerLive !== false) continue;
       const checkinAt = await this.probe.lastCheckin(job.jobId, taskIndex);
       const lastActivityAt = checkinAt ?? task.startedAt ?? job.createdAt;
       if (this.clock() - lastActivityAt < this.config.lostAfterMs) continue;

@@ -87,6 +87,33 @@ describe('authoritative live agent state', () => {
   });
 
 
+
+  it('holds every state read behind successful boot reconciliation', async() => {
+    // risk: startup views advertise stale running work before reconciliation
+    const { states } = harness([job('startup-gate', [task()])]);
+    let release!: () => void;
+    states.setReadiness(new Promise<void>(resolve => { release = resolve; }));
+    let settled = false;
+    const read = states.jobs().then(value => { settled = true; return value; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    expect((await read).map(candidate => candidate.jobId)).toEqual(['startup-gate']);
+
+    states.setReadiness(Promise.reject(new Error('reconcile failed')));
+    await expect(states.jobs()).rejects.toThrow('reconcile failed');
+  });
+
+  it('never marks an intentionally parked future-wake task lost', async() => {
+    // risk: agents/wait is mistaken for a dead worker after its quiet threshold
+    const parked = job('future-wake', [task({ status: 'parked', threadId: 'future-wake-thread' })], { status: 'parked' });
+    const { store, states } = harness([parked], 500_000);
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    expect(store.durable.get('future-wake')).toMatchObject({ status: 'parked', tasks: [{ status: 'parked' }] });
+    expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows[0].state).toBe('parked');
+  });
+
   it('leaves cache unchanged and emits nothing when the durable write fails', async() => {
     // risk: a failed Postgres write is advertised as live state
     const { store, cache, states } = harness([job('write-failure', [task()])]);

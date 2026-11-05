@@ -29,9 +29,9 @@ export class AgentStateService {
 
   get version(): number { return this.versionValue; }
   setReadiness(readiness: Promise<unknown>): void {
-    this.readiness = readiness.then(() => undefined, error => {
-      console.error('[AgentStateService] boot reconciliation failed; continuing with periodic repair:', error);
-    });
+    // Reads fail closed until boot reconciliation succeeds. Serving stale rows
+    // after a failed durable reconciliation would advertise dead work as live.
+    this.readiness = readiness.then(() => undefined);
   }
   async ready(): Promise<void> { await this.readiness; }
   onChange(listener: AgentStateChangeListener): () => void {

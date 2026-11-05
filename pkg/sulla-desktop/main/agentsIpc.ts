@@ -20,7 +20,7 @@ import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvid
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
-import { probeAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { awaitAgentContainerRuntimeRehydration, probeAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
@@ -212,7 +212,9 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 
 export function initAgentsIpc(): void {
-  const bootReconciliation = agentLivenessReconciler.reconcile();
+  // Do not decide a container is gone until the supervisor's bounded rebind
+  // window has closed. Every state read awaits this same readiness promise.
+  const bootReconciliation = awaitAgentContainerRuntimeRehydration().then(() => agentLivenessReconciler.reconcile());
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
   agentStatePublisher.register();
