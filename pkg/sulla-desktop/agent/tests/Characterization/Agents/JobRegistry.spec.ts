@@ -99,7 +99,9 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
   it('delivers a durable completion at most once', async() => {
     const job = await registry.createJob([{ agentId: 'worker', label: 'complete', prompt: 'work', status: 'running' }], 'parent', 'completion-parent');
-    await registry.completeJob(job.jobId, [{ label: 'complete', status: 'completed', output: 'ok', threadId: 'child' }]);
+    const result = { label: 'complete', status: 'completed' as const, output: 'ok', threadId: 'child' };
+    await registry.recordTaskCompletion(job.jobId, 0, result);
+    await registry.completeJob(job.jobId, [result]);
     expect((await registry.getPendingCompletions()).map(item => item.jobId)).toContain(job.jobId);
     await registry.markCompletionDelivered(job.jobId);
     await registry.markCompletionDelivered(job.jobId);
