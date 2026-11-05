@@ -5,7 +5,13 @@
 
 import { buildWakeContent } from '../tools/agents/jobDelivery';
 
-import type { AgentJobResult } from '../tools/agents/jobRegistry';
+import type { AgentJobResult, AgentJobTask, AgentJob } from '../tools/agents/jobRegistry';
+
+export interface AgentTerminalNotice {
+  status: 'stopped' | 'failed';
+  reason: string;
+  stoppedBy?: AgentJob['stoppedBy'] | AgentJobTask['stoppedBy'];
+}
 
 export const COMPLETION_RESULT_LIMIT = 8_000;
 
@@ -14,6 +20,7 @@ export interface PendingCompletion {
   taskIndex: number;
   results: AgentJobResult[];
   failureReason?: string;
+  terminal?: AgentTerminalNotice;
   notice?: string;
   dedupeKey?: string;
 }
@@ -65,7 +72,7 @@ export class CompletionInboxStore {
 
   format(entries: PendingCompletion[]): string {
     return entries.map(entry => {
-      const content = entry.notice ?? buildWakeContent(entry.jobId, entry.results, entry.failureReason);
+      const content = entry.notice ?? buildWakeContent(entry.jobId, entry.results, entry.failureReason, entry.terminal);
       if (content.length <= COMPLETION_RESULT_LIMIT) return content;
       return `${ content.slice(0, COMPLETION_RESULT_LIMIT) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
     }).join('\n\n==========\n\n');

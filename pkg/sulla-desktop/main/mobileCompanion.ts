@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { decisionService } from '@pkg/agent/services/DecisionService';
+import { StopPrincipal } from '@pkg/agent/app/ValueObjects/StopPrincipal';
 import type { DecisionResponse } from '@pkg/shared/decisions';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';
@@ -317,7 +318,7 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
   }
   case 'agents.stop': {
     const target = await companionJob(params);
-    const result = await stopAgentJob(target.jobId);
+    const result = await stopAgentJob(target.jobId, StopPrincipal.human(), 'Stopped from authenticated mobile companion');
     if (!result.successBoolean) throw new Error(result.responseString);
     return { stopped: true, jobId: target.jobId, mode: 'cooperative-stop' };
   }

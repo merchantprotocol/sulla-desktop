@@ -18,6 +18,10 @@ import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { StrandedManagerAlertService } from '../Services/StrandedManagerAlertService';
 import { StrandedManagerDetector } from '../Services/StrandedManagerDetector';
 import { StrandedManagerScheduler } from '../Services/StrandedManagerScheduler';
+import { JobStopService } from '../Services/JobStopService';
+import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
+import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
+import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { postgresClient } from '../../database/PostgresClient';
 
@@ -29,11 +33,15 @@ export class AgentJobServiceProvider {
   readonly states: AgentStateService;
   readonly fleet: AgentFleetProjectionService;
   readonly stranded: StrandedManagerScheduler;
+  readonly delivery: JobCompletionDelivery;
+  readonly wrapUp: JobWrapUpService;
+  readonly blockerEscalation: BlockerEscalationService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
+    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime);
@@ -43,7 +51,11 @@ export class AgentJobServiceProvider {
       new StrandedEpisodeRepository(connection), new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states);
+    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator);
+    const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
+    this.wrapUp = new JobWrapUpService(stops, messages);
+    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops);
+    this.delivery = new JobCompletionDelivery(this.service);
   }
 }
 

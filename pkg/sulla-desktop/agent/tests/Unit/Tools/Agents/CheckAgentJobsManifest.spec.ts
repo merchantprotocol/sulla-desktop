@@ -14,8 +14,10 @@ describe('check_agent_jobs registered manifest', () => {
     const tool = await registry.createToolForCategory('agents', 'check_agent_jobs');
     tool.fleet = { list: async() => [{ jobId: 'manager', status: 'running', createdAt: '2026-11-05T12:00:00.000Z', finishedAt: null, parentThreadId: 'root', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', tasks: [] }] };
     tool.setState({ metadata: { threadId: 'root' } });
-    const response = await tool.call({ view: 'tree' });
-    expect(response.success).toBe(true);
-    expect(JSON.parse(String(response.result))).toEqual({ count: 0, tasks: [] });
+    const validated = tool.parseInput({ view: 'tree' });
+    const response = await tool._validatedCall(validated);
+    expect(validated).toMatchObject({ scope: 'mine', view: 'tree' });
+    expect(response.successBoolean).toBe(true);
+    expect(JSON.parse(response.responseString)).toEqual({ count: 0, tasks: [] });
   });
 });
