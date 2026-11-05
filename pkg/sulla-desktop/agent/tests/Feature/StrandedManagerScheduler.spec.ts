@@ -12,6 +12,10 @@ import type { FleetJobView, FleetTaskView } from '../../app/Services/AgentFleetT
 import { AgentCompletionInbox } from '../../services/AgentCompletionInbox';
 import { StrandedManagerAlertService } from '../../app/Services/StrandedManagerAlertService';
 import { TestDatabase } from '../Support/TestDatabase';
+import { AgentJobRepository } from '../../app/Repositories/AgentJobRepository';
+import { AgentStateService } from '../../app/Services/AgentStateService';
+import { JobRuntimeRegistry } from '../../app/Services/JobRuntimeRegistry';
+import { AgentFleetProjectionService } from '../../app/Services/AgentFleetProjectionService';
 
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 const now = Date.parse('2026-11-05T12:00:00.000Z');
@@ -97,5 +101,37 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     const jobs: FleetJobView[] = [];
     for (let index = 0; index < 20; index++) { const id = `scale-${ index }`; jobs.push(manager(id)); for (let childIndex = 0; childIndex < 6; childIndex++) jobs.push(child(id, String(childIndex))); }
     expect(new StrandedManagerDetector(() => now).detect(jobs)).toHaveLength(20);
+  });
+
+  it('projects all 20 managers and 120 terminal descendants through real Postgres state without the list limit', async() => {
+    // risk: data accuracy -- newest-100 truncation hides terminal descendants and suppresses stranded-manager reconciliation
+    const prefix = `scale-real-${ Date.now() }`;
+    for (let managerIndex = 0; managerIndex < 20; managerIndex++) {
+      const managerId = `${ prefix }-manager-${ managerIndex }`;
+      const managerThread = `${ managerId }-thread`;
+      await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility)
+        VALUES ($1, 'parked', 1, 'sulla-desktop', $2, now() - interval '1 hour', $3::jsonb, 'hidden')`, [managerId, `${ prefix }-root`, JSON.stringify([
+        { agentId: 'manager', label: 'Manager', prompt: 'manage', status: 'parked', threadId: managerThread, startedAt: now - 60 * 60_000 },
+      ])]);
+      for (let childIndex = 0; childIndex < 6; childIndex++) {
+        const childId = `${ managerId }-child-${ childIndex }`;
+        await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, finished_at, tasks, visibility)
+          VALUES ($1, 'completed', 1, 'sulla-desktop', $2, now() - interval '30 minutes', now() - interval '20 minutes', $3::jsonb, 'hidden')`,
+        [childId, managerThread, JSON.stringify([{ agentId: 'worker', label: 'Worker', prompt: 'work', status: 'completed', threadId: `${ childId }-thread`,
+          startedAt: now - 30 * 60_000, finishedAt: now - 20 * 60_000, returnedAt: now - 20 * 60_000,
+          completion: { label: 'Worker', status: 'completed', output: 'done', threadId: `${ childId }-thread` } }])]);
+      }
+    }
+
+    const client = { query: async(sql: string, bindings?: readonly unknown[]) => { const rows = await database.query(sql, [...(bindings ?? [])]); return { rows, rowCount: rows.length } } } as unknown as ConstructorParameters<typeof PostgresConnection>[0];
+    const connection = new PostgresConnection(client);
+    const states = new AgentStateService(new AgentJobRepository(connection as never), new JobRuntimeRegistry(), () => now);
+    const telemetry = { telemetryForJob: async() => ({}), latestTelemetryForJobs: async() => ({}) };
+    const titles = { titlesForThreadIds: async() => ({}) };
+    const fleet = new AgentFleetProjectionService(states, telemetry, titles as never, () => now);
+    const projected = (await fleet.supervisionCandidates()).filter(job => job.jobId.startsWith(prefix));
+
+    expect(projected).toHaveLength(140);
+    expect(new StrandedManagerDetector(() => now).detect(projected)).toHaveLength(20);
   });
 });

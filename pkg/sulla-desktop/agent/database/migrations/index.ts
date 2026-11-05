@@ -12,7 +12,7 @@ import { up as up_0146, down as down_0146 } from './0146_parked_agent_jobs';
 import { up as up_0147, down as down_0147 } from './0147_orphaned_child_notices';
 import { up as up_0148, down as down_0148 } from './0148_agent_job_stop_attribution';
 import { up as up_0149, down as down_0149 } from './0149_agent_task_waits';
-import { up as up_0150, down as down_0150 } from './0150_create_agent_stranded_episodes';
+import { up as up_0152, down as down_0152 } from './0152_create_agent_stranded_episodes';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -277,5 +277,5 @@ export const migrationsRegistry = [
   { name: '0147_orphaned_child_notices', up: up_0147, down: down_0147 },
   { name: '0148_agent_job_stop_attribution', up: up_0148, down: down_0148 },
   { name: '0149_agent_task_waits', up: up_0149, down: down_0149 },
-  { name: '0150_create_agent_stranded_episodes', up: up_0150, down: down_0150 },
+  { name: '0152_create_agent_stranded_episodes', up: up_0152, down: down_0152 },
 ] as const;

@@ -15,7 +15,7 @@
 // the conversation_history rows for that agent's channel, and
 // agents:conversation reads one conversation's JSONL message log.
 
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
@@ -23,6 +23,7 @@ import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
+import { StrandedManagerLifecycle } from '@pkg/agent/app/Services/StrandedManagerLifecycle';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
 
@@ -211,6 +212,7 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
   lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
 });
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
+const strandedManagerLifecycle = new StrandedManagerLifecycle(agentJobProvider.stranded, app);
 
 export function initAgentsIpc(): void {
   // Do not decide a container is gone until the supervisor's bounded rebind
@@ -219,6 +221,7 @@ export function initAgentsIpc(): void {
   const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
+  strandedManagerLifecycle.start();
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');

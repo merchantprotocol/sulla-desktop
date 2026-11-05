@@ -18,12 +18,14 @@ import { JobTaskLocator } from '../Services/JobTaskLocator';
 import { StrandedManagerAlertService } from '../Services/StrandedManagerAlertService';
 import { StrandedManagerDetector } from '../Services/StrandedManagerDetector';
 import { StrandedManagerScheduler } from '../Services/StrandedManagerScheduler';
+import { RunActivityManagerActivitySource, type RunActivityReader } from '../Services/RunActivityManagerActivitySource';
 import { JobStopService } from '../Services/JobStopService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { postgresClient } from '../../database/PostgresClient';
+import { RunActivity } from '../../services/RunActivity';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -37,7 +39,7 @@ export class AgentJobServiceProvider {
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
 
-  constructor() {
+  constructor(runActivity: RunActivityReader = RunActivity) {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
@@ -48,7 +50,7 @@ export class AgentJobServiceProvider {
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);
     this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes);
-    this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(),
+    this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(Date.now, new RunActivityManagerActivitySource(runActivity)),
       strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
