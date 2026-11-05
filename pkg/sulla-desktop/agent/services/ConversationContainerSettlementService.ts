@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { AgentContainerLifecycle } from './AgentContainerLauncher';
+
 export interface ConversationTerminalReader { isTerminalDelegatedThread(threadId: string): Promise<boolean>; }
 export interface ConversationContainerRecord {
-  lifecycle: { close(reason: string, source: string): Promise<void> };
+  lifecycle: AgentContainerLifecycle;
   idleTimer: ReturnType<typeof setTimeout>;
 }
 
