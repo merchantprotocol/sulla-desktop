@@ -27,7 +27,7 @@ export interface WorkspaceJobState { status: string; finishedAt?: number | null;
 export interface WorkspaceJobStateReader { state(jobId: string): Promise<WorkspaceJobState | undefined>; }
 export interface WorkspaceRecoveryPreserver { preserve(path: string, jobId: string): Promise<string>; }
 
-export type WorkspaceRemovalReason = 'clean' | 'age' | 'disk';
+export type WorkspaceRemovalReason = 'clean' | 'age' | 'disk' | 'orphan';
 
 export interface WorkspaceRemovalRecord {
   path:   string;
@@ -171,7 +171,7 @@ export class AgentWorkspaceRetentionPolicy {
     const waitingForAge: WorkspaceCandidate[] = [];
 
     for (const candidate of candidates) {
-      candidate.job = this.jobs ? await this.jobs.state(candidate.jobId) : { status: 'completed', finishedAt: candidate.mtimeMs };
+      candidate.job = await this.readJob(candidate);
       if (!candidate.job || this.isProtected(candidate.job) || this.activeJobGuard.isActive(candidate.jobId)) continue;
 
       try {
@@ -180,7 +180,7 @@ export class AgentWorkspaceRetentionPolicy {
         report.errors.push({ path: candidate.path, error: `failed to claim workspace: ${ this.describe(error) }` });
       }
       if (!candidate.lease) continue;
-      const refreshed = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      const refreshed = await this.readJob(candidate);
       if (!refreshed || this.isProtected(refreshed) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         continue;
@@ -197,7 +197,7 @@ export class AgentWorkspaceRetentionPolicy {
         await this.restore(candidate, report);
         continue;
       }
-      const job = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      const job = await this.readJob(candidate);
       if (!job || this.isProtected(job) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         continue;
@@ -219,7 +219,7 @@ export class AgentWorkspaceRetentionPolicy {
       }
       if (terminalDue) {
         if (this.jobs && (inspection.status === 'unsafe' || !inspection.hasGitRepository) && !await this.preserve(candidate, report)) continue;
-        await this.remove(candidate, 'age', report);
+        await this.remove(candidate, candidate.job.status === 'orphan' ? 'orphan' : 'age', report);
       } else waitingForAge.push(candidate);
     }
 
@@ -330,7 +330,7 @@ export class AgentWorkspaceRetentionPolicy {
     report: WorkspaceRetentionReport,
   ): Promise<number | undefined> {
     try {
-      const job = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      const job = await this.readJob(candidate);
       if (!job || this.isProtected(job) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         return undefined;
@@ -354,8 +354,16 @@ export class AgentWorkspaceRetentionPolicy {
     }
   }
 
+  private async readJob(candidate: WorkspaceCandidate): Promise<WorkspaceJobState | undefined> {
+    if (!this.jobs) return candidate.job ?? { status: 'completed', finishedAt: candidate.mtimeMs };
+    const registered = await this.jobs.state(candidate.jobId);
+    if (registered) return registered;
+    if (this.clock.now() - candidate.mtimeMs < this.config.terminalRetentionMs) return undefined;
+    return { status: 'orphan', finishedAt: candidate.mtimeMs };
+  }
+
   private isProtected(job: WorkspaceJobState): boolean {
-    return !['completed', 'failed', 'stopped'].includes(job.status) || (job.waitingOnChildren ?? 0) > 0;
+    return !['completed', 'failed', 'stopped', 'orphan'].includes(job.status) || (job.waitingOnChildren ?? 0) > 0;
   }
 
   private async preserve(candidate: WorkspaceCandidate, report: WorkspaceRetentionReport): Promise<boolean> {

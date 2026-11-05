@@ -716,7 +716,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     const failedPath = path.join(root, workspaceDirName(failedId));
     await fsPromises.mkdir(failedPath);
     await fsPromises.writeFile(path.join(failedPath, 'diagnostic.txt'), 'keep');
-    jobs.set(failedId, { status: 'failed', finishedAt: Date.now() - day });
+    jobs.set(failedId, { status: 'failed', finishedAt: Date.now() - 23 * 60 * 60_000 });
     const report = await buildPolicy({ jobs, now: Date.now() }).policy.enforce();
     expect(report.removed.map(item => item.jobId)).toEqual([completedId]);
     await expect(fsPromises.access(failedPath)).resolves.toBeUndefined();
@@ -735,6 +735,46 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     const report = await buildPolicy({ jobs, recovery, now: Date.now(), diskFreeBytes: 0, minFreeDiskBytes: 1 }).policy.enforce();
     expect(recovery.preserved).toEqual([jobId]);
     expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'age' }]);
+  });
+
+
+  it('protects an unknown workspace younger than 24 hours', async() => {
+    // risk: a registry persistence race deletes a workspace whose job is not visible yet
+    const jobs = new FixtureJobStateReader();
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    await setMtime(workspacePath, Date.now() - 23 * 60 * 60_000);
+    const report = await buildPolicy({ jobs, now: Date.now() }).policy.enforce();
+    expect(report.removed).toEqual([]);
+    await expect(fsPromises.access(workspacePath)).resolves.toBeUndefined();
+  });
+
+  it('reclaims an unknown pushed workspace older than 24 hours as an orphan', async() => {
+    // risk: deleted/pre-persistence job rows leave published workspaces in the backlog forever
+    const jobs = new FixtureJobStateReader();
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    pushedCleanRepo(workspacePath, path.join(outsideRoot, 'orphan-clean.git'));
+    await setMtime(workspacePath, Date.now() - 25 * 60 * 60_000);
+    const report = await buildPolicy({ jobs, now: Date.now() }).policy.enforce();
+    expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'orphan' }]);
+  });
+
+  it('archives an unknown unsafe workspace older than 24 hours before orphan removal', async() => {
+    // risk: reclaiming orphan backlog silently destroys commits that exist only inside the VM
+    const jobs = new FixtureJobStateReader();
+    const recovery = new FixtureRecoveryPreserver();
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    initRepoWithRemote(workspacePath, path.join(outsideRoot, 'orphan-unsafe.git'));
+    commit(workspacePath, 'only-local.txt', 'valuable');
+    await setMtime(workspacePath, Date.now() - 25 * 60 * 60_000);
+    const report = await buildPolicy({ jobs, recovery, now: Date.now() }).policy.enforce();
+    expect(recovery.preserved).toEqual([jobId]);
+    expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'orphan' }]);
   });
 
 });

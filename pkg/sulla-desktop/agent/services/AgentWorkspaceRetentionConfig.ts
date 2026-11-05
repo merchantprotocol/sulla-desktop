@@ -15,7 +15,7 @@ export interface WorkspaceRetentionConfigOverrides {
 /** Tunables for guest agent-workspace retention. */
 export class WorkspaceRetentionConfig {
   static readonly DEFAULT_COMPLETED_RETENTION_MS = 10 * 60_000;
-  static readonly DEFAULT_TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
+  static readonly DEFAULT_TERMINAL_RETENTION_MS = 24 * 60 * 60_000;
   static readonly DEFAULT_MIN_FREE_DISK_BYTES = 5 * 1024 ** 3;
   static readonly DEFAULT_INTERVAL_MS = 2 * 60_000;
 
