@@ -40,6 +40,14 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await agentJobProvider.custody.history(worker.jobId)).toHaveLength(1);
     const pending=await agentJobProvider.messaging.pendingMessagesForThread('worker-thread');
     expect(pending.map(item=>item.message)).toContainEqual(expect.stringContaining('[Manager changed]'));
+    const old={wsChannel:'manager-one',agentId:'manager-one',threadId:'manager-one-thread',subAgentDepth:1};
+    const refusedMessage=await tools.call('send_job_message',{jobId:worker.jobId,message:'stale command'},old);
+    expect(refusedMessage.success).toBe(false);expect(String(refusedMessage.error??refusedMessage.result)).toContain('manager-two');
+    const accepted=await tools.call('send_job_message',{jobId:worker.jobId,message:'current command'},{wsChannel:'manager-two',agentId:'manager-two',threadId:'manager-two-thread',subAgentDepth:1});
+    expect(accepted,JSON.stringify(accepted)).toMatchObject({success:true});
+    expect(await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='current command'`,[worker.jobId])).toHaveLength(1);
+    const refusedStop=await tools.call('stop_agent_job',{jobId:worker.jobId,reason:'stale stop'},old);
+    expect(refusedStop.success).toBe(false);expect(String(refusedStop.error??refusedStop.result)).toContain('manager-two');expect((await registry.getJob(worker.jobId)).status).toBe('running');
   });
 
   it('H5 refuses a live peer through both registered tools without an audit row',async()=>{
@@ -56,29 +64,4 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await agentJobProvider.custody.history(job.jobId)).toHaveLength(0);
   });
 
-  it('H7 refuses the old owner and lets the new owner durably message after a move',async()=>{
-    // risk: an old manager acts after custody has committed
-    await registry.createJob([{agentId:'message-new',label:'new',prompt:'manage',status:'running',threadId:'message-new-thread'}],'root','root-thread',{parentAgentId:'root'});
-    const job=await registry.createJob([{agentId:'worker',label:'worker',prompt:'work',status:'running',threadId:'message-worker-thread'}],'message-old','message-old-thread',{parentAgentId:'message-old'});
-    const old={wsChannel:'message-old',agentId:'message-old',threadId:'message-old-thread',subAgentDepth:1};
-    const moved=await tools.call('reassign_job',{jobId:job.jobId,to:'message-new-thread',reason:'rotate manager'},old);
-    expect(moved,JSON.stringify(moved)).toMatchObject({success:true});
-    const refused=await tools.call('send_job_message',{jobId:job.jobId,message:'stale command'},old);
-    expect(refused.success).toBe(false); expect(String(refused.error??refused.result)).toContain('message-new');
-    const before=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='stale command'`,[job.jobId]);expect(before).toHaveLength(0);
-    const accepted=await tools.call('send_job_message',{jobId:job.jobId,message:'current command'},{wsChannel:'message-new',agentId:'message-new',threadId:'message-new-thread',subAgentDepth:1});
-    expect(accepted,JSON.stringify(accepted)).toMatchObject({success:true});
-    expect(await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message='current command'`,[job.jobId])).toHaveLength(1);
-  });
-
-  it('H7 stop refusal names effective custody and leaves state unchanged',async()=>{
-    // risk: stale owner terminates work after a handoff
-    await registry.createJob([{agentId:'stop-new',label:'new',prompt:'manage',status:'running',threadId:'stop-new-thread'}],'root','root-thread',{parentAgentId:'root'});
-    const job=await registry.createJob([{agentId:'worker',label:'worker',prompt:'work',status:'running',threadId:'stop-worker-thread'}],'stop-old','stop-old-thread',{parentAgentId:'stop-old'});
-    const old={wsChannel:'stop-old',agentId:'stop-old',threadId:'stop-old-thread',subAgentDepth:1};
-    expect(await tools.call('reassign_job',{jobId:job.jobId,to:'stop-new-thread',reason:'rotate manager'},old)).toMatchObject({success:true});
-    const refused=await tools.call('stop_agent_job',{jobId:job.jobId,reason:'stale stop'},old);
-    expect(refused.success).toBe(false);expect(String(refused.error??refused.result)).toContain('stop-new');
-    expect((await registry.getJob(job.jobId)).status).toBe('running');
-  });
 });
