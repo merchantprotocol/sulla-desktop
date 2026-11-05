@@ -22,7 +22,7 @@ import {
   wakeTargetFromState,
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
-import { disallowedToolsFor } from './claudeToolPolicy';
+import { ClaudeToolPolicy } from './claudeToolPolicy';
 import {
   CliFaultError, CliHandoffFailure, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
 } from './cliFaultRecovery';
@@ -208,6 +208,7 @@ function handoffAbortError(): Error {
 }
 
 export class ClaudeCodeService extends BaseLanguageModel {
+  private readonly toolPolicy: ClaudeToolPolicy;
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -424,8 +425,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor() {
+  constructor(toolPolicy = new ClaudeToolPolicy()) {
     super({ id: 'claude-code', model: 'claude-code', baseUrl: 'local-vm' });
+    this.toolPolicy = toolPolicy;
   }
 
   /** Non-streaming chat — buffers the whole response and returns it. */
@@ -929,7 +931,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // isSubAgent — workflow-node agents are sub-agents stamped 'primary' and
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
-    const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
+    const disallowedTools = this.toolPolicy.disallowedToolsFor(options.state?.metadata as any);
     // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
     const systemPromptFile: ProviderFileRef = await transport.files.write({

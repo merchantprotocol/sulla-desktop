@@ -10,7 +10,7 @@ describe('WorkerPromptBuilder', () => {
   it('injects the delegated job identity and Sulla-only waiting rules', () => {
     // risk: a worker waits with unsupported native controls and never reports its contract
     const prompt = new WorkerPromptBuilder().build({
-      delegatedJobId: 'job-42', delegatedTaskIndex: 3, workflowParentChannel: 'coding-manager',
+      delegatedJobId: 'job-42', delegatedTaskIndex: 3, managerAgentId: 'coding-manager', managerThreadId: 'thread-7',
     });
     expect(prompt).toContain('Job: job-42 (task 3)');
     expect(prompt).toContain('Manager: coding-manager');

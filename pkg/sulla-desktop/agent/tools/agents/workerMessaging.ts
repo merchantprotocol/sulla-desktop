@@ -14,9 +14,10 @@ export class WorkerPromptBuilder {
     const jobId = String(metadata.delegatedJobId ?? metadata.jobId ?? 'unknown');
     const taskIndex = String(metadata.delegatedTaskIndex ?? metadata.taskIndex ?? 'unknown');
     const manager = String(metadata.managerAgentId ?? metadata.parentAgentId ?? metadata.workflowParentChannel ?? 'unknown');
+    const managerThread = String(metadata.managerThreadId ?? metadata.parentThreadId ?? 'unknown');
     return `[How your job works]
 Job: ${ jobId } (task ${ taskIndex })
-Manager: ${ manager }
+Manager: ${ manager } (thread ${ managerThread }, job ${ jobId })
 Ending your turn without agents/return_result fails your task after one reminder.
 For anything longer than a minute, use sulla agents/wait with seconds and reason, then end your turn.
 Never use background processes, Monitor, cron, or scheduled wakeups.
@@ -24,8 +25,6 @@ Manager messages arrive at your next tool boundary as "[Message from orchestrato
 Put questions in report_progress blockers so your manager is alerted.`;
   }
 }
-
-const workerPromptBuilder = new WorkerPromptBuilder();
 
 function representedMessageIds(state: any): Set<string> {
   return new Set((state?.messages ?? [])
@@ -36,7 +35,7 @@ function representedMessageIds(state: any): Set<string> {
 /** Add worker guidance and durable queued messages at a CLI model-call boundary. */
 export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): Promise<string> {
   if (!state?.metadata?.isSubAgent) return basePrompt;
-  const workerGuidance = workerPromptBuilder.build(state.metadata);
+  const workerGuidance = new WorkerPromptBuilder().build(state.metadata);
   const threadId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : '';
   if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
 
