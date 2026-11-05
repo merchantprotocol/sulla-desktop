@@ -15,6 +15,7 @@ import { copyLockedFile } from './fileOperations.js';
 import { mimeForPath as mime } from './mimeTypes.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
+import { CollectionPolicyRepository } from './Repositories/CollectionPolicyRepository.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { NativeOperationJournal } from './nativeOperationJournal.js';
 import { queryNativeSourcePage, type NativeSourcePage, type NativeSourcePageRow } from './nativeSourcePaging.js';
@@ -172,6 +173,7 @@ export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:stri
 export class LocalFilesManager {
   private readonly store: Store;
   private readonly publicationLifecyclePolicy: PublicationLifecyclePolicy;
+  private readonly collectionPolicyRepository: CollectionPolicyRepository;
   private collectionId?:  string;
   private stopped = false;
   private running?:       Promise<unknown>;
@@ -320,9 +322,10 @@ export class LocalFilesManager {
   }
 
   /** store: the process-wide chunk store, so reads of evicted chunks hydrate through the chunk cache. */
-  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator, store?:Store, publicationLifecyclePolicy?:PublicationLifecyclePolicy) {
+  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator, store?:Store, publicationLifecyclePolicy?:PublicationLifecyclePolicy, collectionPolicyRepository?:CollectionPolicyRepository) {
     this.store = store ?? new Store(config.chunkRoot);
-    this.publicationLifecyclePolicy = publicationLifecyclePolicy ?? new PublicationLifecyclePolicy(); this.paused = config.paused;
+    this.publicationLifecyclePolicy = publicationLifecyclePolicy ?? new PublicationLifecyclePolicy();
+    this.collectionPolicyRepository = collectionPolicyRepository ?? new CollectionPolicyRepository(); this.paused = config.paused;
     this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
       .filter(root => !isSensitiveTrackedPath(root.path));
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
@@ -1650,7 +1653,7 @@ export class LocalFilesManager {
         entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
         entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
         entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
-      const collection = entry.collection ?? (await client.query('SELECT system_area FROM collections WHERE id=$1', [collectionId])).rows[0];
+      const collection = entry.collection ?? await this.collectionPolicyRepository.findPublicationPolicy(client, collectionId);
       if (!collection) throw new Error(`Replication collection ${ collectionId } is unavailable`);
       const replicatedLifecycle = this.publicationLifecyclePolicy.sanitizeReplication({
         collection, path:entry.file.path, createdByType:entry.version.created_by_type,

@@ -10,10 +10,10 @@ import { join, resolve } from 'node:path';
 
 import { Pool } from 'pg';
 
-import { createApp } from '../../../../../../services/sulla-files/src/app.js';
-import { issueCapabilityToken } from '../../../../../../services/sulla-files/src/auth.js';
-import { migrate } from '../../../../../../services/sulla-files/src/db.js';
-import { LocalFilesManager } from '../../../../../../services/sulla-files/src/localManager.js';
+import { createApp } from '../../../../../services/sulla-files/src/app.js';
+import { issueCapabilityToken } from '../../../../../services/sulla-files/src/auth.js';
+import { migrate } from '../../../../../services/sulla-files/src/db.js';
+import { LocalFilesManager } from '../../../../../services/sulla-files/src/localManager.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 class UseCasePublicationFixture {
