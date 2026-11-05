@@ -251,6 +251,24 @@ class ProductionFilesFixture {
     return (await this.pool!.query(`SELECT f.published_version_id,v.publication_status,v.published_at,v.published_by FROM files f JOIN file_versions v ON v.id=f.published_version_id WHERE f.id=$1`,[file.id])).rows[0];
   }
 
+  async syncQuarantinesMissingCollection():Promise<any> {
+    const missingCollectionId=randomUUID(); const validFileId=randomUUID();
+    const entry=(seq:number,collectionId:string,fileId:string)=>{const manifest={hash:'',chunk_ids:[],total_size:0};manifest.hash=createHash('sha256').update(JSON.stringify({ids:manifest.chunk_ids,size:0})).digest('hex');return {seq,op:'put',syncAuthority:{canMaterialize:true},manifest,
+      file:{id:fileId,collection_id:collectionId,path:`Use Cases/functions/sync-${seq}/function.yaml`,created_by_type:'agent-run',created_by_id:'remote',mime:'text/yaml',size:0,lifecycle_generation:0},
+      version:{id:randomUUID(),file_id:fileId,chunk_collection_id:collectionId,parent_version_id:null,manifest_hash:manifest.hash,size:0,deleted:false,created_by_type:'agent-run',created_by_id:'remote',created_at:new Date().toISOString(),message:'remote',device_id:'older-peer',publication_status:'draft',published_at:null,published_by:null}}};
+    const entries=[entry(1,missingCollectionId,randomUUID()),entry(2,this.collectionId,validFileId)];
+    const remote=(this.manager as any).remote.bind(this.manager);
+    (this.manager as any).remote=async(path:string)=>path.includes('/journal?after=')?entries.filter(item=>item.seq>Number(new URL(path,'http://sync.test').searchParams.get('after')??0)):remote(path);
+    try {
+      await (this.manager as any).syncCollection(this.collectionId,false);
+      await (this.manager as any).syncCollection(this.collectionId,false);
+    } finally { (this.manager as any).remote=remote }
+    const cursor=(await this.pool!.query('SELECT last_seq FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2',[this.collectionId,'local-device'])).rows[0];
+    const valid=(await this.pool!.query('SELECT id,current_version_id FROM files WHERE id=$1',[validFileId])).rows[0];
+    const versionCount=Number((await this.pool!.query('SELECT COUNT(*) AS count FROM file_versions WHERE file_id=$1',[validFileId])).rows[0].count);
+    return {cursor,valid,versionCount};
+  }
+
   async replicationCases():Promise<any> {
     const logsId=randomUUID();
     await this.pool!.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,system_area,explorer_path)
@@ -289,6 +307,11 @@ describeWithDatabase('Use Case publication production paths',()=>{
   it('requests and approves publication through the real lifecycle routes',async()=>{
     // risk: authorization — only the human approval path may activate an agent draft.
     const approved=await fixture.approve(streamed); expect(approved).toMatchObject({publication_status:'published',published_by:'publication-test-user'}); expect(approved.published_at).toBeTruthy(); expect(approved.published_version_id).toBe(streamed.current_version_id);
+  });
+  it('quarantines a missing-collection sync entry without pinning the cursor',async()=>{
+    // risk: data availability — one malformed peer entry must not block later entries or replay them repeatedly.
+    const result=await fixture.syncQuarantinesMissingCollection();
+    expect(result.cursor.last_seq).toBe('2'); expect(result.valid?.current_version_id).toBeTruthy(); expect(result.versionCount).toBe(1);
   });
   it('sanitizes replication with local old-peer policy and is idempotent',async()=>{
     // risk: replication integrity — local logs policy must survive absent peer metadata while canonical malformed publications remain gated.

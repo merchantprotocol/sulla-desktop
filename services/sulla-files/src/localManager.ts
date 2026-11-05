@@ -1433,7 +1433,14 @@ export class LocalFilesManager {
     await this.db.query('INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [collectionId, this.config.deviceId]);
     let cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
-    for (const entry of entries) { await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]) }
+    for (const entry of entries) {
+      const entryCollectionId=String(entry?.file?.collection_id??'');
+      const localCollection=(await this.db.query('SELECT id FROM collections WHERE id=$1',[entryCollectionId])).rows[0];
+      if (!localCollection) {
+        console.warn(`[SullaFiles] quarantined sync journal entry ${ String(entry?.seq??'unknown') } (file ${ String(entry?.file?.id??'unknown') }) for missing local collection ${ entryCollectionId||'unknown' }`);
+      } else await this.pull(entry);
+      await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
+    }
     cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     if (canPush) {
       const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.lifecycle_generation,f.operation_revision) x)) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
