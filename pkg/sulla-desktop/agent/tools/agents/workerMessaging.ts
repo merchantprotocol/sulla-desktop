@@ -22,7 +22,8 @@ Ending your turn without agents/return_result fails your task after one reminder
 For anything longer than a minute, use sulla agents/wait with seconds and reason, then end your turn.
 Never use background processes, Monitor, cron, or scheduled wakeups.
 Manager messages arrive at your next tool boundary as "[Message from orchestrator]"; prefer short tool calls while waiting.
-Put questions in report_progress blockers so your manager is alerted.`;
+Put questions in report_progress blockers so your manager is alerted.
+Use stdin for quote-safe check-ins: sulla agents/report_progress - <<'JSON' (JSON payload on the next line, then JSON on its own line).`;
   }
 }
 

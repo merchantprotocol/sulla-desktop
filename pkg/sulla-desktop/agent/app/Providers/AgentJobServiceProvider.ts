@@ -15,6 +15,8 @@ import { JobStopService } from '../Services/JobStopService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
+import { completionInboxStore } from '../../services/AgentCompletionInbox';
+import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -23,11 +25,13 @@ export class AgentJobServiceProvider {
   readonly service: AgentJobService;
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
+  readonly blockerEscalation: BlockerEscalationService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
+    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     const recovery = new JobRecoveryService(this.jobs);
