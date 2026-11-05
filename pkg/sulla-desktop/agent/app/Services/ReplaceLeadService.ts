@@ -17,6 +17,7 @@ export class ReplaceLeadService {
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note); if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    let operation:any; let owner:any;
    try{const locked=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client,pinned)=>{
+     const refusal=await this.custody.authorizeReplacement(pinned,input.actor); if(refusal)return {refusal};
      const current=await this.packets.operation(client,input.jobId,input.taskIndex);
      if(!current.replacementJobId){
        const launchOwner:CustodyOwner={channel:pinned.channel,threadId:pinned.threadId,agentId:pinned.agentId};
@@ -24,7 +25,7 @@ export class ReplaceLeadService {
        Object.assign(current,{replacementJobId:launched.jobId,replacementTaskIndex:launched.taskIndex,replacementThreadId:launched.threadId}); await this.packets.saveOperation(client,current);
      }
      return {operation:current,owner:pinned};
-   }); if(!locked)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`}; ({operation,owner}=locked);}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
+   }); if(!locked)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`}; if('refusal' in locked)return locked.refusal; ({operation,owner}=locked);}catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    const launched={jobId:operation.replacementJobId,taskIndex:operation.replacementTaskIndex,threadId:operation.replacementThreadId};
    const replacementOwner:CustodyOwner={channel:owner.channel,threadId:launched.threadId,agentId:input.agentId};
    const oldLeadThread=packet.snapshot.lead.tasks[input.taskIndex]?.threadId??owner.threadId;
