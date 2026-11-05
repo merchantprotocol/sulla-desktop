@@ -213,7 +213,7 @@ export class AgentWorkspaceRetentionPolicy {
         continue;
       }
       if ((completedDue && inspection.status === 'clean') || empty) {
-        await this.remove(candidate, 'clean', report);
+        await this.remove(candidate, empty ? 'clean' : 'age', report);
         continue;
       }
       if (terminalDue) {
