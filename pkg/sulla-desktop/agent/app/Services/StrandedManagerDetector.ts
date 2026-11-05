@@ -47,7 +47,7 @@ export class StrandedManagerDetector {
     const managerActivity = Date.parse(task.lastActivityAt);
     const live = descendants.some(child => this.live(child, now));
     if (live) return null;
-    const unprocessed = descendants.filter(child => this.terminalAt(child) !== null && !child.completionDeliveredAt);
+    const unprocessed = descendants.filter(child => (child.returned || child.completion !== undefined) && this.terminalAt(child) !== null && !child.completionDeliveredAt);
     const maxTerminal = Math.max(0, ...unprocessed.map(child => this.terminalAt(child) ?? 0));
     let reasonKind: StrandedReasonKind; let reason: string;
     if (maxTerminal > 0 && now - maxTerminal >= 10 * 60_000 && managerActivity <= maxTerminal) {
@@ -57,7 +57,7 @@ export class StrandedManagerDetector {
       reasonKind = 'parked-without-live-children';
       reason = `parked with no live children and no activity for ${ Math.floor((now - managerActivity) / 60_000) } minutes`;
     } else return null;
-    const childRefs = unprocessed.map(child => `${ child.parentJobId ?? 'root' }#${ child.taskIndex }:${ this.terminalAt(child) }`).sort().join(',');
+    const childRefs = unprocessed.map(child => `${ child.threadId ?? 'unknown' }#${ child.taskIndex }:${ this.terminalAt(child) }`).sort().join(',');
     const stateKey = `stranded:${ job.jobId }:${ task.taskIndex }:${ reasonKind }:${ managerActivity }:${ maxTerminal }:${ childRefs }`;
     return { managerJobId: job.jobId, managerTaskIndex: task.taskIndex, stateKey, reason, reasonKind,
       detectedAt: now, parentChannel: String(job.parentChannel ?? 'sulla-desktop'), parentThreadId: job.parentThreadId,
