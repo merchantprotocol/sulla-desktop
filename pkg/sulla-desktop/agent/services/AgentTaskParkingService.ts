@@ -11,7 +11,8 @@ export class AgentTaskParkingService {
 
   async park(jobId: string, taskIndex: number, request: AgentWaitRequest): Promise<void> {
     const wait = { jobId, taskIndex, wakeAt: request.wakeAt, reason: request.reason, state: 'scheduled' as const };
-    await this.waits.schedule(wait);
+    if (!await this.waits.scheduleAndPark(wait)) throw new Error('The delegated task is no longer running and cannot be parked.');
+    // Keep the live runtime cache in step with the atomic database transition.
     await this.parkTask(jobId, taskIndex, 0);
     this.scheduler.schedule(wait);
   }
