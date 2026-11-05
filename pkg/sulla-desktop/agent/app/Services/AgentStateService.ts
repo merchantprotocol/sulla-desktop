@@ -160,11 +160,12 @@ export class AgentStateService {
     if (job.tasks.length === 0) return job;
     if (['completed', 'failed', 'stopped'].includes(job.status)) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
-    if (statuses.some(value => value === 'error')) status = 'failed';
-    else if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
+    if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
     else if (statuses.some(value => value === 'parked')) status = 'parked';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
-    else status = 'completed';
+    // Task settlement is persisted before the final job verdict. Keep the job
+    // live until completeJob/failJob commits that explicit terminal verdict.
+    else status = job.status;
     return status === job.status ? job : { ...job, status };
   }
   private emitChange(): void { this.versionValue = Math.max(this.versionValue + 1, Date.now()); this.changes.emit('change', this.versionValue); }
