@@ -10,11 +10,13 @@ import { join, resolve } from 'node:path';
 
 import { Pool } from 'pg';
 
-import { createApp } from '../../../../../services/sulla-files/src/app.js';
 import { issueCapabilityToken } from '../../../../../services/sulla-files/src/auth.js';
 import { migrate } from '../../../../../services/sulla-files/src/db.js';
 import { LocalFilesManager } from '../../../../../services/sulla-files/src/localManager.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+vi.mock('@aws-sdk/client-s3', () => ({ S3Client:class {}, PutObjectCommand:class {}, GetObjectCommand:class {}, HeadObjectCommand:class {}, DeleteObjectCommand:class {}, ListObjectsV2Command:class {} }));
+vi.mock('@sulla/vault-crypto', () => ({}));
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 class UseCasePublicationFixture {
   private readonly schema = `use_case_gate_${ randomUUID().replaceAll('-', '') }`;
@@ -215,6 +217,8 @@ class ProductionFilesFixture {
     await this.pool.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')",[this.collectionId,this.userId]);
     this.manager=new LocalFilesManager(this.pool,config);
     (this.manager as any).rootCollections.set('default',this.collectionId);
+    const appModulePath='../../../../../services/sulla-files/src/app.js';
+    const {createApp}=await import(appModulePath);
     const app=createApp(this.pool,config,this.manager);
     this.server=createServer(app); await new Promise<void>(resolve=>this.server!.listen(0,'127.0.0.1',resolve));
     const address=this.server.address(); if (!address || typeof address==='string') throw new Error('test server did not bind');
