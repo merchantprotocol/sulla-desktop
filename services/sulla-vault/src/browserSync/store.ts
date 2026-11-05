@@ -13,7 +13,7 @@
 
 import { CanonicalJson } from '@sulla/domain';
 
-import { EnvelopeError, type BundleFields, type SyncBundle } from '../browserEnvelope/VaultSyncContracts.js';
+import type { BundleFields, SyncBundle } from '../browserEnvelope/VaultSyncContracts.js';
 import { VaultSyncExportMapper } from '../browserEnvelope/VaultSyncExportMapper.js';
 
 import type { Queryable } from '../db.js';
@@ -153,10 +153,6 @@ export function bundleMatchesAccount(bundle: SyncBundle, expected: BundleFields)
   void _v;
   void _mac;
   const canonical = new CanonicalJson();
-  try {
-    return canonical.stringify(fields) === canonical.stringify(expected);
-  } catch (error) {
-    throw EnvelopeError.fromDomain(error);
-  }
+  return canonical.stringify(fields) === canonical.stringify(expected);
 }
 
