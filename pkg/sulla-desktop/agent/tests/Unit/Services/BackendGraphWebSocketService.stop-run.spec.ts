@@ -9,11 +9,12 @@ describe('BackendGraphWebSocketService stop_run scope', () => {
     const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
     const parentAbort = new AbortController();
     const taskOne = new JobAbortScope(); const taskTwo = new JobAbortScope();
+    const taskOneSignal = taskOne.taskSignal(0); const taskTwoSignal = taskTwo.taskSignal(0);
     const service = Object.create(BackendGraphWebSocketService.prototype) as any;
     service.activeAborts = new Map([['desktop|parent-thread', { abort: () => parentAbort.abort() }]]);
     await service.handleChannelMessage('desktop', 'sulla-desktop', { type: 'stop_run', data: { threadId: 'parent-thread' } });
     expect(parentAbort.signal.aborted).toBe(true);
-    expect(taskOne.jobSignal.aborted).toBe(false);
-    expect(taskTwo.jobSignal.aborted).toBe(false);
+    expect(taskOneSignal.aborted).toBe(false);
+    expect(taskTwoSignal.aborted).toBe(false);
   });
 });
