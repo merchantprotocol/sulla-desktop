@@ -63,8 +63,8 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE 'return-h3-%'`)).toEqual(Array.from({length:3},()=>({receiver_thread_id:replacement.threadId})));
 
   // risk: authorization/operations — peers and invalid targets must not mutate another lead.
-  const {leadId:refusedLead}=await seedLead('refuse');const peer=await call({jobId:refusedLead,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(String(peer.result??peer.error)).toContain('coding-manager-sol');
-  expect((await call({jobId:'missing',taskIndex:7,agentId:'coding-manager-sol'})).success).toBe(false);const disabled=await call({jobId:refusedLead,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(String(disabled.result)).toContain('enabled agent');
+  const {leadId:refusedLead}=await seedLead('refuse');const peer=await call({jobId:refusedLead,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(JSON.stringify(peer.result??peer.error)).toContain('coding-manager-sol');
+  expect((await call({jobId:'missing',taskIndex:7,agentId:'coding-manager-sol'})).success).toBe(false);const disabled=await call({jobId:refusedLead,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(JSON.stringify(disabled.result)).toContain('enabled agent');
 
   // risk: duplicate agents/side effects — a persisted launch retry must converge on one replacement.
   const {leadId:retryLead}=await seedLead('retry');failAfterPersist=true;expect((await call({jobId:retryLead,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);failAfterPersist=false;
