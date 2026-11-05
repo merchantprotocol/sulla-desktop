@@ -120,9 +120,6 @@ export interface AgentJob {
   dismissedAt?: number | null;
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
-  /** Durable leaf-worker wait details while status is parked. */
-  waitReason?: string;
-  wakeAt?: number;
   orphanedChildNotices?: OrphanedChildNotice[];
 }
 
