@@ -79,6 +79,11 @@ export interface AgentJobTask {
   completion?: AgentJobResult;
   /** Set only after this task's contract is dispatched into a parent turn. */
   completionDeliveredAt?: number;
+  /** Durable agents/wait state. */
+  waitReason?: string;
+  wakeAt?: number;
+  /** Current persisted stranded-manager alert episode; cleared when the condition resolves. */
+  stranded?: { stateKey: string; detectedAt: number; reason: string; alertedAt: number };
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
 }

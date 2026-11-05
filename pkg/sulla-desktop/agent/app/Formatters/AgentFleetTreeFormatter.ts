@@ -41,7 +41,7 @@ export class AgentFleetTreeFormatter {
       ref: `${ job.jobId }#${ task.taskIndex }`,
       parent: job.parentJobId === null ? null : `${ job.parentJobId }#${ job.parentTaskIndex }`,
       depth,
-      state: this.state(job, task, blockers),
+      state: task.stranded ? 'stranded' : this.state(job, task, blockers),
       activityAge: this.age(task.lastActivityAt),
       step: task.latestCheckin?.step || undefined,
       blockers,

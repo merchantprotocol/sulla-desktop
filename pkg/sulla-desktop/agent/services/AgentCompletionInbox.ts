@@ -14,6 +14,8 @@ export interface PendingCompletion {
   taskIndex: number;
   results: AgentJobResult[];
   failureReason?: string;
+  notice?: string;
+  dedupeKey?: string;
 }
 
 interface Inbox {
@@ -33,7 +35,8 @@ export class CompletionInboxStore {
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
-    const duplicate = inbox.entries.some(entry => entry.jobId === completion.jobId && entry.taskIndex === completion.taskIndex);
+    const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
+    const duplicate = inbox.entries.some(entry => (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
     if (!inbox.stopped && !duplicate) this.idleDispatcher?.(channel, threadId);
@@ -62,7 +65,7 @@ export class CompletionInboxStore {
 
   format(entries: PendingCompletion[]): string {
     return entries.map(entry => {
-      const content = buildWakeContent(entry.jobId, entry.results, entry.failureReason);
+      const content = entry.notice ?? buildWakeContent(entry.jobId, entry.results, entry.failureReason);
       if (content.length <= COMPLETION_RESULT_LIMIT) return content;
       return `${ content.slice(0, COMPLETION_RESULT_LIMIT) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
     }).join('\n\n==========\n\n');

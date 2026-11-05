@@ -88,6 +88,7 @@ export class AgentFleetProjectionService {
     const lineage = index.lineage(job);
     const fields = {
       parentThreadId: job.parentThreadId ?? null,
+      parentChannel: job.parentChannel ?? null,
       parentAgentId: job.parentAgentId ?? null,
       parentJobId: lineage.parentJobId,
       parentTaskIndex: lineage.parentTaskIndex,
@@ -133,6 +134,8 @@ export class AgentFleetProjectionService {
       rootThreadId: fields.rootThreadId as string | null,
       ...fields,
       latestCheckin: this.checkin(latestCheckin, !detailed),
+      wakeAt: task.wakeAt ? new Date(task.wakeAt).toISOString() : null,
+      stranded: task.stranded ?? null,
       result: task.result,
       completion: task.completion,
       undeliveredOrchestratorMessages: telemetry?.undeliveredMessages ?? 0,

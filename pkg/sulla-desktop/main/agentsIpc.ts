@@ -219,6 +219,7 @@ export function initAgentsIpc(): void {
   const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
+  agentJobProvider.stranded.start();
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');

@@ -52,6 +52,7 @@ export class SubagentDirectoryBuilder {
     else if (open) parts.push('no check-in yet');
     if (task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
     if (team) parts.push(this.team(team));
+    if (task.stranded) parts.push(`⚠ stranded: ${ this.quote(task.stranded.reason) }`);
     if (stalled) parts.push(`⚠ stalled (quiet ${ this.span(this.now() - lastActivity) })`);
     parts.push(`job ${ job.tasks.length > 1 ? `${ job.jobId }#${ task.taskIndex }` : job.jobId }`);
     return { line: `- ${ parts.join(' · ') }`, stalled, undelivered: !open && (task.returned || !!task.completion) && !task.completionDeliveredAt, label: task.label || task.agentId, output: task.completion ?? task.result };
