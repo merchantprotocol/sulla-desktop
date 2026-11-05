@@ -32,12 +32,18 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
+import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
+import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
+import { DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
+import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
+import { postgresClient } from '../database/PostgresClient';
 import { markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
+import { ReceiverRunGuard } from './ReceiverRunGuard';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -75,6 +81,9 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+  private readonly agentInbox: AgentInbox;
+  private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
+  private readonly inboxRunGuard: ReceiverRunGuard;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
   private prepareFreshTurn(state: AgentGraphState): void {
@@ -183,9 +192,39 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer(), dependencies: { inboxRepository?: AgentInboxRepository; inboxReceiverResolver?: AgentInboxReceiverResolver; inboxRunGuard?: ReceiverRunGuard } = {}) {
+    const repository = dependencies.inboxRepository ?? new PostgresAgentInboxRepository(new DesktopPostgresConnection(postgresClient));
+    this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();
+    this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
+      agentJobProvider.jobs,
+      channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
+    );
+    this.agentInbox = new AgentInbox(repository, {
+      isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
+      wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
+    }, this.inboxRunGuard);
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
+  }
+
+  private inboxThread(target: AgentInboxTarget): string | undefined {
+    if (target.threadId && this.hasActiveRun(target.channel, target.threadId)) return target.threadId;
+    const prefix = `${ target.channel }|`;
+    return [...this.activeAborts.keys()].find(key => key.startsWith(prefix))?.slice(prefix.length);
+  }
+
+  private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt> {
+    const threadId = target.threadId || this.inboxThread(target);
+    return await this.dispatchToAgent(
+      target.channel,
+      target.channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+      batch,
+      threadId,
+      undefined,
+      target.agentId,
+      'system',
+      { source: 'agent_inbox', inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId) },
+    );
   }
 
   /**
@@ -427,6 +466,8 @@ export class BackendGraphWebSocketService {
     // an empty in-process bus and incorrectly acknowledged as delivered.
     recoverPendingAgentCompletions().catch(err =>
       console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
+    this.agentInbox.replayPending().catch(err =>
+      console.warn('[BackendGraphWS] Failed to replay pending agent inbox messages:', err));
     const interruptedRecovery = new InterruptedAgentRecoveryService(
       agentJobProvider.jobs,
       async(job, taskIndex) => {
@@ -495,6 +536,18 @@ export class BackendGraphWebSocketService {
       }
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       setCompletionInboxStopped(channelId, stopThreadId, true);
+      return;
+    }
+
+    if (msg.type === 'agent_inbox_message') {
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const envelope = data?.envelope;
+      if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
+      const target = await this.inboxReceiverResolver.resolve(channelId);
+      await this.agentInbox.receive({
+        envelope,
+        target,
+      });
       return;
     }
 
@@ -604,7 +657,7 @@ export class BackendGraphWebSocketService {
     await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, metadata);
   }
 
-  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<void> {
+  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
     const { getModelProviderService } = await import('./ModelProviderService');
     const modelProvider = getModelProviderService();
     // Before the saved model choice loads (it waits for the vault on a
@@ -619,19 +672,19 @@ export class BackendGraphWebSocketService {
         role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
       });
       firstRunTrace('chat', 'chat held: model choice not loaded yet', { channelId });
-      return;
+      return 'failed';
     }
     if (!modelProvider.isInitialized() || !modelProvider.getPrimaryProvider().trim()) {
       if (channelId === HEARTBEAT_CHANNEL_ID) {
         console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
-        return;
+        return 'failed';
       }
       this.emitMessage(channelId, 'assistant_message', {
         content: 'No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.',
         role: 'assistant', kind: 'notice', thread_id: threadIdFromMsg,
       });
       firstRunTrace('chat', 'chat blocked before launch', { reason: 'no-ai-provider', channelId });
-      return;
+      return 'failed';
     }
     // Use the frontend's threadId if provided (maintains conversation).
     // Otherwise create a new one and notify the frontend via thread_created.
@@ -779,11 +832,11 @@ export class BackendGraphWebSocketService {
       // already written to agent_job_messages by the caller before this
       // dispatch, and the finally block below redelivers anything still
       // pending once the active run ends.
-      if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message') && this.activeAborts.has(abortKey)) {
+      if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
         if (metadata?.source === 'sub_agent_completion') {
           for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
         }
-        return;
+        return 'deferred';
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
@@ -976,6 +1029,10 @@ export class BackendGraphWebSocketService {
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
 
+        // Error, abort and success all release queued peer messages as one follow-up batch.
+        await this.agentInbox?.flush({ channel: channelId, threadId, agentId })
+          .catch(err => console.error('[BackendGraphWS] Failed to flush agent inbox:', err));
+
         // Keep a durable transcript for tabs that mount after their first run
         // has already started or completed. The renderer can hydrate this
         // snapshot before it begins consuming live events.
@@ -1025,6 +1082,7 @@ export class BackendGraphWebSocketService {
         }
       }
     }
+    return turnConsumedInput ? 'accepted' : 'failed';
   }
 
   // ------------------------------------------------------------------
