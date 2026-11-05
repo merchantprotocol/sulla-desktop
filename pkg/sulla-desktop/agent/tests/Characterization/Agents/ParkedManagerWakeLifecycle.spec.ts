@@ -47,6 +47,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
   let ParkedAgentRehydrator: typeof import('../../../services/ParkedAgentRehydrator').ParkedAgentRehydrator;
   let InterruptedAgentRecoveryService: typeof import('../../../services/InterruptedAgentRecoveryService').InterruptedAgentRecoveryService;
   let agentJobProvider: typeof import('../../../app/Providers/AgentJobServiceProvider').agentJobProvider;
+  let AgentJobServiceProvider: typeof import('../../../app/Providers/AgentJobServiceProvider').AgentJobServiceProvider;
 
   beforeAll(async() => {
     await database.initialize();
@@ -64,7 +65,9 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     recovery = await import('../../../services/AgentCompletionRecoveryService');
     ParkedAgentRehydrator = (await import('../../../services/ParkedAgentRehydrator')).ParkedAgentRehydrator;
     InterruptedAgentRecoveryService = (await import('../../../services/InterruptedAgentRecoveryService')).InterruptedAgentRecoveryService;
-    agentJobProvider = (await import('../../../app/Providers/AgentJobServiceProvider')).agentJobProvider;
+    const providerModule = await import('../../../app/Providers/AgentJobServiceProvider');
+    agentJobProvider = providerModule.agentJobProvider;
+    AgentJobServiceProvider = providerModule.AgentJobServiceProvider;
   }, 60_000);
   afterAll(async() => database.dispose());
   afterEach(() => { inbox.clearCompletionInboxes(); wakeParkedAgent.mockClear() });
@@ -140,6 +143,42 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // A later replay sweep must not resurrect an already-consumed completion.
     await recovery.recoverPendingAgentCompletions();
     expect(inbox.takeAgentCompletions('replay-parent', 'replay-parent-thread')).toEqual([]);
+  });
+
+  it('b2) persists a consumed task acknowledgement after its job is terminal and recovers only the unconsumed task', async() => {
+    // risk: completeJob makes the row terminal before the parent consumes its
+    // wake, so a status-gated acknowledgement is lost and restart duplicates it.
+    const consumed = await registry.createJob(
+      [{ agentId: 'worker', label: 'consumed', prompt: 'work', status: 'running' }],
+      'terminal-ack-parent', 'terminal-ack-parent-thread',
+    );
+    const consumedResult = { label: 'consumed', status: 'completed' as const, output: 'done', threadId: '' };
+    await registry.recordTaskCompletion(consumed.jobId, 0, consumedResult);
+    await registry.completeJob(consumed.jobId, [consumedResult]);
+
+    const unconsumed = await registry.createJob(
+      [{ agentId: 'worker', label: 'unconsumed', prompt: 'work', status: 'running' }],
+      'terminal-ack-parent', 'terminal-ack-parent-thread',
+    );
+    const unconsumedResult = { label: 'unconsumed', status: 'completed' as const, output: 'pending', threadId: '' };
+    await registry.recordTaskCompletion(unconsumed.jobId, 0, unconsumedResult);
+    await registry.completeJob(unconsumed.jobId, [unconsumedResult]);
+
+    // A fresh service models the parent consuming the wake after settlement.
+    const consumingProvider = new AgentJobServiceProvider();
+    await consumingProvider.service.markTaskCompletionDelivered(consumed.jobId, 0);
+
+    // Another fresh provider models restart: only durable Postgres state is visible.
+    const restartedProvider = new AgentJobServiceProvider();
+    expect((await restartedProvider.jobs.job(consumed.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number));
+    expect((await restartedProvider.jobs.job(unconsumed.jobId))?.tasks[0].completionDeliveredAt).toBeUndefined();
+    expect((await restartedProvider.service.getPendingCompletions()).map(job => job.jobId)).not.toContain(consumed.jobId);
+    expect((await restartedProvider.service.getPendingCompletions()).map(job => job.jobId)).toContain(unconsumed.jobId);
+
+    inbox.clearCompletionInboxes();
+    await recovery.recoverPendingAgentCompletions();
+    const recovered = inbox.takeAgentCompletions('terminal-ack-parent', 'terminal-ack-parent-thread');
+    expect(recovered.map(item => item.jobId)).toEqual([unconsumed.jobId]);
   });
 
   it('c) send_job_message wakes a parked manager without acking before consumption, then its progress and return stay on the same job and wake its parent', async() => {

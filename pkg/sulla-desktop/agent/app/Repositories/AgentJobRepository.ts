@@ -52,6 +52,15 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }
 
+  /** Acknowledge one consumed task without reopening terminal rows to general task mutation. */
+  async markTaskCompletionDelivered(jobId: string, taskIndex: number, deliveredAt: number): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs
+      SET tasks = jsonb_set(tasks, ARRAY[$2::text, 'completionDeliveredAt'], to_jsonb($3::bigint), true)
+      WHERE job_id = $1
+        AND (tasks -> $2::int) IS NOT NULL
+        AND (tasks -> $2::int) ->> 'completionDeliveredAt' IS NULL`, [jobId, taskIndex, deliveredAt]);
+  }
+
   async updateTaskCompletions(jobId: string, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb WHERE job_id = $1`, [jobId, JSON.stringify(tasks), JSON.stringify(results)]);
   }
