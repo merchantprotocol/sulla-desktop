@@ -70,6 +70,22 @@ export class GitHubDeleteRefWorker extends BaseTool {
         responseString: `Deleted remote ${ refType }/${ name } on ${ owner }/${ repo } (was ${ sha }). Recover with github_create_ref({ branch: "${ name }", sha: "${ sha }" }) if needed.`,
       };
     } catch (error) {
+      const status = (error as any)?.status;
+      if (status === 422) {
+        return {
+          successBoolean: false,
+          responseString: `Ref ${ refType }/${ name } is already gone from ${ owner }/${ repo } (GitHub returned 422: Reference does not exist).`,
+        };
+      }
+      // Octokit treats a broker response with status 204 and no JSON body as a
+      // successful promise. Keep this guard explicit for alternate transports
+      // that surface the status as an error while still completing the delete.
+      if (status === 204) {
+        return {
+          successBoolean: true,
+          responseString: `Deleted remote ${ refType }/${ name } on ${ owner }/${ repo } (was ${ sha }).`,
+        };
+      }
       return { successBoolean: false, responseString: `Error deleting ${ refType }/${ name }: ${ (error as Error).message }` };
     }
   }
