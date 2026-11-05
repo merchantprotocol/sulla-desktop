@@ -47,11 +47,11 @@ async createJob(
 }
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
-  await this.states.update(jobId, job => {
+  await this.states.mutateJob(jobId, job => {
     if (!job.tasks[index]) return job;
     const nextPatch = (job.status === 'stopped' || job.tasks[index].status === 'stopped') && patch.status && patch.status !== 'stopped' ? { ...patch, status: 'stopped' as const } : patch;
     return { ...job, tasks: job.tasks.map((task, taskIndex) => taskIndex === index ? { ...task, ...nextPatch } : task) };
-  });
+  }, undefined, false);
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {

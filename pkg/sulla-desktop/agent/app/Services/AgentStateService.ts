@@ -122,13 +122,13 @@ export class AgentStateService {
 
   /** The only whole-row mutation boundary: latest durable read, mutation, write, cache, and publish share one per-job queue. */
   async mutateJob(jobId: string, mutate: (current: AgentJob) => AgentJob | undefined,
-    persist?: (next: AgentJob) => Promise<boolean>): Promise<AgentJob | undefined> {
+    persist?: (next: AgentJob) => Promise<boolean>, deriveStatus = true): Promise<AgentJob | undefined> {
     return this.mutations.run(jobId, async() => {
       const current = (await this.store.allJobs()).find(job => job.jobId === jobId);
       if (!current) return undefined;
       const candidate = mutate(structuredClone(current));
       if (!candidate) return undefined;
-      const next = this.withDerivedStatus(candidate);
+      const next = deriveStatus ? this.withDerivedStatus(candidate) : candidate;
       if (persist && !await persist(next)) return undefined;
       if (!persist) await this.store.replaceState(next);
       this.cache.jobs.set(next.jobId, next);
