@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentJobMessagingModel } from '../../../database/models/AgentJobMessagingModel';
+import { StopPrincipal } from '@pkg/agent/app/ValueObjects/StopPrincipal';
 import { getAllJobs } from '../jobRegistry';
 import { sendJobMessage } from '../send_job_message';
 import { stopAgentJob } from '../stop_agent_job';
@@ -61,7 +62,7 @@ export async function dispatchCloudAgentCommand(body: Record<string, any>): Prom
     return { ok: false, error: 'agent_not_found' };
   }
   if (body.type === 'agent.stop') {
-    const result = await stopAgentJob(jobId);
+    const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from authenticated cloud dashboard');
     return { ok: result.successBoolean, message: result.responseString };
   }
   if (body.type === 'agent.message') {

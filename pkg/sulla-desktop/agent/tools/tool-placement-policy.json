@@ -113,6 +113,7 @@
       "agents/send_job_message",
       "agents/start_agent_conversation",
       "agents/stop_agent_job",
+      "agents/wait",
       "applescript/applescript_execute",
       "bookmarks/bookmarks_add",
       "bookmarks/bookmarks_create_folder",

@@ -13,6 +13,7 @@ export interface AgentJobTaskTarget {
   threadId?:      string;
   parentChannel?:  string;
   parentThreadId?: string;
+  label?:          string;
 }
 
 export interface AgentJobMessage {
@@ -31,6 +32,12 @@ export interface AgentJobCheckin {
   blockers:     string[];
   percent?:     number;
   createdAt:    number;
+}
+
+export interface AgentJobCheckinReceipt {
+  target:          AgentJobTaskTarget;
+  checkin:         AgentJobCheckin;
+  blockersChanged: boolean;
 }
 
 export interface AgentJobTaskTelemetry {

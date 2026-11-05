@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ReportProgressWorker extends BaseTool {
@@ -20,17 +20,17 @@ export class ReportProgressWorker extends BaseTool {
         responseString: 'report_progress is only available inside a delegated agent task (hidden or tab).',
       };
     }
-    const step = String(input.step ?? '').trim();
+    const step = String(input.step ?? 'progress').trim() || 'progress';
     const summary = String(input.summary ?? '').trim();
-    if (!step || !summary) {
-      return { successBoolean: false, responseString: 'step and a non-empty summary are required.' };
+    if (!summary) {
+      return { successBoolean: false, responseString: 'A non-empty summary is required.' };
     }
     const percent = input.percent === undefined ? undefined : Number(input.percent);
     if (percent !== undefined && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
       return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
     }
 
-    const result = await AgentJobMessagingModel.appendCheckin(threadId, {
+    const result = await agentJobProvider.blockerEscalation.record(threadId, {
       step,
       summary,
       filesTouched: Array.isArray(input.filesTouched) ? input.filesTouched.map(String) : [],
