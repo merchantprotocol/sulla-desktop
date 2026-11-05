@@ -75,7 +75,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async stop(jobId: string, tasks: AgentJobTask[], stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
+    await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
   }
 
   async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<string[]> {
@@ -85,7 +85,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       SELECT child.job_id, child.tasks FROM agent_jobs child
       JOIN descendants parent ON child.parent_thread_id IN (SELECT value->>'threadId' FROM jsonb_array_elements(parent.tasks) value)
     )
-    UPDATE agent_jobs target SET status = 'stopped', finished_at = now(), waiting_on_children = 0,
+    UPDATE agent_jobs target SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(),
       stopped_by = $2::jsonb, stop_reason = $3, tasks = (SELECT COALESCE(jsonb_agg(CASE WHEN value->>'status' IN ('queued','running','parked') THEN value || jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint) ELSE value END), '[]'::jsonb) FROM jsonb_array_elements(target.tasks) value)
     FROM descendants WHERE target.job_id = descendants.job_id AND target.status IN ('running','parked') RETURNING target.job_id` , [jobId, JSON.stringify(stoppedBy), reason]);
     return rows.map(row => String(row.job_id));
@@ -147,7 +147,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async complete(job: AgentJob): Promise<void> {
-    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb WHERE job_id = $1`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
+    await this.connection.run(`UPDATE agent_jobs SET status = $2, finished_at = now(), waiting_on_children = 0, error = $3, results = $4::jsonb, tasks = $5::jsonb WHERE job_id = $1 AND status <> 'stopped'`, [job.jobId, job.status, job.error ?? null, JSON.stringify(job.results), JSON.stringify(job.tasks)]);
   }
 
   async markCompletionDelivered(jobId: string): Promise<void> {
@@ -157,6 +157,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async pendingCompletions(): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs
       WHERE completion_delivered_at IS NULL
+        AND status <> 'stopped'
         AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
         AND parent_channel IS NOT NULL
         AND parent_thread_id IS NOT NULL

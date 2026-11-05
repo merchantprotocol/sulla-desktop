@@ -172,6 +172,12 @@ export class SpawnAgentWorker extends BaseTool {
       };
     }
 
+    const { agentLaunchPauseService } = await import('../../services/AgentLaunchPauseService');
+    if (await agentLaunchPauseService.isPaused()) {
+      await this.rejectTasks(tasks, 'Jonathon has paused all agent launches from Live Agents');
+      return { successBoolean: false, responseString: 'Jonathon has paused all agent launches from Live Agents' };
+    }
+
     if (tasks.length > MAX_TASKS) {
       return {
         successBoolean: false,

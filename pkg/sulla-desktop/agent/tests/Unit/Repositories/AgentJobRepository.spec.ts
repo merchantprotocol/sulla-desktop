@@ -45,6 +45,16 @@ dbDescribe('AgentJobRepository', () => {
     expect((await repository.job(input.jobId))?.status).toBe('completed');
   });
 
+  it('never overwrites a stopped row with a later failure or completion', async() => {
+    // risk: container teardown resurrects an intentional human kill as a failure
+    const input = job('repository-terminal-stop-guard');
+    await repository.insertJob(input);
+    await repository.stop(input.jobId, input.tasks.map(task => ({ ...task, status: 'stopped' })), 'human', 'Killed by human');
+    await repository.fail(input.jobId, 'Agent container disappeared', input.tasks.map(task => ({ ...task, status: 'error' })));
+    await repository.complete({ ...input, status: 'failed', error: 'missing contract' });
+    expect(await repository.job(input.jobId)).toMatchObject({ status: 'stopped', stoppedBy: 'human', stopReason: 'Killed by human' });
+  });
+
   it('uses one bounded projection for every active job plus only 25 finished jobs', async() => {
     // risk: BL-043 unbounded history and N+1 database traffic
     const now = Date.now();

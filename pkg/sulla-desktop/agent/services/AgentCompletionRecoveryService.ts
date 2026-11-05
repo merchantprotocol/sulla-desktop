@@ -46,7 +46,7 @@ export class AgentCompletionRecoveryService {
   private async recoverPending(): Promise<void> {
     const jobs = await this.repository.pendingCompletions();
     for (const job of jobs) {
-      if (this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) continue;
+      if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) continue;
       this.inFlight.add(job.jobId);
       try {
         job.tasks.forEach((task, taskIndex) => {
