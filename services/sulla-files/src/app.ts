@@ -1478,7 +1478,7 @@ export function createApp(
       return;
     }
     const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = '';
-    const query = await db.query(`SELECT j.*,${FILE_ROW_JSON_SQL} file,row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(c.*) collection FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id JOIN collections c ON c.id=f.collection_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
+    const query = await db.query(`SELECT j.*,${FILE_ROW_JSON_SQL} file,row_to_json(v.*) version,row_to_json(m.*) manifest,json_build_object('system_area',c.system_area) collection FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id JOIN collections c ON c.id=f.collection_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
     const actor = identity(request); const entries:any[] = [];
     for (const row of query.rows.filter(row => !isProtectedPath(row.file.path))) {
       const draftVisible = true; const canEdit = true;
@@ -1494,7 +1494,7 @@ export function createApp(
     }
     response.json(entries.sort((left, right) => Number(left.seq) - Number(right.seq)).slice(0, 1000));
   } catch (error) { next(error) } });
-  app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(c.*) collection,${FILE_ROW_JSON_SQL} file,
+  app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,json_build_object('system_area',c.system_area) collection,${FILE_ROW_JSON_SQL} file,
       CASE WHEN k.version_id IS NULL THEN NULL ELSE json_build_object('collectionId',k.collection_id,'principalId',k.principal_id,'keyVersion',k.key_version,'epoch',k.key_epoch) END AS "keyContext"
       FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id LEFT JOIN manifests m ON m.hash=v.manifest_hash LEFT JOIN file_version_key_contexts k ON k.version_id=v.id WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await assertUnprotectedFile(db, query.rows[0].file); const file = await requireFile(request, query.rows[0].file.id, 'view'); await visibleVersion(request, file, request.params.id); response.json(query.rows[0]) } catch (error) { next(error) } });
   app.get('/v1/files/:id/recording-metadata', async(request:RequestWithIdentity, response, next) => { try {

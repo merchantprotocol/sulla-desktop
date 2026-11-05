@@ -245,6 +245,18 @@ class ProductionFilesFixture {
     return (await this.pool!.query(`SELECT f.*,v.publication_status FROM files f JOIN file_versions v ON v.id=f.current_version_id WHERE f.id=$1`,[file.id])).rows[0];
   }
 
+  async replicationResponsePolicies():Promise<{ journal:any; version:any }> {
+    const file=await this.bufferedDraft();
+    await this.pool!.query(`UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3,retention_policy=$4 WHERE id=$1`,[
+      this.collectionId,{ciphertext:'private-data-key'},{ciphertext:'private-dedup-key'},{trashDays:99},
+    ]);
+    const journal=await this.request(`/v1/collections/${this.collectionId}/journal?after=0`,{method:'GET'},true);
+    const entry=journal.find((item:any)=>item.file?.id===file.id);
+    if(!entry)throw new Error('journal response omitted the created file');
+    const version=await this.request(`/v1/versions/${file.current_version_id}`,{method:'GET'},true);
+    return {journal:entry.collection,version:version.collection};
+  }
+
   async approve(file:any):Promise<any> {
     const requested=await this.request(`/v1/files/${file.id}/versions/${file.current_version_id}/publish-request`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'functional gate test'})},true);
     await this.request(`/v1/files/publish-requests/${requested.id}/approve`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'},false);
@@ -307,6 +319,12 @@ describeWithDatabase('Use Case publication production paths',()=>{
     // risk: permissions — removing streamingUpload.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
     const streamed=await withFixture(async fixture=>fixture.streamingDraft(await fixture.bufferedDraft()));
     expect(streamed.publication_status).toBe('draft'); expect(streamed.draft_version_id).toBe(streamed.current_version_id); expect(streamed.published_version_id).toBeNull();
+  },120_000);
+  it('limits replication response collection policy to system_area',async()=>{
+    // risk: secret exposure — replication responses must not serialize collection key ciphertexts or unrelated owner/retention metadata.
+    const policies=await withFixture(fixture=>fixture.replicationResponsePolicies());
+    expect(policies.journal).toEqual({system_area:null});
+    expect(policies.version).toEqual({system_area:null});
   },120_000);
   it('requests and approves publication through the real lifecycle routes',async()=>{
     // risk: authorization — only the human approval path may activate an agent draft.
