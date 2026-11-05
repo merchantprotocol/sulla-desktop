@@ -85,8 +85,9 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
-    const rows=await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE ids->>'jobId'=$1 AND kind='contract'`,[lead.jobId]);
-    expect(rows).toHaveLength(1);expect(rows[0].receiver_thread_id).toBe(`${adopter}-thread`);
+    const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
+    const completions=takeAgentCompletions(adopter,`${adopter}-thread`);expect(completions).toHaveLength(1);expect(completions[0]).toMatchObject({jobId:lead.jobId,taskIndex:0});
+    expect(takeAgentCompletions(owner,`${owner}-thread`)).toHaveLength(0);
     GraphRegistry.delete(`${adopter}-thread`);
   });
 
