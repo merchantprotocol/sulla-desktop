@@ -182,7 +182,7 @@ export class JobCompletionDelivery {
     // the parent; the repository marks them consumed before runtime abort.
     if (terminal?.status === 'stopped' && terminal.stoppedBy) return true;
     const owner = await this.custody?.resolveOwner(job.jobId, taskIndex);
-    if (owner) {
+    if (owner && owner.version > 0) {
       await emitProactiveCompletion(owner.channel, job.jobId, results, failureReason, owner.threadId, terminal);
       return wakeParentGraph(owner.channel, owner.threadId, job.jobId, results, failureReason, taskIndex, terminal);
     }

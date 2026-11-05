@@ -26,6 +26,14 @@ export class AgentJobCustodyRepository {
   }
 
   async move(input: CustodyMoveInput, authorize: CustodyTransactionContext['authorize'], changedAt: Date): Promise<CustodyMoveResult> {
+    // Resolve liveness/lineage before opening the writer transaction. Those readers
+    // use their own repositories; doing them while holding the sole pooled client
+    // deadlocks one-connection runtimes. The locked snapshot below must still match
+    // this exact version and owner, otherwise the caller retries against fresh state.
+    const preflight=await this.resolveOwner(input.jobId,input.taskIndex);
+    if(!preflight)return {ok:false,code:'not-found',message:`Job ${input.jobId} was not found.`};
+    const preflightRefusal=await authorize(preflight,undefined as unknown as PoolClient);
+    if(preflightRefusal)return preflightRefusal;
     return this.database.transaction(async client => {
       // Inbox producers do not yet share the per-job advisory lock. This brief,
       // exclusive writer barrier makes a concurrent insert commit before our
@@ -33,8 +41,8 @@ export class AgentJobCustodyRepository {
       await client.query('LOCK TABLE agent_inbox_messages IN SHARE ROW EXCLUSIVE MODE');
       const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex);
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
-      const refusal = await authorize(current, client);
-      if (refusal) return refusal;
+      if(current.version!==preflight.version || current.channel!==preflight.channel || current.threadId!==preflight.threadId || current.agentId!==preflight.agentId)
+        return {ok:false,code:'version-conflict',message:'Custody changed concurrently; retry.',current,retryable:true};
 
       const inbox = await client.query<any>(`SELECT message_id, lease_owner, lease_expires_at FROM agent_inbox_messages
         WHERE ids->>'jobId'=$1 AND ($2::int IS NULL OR ids->>'taskIndex'=$2::text) AND delivered_at IS NULL FOR UPDATE`, [input.jobId, input.taskIndex ?? null]);

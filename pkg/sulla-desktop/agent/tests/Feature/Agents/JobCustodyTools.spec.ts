@@ -33,7 +33,7 @@ dbDescribe('registered custody transfer tools',()=>{
     await registry.createJob([{agentId:'manager-two',label:'M2',prompt:'manage',status:'running',threadId:'manager-two-thread'}],'root','root-thread',{parentAgentId:'root'});
     const worker=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:'worker-thread'}],'manager-one','manager-one-thread',{parentAgentId:'manager-one'});
     const moved=await tools.call('reassign_job',{jobId:worker.jobId,to:'manager-two-thread',reason:'handoff test'},{wsChannel:'manager-one',agentId:'manager-one',threadId:'manager-one-thread',subAgentDepth:1});
-    expect(moved.success).toBe(true);
+    expect(moved,JSON.stringify(moved)).toMatchObject({success:true});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
     expect(await agentJobProvider.custody.resolveOwner(worker.jobId)).toMatchObject({agentId:'manager-two',threadId:'manager-two-thread'});
     expect(await agentJobProvider.custody.history(worker.jobId)).toHaveLength(1);
