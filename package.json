@@ -104,7 +104,8 @@
     "yazl": "^3.3.1",
     "yjs": "13.6.33",
     "zod": "3.25.76",
-    "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz"
+    "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.0-2213270.tgz",
+    "@sulla/domain": "file:vendor/sulla-core/sulla-domain-0.1.0-2213270.tgz"
   },
   "devDependencies": {
     "@babel/core": "7.29.0",
@@ -115,6 +116,7 @@
     "@babel/plugin-proposal-private-methods": "7.18.6",
     "@babel/plugin-proposal-private-property-in-object": "7.21.11",
     "@babel/preset-env": "7.29.0",
+    "@electric-sql/pglite": "0.5.15",
     "@electron/asar": "4.0.1",
     "@electron/fuses": "2.0.0",
     "@electron/notarize": "3.1.1",

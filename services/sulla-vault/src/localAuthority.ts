@@ -103,6 +103,8 @@ import {
   cacheUpdateSessionKeyInput,
 } from './contracts.js';
 import type { Database, Queryable } from './db.js';
+import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
+import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 
 const CHALLENGE_TTL_MS = 30_000;
@@ -603,6 +605,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly db: Database,
     private readonly config: VaultConfig,
     private readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
+    private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
+    private readonly itemRepository: PostgresVaultItemRepository = new PostgresVaultItemRepository(db),
+    private readonly auditLogRepository: PostgresVaultAuditLogRepository = new PostgresVaultAuditLogRepository(db),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -691,7 +696,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async backupCredentials(itemId:string,kind:'s3'|'nas',target:string):Promise<Record<string,string>> {
     const keys=this.requireKeys(); const generation=this.generation;
     if (!/^[0-9a-f-]{36}$/i.test(itemId)) throw new LocalVaultError('invalid_operation',400,'Backup credential ID is invalid');
-    const item=(await this.db.query<ItemRow>(`SELECT * FROM items WHERE id=$1 AND owner_user_id=$2 AND collection_id IS NULL AND deleted_at IS NULL`,[itemId,keys.userId])).rows[0];
+    const item=(await this.itemRepository.findOwnedPersonalActive<ItemRow>([itemId,keys.userId])).rows[0];
     if (!item) throw new LocalVaultError('policy_denied',403,'Backup credential is unavailable');
     const plaintext=JSON.parse(await decryptItemText({version:1,ciphertext:item.ciphertext,encryptedItemKey:item.encrypted_item_key},keys.userKey,{itemId:item.id,ownerId:keys.userId})) as VaultItemPlaintext;
     const bound=credentialField(plaintext,'backup_target');
@@ -1075,10 +1080,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
     const generation = this.generation;
-    const rows = await this.db.query<ItemRow & { item_type: string; updated_at: string }>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision,item_type,updated_at
-         FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, [keys.userId],
-    );
+    const rows = await this.itemRepository.listOwnedActiveByUpdated<ItemRow & { item_type: string; updated_at: string }>([keys.userId]);
     const items = await Promise.all(rows.rows.map(async row => {
       const item = JSON.parse(await decryptItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
@@ -1106,7 +1108,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (typeof input.content !== 'string' || Buffer.byteLength(input.content) > maxContent) throw new LocalVaultError('invalid_operation', 400, 'Bitwarden exports are limited to 25 MB');
     const keys = this.requireKeys(), generation = this.generation;
     const mapped = input.format === 'csv' ? parseBitwardenCsv(input.content) : mapBitwardenExport(input.format === 'zip' ? await readBitwardenZip(input.content,input.password) : await readBitwardenJson(input.content, input.password));
-    const rows = await this.db.query<ItemRow>(`SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL`, [keys.userId]);
+    const rows = await this.itemRepository.listOwnedActiveForImport<ItemRow>([keys.userId]);
     const existing = new Set<string>();
     for (const row of rows.rows) {
       const item = JSON.parse(await decryptItemText({ version:1, ciphertext:row.ciphertext, encryptedItemKey:row.encrypted_item_key }, keys.userKey, { itemId:row.id, ownerId:keys.userId })) as VaultItemPlaintext;
@@ -1131,7 +1133,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async importBitwarden(sessionId: string|undefined, csrf: string|undefined, input: { content:string; format:'json'|'csv'|'zip'; password?:string }): Promise<BitwardenImportPreview & { duplicates:number; importable:number; imported:number }> {
     return this.runSecurityOperation(async()=>{
       const prepared=await this.prepareBitwardenImport(sessionId,csrf,input);
-      await this.runTransaction(async client => { for(const item of prepared.items){ const id=randomUUID(); const encrypted=await encryptItem(JSON.stringify(item),prepared.keys.userKey,{itemId:id,ownerId:prepared.keys.userId}); await client.query(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy) VALUES ($1,$2,$3,$4,$5,$6)`,[id,prepared.keys.userId,item.type,encrypted.ciphertext,encrypted.encryptedItemKey,item.agentPolicy]); } });
+      await this.runTransaction(async client => { for(const item of prepared.items){ const id=randomUUID(); const encrypted=await encryptItem(JSON.stringify(item),prepared.keys.userKey,{itemId:id,ownerId:prepared.keys.userId}); await this.itemRepository.insertImportedItem([id,prepared.keys.userId,item.type,encrypted.ciphertext,encrypted.encryptedItemKey,item.agentPolicy], client); } });
       this.requireGeneration(prepared.generation);
       await this.auditHumanAction(this.db,prepared.keys.userId,'human_bitwarden_import');
       return {...prepared.preview,imported:prepared.items.length};
@@ -1149,12 +1151,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const params: unknown[] = [keys.userId];
     const itemFilter = itemId ? 'AND a.item_id=$2' : '';
     if (itemId) params.push(itemId);
-    const result = await this.db.query(
-      `SELECT a.id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at
-         FROM audit_log a JOIN items i ON i.id=a.item_id
-        WHERE i.owner_user_id=$1 ${ itemFilter }
-        ORDER BY a.created_at DESC LIMIT 100`, params,
-    );
+    const result = await this.auditLogRepository.listOwnedActivity(params, itemFilter);
     this.requireGeneration(generation);
     return result.rows;
     });
@@ -1166,10 +1163,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     const keys = this.requireKeys();
     const generation = this.generation;
-    const result = await this.db.query<ItemRow>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
-         FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
-    );
+    const result = await this.itemRepository.findOwnedActiveForReveal<ItemRow>([itemId, keys.userId]);
     const row = result.rows[0];
     if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
     const item = JSON.parse(await decryptItemText(
@@ -1223,12 +1217,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const result = await this.runTransaction(async client => {
       if (!input.id) {
-      const created = await client.query<{ revision: number }>(
-        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`,
-        [id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
-          input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null],
-      );
+      const created = await this.itemRepository.insertHumanItem<{ revision: number }>([id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
+          input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null], client);
       this.requireGeneration(generation);
       await this.auditHumanAction(client, keys.userId, 'human_item_created', id, input.item.name);
       this.requireGeneration(generation);
@@ -1236,14 +1226,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
     const revision = Number(input.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) throw new LocalVaultError('invalid_operation', 400, 'Item revision is required');
-    const updated = await client.query<{ revision: number }>(
-      `UPDATE items SET item_type=$1,ciphertext=$2,encrypted_item_key=$3,agent_policy=$4,integration_ref=$5,
-              revision=revision+1,updated_at=now()
-        WHERE id=$6 AND owner_user_id=$7 AND revision=$8 AND deleted_at IS NULL RETURNING revision`,
-      [input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
+    const updated = await this.itemRepository.updateHumanItemIfRevision<{ revision: number }>([input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
         input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null,
-        id, keys.userId, revision],
-    );
+        id, keys.userId, revision], client);
     if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
     this.requireGeneration(generation);
     await this.auditHumanAction(client, keys.userId, 'human_item_updated', id, input.item.name);
@@ -1256,10 +1241,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
 
   /** Decrypts only the custom fields of a stored item; used to let unknown field types round-trip. */
   private async storedCustomFields(keys: { userId: string; userKey: Uint8Array }, itemId: string): Promise<VaultItemCustomField[]> {
-    const result = await this.db.query<ItemRow>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
-         FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
-    );
+    const result = await this.itemRepository.findOwnedActiveCustomFields<ItemRow>([itemId, keys.userId]);
     const row = result.rows[0];
     if (!row) return [];
     const stored = JSON.parse(await decryptItemText(
@@ -1276,11 +1258,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     await this.runTransaction(async client => {
-    const result = await client.query(
-      `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
-        WHERE id=$1 AND owner_user_id=$2 AND revision=$3 AND deleted_at IS NULL RETURNING id`,
-      [itemId, keys.userId, revision],
-    );
+    const result = await this.itemRepository.softDeleteOwnedIfRevision([itemId, keys.userId, revision], client);
     if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
     this.requireGeneration(generation);
     await this.auditHumanAction(client, keys.userId, 'human_item_deleted', itemId);
@@ -1313,11 +1291,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
-      await client.query(
-        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'password_change' FROM users WHERE id=$1`,
-        [keys.userId],
-      );
+      await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'password_change', client);
       await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
@@ -1439,11 +1413,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         };
       }
       await this.runTransaction(async client => {
-        await client.query(
-          `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-           SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'account_password_migration' FROM users WHERE id=$1`,
-          [keys.userId],
-        );
+        await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'account_password_migration', client);
         await client.query(
           `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
           [verifier.salt, verifier.verifier, wrapped,
@@ -1546,12 +1516,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
       let replacedExisting = false;
       await this.runTransaction(async client => {
-        const prior = await client.query(
-          `INSERT INTO local_vault_recovery_history(user_id,recovery_salt,recovery_verifier,encrypted_user_key,reason)
-           SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key,'rotation'
-           FROM local_vault_recovery WHERE user_id=$1 RETURNING id`, [keys.userId],
-        );
-        replacedExisting = Boolean(prior.rowCount);
+        replacedExisting = await this.rewrapHistory.preserveCurrentRecoveryWrap(keys.userId, 'rotation', client);
         await client.query(
           `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
            VALUES ($1,$2,$3,$4)
@@ -1624,11 +1589,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
-      await client.query(
-        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'recovery' FROM users WHERE id=$1`,
-        [row.user_id],
-      );
+      await this.rewrapHistory.preserveCurrentPasswordWrap(row.user_id, 'recovery', client);
       await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
@@ -1662,7 +1623,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     const [user, items, recovery] = await Promise.all([
       this.db.query('SELECT id,email,login_hash_salt,login_hash_verifier,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1', [keys.userId]),
-      this.db.query('SELECT id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref,revision,created_at,updated_at FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL', [keys.userId]),
+      this.itemRepository.listOwnedForBackup([keys.userId]),
       this.db.query('SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [keys.userId]),
     ]);
     const backup = await deriveMasterKey(backupPassword);
@@ -1710,12 +1671,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             payload.user.public_key, payload.user.encrypted_private_key, payload.user.encrypted_user_key, payload.user.kdf],
         );
         for (const item of payload.items) {
-          await client.query(
-            `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref,revision,created_at,updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [item.id, payload.user.id, item.item_type, item.ciphertext, item.encrypted_item_key, item.agent_policy,
-              item.integration_ref, item.revision, item.created_at, item.updated_at],
-          );
+          await this.itemRepository.insertBackupItem([item.id, payload.user.id, item.item_type, item.ciphertext, item.encrypted_item_key, item.agent_policy,
+              item.integration_ref, item.revision, item.created_at, item.updated_at], client);
         }
         if (payload.recovery) {
           await client.query(
@@ -1795,17 +1752,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
       const generation = this.generation;
       const result = await this.runTransaction(async client => {
-        const created = await client.query<{ revision: number }>(
-          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-           VALUES ($1,$2,$3,$4,$5,$6,NULL) RETURNING revision`,
-          [id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy],
-        );
+        const created = await this.itemRepository.insertAgentItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy], client);
         this.requireGeneration(generation);
-        await client.query(
-          `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked)
-           VALUES ($1,$2,'agent_vault_item_created',$3,$4,false)`,
-          [keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }],
-        );
+        await this.auditLogRepository.recordAgentCreated([keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
         return Number(created.rows[0].revision);
       });
       return { itemId: id, revision: result, generated: input.generate === true };
@@ -1818,15 +1767,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return this.runSecurityOperation(async() => {
       const keys = this.validateAgentWriteClaims(input?.claims, callerId, token);
       if (!UUID_PATTERN.test(input.itemId)) throw new LocalVaultError('invalid_operation', 400, 'Item reference is invalid');
-      const owned = await this.db.query(
-        `SELECT 1 FROM audit_log WHERE item_id=$1 AND action='agent_vault_item_created' AND metadata->>'agentId'=$2 LIMIT 1`,
-        [input.itemId, input.claims.agent_id],
-      );
+      const owned = await this.auditLogRepository.wasCreatedByAgentForUpdate([input.itemId, input.claims.agent_id]);
       if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only vault items they created');
-      const rows = await this.db.query<ItemRow>(
-        `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
-         WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [input.itemId, keys.userId],
-      );
+      const rows = await this.itemRepository.findOwnedActiveForAgentUpdate<ItemRow>([input.itemId, keys.userId]);
       const row = rows.rows[0];
       if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
       const item = JSON.parse(await decryptItemText(
@@ -1845,18 +1788,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
       const generation = this.generation;
       const revision = await this.runTransaction(async client => {
-        const updated = await client.query<{ revision: number }>(
-          `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now()
-           WHERE id=$3 AND owner_user_id=$4 AND revision=$5 AND deleted_at IS NULL RETURNING revision`,
-          [encrypted.ciphertext, encrypted.encryptedItemKey, row.id, keys.userId, row.revision],
-        );
+        const updated = await this.itemRepository.updateOwnedCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, keys.userId, row.revision], client);
         if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
         this.requireGeneration(generation);
-        await client.query(
-          `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked)
-           VALUES ($1,$2,'agent_vault_item_updated',$3,$4,false)`,
-          [keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }],
-        );
+        await this.auditLogRepository.recordAgentUpdated([keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
         return Number(updated.rows[0].revision);
       });
       return { itemId: row.id, revision, generated: input.generate === true };
@@ -1874,25 +1809,22 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         throw new LocalVaultError('invalid_operation', 400, 'Credential reference is invalid');
       }
       const keys = this.validateAgentWriteClaims(input.claims, callerId, token);
-      const existing = await this.db.query<ItemRow>(
-        `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
-         WHERE owner_user_id=$1 AND integration_ref=$2 AND deleted_at IS NULL LIMIT 1`, [keys.userId, `${ integrationId }/${ accountId }`],
-      );
+      const existing = await this.itemRepository.findOwnedIntegrationCredential<ItemRow>([keys.userId, `${ integrationId }/${ accountId }`]);
       if (!existing.rowCount) {
         const result = await this.createAgentIntegrationItem(keys, input, integrationId, accountId, property);
         return result;
       }
       const row = existing.rows[0];
-      const owned = await this.db.query(`SELECT 1 FROM audit_log WHERE item_id=$1 AND action='agent_vault_item_created' AND metadata->>'agentId'=$2 LIMIT 1`, [row.id, input.claims.agent_id]);
+      const owned = await this.auditLogRepository.wasCreatedByAgentForIntegration([row.id, input.claims.agent_id]);
       if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only credentials they created');
       const item = JSON.parse(await decryptItemText({ version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey, { itemId: row.id, ownerId: keys.userId })) as VaultItemPlaintext;
       item.integration ??= { integrationId, accountId, properties: {} };
       item.integration.properties[property] = String(input.value);
       const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
       const updated = await this.runTransaction(async client => {
-        const result = await client.query<{ revision: number }>(`UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now() WHERE id=$3 AND revision=$4 RETURNING revision`, [encrypted.ciphertext, encrypted.encryptedItemKey, row.id, row.revision]);
+        const result = await this.itemRepository.updateCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, row.revision], client);
         if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
-        await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked) VALUES ($1,$2,'agent_vault_item_updated',$3,$4,false)`, [keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }]);
+        await this.auditLogRepository.recordIntegrationAgentUpdated([keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
         return Number(result.rows[0].revision);
       });
       return { itemId: row.id, revision: updated, generated: false };
@@ -1904,8 +1836,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false } };
     const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const revision = await this.runTransaction(async client => {
-      const created = await client.query<{ revision: number }>(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`, [id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`]);
-      await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked) VALUES ($1,$2,'agent_vault_item_created',$3,$4,false)`, [keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }]);
+      const created = await this.itemRepository.insertAgentIntegrationItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`], client);
+      await this.auditLogRepository.recordIntegrationAgentCreated([keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
       return Number(created.rows[0].revision);
     });
     return { itemId: id, revision, generated: false };
@@ -1926,15 +1858,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
     const keys = this.requireKeys();
     const generation = this.generation;
-    const result = await this.db.query<ItemRow & { integration_ref: string }>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision,integration_ref
-         FROM items
-        WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
-          AND split_part(integration_ref,'/',1)=$2
-          AND ($3::text IS NULL OR split_part(integration_ref,'/',2)=$3)
-        ORDER BY updated_at DESC`,
-      [keys.userId, integrationId, accountFilter ?? null],
-    );
+    const result = await this.itemRepository.listIntegrationMetadata<ItemRow & { integration_ref: string }>([keys.userId, integrationId, accountFilter ?? null]);
     this.requireGeneration(generation);
     const active = await this.db.query<{ active_account_id: string | null }>(
       'SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2',
@@ -1983,10 +1907,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
     const keys = this.requireKeys();
     const generation = this.generation;
-    const exists = await this.db.query(
-      `SELECT 1 FROM items WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL`,
-      [keys.userId, `${ integrationId }/${ accountId }`],
-    );
+    const exists = await this.itemRepository.existsByIntegrationRefForActivation([keys.userId, `${ integrationId }/${ accountId }`]);
     this.requireGeneration(generation);
     if (!exists.rowCount) throw new LocalVaultError('invalid_operation', 404, 'Integration account is unavailable');
     await this.db.query(
@@ -2020,10 +1941,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     const integrationRef = `${ integrationId }/${ accountId }`;
-    const exists = await this.db.query(
-      `SELECT 1 FROM items WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL`,
-      [keys.userId, integrationRef],
-    );
+    const exists = await this.itemRepository.existsByIntegrationRefForOAuth([keys.userId, integrationRef]);
     this.requireGeneration(generation);
     if (!exists.rowCount) {
       // Same default as the vault's guided Connect screen with "agents can use this" on.
@@ -2039,11 +1957,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
       await this.runSecurityOperation(() => this.runTransaction(async client => {
         this.requireGeneration(generation);
-        await client.query(
-          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-           VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
-          [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, integrationRef],
-        );
+        await this.itemRepository.insertOAuthAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, integrationRef], client);
         await this.auditHumanAction(client, keys.userId, 'oauth_account_created', itemId, label);
         this.requireGeneration(generation);
       }));
@@ -2079,11 +1993,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     const integrationRef = `${ integrationId }/${ accountId }`;
-    const existing = await this.db.query<ItemRow>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
-       WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL LIMIT 1`,
-      [keys.userId, integrationRef],
-    );
+    const existing = await this.itemRepository.findOwnedIntegrationAccount<ItemRow>([keys.userId, integrationRef]);
     this.requireGeneration(generation);
     const itemId = existing.rows[0]?.id ?? randomUUID();
     let plaintext: VaultItemPlaintext;
@@ -2124,18 +2034,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       this.requireGeneration(generation);
       if (existing.rowCount) {
         const row = existing.rows[0];
-        const updated = await client.query(
-          `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now()
-           WHERE id=$3 AND revision=$4 AND deleted_at IS NULL`,
-          [encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision],
-        );
+        const updated = await this.itemRepository.updateIntegrationCiphertextIfRevision([encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision], client);
         if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
       } else {
-        await client.query(
-          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-           VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
-          [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef],
-        );
+        await this.itemRepository.insertIntegrationAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef], client);
       }
       if (input.active !== false) {
         await client.query(
@@ -2215,18 +2117,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
     await this.runSecurityOperation(() => this.runTransaction(async client => {
       this.requireGeneration(generation);
-      await client.query(
-        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
-          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
-            AND split_part(integration_ref,'/',1)=$2`,
-        [keys.userId, SULLA_CLOUD_INTEGRATION_ID],
-      );
-      await client.query(
-        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-         VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
-        [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
-          `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`],
-      );
+      await this.itemRepository.softDeleteIntegrationAccounts([keys.userId, SULLA_CLOUD_INTEGRATION_ID], client);
+      await this.itemRepository.insertSullaCloudAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
+          `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`], client);
       await client.query(
         `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
          VALUES ($1,$2,$3)
@@ -2244,12 +2137,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     return this.runSecurityOperation(() => this.runTransaction(async client => {
-      const result = await client.query(
-        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
-          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
-            AND split_part(integration_ref,'/',1)=ANY($2::text[]) RETURNING id`,
-        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
-      );
+      const result = await this.itemRepository.softDeleteIntegrationFamilies([keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']], client);
       await client.query(
         `DELETE FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=ANY($2::text[])`,
         [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
@@ -2440,10 +2328,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       for (const groupRows of groups.values()) {
         this.requireGeneration(generation);
         const { integration_id: integrationId, account_id: accountId } = groupRows[0];
-        const existing = await client.query(
-          'SELECT id FROM items WHERE integration_ref=$1 AND owner_user_id=$2 AND deleted_at IS NULL',
-          [`${ integrationId }/${ accountId }`, keys.userId],
-        );
+        const existing = await this.itemRepository.findLegacyIntegrationItem([`${ integrationId }/${ accountId }`, keys.userId], client);
         if (existing.rowCount) {
           skipped += groupRows.length;
           continue;
@@ -2473,11 +2358,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         if (reopened !== JSON.stringify(plaintext)) {
           throw new LocalVaultError('migration_failed', 409, 'Migrated item failed reopen verification');
         }
-        await client.query(
-          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-           VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
-          [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`],
-        );
+        await this.itemRepository.insertMigratedLegacyItem([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`], client);
         for (const row of groupRows) {
           await client.query(
             `INSERT INTO local_vault_migration_rows(source_kind,source_value_id,source_fingerprint,item_id)
@@ -2562,11 +2443,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     if (claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const result = await this.db.query<ItemRow>(
-      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
-         FROM items WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
-           AND agent_policy->>'mode'='agents'`, [keys.userId],
-    );
+    const result = await this.itemRepository.listAgentAccessiblePersonal<ItemRow>([keys.userId]);
     const items: BrokerItemListResponse['items'] = [];
     for (const row of result.rows) {
       const plaintext = JSON.parse(await decryptItemText(
@@ -3162,11 +3039,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   private async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null, path?: string): Promise<void> {
-    await db.query(
-      `INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked)
-       VALUES ($1,$2,$3,'{}'::jsonb,false)`,
-      [actorId, itemId, action],
-    );
+    await this.auditLogRepository.recordHumanAction([actorId, itemId, action], db);
     if (itemId) this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: itemId, action, actor: actorId, result: 'allowed', ...(path ? { path } : {}) });
   }
 
@@ -3363,17 +3236,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
     }
     const integrationRef = ref.integrationId ? `${ ref.integrationId }/${ ref.accountId ?? 'default' }` : null;
-    const result = await this.db.query<ItemRow>(
-      `SELECT i.id,i.owner_user_id,i.collection_id,i.ciphertext,i.encrypted_item_key,i.agent_policy,i.revision,
-              c.org_id,om.role,cm.can_use_by_agents,
-              EXISTS (SELECT 1 FROM group_members gm JOIN collection_group_members cgm ON cgm.group_id=gm.group_id
-                WHERE gm.user_id=$1 AND cgm.collection_id=i.collection_id AND cgm.can_use_by_agents=true) AS group_can_use_by_agents
-         FROM items i LEFT JOIN collections c ON c.id=i.collection_id
-         LEFT JOIN org_members om ON om.org_id=c.org_id AND om.user_id=$1 AND om.status='confirmed'
-         LEFT JOIN collection_members cm ON cm.collection_id=i.collection_id AND cm.user_id=$1
-        WHERE i.deleted_at IS NULL AND (($2::uuid IS NOT NULL AND i.id=$2) OR ($3::text IS NOT NULL AND i.integration_ref=$3)) LIMIT 1`,
-      [input.claims.sub, ref.itemId ?? null, integrationRef],
-    );
+    const result = await this.itemRepository.findBrokerCredential<ItemRow>([input.claims.sub, ref.itemId ?? null, integrationRef]);
     const item = result.rows[0];
     const personal = item?.owner_user_id === input.claims.sub;
     // Local authority has only the personal user key in memory. It must never
@@ -3684,12 +3547,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       ownerId,
     });
     this.requireGeneration(prepared.generation);
-    const updated = await db.query(
-      `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,agent_wrapped_item_key=NULL,
-              revision=revision+1,updated_at=now()
-        WHERE id=$3 AND revision=$4 AND deleted_at IS NULL RETURNING revision`,
-      [encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision],
-    );
+    const updated = await this.itemRepository.updateOAuthCiphertextIfRevision([encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision], db);
     if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during token update');
     this.requireGeneration(prepared.generation);
     return Number(updated.rows[0].revision);
@@ -3733,14 +3591,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     reason: string | null,
     db: Queryable = this.db,
   ): Promise<void> {
-    await db.query(
-      `INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
-       VALUES ($1,$2,$3,$4,'vault_outbound_request',$5,$6,$7,$8)`,
-      [input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
+    await this.auditLogRepository.recordOutboundRequest([input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
         { agentId: input.claims.agent_id, operation: input.operation,
           destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
-          ...(input.operation === 'item.http' ? { itemId: item.id } : {}) }, blocked, reason],
-    );
+          ...(input.operation === 'item.http' ? { itemId: item.id } : {}) }, blocked, reason], db);
     this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: item.id, action: 'vault_outbound_request', actor: input.claims.agent_id || input.claims.sub, result: blocked ? 'blocked' : 'allowed', meta: { operation: input.operation, agentId: input.claims.agent_id } });
   }
 
@@ -3752,16 +3606,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     } catch {
       // Invalid destinations are represented by the denial reason, never copied into audit metadata.
     }
-    await this.db.query(
-      `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked,reason)
-       VALUES ($1,NULL,'vault_outbound_request',$2,$3,true,$4)`,
-      [input.claims.sub, input.claims.pod_id, {
+    await this.auditLogRepository.recordOutboundDenial([input.claims.sub, input.claims.pod_id, {
         agentId: input.claims.agent_id,
         operation: input.operation,
         ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
         ...(destination ? { destination } : {}),
-      }, reason],
-    );
+      }, reason]);
   }
 }
 
