@@ -59,6 +59,8 @@ export class AgentStateService {
   async job(jobId: string): Promise<AgentJob | undefined> { await this.refresh(); return this.cache.jobs.get(jobId); }
   /** Write-side lookup. Lifecycle writes must not wait for boot reconciliation. */
   async jobForWrite(jobId: string): Promise<AgentJob | undefined> {
+    const cached = this.cache.jobs.get(jobId);
+    if (cached) return cached;
     await this.refreshUnsafe();
     return this.cache.jobs.get(jobId);
   }

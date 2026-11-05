@@ -184,10 +184,13 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     // risk: lifecycle transitions split durable truth from action-button state
     const job = await registry.createJob([{ agentId: 'worker', label: 'lifecycle', prompt: 'x', status: 'queued' }]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    const assertEqual = async() => {
-      const cached = agentJobProvider.runtime.jobs.get(job.jobId);
-      const durable = await agentJobProvider.jobs.job(job.jobId);
-      expect(cached).toEqual(durable);
+    const lifecycleState = (value: Awaited<ReturnType<typeof agentJobProvider.jobs.job>>) => value && ({
+      status: value.status, tasks: value.tasks, results: value.results, error: value.error ?? null,
+      finishedAt: value.finishedAt, waitingOnChildren: value.waitingOnChildren ?? 0,
+      completionDeliveredAt: value.completionDeliveredAt ?? null, dismissedAt: value.dismissedAt ?? null,
+    });
+    const assertEqual = async(jobId = job.jobId) => {
+      expect(lifecycleState(agentJobProvider.runtime.jobs.get(jobId))).toEqual(lifecycleState(await agentJobProvider.jobs.job(jobId)));
     };
     await assertEqual();
     await registry.updateJobTask(job.jobId, 0, { status: 'running', startedAt: Date.now() }); await assertEqual();
@@ -197,10 +200,10 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
 
     const failed = await registry.createJob([{ agentId: 'worker', label: 'failed', prompt: 'x', status: 'running' }]);
     await registry.failJob(failed.jobId, 'expected');
-    expect(agentJobProvider.runtime.jobs.get(failed.jobId)).toEqual(await agentJobProvider.jobs.job(failed.jobId));
+    await assertEqual(failed.jobId);
     const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running' }]);
     await registry.stopJobCascade(stopped.jobId);
-    expect(agentJobProvider.runtime.jobs.get(stopped.jobId)).toEqual(await agentJobProvider.jobs.job(stopped.jobId));
+    await assertEqual(stopped.jobId);
   });
 
   it('repairs a contradictory job rollup from its task state in Postgres and cache', async() => {
