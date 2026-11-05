@@ -22,7 +22,8 @@ export class AgentDockerRunPolicy {
     if (persistent && !reason) throw new Error('persistent:true requires a non-empty reason');
     const options = this.tokenize(request.options ?? '');
     const restartIndex = options.findIndex(option => option === '--restart' || option.startsWith('--restart='));
-    if (restartIndex >= 0 && !persistent) {
+    const restartValue = restartIndex < 0 ? '' : options[restartIndex].includes('=') ? options[restartIndex].split('=')[1] : String(options[restartIndex + 1] ?? '');
+    if (restartIndex >= 0 && restartValue !== 'no' && !persistent) {
       throw new Error('Docker restart policies are refused for temporary agent containers. Pass persistent:true with a non-empty reason to opt out.');
     }
     const ttl = Number.isFinite(request.ttlSeconds) && Number(request.ttlSeconds) > 0
