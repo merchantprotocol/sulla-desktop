@@ -11,40 +11,15 @@ import { JobTaskLocator } from './JobTaskLocator';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
 import { JobWrapUpService } from './JobWrapUpService';
+import { SpawnDedupeGuard } from './SpawnDedupeGuard';
+import { SpawnJobCreator } from './SpawnJobCreator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService) { super(); this.runtime.start(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService, spawnDedupe = new SpawnDedupeGuard(clock)) { super(); this.runtime.start(); this.jobCreator = new SpawnJobCreator(repository, runtime, recovery, clock, idGenerator, spawnDedupe); }
+  private readonly jobCreator: SpawnJobCreator;
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[AgentJobService] persistence write failed (job continues in-memory):', (error as Error).message); } }
-async createJob(
-  taskInput: number | AgentJobTask[],
-  parentChannel?: string,
-  parentThreadId?: string,
-  options: CreateJobOptions = {},
-): Promise<AgentJob> {
-  await this.recovery.ensureHydrated();
-    const tasks = Array.isArray(taskInput) ? taskInput : [];
-  const taskCount = Array.isArray(taskInput) ? taskInput.length : taskInput;
-  const jobId = this.idGenerator.next();
-  const job: AgentJob = {
-    jobId,
-    status:     'running',
-    createdAt:  this.clock.now().getTime(),
-    finishedAt: null,
-    taskCount,
-    results:    [],
-    tasks,
-    parentChannel,
-    parentThreadId,
-    parentAgentId: options.parentAgentId,
-    visibility: options.visibility ?? 'hidden',
-    completionDeliveredAt: null,
-    dismissedAt: null,
-  };
-  this.runtime.jobs.set(jobId, job);
-  void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
-  this.runtime.abortScopes.set(jobId, new JobAbortScope());
-  await this.persist(this.repository.insertJob(job));
-  return job;
+async createJob(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
+  return this.jobCreator.create(taskInput, parentChannel, parentThreadId, options);
 }
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {

@@ -432,7 +432,13 @@ export class SpawnAgentWorker extends BaseTool {
         depth:      parentDepth + 1,
       };
     });
-    const jobOptions = { visibility: 'hidden' as const, parentAgentId };
+    const jobOptions = {
+      visibility: 'hidden' as const,
+      parentAgentId,
+      // Dedupe is intentionally per single-task call; multi-task batches are
+      // never partially reused. An omitted label opts out completely.
+      dedupeLabel: tasks.length === 1 ? tasks[0].label?.trim() : undefined,
+    };
 
     // Abort signal for THIS job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
@@ -807,6 +813,14 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
       const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+      if (job.deduplicated) {
+        const response = {
+          mode: 'async', jobId: job.jobId, taskCount: tasks.length, parallel,
+          deduplicated: true,
+          message: 'A matching labeled spawn is already queued or running; reused the existing job.',
+        };
+        return { successBoolean: true, responseString: JSON.stringify(response), result: response } as ToolResponse;
+      }
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       activityJobId = job.jobId;
@@ -843,16 +857,20 @@ export class SpawnAgentWorker extends BaseTool {
         })
         .finally(async() => { stopDeadRunWatch(); });
 
+      const response = {
+        mode:      'async',
+        jobId:     job.jobId,
+        taskCount: tasks.length,
+        parallel,
+        message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
+      };
       return {
         successBoolean: true,
-        responseString: JSON.stringify({
-          mode:      'async',
-          jobId:     job.jobId,
-          taskCount: tasks.length,
-          parallel,
-          message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
-        }, null, 2),
-      };
+        responseString: JSON.stringify(response, null, 2),
+        // Keep the structured tool result as an object. responseString remains
+        // for model/tool compatibility, while CLI callers now parse once.
+        result: response,
+      } as ToolResponse;
     }
 
     // ── Sync mode: block until complete ─────────────────────────

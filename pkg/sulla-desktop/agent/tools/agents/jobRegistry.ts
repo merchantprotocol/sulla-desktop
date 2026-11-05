@@ -121,11 +121,15 @@ export interface AgentJob {
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
   orphanedChildNotices?: OrphanedChildNotice[];
+  /** Set only on the in-memory response when a spawn retry reused a recent job. */
+  deduplicated?: boolean;
 }
 
 export interface CreateJobOptions {
   visibility?:    AgentJobVisibility;
   parentAgentId?: string;
+  /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
+  dedupeLabel?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;
