@@ -25,6 +25,9 @@ import {
   type DiskSpaceProbe,
   type RetentionClock,
   type WorkspaceRemover,
+  type WorkspaceJobState,
+  type WorkspaceJobStateReader,
+  type WorkspaceRecoveryPreserver,
 } from '../../../../services/AgentWorkspaceRetentionPolicy';
 import { WorkspaceRetentionConfig } from '../../../../services/AgentWorkspaceRetentionConfig';
 
@@ -75,6 +78,17 @@ class FixtureActiveJobGuard implements ActiveJobGuard {
   private readonly active = new Set<string>();
   markActive(jobId: string): void { this.active.add(jobId) }
   isActive(jobId: string): boolean { return this.active.has(jobId) }
+}
+
+
+class FixtureJobStateReader implements WorkspaceJobStateReader {
+  private readonly states = new Map<string, WorkspaceJobState>();
+  set(jobId: string, state: WorkspaceJobState): void { this.states.set(jobId, state) }
+  async state(jobId: string): Promise<WorkspaceJobState | undefined> { return this.states.get(jobId) }
+}
+class FixtureRecoveryPreserver implements WorkspaceRecoveryPreserver {
+  readonly preserved: string[] = [];
+  async preserve(_path: string, jobId: string): Promise<string> { this.preserved.push(jobId); return `/recovery/${ jobId }.tar.gz`; }
 }
 
 class FixtureDiskSpaceProbe implements DiskSpaceProbe {
@@ -181,6 +195,8 @@ describe('AgentWorkspaceRetentionPolicy', () => {
     retentionWindowMs?: number;
     minFreeDiskBytes?: number;
     inspector?:        WorkspaceInspector;
+    jobs?:             WorkspaceJobStateReader;
+    recovery?:         WorkspaceRecoveryPreserver;
   } = {}) {
     const clock = new FixtureClock(options.now ?? Date.now());
     const guard = options.guard ?? new FixtureActiveJobGuard();
@@ -191,7 +207,7 @@ describe('AgentWorkspaceRetentionPolicy', () => {
       minFreeDiskBytes:  options.minFreeDiskBytes,
     });
     const policy = new AgentWorkspaceRetentionPolicy(
-      root, fileSystem, options.inspector ?? inspector, guard, clock, diskSpaceProbe, remover, config,
+      root, fileSystem, options.inspector ?? inspector, guard, clock, diskSpaceProbe, remover, config, undefined, options.jobs, options.recovery,
     );
     return { policy, clock, guard, diskSpaceProbe, remover };
   }
@@ -672,6 +688,53 @@ describe('AgentWorkspaceRetentionPolicy', () => {
 
     expect(report.removed).toEqual([]);
     await expect(fsPromises.readFile(path.join(originalPath, 'recover.txt'), 'utf8')).resolves.toBe('keep');
+  });
+
+
+  it('never reclaims running, parked, waiting-on-children, or unknown jobs', async() => {
+    // risk: an active manager loses its workspace while children are still running
+    const jobs = new FixtureJobStateReader();
+    for (const [status, waiting] of [['running', 0], ['parked', 2], ['completed', 1]] as Array<[string, number]>) {
+      const jobId = nextJobId();
+      await fsPromises.mkdir(path.join(root, workspaceDirName(jobId)));
+      jobs.set(jobId, { status, waitingOnChildren: waiting, finishedAt: Date.now() - 30 * day });
+    }
+    await fsPromises.mkdir(path.join(root, workspaceDirName(nextJobId()))); // deliberately unknown
+    const report = await buildPolicy({ jobs, now: Date.now(), retentionWindowMs: 1 }).policy.enforce();
+    expect(report.removed).toEqual([]);
+  });
+
+  it('reclaims pushed completed work after ten minutes but keeps failed work inside its window', async() => {
+    // risk: published work fills disk, or failed diagnostic state disappears too early
+    const jobs = new FixtureJobStateReader();
+    const completedId = nextJobId();
+    const completedPath = path.join(root, workspaceDirName(completedId));
+    await fsPromises.mkdir(completedPath);
+    pushedCleanRepo(completedPath, path.join(outsideRoot, 'completed.git'));
+    jobs.set(completedId, { status: 'completed', finishedAt: Date.now() - 11 * 60_000 });
+    const failedId = nextJobId();
+    const failedPath = path.join(root, workspaceDirName(failedId));
+    await fsPromises.mkdir(failedPath);
+    await fsPromises.writeFile(path.join(failedPath, 'diagnostic.txt'), 'keep');
+    jobs.set(failedId, { status: 'failed', finishedAt: Date.now() - day });
+    const report = await buildPolicy({ jobs, now: Date.now() }).policy.enforce();
+    expect(report.removed.map(item => item.jobId)).toEqual([completedId]);
+    await expect(fsPromises.access(failedPath)).resolves.toBeUndefined();
+  });
+
+  it('preserves unpushed failed work before age deletion and under low disk pressure', async() => {
+    // risk: disk recovery silently destroys the only copy of a worker's changes
+    const jobs = new FixtureJobStateReader();
+    const recovery = new FixtureRecoveryPreserver();
+    const jobId = nextJobId();
+    const workspacePath = path.join(root, workspaceDirName(jobId));
+    await fsPromises.mkdir(workspacePath);
+    initRepoWithRemote(workspacePath, path.join(outsideRoot, 'unsafe.git'));
+    commit(workspacePath, 'only-local.txt', 'valuable');
+    jobs.set(jobId, { status: 'failed', finishedAt: Date.now() - 30 * day });
+    const report = await buildPolicy({ jobs, recovery, now: Date.now(), diskFreeBytes: 0, minFreeDiskBytes: 1 }).policy.enforce();
+    expect(recovery.preserved).toEqual([jobId]);
+    expect(report.removed).toEqual([{ path: workspacePath, jobId, reason: 'age' }]);
   });
 
 });

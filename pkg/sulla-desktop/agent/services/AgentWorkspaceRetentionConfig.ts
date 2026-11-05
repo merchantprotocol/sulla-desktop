@@ -4,25 +4,32 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 export interface WorkspaceRetentionConfigOverrides {
-  retentionWindowMs?:  number;
-  minFreeDiskBytes?:   number;
+  /** Legacy alias for terminalRetentionMs. */
+  retentionWindowMs?: number;
+  completedRetentionMs?: number;
+  terminalRetentionMs?: number;
+  minFreeDiskBytes?: number;
+  intervalMs?: number;
 }
 
-/**
- * Tuning for AgentWorkspaceRetentionPolicy. The retention window is the grace
- * period a safe (pushed, clean) git checkout gets before normal sweeps reclaim
- * it; minFreeDiskBytes is the same guest-disk floor used by the sibling
- * container-retention policy, so both policies start reclaiming at once.
- */
+/** Tunables for guest agent-workspace retention. */
 export class WorkspaceRetentionConfig {
-  static readonly DEFAULT_RETENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
-  static readonly DEFAULT_MIN_FREE_DISK_BYTES = 5 * 1024 * 1024 * 1024;
+  static readonly DEFAULT_COMPLETED_RETENTION_MS = 10 * 60_000;
+  static readonly DEFAULT_TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
+  static readonly DEFAULT_MIN_FREE_DISK_BYTES = 5 * 1024 ** 3;
+  static readonly DEFAULT_INTERVAL_MS = 2 * 60_000;
 
+  readonly completedRetentionMs: number;
+  readonly terminalRetentionMs: number;
   readonly retentionWindowMs: number;
-  readonly minFreeDiskBytes:  number;
+  readonly minFreeDiskBytes: number;
+  readonly intervalMs: number;
 
   constructor(overrides: WorkspaceRetentionConfigOverrides = {}) {
-    this.retentionWindowMs = overrides.retentionWindowMs ?? WorkspaceRetentionConfig.DEFAULT_RETENTION_WINDOW_MS;
-    this.minFreeDiskBytes  = overrides.minFreeDiskBytes ?? WorkspaceRetentionConfig.DEFAULT_MIN_FREE_DISK_BYTES;
+    this.completedRetentionMs = overrides.completedRetentionMs ?? overrides.retentionWindowMs ?? WorkspaceRetentionConfig.DEFAULT_COMPLETED_RETENTION_MS;
+    this.terminalRetentionMs = overrides.terminalRetentionMs ?? overrides.retentionWindowMs ?? WorkspaceRetentionConfig.DEFAULT_TERMINAL_RETENTION_MS;
+    this.retentionWindowMs = this.terminalRetentionMs;
+    this.minFreeDiskBytes = overrides.minFreeDiskBytes ?? WorkspaceRetentionConfig.DEFAULT_MIN_FREE_DISK_BYTES;
+    this.intervalMs = overrides.intervalMs ?? WorkspaceRetentionConfig.DEFAULT_INTERVAL_MS;
   }
 }

@@ -23,6 +23,9 @@ export interface DiskSpaceProbe {
 export interface WorkspaceRemover {
   remove(path: string): Promise<number | undefined>;
 }
+export interface WorkspaceJobState { status: string; finishedAt?: number | null; waitingOnChildren?: number; }
+export interface WorkspaceJobStateReader { state(jobId: string): Promise<WorkspaceJobState | undefined>; }
+export interface WorkspaceRecoveryPreserver { preserve(path: string, jobId: string): Promise<string>; }
 
 export type WorkspaceRemovalReason = 'clean' | 'age' | 'disk';
 
@@ -55,6 +58,8 @@ interface WorkspaceCandidate {
   lease?:    WorkspaceDeletionLease;
   jobId:     string;
   mtimeMs:   number;
+  job?:      WorkspaceJobState;
+  requiresPreservation?: boolean;
 }
 
 /**
@@ -155,6 +160,8 @@ export class AgentWorkspaceRetentionPolicy {
     private readonly remover:         WorkspaceRemover,
     private readonly config = new WorkspaceRetentionConfig(),
     private readonly leases: WorkspaceDeletionLeaseProvider = new AtomicRenameWorkspaceDeletionLeaseProvider(fileSystem),
+    private readonly jobs?: WorkspaceJobStateReader,
+    private readonly recovery?: WorkspaceRecoveryPreserver,
   ) {}
 
   async enforce(): Promise<WorkspaceRetentionReport> {
@@ -163,7 +170,8 @@ export class AgentWorkspaceRetentionPolicy {
     const waitingForAge: WorkspaceCandidate[] = [];
 
     for (const candidate of candidates) {
-      if (this.activeJobGuard.isActive(candidate.jobId)) continue;
+      candidate.job = this.jobs ? await this.jobs.state(candidate.jobId) : { status: 'completed', finishedAt: candidate.mtimeMs };
+      if (!candidate.job || this.isProtected(candidate.job) || this.activeJobGuard.isActive(candidate.jobId)) continue;
 
       try {
         candidate.lease = await this.leases.acquire(candidate.path, candidate.mtimeMs);
@@ -171,10 +179,12 @@ export class AgentWorkspaceRetentionPolicy {
         report.errors.push({ path: candidate.path, error: `failed to claim workspace: ${ this.describe(error) }` });
       }
       if (!candidate.lease) continue;
-      if (this.activeJobGuard.isActive(candidate.jobId)) {
+      const refreshed = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      if (!refreshed || this.isProtected(refreshed) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         continue;
       }
+      candidate.job = refreshed;
 
       const inspection = await this.inspector.inspect(candidate.lease.inspectionPath).catch(error => ({
         status: 'unsafe' as const, reasons: [`inspection failed: ${ this.describe(error) }`], hasGitRepository: true,
@@ -186,24 +196,30 @@ export class AgentWorkspaceRetentionPolicy {
         await this.restore(candidate, report);
         continue;
       }
-      if (this.activeJobGuard.isActive(candidate.jobId)) {
+      const job = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      if (!job || this.isProtected(job) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         continue;
       }
-      if (inspection.status === 'unsafe') {
+      const finishedAt = candidate.job.finishedAt ?? candidate.mtimeMs;
+      const ageMs = this.clock.now() - finishedAt;
+      const completedDue = candidate.job.status === 'completed' && ageMs >= this.config.completedRetentionMs;
+      const terminalDue = candidate.job.status !== 'completed' && ageMs >= this.config.terminalRetentionMs;
+      candidate.requiresPreservation = inspection.status === 'unsafe' || !inspection.hasGitRepository;
+      const empty = !inspection.hasGitRepository && await this.isEmptyDirectory(candidate.lease.inspectionPath, report);
+      if (inspection.status === 'unsafe' && (!terminalDue || !this.jobs)) {
         report.keptUnsafe.push({ path: candidate.path, jobId: candidate.jobId, reasons: inspection.reasons });
         await this.restore(candidate, report);
         continue;
       }
-
-      if (!inspection.hasGitRepository && await this.isEmptyDirectory(candidate.lease.inspectionPath, report)) {
+      if ((completedDue && inspection.status === 'clean') || empty) {
         await this.remove(candidate, 'clean', report);
         continue;
       }
-
-      const ageMs = this.clock.now() - candidate.mtimeMs;
-      if (ageMs >= this.config.retentionWindowMs) await this.remove(candidate, 'age', report);
-      else waitingForAge.push(candidate);
+      if (terminalDue) {
+        if (this.jobs && (inspection.status === 'unsafe' || !inspection.hasGitRepository) && !await this.preserve(candidate, report)) continue;
+        await this.remove(candidate, 'age', report);
+      } else waitingForAge.push(candidate);
     }
 
     if (waitingForAge.length) await this.reclaimUnderDiskPressure(waitingForAge, report);
@@ -292,6 +308,7 @@ export class AgentWorkspaceRetentionPolicy {
     const oldestFirst = [...waitingForAge].sort((a, b) => a.mtimeMs - b.mtimeMs);
     for (const candidate of oldestFirst) {
       if (freeBytes >= this.config.minFreeDiskBytes) break;
+      if (candidate.requiresPreservation && this.jobs && !await this.preserve(candidate, report)) continue;
       const freed = await this.remove(candidate, 'disk', report);
       if (freed === undefined) {
         try {
@@ -312,7 +329,8 @@ export class AgentWorkspaceRetentionPolicy {
     report: WorkspaceRetentionReport,
   ): Promise<number | undefined> {
     try {
-      if (this.activeJobGuard.isActive(candidate.jobId)) {
+      const job = this.jobs ? await this.jobs.state(candidate.jobId) : candidate.job;
+      if (!job || this.isProtected(job) || this.activeJobGuard.isActive(candidate.jobId)) {
         await this.restore(candidate, report);
         return undefined;
       }
@@ -332,6 +350,24 @@ export class AgentWorkspaceRetentionPolicy {
       report.errors.push({ path: candidate.path, error: this.describe(error) });
       await this.restore(candidate, report);
       return undefined;
+    }
+  }
+
+  private isProtected(job: WorkspaceJobState): boolean {
+    return !['completed', 'failed', 'stopped'].includes(job.status) || (job.waitingOnChildren ?? 0) > 0;
+  }
+
+  private async preserve(candidate: WorkspaceCandidate, report: WorkspaceRetentionReport): Promise<boolean> {
+    if (!candidate.lease || !this.recovery) {
+      report.keptUnsafe.push({ path: candidate.path, jobId: candidate.jobId, reasons: ['recovery preservation unavailable'] });
+      await this.restore(candidate, report);
+      return false;
+    }
+    try { await this.recovery.preserve(candidate.lease.inspectionPath, candidate.jobId); return true; }
+    catch (error) {
+      report.errors.push({ path: candidate.path, error: `recovery preservation failed: ${ this.describe(error) }` });
+      await this.restore(candidate, report);
+      return false;
     }
   }
 
