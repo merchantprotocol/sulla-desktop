@@ -52,7 +52,7 @@ suite('agents/replace_lead registered production path',()=>{
   for(let index=0;index<children;index++)await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,'running',1,$2,$3,'coding-manager-sol',$4::jsonb)`,[`child-${suffix}-${index}`,owner.channel,leadThread,JSON.stringify([task(`Worker ${index+1}`,`worker-${suffix}-${index}`)])]);
   return {leadId,leadThread};
  }
- async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
+ async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return Promise.race([tool.call(input),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error(`replace_lead deadline for ${input.jobId}`)),5_000))]);}
 
  it('covers handoff, retry idempotency, caller authorization, missing tasks, and disabled agents',async()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
