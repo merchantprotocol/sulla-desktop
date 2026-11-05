@@ -37,6 +37,8 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
   readonly removedIds: string[] = [];
   readonly removeForceFlags: Array<boolean | undefined> = [];
   listError: Error | null = null;
+  /** Label filters whose listing fails, so one pass can fail while the other succeeds. */
+  failingListLabels = new Set<string>();
   inspectErrorIds = new Set<string>();
   removeErrorIds = new Set<string>();
   /** When true, `list()` ignores the label filter — simulates a driver whose `ps --filter` can't be trusted. */
@@ -50,6 +52,7 @@ class FakeContainerRuntimeDriver implements ContainerRuntimeDriver {
 
   async list(label?: string): Promise<any[]> {
     if (this.listError) throw this.listError;
+    if (label && this.failingListLabels.has(label)) throw new Error(`docker ps --filter label=${ label } failed`);
     const [key, value] = (label ?? '').split('=');
     return [...this.containers.values()]
       .filter(c => this.ignoreListFilter || !label || c.labels[key] === value)
@@ -126,7 +129,10 @@ describe('ContainerRetentionPolicy', () => {
 
     const report = await policy.enforce();
 
-    expect(report.errors).toEqual([{ stage: 'list', message: 'docker ps failed' }]);
+    expect(report.errors).toEqual([
+      { stage: 'agent-owner-list', message: 'docker ps failed' },
+      { stage: 'list', message: 'docker ps failed' },
+    ]);
     expect(report.removed).toEqual([]);
     expect(report.keptCount).toBe(0);
     expect(runtime.removedIds).toEqual([]);
@@ -357,5 +363,37 @@ describe('ContainerRetentionPolicy', () => {
     await policy.enforce();
 
     expect(runtime.removeForceFlags).toEqual([false]);
+  });
+  it('reaps expired and terminal-owner agent containers while preserving persistent running and unlabeled containers', async() => {
+    // risk: temporary containers outlive their job, while core services are accidentally reaped
+    const clock = new FakeClock(20_000_000);
+    const runtime = new FakeContainerRuntimeDriver();
+    const expires = Math.floor(clock.current / 1_000);
+    runtime.add(agentContainer({ id: 'expired', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'live', 'com.sulla.expires-at': String(expires - 1), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'terminal', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires + 1000), 'com.sulla.persistent': 'false' } }));
+    runtime.add(agentContainer({ id: 'persistent', status: 'running', labels: { 'com.sulla.owner': 'agent', 'com.sulla.job-id': 'done', 'com.sulla.expires-at': String(expires + 1000), 'com.sulla.persistent': 'true' } }));
+    runtime.add(agentContainer({ id: 'postgres', labels: {}, status: 'running' }));
+    const policy = new ContainerRetentionPolicy(runtime, new FakeDiskSpaceProbe([100 * 1024 ** 3]), clock, new FakeActiveContainerGuard(), new RetentionConfig(), {
+      status: async(jobId: string) => jobId === 'done' ? 'completed' : 'running',
+    });
+    const report = await policy.enforce();
+    expect(report.removed.map(entry => [entry.id, entry.reason])).toEqual([['expired', 'expired'], ['terminal', 'terminal-owner']]);
+    expect(runtime.get('persistent')).toBeDefined();
+    expect(runtime.get('postgres')).toBeDefined();
+  });
+
+  it('still enforces failed-container retention when the agent-owner listing fails', async() => {
+    // risk: one broken temporary-container listing silently disables the age/count/disk cleanup of failed containers
+    const clock = new FakeClock();
+    const runtime = new FakeContainerRuntimeDriver();
+    runtime.failingListLabels.add('com.sulla.owner=agent');
+    runtime.add(agentContainer({ id: 'old-failed', finishedAt: new Date(clock.current - 25 * HOUR_MS).toISOString() }));
+    const { policy } = buildPolicy({ runtime, clock, config: new RetentionConfig({ maxAgeMs: 24 * HOUR_MS }) });
+
+    const report = await policy.enforce();
+
+    expect(report.errors).toEqual([{ stage: 'agent-owner-list', message: 'docker ps --filter label=com.sulla.owner=agent failed' }]);
+    expect(report.removed).toEqual([{ id: 'old-failed', name: 'old-failed', reason: 'age' }]);
+    expect(runtime.get('old-failed')).toBeUndefined();
   });
 });

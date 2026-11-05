@@ -134,7 +134,7 @@ async function finishTabJob(job: AgentJob, taskIndex: number): Promise<void> {
   const { confirmAgentTabReturn } = await import('../../services/AgentTabOpener');
   if (threadId) confirmAgentTabReturn(threadId, result.contract ?? 'result');
 
-  const delivered = await deliverJobCompletion(job, [result]);
+  const delivered = await deliverJobCompletion(job, [result], taskIndex);
   await safeFinishDelegationByRef(job.jobId, {
     outcome:         result.status === 'completed' ? 'completed' : 'failed',
     detail:          result.status === 'completed' ? '' : `${ result.status }: ${ result.output }`,

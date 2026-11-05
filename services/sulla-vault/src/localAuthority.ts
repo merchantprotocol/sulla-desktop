@@ -103,6 +103,7 @@ import {
   cacheUpdateSessionKeyInput,
 } from './contracts.js';
 import type { Database, Queryable } from './db.js';
+import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 
 const CHALLENGE_TTL_MS = 30_000;
@@ -603,6 +604,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly db: Database,
     private readonly config: VaultConfig,
     private readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
+    private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -1313,11 +1315,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
-      await client.query(
-        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'password_change' FROM users WHERE id=$1`,
-        [keys.userId],
-      );
+      await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'password_change', client);
       await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
@@ -1439,11 +1437,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         };
       }
       await this.runTransaction(async client => {
-        await client.query(
-          `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-           SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'account_password_migration' FROM users WHERE id=$1`,
-          [keys.userId],
-        );
+        await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'account_password_migration', client);
         await client.query(
           `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
           [verifier.salt, verifier.verifier, wrapped,
@@ -1546,12 +1540,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
       let replacedExisting = false;
       await this.runTransaction(async client => {
-        const prior = await client.query(
-          `INSERT INTO local_vault_recovery_history(user_id,recovery_salt,recovery_verifier,encrypted_user_key,reason)
-           SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key,'rotation'
-           FROM local_vault_recovery WHERE user_id=$1 RETURNING id`, [keys.userId],
-        );
-        replacedExisting = Boolean(prior.rowCount);
+        replacedExisting = await this.rewrapHistory.preserveCurrentRecoveryWrap(keys.userId, 'rotation', client);
         await client.query(
           `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
            VALUES ($1,$2,$3,$4)
@@ -1624,11 +1613,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
-      await client.query(
-        `INSERT INTO local_vault_wrap_history(user_id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,reason)
-         SELECT id,login_hash_salt,login_hash_verifier,encrypted_user_key,kdf,'recovery' FROM users WHERE id=$1`,
-        [row.user_id],
-      );
+      await this.rewrapHistory.preserveCurrentPasswordWrap(row.user_id, 'recovery', client);
       await client.query(
         `UPDATE users SET login_hash_salt=$1,login_hash_verifier=$2,encrypted_user_key=$3,kdf=$4,updated_at=now() WHERE id=$5`,
         [verifier.salt, verifier.verifier, wrapped,
