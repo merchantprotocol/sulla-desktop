@@ -37,6 +37,7 @@ import { abortJob, getJobsForParentThread, markTaskCompletionDelivered } from '.
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -74,6 +75,11 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+
+  /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
+  private prepareFreshTurn(state: AgentGraphState): void {
+    (this.turnPreparer ?? new DelegatedTurnPreparer()).prepare(state);
+  }
   private resumeContexts = new Map<string, {
     channelId: string; triggerType: string; threadId: string; scopedWorkflowId?: string;
     overrideAgentId?: string; inputSource?: string;
@@ -163,7 +169,7 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  constructor() {
+  constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
   }
@@ -803,10 +809,6 @@ export class BackendGraphWebSocketService {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
       acquireChatActivity(`graph:${ abortKey }`);
-      for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-        await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
-      }
-
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -866,11 +868,7 @@ export class BackendGraphWebSocketService {
         resumeNodeId !== 'output';
 
       // Reset execution counters for this run (but NOT messages — those accumulate)
-      state.metadata.consecutiveSameNode = 0;
-      state.metadata.iterations = 0;
-      (state.metadata as any).agentLoopCount = 0;
-      state.metadata.cycleComplete = false;
-      state.metadata.waitingForUser = false;
+      this.prepareFreshTurn(state);
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       // Front-door repair channels stay in the VM during the staged rollout,

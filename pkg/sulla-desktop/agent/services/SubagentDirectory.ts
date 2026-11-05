@@ -16,6 +16,7 @@
 
 import { AgentJobMessagingModel, type AgentJobTaskTelemetry } from '../database/models/AgentJobMessagingModel';
 import { getJobsForParentThread, type AgentJob, type AgentJobTask } from '../tools/agents/jobRegistry';
+import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 import { RunActivity } from './RunActivity';
 import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
 
@@ -24,6 +25,8 @@ export const SUBAGENT_STALL_MS = 15 * 60_000;
 /** A delivered, finished child stays listed this long, then drops off. */
 export const SUBAGENT_DONE_TTL_MS = 60 * 60_000;
 export const SUBAGENT_DIRECTORY_MAX_CHARS = 3000;
+
+const taskStatusPolicy = new AgentJobTaskStatusPolicy();
 
 function ago(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
@@ -44,8 +47,8 @@ function quote(text: string, max = 80): string {
   return `"${ flat.length > max ? `${ flat.slice(0, max) }…` : flat }"`;
 }
 
-function isOpen(job: AgentJob, task: AgentJobTask): boolean {
-  return (job.status === 'running' || job.status === 'parked') && ['running', 'queued', 'parked'].includes(task.status);
+export function isOpenAgentJobTask(job: AgentJob, task: AgentJobTask): boolean {
+  return (job.status === 'running' || job.status === 'parked') && taskStatusPolicy.isOpen(task.status);
 }
 
 interface ChildRow {
@@ -57,7 +60,7 @@ interface ChildRow {
 function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetry: AgentJobTaskTelemetry | undefined, now: number, policy: AgentJobLivenessPolicy): ChildRow | null {
   if (task.dismissed) return null;
   const finishedAt = task.finishedAt ?? job.finishedAt ?? undefined;
-  const open = isOpen(job, task);
+  const open = isOpenAgentJobTask(job, task);
   // Delivered and finished an hour ago: the parent already has it.
   if (!open && job.completionDeliveredAt && finishedAt && now - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
 

@@ -33,6 +33,9 @@ import type { AgentContractSpec } from './contract';
 
 export type AgentJobVisibility = 'hidden' | 'tab';
 
+export const AGENT_JOB_TASK_STATUSES = ['queued', 'running', 'parked', 'lost', 'completed', 'blocked', 'error', 'stopped'] as const;
+export type AgentJobTaskStatus = typeof AGENT_JOB_TASK_STATUSES[number];
+
 export interface AgentJobResult {
   label:    string;
   status:   'completed' | 'blocked' | 'error';
@@ -62,7 +65,7 @@ export interface AgentJobTask {
   restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
-  status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';
+  status:     AgentJobTaskStatus;
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;
