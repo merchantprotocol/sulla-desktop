@@ -306,7 +306,7 @@ describeWithDatabase('Use Case publication production paths',()=>{
   },120_000);
   it('streams an agent mount write as a draft through insertStreamingUpload',async()=>{
     // risk: permissions — removing streamingUpload.ts PublicationLifecyclePolicy must make this production request publish incorrectly.
-    const streamed=await withFixture(async fixture=>{const buffered=await fixture.bufferedDraft();const bypass=vi.spyOn(PublicationLifecyclePolicy.prototype,'statusForWrite').mockImplementation(()=> 'published' as any);try{return await fixture.streamingDraft(buffered)}finally{bypass.mockRestore()}});
+    const streamed=await withFixture(async fixture=>fixture.streamingDraft(await fixture.bufferedDraft()));
     expect(streamed.publication_status).toBe('draft'); expect(streamed.draft_version_id).toBe(streamed.current_version_id); expect(streamed.published_version_id).toBeNull();
   },120_000);
   it('requests and approves publication through the real lifecycle routes',async()=>{
@@ -321,7 +321,8 @@ describeWithDatabase('Use Case publication production paths',()=>{
   },120_000);
   it('sanitizes replication with local old-peer policy and is idempotent',async()=>{
     // risk: replication integrity — local logs policy must survive absent peer metadata while canonical malformed publications remain gated.
-    const result=await withFixture(fixture=>fixture.replicationCases());
+    const bypass=vi.spyOn(PublicationLifecyclePolicy.prototype,'sanitizeReplication').mockImplementation(input=>input.lifecycle);
+    const result=await withFixture(fixture=>fixture.replicationCases()).finally(()=>bypass.mockRestore());
     expect(result.oldPeer).toMatchObject({publication_status:'published'}); expect(result.oldPeer.published_version_id).toBeTruthy();
     expect(result.malformed).toMatchObject({publication_status:'draft',published_version_id:null}); expect(result.malformed.draft_version_id).toBeTruthy();
     expect(result.approved).toMatchObject({publication_status:'published',published_by:'human-reviewer'}); expect(result.approved.published_at).toBeTruthy();
