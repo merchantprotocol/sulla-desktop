@@ -180,7 +180,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
-        AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
+        AND (status = 'completed' OR tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))')
         AND parent_channel IS NOT NULL
         AND parent_thread_id IS NOT NULL
       ORDER BY COALESCE(finished_at, created_at) ASC`);

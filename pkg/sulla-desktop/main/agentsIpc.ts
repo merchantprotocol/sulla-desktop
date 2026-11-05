@@ -15,7 +15,7 @@
 // the conversation_history rows for that agent's channel, and
 // agents:conversation reads one conversation's JSONL message log.
 
-import { app, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
@@ -219,8 +219,6 @@ export function initAgentsIpc(): void {
   const bootReconciliation = rehydrateAgentContainerRuntimes().then(() => agentLivenessReconciler.reconcile());
   agentJobProvider.states.setReadiness(bootReconciliation);
   agentLivenessReconciler.start();
-  agentJobProvider.stranded.start();
-  app.once('will-quit', () => agentJobProvider.stranded.stop());
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
@@ -348,7 +346,8 @@ export function initAgentsIpc(): void {
       ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
     };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
-    const result = await stopAgentJob(jobId, { kind: 'human' });
+    const { StopPrincipal } = await import('@pkg/agent/app/ValueObjects/StopPrincipal');
+    const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from Live Agents');
     return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 

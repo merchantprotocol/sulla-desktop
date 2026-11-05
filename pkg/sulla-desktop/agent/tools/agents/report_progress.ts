@@ -21,10 +21,10 @@ export class ReportProgressWorker extends BaseTool {
         responseString: 'report_progress is only available inside a delegated agent task (hidden or tab).',
       };
     }
-    const step = String(input.step ?? '').trim();
+    const step = String(input.step ?? 'progress').trim();
     const summary = String(input.summary ?? '').trim();
-    if (!step || !summary) {
-      return { successBoolean: false, responseString: 'step and a non-empty summary are required.' };
+    if (!summary) {
+      return { successBoolean: false, responseString: 'a non-empty summary is required.' };
     }
     const percent = input.percent === undefined ? undefined : Number(input.percent);
     if (percent !== undefined && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
