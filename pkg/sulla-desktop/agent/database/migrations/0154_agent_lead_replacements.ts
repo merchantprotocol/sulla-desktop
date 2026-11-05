@@ -2,10 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { PostgresClient } from '../PostgresClient';
-
-export class AgentLeadReplacementsMigration {
- async up(client:PostgresClient):Promise<void>{await client.query(`CREATE TABLE IF NOT EXISTS agent_lead_replacements (
+export const up=`CREATE TABLE IF NOT EXISTS agent_lead_replacements (
   old_job_id TEXT NOT NULL REFERENCES agent_jobs(job_id) ON DELETE CASCADE,
   old_task_index INTEGER NOT NULL,
   replacement_job_id TEXT,
@@ -17,8 +14,5 @@ export class AgentLeadReplacementsMigration {
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(old_job_id,old_task_index)
-)`);}
- async down(client:PostgresClient):Promise<void>{await client.query(`DROP TABLE IF EXISTS agent_lead_replacements`);}
-}
-export async function up(client:PostgresClient):Promise<void>{await new AgentLeadReplacementsMigration().up(client);}
-export async function down(client:PostgresClient):Promise<void>{await new AgentLeadReplacementsMigration().down(client);}
+)`;
+export const down=`DROP TABLE IF EXISTS agent_lead_replacements`;
