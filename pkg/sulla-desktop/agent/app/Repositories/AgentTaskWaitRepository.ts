@@ -19,7 +19,7 @@ export class AgentTaskWaitRepository {
     try {
       await client.query('BEGIN');
       const parked = await client.query(`UPDATE agent_jobs SET
-        tasks = (SELECT jsonb_agg(CASE WHEN ordinal - 1 = $2::int THEN task || jsonb_build_object('status','parked','waitReason',$3,'wakeAt',$4::bigint) ELSE task END ORDER BY ordinal)
+        tasks = (SELECT jsonb_agg(CASE WHEN ordinal - 1 = $2::int THEN task || jsonb_build_object('status','parked','waitReason',$3::text,'wakeAt',$4::bigint) ELSE task END ORDER BY ordinal)
           FROM jsonb_array_elements(tasks) WITH ORDINALITY AS item(task, ordinal)),
         status = CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(tasks) WITH ORDINALITY AS item(task, ordinal)
           WHERE ordinal - 1 <> $2::int AND task->>'status' IN ('queued','running')) THEN 'parked' ELSE status END,

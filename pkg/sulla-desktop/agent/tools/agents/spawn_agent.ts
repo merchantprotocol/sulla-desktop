@@ -648,7 +648,7 @@ export class SpawnAgentWorker extends BaseTool {
 
         // Settlement and stop both invalidate any scheduled timer before
         // the task status changes, so a racing callback cannot wake it later.
-        await agentWaitProvider.cancel(activityJobId, index);
+        await agentWaitProvider.cancel(activityJobId!, index);
         taskAbortSignal?.removeEventListener('abort', cancelScheduledWait);
 
         if (returned) {
