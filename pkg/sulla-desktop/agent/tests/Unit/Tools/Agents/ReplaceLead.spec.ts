@@ -60,7 +60,7 @@ describe('agents/replace_lead',()=>{
  });
  it('reports nonexistent tasks and disabled replacement agents without moving children',async()=>{
    // risk: operations — invalid targets must fail before custody changes.
-   const missing=new ReplaceLeadHarness(); missing.custody.resolveOwner.mockResolvedValueOnce(undefined); expect((await missing.service.replace({jobId:'missing',taskIndex:9,agentId:'coding-manager-sol',actor})).message).toContain('not found');
+   const missing=new ReplaceLeadHarness(); (missing.custody.resolveOwner as any).mockResolvedValueOnce(undefined); expect((await missing.service.replace({jobId:'missing',taskIndex:9,agentId:'coding-manager-sol',actor})).message).toContain('not found');
    const disabled=new ReplaceLeadHarness(); disabled.launcher.launchReplacement.mockRejectedValueOnce(new Error('no enabled agent definition exists'));
    expect((await disabled.service.replace({jobId:'lead',taskIndex:0,agentId:'disabled-agent',actor})).message).toContain('enabled agent'); expect(disabled.moves).toHaveLength(0);
  });
