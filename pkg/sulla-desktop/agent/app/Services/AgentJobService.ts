@@ -141,7 +141,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
   this.runtime.abortScopes.delete(jobId); this.wrapUp.jobSettled(jobId);
   const job = await this.states.mutateJob(jobId, current => {
     if (current.status === 'completed') return undefined;
-    if (current.status === 'failed') return { ...current, results, tasks: current.tasks.map((task, index) => {
+    if (current.status === 'failed') return { ...current, results, error: current.error ?? results.find(result => result.status === 'error')?.output, tasks: current.tasks.map((task, index) => {
       const result = results[index]; return !result ? task : { ...task, status: 'error', threadId: result.threadId || task.threadId,
         finishedAt: task.finishedAt ?? this.clock.now().getTime(), completion: task.completion ?? result };
     }) };
