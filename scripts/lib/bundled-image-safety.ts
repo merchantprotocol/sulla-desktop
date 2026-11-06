@@ -19,7 +19,6 @@ const FAT_CIGAM = 0xbebafeca;
 const MACH_CPU_TYPES = new Set([7, 12, 18, 0x01000007, 0x0100000c, 0x01000012]);
 const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz|\.gz)$/i;
 const NESTED_COMPRESSED = /(?:\.tar\.gz|\.tgz|\.gz)$/i;
-const NESTED_TAR = /(?:\.tar|\.tar\.gz|\.tgz)$/i;
 const PACKAGE_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
 const GZIP_MEDIA_TYPE = /\+gzip$/;
 const ZSTD_MEDIA_TYPE = /\+zstd$/;
@@ -104,7 +103,6 @@ export class BundledImageSafetyScanner {
       const entryPath = prefix ? `${ prefix}!/${ header.name }` : header.name;
       const nested = header.type === 'file' && NESTED_ARCHIVE.test(header.name);
       const compressed = nested && NESTED_COMPRESSED.test(header.name);
-      const nestedTar = nested && NESTED_TAR.test(header.name);
       const cacheMatch = PACKAGE_CACHE.exec(header.name);
 
       if (cacheMatch) {
@@ -116,7 +114,7 @@ export class BundledImageSafetyScanner {
         }
       }
 
-      void this.inspectEntry(stream, header.size ?? 0, nested, compressed, nestedTar, entryPath, image, layer, depth, findings)
+      void this.inspectEntry(stream, header.size ?? 0, nested, compressed, entryPath, image, layer, depth, findings)
         .then(next, error => extract.destroy(error as Error));
     });
     input.pipe(extract);
@@ -128,7 +126,6 @@ export class BundledImageSafetyScanner {
     declaredSize: number,
     nested: boolean,
     compressed: boolean,
-    nestedTar: boolean,
     entryPath: string,
     image: string,
     layer: string,
@@ -165,7 +162,7 @@ export class BundledImageSafetyScanner {
       if (output) await new Promise<void>(resolve => output.end(resolve));
 
       if (this.isMachO(inspectionPrefix)) findings.push({ image, layer, path: entryPath, reason: 'Mach-O binary', level: 'error' });
-      if (temporaryFile && (nestedTar || this.isTar(inspectionPrefix))) {
+      if (temporaryFile && this.isTar(inspectionPrefix)) {
         await this.scanTarFile(temporaryFile, image, layer, entryPath, depth + 1, findings);
       }
     } finally {
