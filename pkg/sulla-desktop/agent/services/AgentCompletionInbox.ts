@@ -19,7 +19,9 @@ export class CompletionInboxStore extends AgentCompletionInboxService {
 }
 
 export { CompletionInboxStore as AgentCompletionInbox };
-export const completionInboxStore = agentCompletionProvider.inbox;
+export const completionInboxStore = {
+  enqueue: (...args: Parameters<AgentCompletionInboxService['enqueue']>) => agentCompletionProvider.inbox.enqueue(...args),
+};
 
 export const registerCompletionIdleDispatcher = (...args: Parameters<typeof agentCompletionProvider.inbox.registerIdleDispatcher>) =>
   agentCompletionProvider.inbox.registerIdleDispatcher(...args);
