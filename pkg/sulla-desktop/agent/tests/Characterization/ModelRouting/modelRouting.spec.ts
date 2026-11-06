@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // This narrow replacement is the only available seam; provider behavior itself is injected publicly below.
 vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { openai: {}, anthropic: {} } }));
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
-import { Interrupted } from '../../../languagemodels/failures';
+import { AuthRevoked, Interrupted, QuotaExceeded, Transient, legacyProviderFailure } from '../../../languagemodels/failures';
 import { CliFaultError, CliHandoffFailure, markSullaInternalFault } from '../../../languagemodels/cliFaultRecovery';
 import { BACKOFF_FREE_FAILURES, ModelRouter, backoffMs, type EditableState } from '../../../languagemodels/modelRouter';
 import { InfrastructureFailure, classifyLLMFailure } from '../../../languagemodels/providerRecovery';
@@ -90,6 +90,15 @@ describe('BL-044 provider health is a temporary routing hint', () => {
     const subject = router();
     expect(await subject.resolve('agents', { mode: 'pin', provider: 'anthropic', model: 'fixed' })).toEqual([{ provider: 'anthropic', model: 'fixed' }]);
     expect((await subject.resolve('agents'))[0]?.provider).toBe('openai');
+  });
+
+  it('does not call generic transport denial revoked authentication', () => {
+    // risk: sign-in state corruption
+    expect(legacyProviderFailure('codex', new Error('transport forbidden by proxy'))).not.toBeInstanceOf(AuthRevoked);
+    expect(legacyProviderFailure('codex', new Error('access denied by provider bridge'))).not.toBeInstanceOf(AuthRevoked);
+    expect(legacyProviderFailure('codex', new Error('OAuth token was revoked'))).toBeInstanceOf(AuthRevoked);
+    expect(legacyProviderFailure('claude-code', new Error('weekly limit exhausted'))).toBeInstanceOf(QuotaExceeded);
+    expect(legacyProviderFailure('codex', new Error('network connection reset'))).toBeInstanceOf(Transient);
   });
 
   it('matches the consecutive-failure reset model across random health event sequences', async () => {

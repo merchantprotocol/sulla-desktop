@@ -290,7 +290,9 @@ const modelSelector = new AgentModelSelectorController({
   modelMode,
   isRunning,
   onSelectForChat: ({ providerId, modelId, agentId }) => {
-    chatSelection.value = { providerId, modelId, ...(agentId ? { agentId } : {}) };
+    chatSelection.value = providerId && modelId
+      ? { modelSelection: 'explicit', providerId, modelId, ...(agentId ? { agentId } : {}) }
+      : { modelSelection: 'default', ...(agentId ? { agentId } : {}) };
   },
 });
 
