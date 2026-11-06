@@ -13,7 +13,7 @@ import tar from 'tar-stream';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { BundledImageLock } from '../../pkg/sulla-desktop/backend/bundledImages';
-import { BundledImageSafetyScanner } from './bundled-image-safety';
+import { BundledImageSafetyScanner, type BundledImageEntryStreamDecoder } from './bundled-image-safety';
 
 class TarFixtureBuilder {
   async build(entries: Array<{ name: string; data: Buffer }>): Promise<Buffer> {
@@ -126,6 +126,22 @@ describe('BundledImageSafetyScanner', () => {
 
     await expect(new BundledImageSafetyScanner({ maxDepth: 1 }).scanTarBuffer(layer, 'deep-image', 'sha256:deep'))
       .rejects.toThrow(/deep-image sha256:deep .*nested archive depth exceeds 1/);
+  });
+
+  it('removes its temporary spool when entry decoding rejects before yielding data', async() => {
+    // risk: release availability — decoder failures must not leak large temporary spools across packaging retries.
+    class RejectingEntryDecoder implements BundledImageEntryStreamDecoder {
+      async decode(): Promise<never> {
+        throw new Error('injected decode failure');
+      }
+    }
+
+    const temporaryRoot = await fixture.temporaryDirectory();
+    const layer = await fixture.tar.build([{ name: 'broken.tgz', data: Buffer.from('not an archive') }]);
+    const scanner = new BundledImageSafetyScanner({ temporaryRoot, entryDecoder: new RejectingEntryDecoder() });
+
+    await expect(scanner.scanTarBuffer(layer, 'broken-image', 'sha256:broken')).rejects.toThrow('injected decode failure');
+    await expect(fs.promises.readdir(temporaryRoot)).resolves.toEqual([]);
   });
 
   it('fails closed when a nested archive exceeds the configured entry-size cap', async() => {

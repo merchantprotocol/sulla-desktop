@@ -32,10 +32,43 @@ export interface BundledImageSafetyFinding {
   level:  'error' | 'warning';
 }
 
+export interface BundledImageEntryStreamDecoder {
+  decode(stream: Readable, compressed: boolean): Promise<Readable>;
+}
+
+/** Chooses gzip decoding by content while preserving backpressure. */
+export class DefaultBundledImageEntryStreamDecoder implements BundledImageEntryStreamDecoder {
+  async decode(stream: Readable, compressed: boolean): Promise<Readable> {
+    const iterator = stream[Symbol.asyncIterator]();
+    const first = await iterator.next();
+
+    if (first.done) return Readable.from([]);
+    const firstChunk = Buffer.from(first.value);
+    const input = Readable.from(this.prependChunk(firstChunk, iterator as AsyncIterator<Uint8Array>));
+
+    return compressed && this.isGzip(firstChunk) ? input.pipe(createGunzip()) : input;
+  }
+
+  private async *prependChunk(first: Buffer, iterator: AsyncIterator<Uint8Array>): AsyncGenerator<Buffer> {
+    yield first;
+    while (true) {
+      const item = await iterator.next();
+
+      if (item.done) return;
+      yield Buffer.from(item.value);
+    }
+  }
+
+  private isGzip(buffer: Buffer): boolean {
+    return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+  }
+}
+
 export interface BundledImageSafetyScannerOptions {
   maxDepth?:      number;
   maxEntryBytes?: number;
   temporaryRoot?: string;
+  entryDecoder?: BundledImageEntryStreamDecoder;
 }
 
 /** Inspects OCI filesystem layers for host binaries Apple will inspect during notarization. */
@@ -45,11 +78,13 @@ export class BundledImageSafetyScanner {
   private readonly maxDepth: number;
   private readonly maxEntryBytes: number;
   private readonly temporaryRoot: string;
+  private readonly entryDecoder: BundledImageEntryStreamDecoder;
 
   constructor(options: BundledImageSafetyScannerOptions = {}) {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
     this.temporaryRoot = options.temporaryRoot ?? os.tmpdir();
+    this.entryDecoder = options.entryDecoder ?? new DefaultBundledImageEntryStreamDecoder();
   }
 
   async scan(imagesDir: string, lock: BundledImageLock): Promise<BundledImageSafetyFinding[]> {
@@ -141,14 +176,18 @@ export class BundledImageSafetyScanner {
       throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
     }
 
-    const temporaryDirectory = nested ? await fs.promises.mkdtemp(path.join(this.temporaryRoot, 'sulla-image-scan-')) : undefined;
-    const temporaryFile = temporaryDirectory ? path.join(temporaryDirectory, 'archive') : undefined;
-    const output = temporaryFile ? fs.createWriteStream(temporaryFile, { flags: 'wx' }) : undefined;
-    let inspectionPrefix = Buffer.alloc(0);
-    let totalBytes = 0;
-    const inspectedStream = await this.decodeEntryStream(stream, compressed);
+    let temporaryDirectory: string | undefined;
+    let output: fs.WriteStream | undefined;
 
     try {
+      temporaryDirectory = nested ? await fs.promises.mkdtemp(path.join(this.temporaryRoot, 'sulla-image-scan-')) : undefined;
+      const temporaryFile = temporaryDirectory ? path.join(temporaryDirectory, 'archive') : undefined;
+
+      output = temporaryFile ? fs.createWriteStream(temporaryFile, { flags: 'wx' }) : undefined;
+      let inspectionPrefix = Buffer.alloc(0);
+      let totalBytes = 0;
+      const inspectedStream = await this.entryDecoder.decode(stream, compressed);
+
       for await (const rawChunk of inspectedStream) {
         const chunk = Buffer.from(rawChunk);
 
@@ -172,25 +211,6 @@ export class BundledImageSafetyScanner {
   }
 
 
-  private async decodeEntryStream(stream: Readable, compressed: boolean): Promise<Readable> {
-    const iterator = stream[Symbol.asyncIterator]();
-    const first = await iterator.next();
-
-    if (first.done) return Readable.from([]);
-    const input = Readable.from(this.prependChunk(Buffer.from(first.value), iterator as AsyncIterator<Uint8Array>));
-
-    return compressed && this.isGzip(Buffer.from(first.value)) ? input.pipe(createGunzip()) : input;
-  }
-
-  private async *prependChunk(first: Buffer, iterator: AsyncIterator<Uint8Array>): AsyncGenerator<Buffer> {
-    yield first;
-    while (true) {
-      const item = await iterator.next();
-
-      if (item.done) return;
-      yield Buffer.from(item.value);
-    }
-  }
 
   private isMachO(prefix: Buffer): boolean {
     if (prefix.length < 4) return false;
