@@ -63,7 +63,7 @@ import { acquireSingleInstanceLock } from '@pkg/main/restartMarker';
 import buildApplicationMenu, { sendAgentCommand } from '@pkg/main/mainmenu';
 import setupNetworking from '@pkg/main/networking';
 import { Snapshots } from '@pkg/main/snapshots/snapshots';
-import { startStorageWatch, stopStorageWatch } from '@pkg/main/storageWatch';
+import { DesktopStorageWatchService } from '@pkg/main/storageWatch';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
@@ -176,6 +176,7 @@ let firstRunBackendFailurePayload: unknown;
 let firstRunLastStartFailure: { reason: string; message: string } | undefined;
 let gone = false; // when true indicates app is shutting down
 let shuttingDown = false; // re-entrancy guard for before-quit handler
+const storageWatch = new DesktopStorageWatchService();
 let backendStarted = false;
 let launchedVmResources: { memoryInGB: number; numberCPUs: number } | undefined;
 let imageEventHandler: ImageEventHandler | null = null;
@@ -1161,7 +1162,7 @@ async function startBackend() {
       numberCPUs: cfg.virtualMachine.numberCPUs,
     };
     await startK8sManager();
-    startStorageWatch();
+    storageWatch.start();
   } catch (err) {
     handleFailure(err);
   } finally {
@@ -1315,7 +1316,7 @@ Electron.app.on('before-quit', async(event) => {
   const phaseTimeout = (quitMs: number, restartMs: number) => restart ? restartMs : quitMs;
 
   // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
-  stopStorageWatch();
+  storageWatch.stop();
 
   await withTimeout('httpCommandServer.close', phaseTimeout(5_000, 3_000), httpCommandServer?.closeServer() ?? Promise.resolve());
   await withTimeout('httpCredentialHelperServer.close', phaseTimeout(5_000, 3_000), httpCredentialHelperServer.closeServer());

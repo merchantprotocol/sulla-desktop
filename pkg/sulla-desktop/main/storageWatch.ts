@@ -56,11 +56,18 @@ class NativeStorageNotifier {
   }
 }
 
-const probe = new MacDataVolumeProbe();
-const service = new StorageWatchService(
-  () => probe.read(), new DesktopStorageWatchSettingsStore(), new StorageOptimizerWorkflowRunner(),
-  new NativeStorageNotifier(), { now: () => Date.now() }, console,
-);
+/** Main-process composition root for the platform-specific storage watcher. */
+export class DesktopStorageWatchService {
+  private readonly service: StorageWatchService;
 
-export function startStorageWatch(): void { if (process.platform === 'darwin') service.start() }
-export function stopStorageWatch(): void { service.stop() }
+  constructor(private readonly platform = process.platform) {
+    const probe = new MacDataVolumeProbe();
+    this.service = new StorageWatchService(
+      () => probe.read(), new DesktopStorageWatchSettingsStore(), new StorageOptimizerWorkflowRunner(),
+      new NativeStorageNotifier(), { now: () => Date.now() }, console,
+    );
+  }
+
+  start(): void { if (this.platform === 'darwin') this.service.start() }
+  stop(): void { this.service.stop() }
+}
