@@ -13,10 +13,8 @@ import tar from 'tar-stream';
 
 import { blobPath, type BundledImageLock } from '../../pkg/sulla-desktop/backend/bundledImages';
 
-const THIN_MACH_O_MAGICS = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe']);
 const FAT_MAGIC = 0xcafebabe;
 const FAT_CIGAM = 0xbebafeca;
-const MACH_CPU_TYPES = new Set([7, 12, 18, 0x01000007, 0x0100000c, 0x01000012]);
 const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz|\.gz)$/i;
 const NESTED_COMPRESSED = /(?:\.tar\.gz|\.tgz|\.gz)$/i;
 const PACKAGE_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
@@ -42,6 +40,8 @@ export interface BundledImageSafetyScannerOptions {
 
 /** Inspects OCI filesystem layers for host binaries Apple will inspect during notarization. */
 export class BundledImageSafetyScanner {
+  private readonly thinMachOMagics = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe']);
+  private readonly machCpuTypes = new Set([7, 12, 18, 0x01000007, 0x0100000c, 0x01000012]);
   private readonly maxDepth: number;
   private readonly maxEntryBytes: number;
   private readonly temporaryRoot: string;
@@ -196,7 +196,7 @@ export class BundledImageSafetyScanner {
     if (prefix.length < 4) return false;
     const magic = prefix.subarray(0, 4).toString('hex');
 
-    if (THIN_MACH_O_MAGICS.has(magic)) return true;
+    if (this.thinMachOMagics.has(magic)) return true;
     if (prefix.length < 12) return false;
 
     const magicNumber = prefix.readUInt32BE(0);
@@ -208,7 +208,7 @@ export class BundledImageSafetyScanner {
     // cafebabe is also the Java class-file magic. A real fat Mach-O has a small
     // architecture count followed by a recognized Mach CPU type.
     if (architectureCount < 1 || architectureCount > 64) return false;
-    return MACH_CPU_TYPES.has(littleEndian ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8));
+    return this.machCpuTypes.has(littleEndian ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8));
   }
 
 
