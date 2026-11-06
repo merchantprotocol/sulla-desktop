@@ -196,9 +196,17 @@ export class BundledImageSafetyScanner {
         if (nested && totalBytes > this.maxEntryBytes) {
           throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
         }
-        if (output && !output.write(chunk)) await new Promise<void>(resolve => output.once('drain', resolve));
+        if (output) {
+          const writer = output;
+
+          if (!writer.write(chunk)) await new Promise<void>(resolve => writer.once('drain', resolve));
+        }
       }
-      if (output) await new Promise<void>(resolve => output.end(resolve));
+      if (output) {
+        const writer = output;
+
+        await new Promise<void>(resolve => writer.end(resolve));
+      }
 
       if (this.isMachO(inspectionPrefix)) findings.push({ image, layer, path: entryPath, reason: 'Mach-O binary', level: 'error' });
       if (temporaryFile && this.isTar(inspectionPrefix)) {
