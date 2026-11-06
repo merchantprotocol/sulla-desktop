@@ -258,7 +258,9 @@ export class ModelRouter {
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }): Promise<ModelCandidate[]> {
     const state = await this.getEditableState();
     const live = await this.liveProviders();
-    if (choice.mode === 'pin') return [{ provider: canonicalProviderId(choice.provider), model: choice.model }];
+    const pinned = choice.mode === 'pin'
+      ? { provider: canonicalProviderId(choice.provider), model: choice.model }
+      : null;
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
@@ -280,9 +282,12 @@ export class ModelRouter {
       this.health.clear();
       this.expire();
       this.emit();
-      return backedOff;
+      const configured = backedOff;
+      return pinned ? [pinned, ...configured.filter(item => item.provider !== pinned.provider || item.model !== pinned.model)] : configured;
     }
-    return [...healthy, ...backedOff];
+    const configured = [...healthy, ...backedOff];
+    // An explicit choice is always first. Recovery may then advance only through the configured list.
+    return pinned ? [pinned, ...configured.filter(item => item.provider !== pinned.provider || item.model !== pinned.model)] : configured;
   }
 
   async providerInfo(): Promise<RoutingProviderInfo[]> {

@@ -4,11 +4,21 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { ModelCandidate } from './modelRouter';
+import type { LLMFailureRecovery } from './providerRecovery';
 
 /** Defines the only routes recovery may attempt after a failed model call. */
 export class ModelRecoveryPolicy {
-  candidates(resolved: readonly ModelCandidate[], pinned: boolean, active: ModelCandidate): ModelCandidate[] {
+  candidates(resolved: readonly ModelCandidate[], active: ModelCandidate): ModelCandidate[] {
     const candidates = resolved.length ? [...resolved] : [active];
-    return pinned ? candidates.slice(0, 1) : candidates;
+    return candidates;
+  }
+
+  /** Remaining same-provider calls after the initial failure (initial + 2 = 3 total). */
+  additionalAttempts(failure: LLMFailureRecovery): number {
+    return failure.retryPrimary ? 2 : 0;
+  }
+
+  canAdvance(failure: LLMFailureRecovery): boolean {
+    return failure.fallbackAllowed;
   }
 }
