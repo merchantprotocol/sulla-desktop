@@ -10,6 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+// @ts-expect-error Node's strip-types runner requires the explicit TypeScript extension.
 import { planConsentInit, recommendedConsentPatch } from '../cloudConsentInit.ts';
 
 test('recommendedConsentPatch opts in to exactly the given kinds, plus enabled', () => {
