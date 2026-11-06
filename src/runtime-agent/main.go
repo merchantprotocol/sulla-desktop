@@ -144,6 +144,7 @@ func main() {
 	go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
 	go a.watchDocker()
 	go a.watchResolver()
+	go newDataTrimmer(a.log).run(a.ctx)
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGPWR)
 	select {
