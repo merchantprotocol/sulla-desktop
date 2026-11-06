@@ -99,6 +99,15 @@ export const defaultSettings = {
     hideNotificationIcon:   false,
     window:                 { quitOnClose: false },
   },
+  storageWatch: {
+    enabled:         true,
+    warningFreeGb:   40,
+    warningFreePct:  10,
+    criticalFreeGb:  15,
+    criticalFreePct: 4,
+    lastWarningAt:   0,
+    lastCriticalAt:  0,
+  },
   containerEngine: {
     allowedImages: {
       enabled:  false,
