@@ -261,6 +261,9 @@ export class ModelRouter {
     const pinned = choice.mode === 'pin'
       ? { provider: canonicalProviderId(choice.provider), model: choice.model }
       : null;
+    // A human's explicit selector choice is a hard route boundary. Recovery may retry this
+    // exact route, but it must never substitute a configured alternate provider or model.
+    if (pinned) return [pinned];
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
@@ -282,12 +285,10 @@ export class ModelRouter {
       this.health.clear();
       this.expire();
       this.emit();
-      const configured = backedOff;
-      return pinned ? [pinned, ...configured.filter(item => item.provider !== pinned.provider || item.model !== pinned.model)] : configured;
+      return backedOff;
     }
     const configured = [...healthy, ...backedOff];
-    // An explicit choice is always first. Recovery may then advance only through the configured list.
-    return pinned ? [pinned, ...configured.filter(item => item.provider !== pinned.provider || item.model !== pinned.model)] : configured;
+    return configured;
   }
 
   async providerInfo(): Promise<RoutingProviderInfo[]> {
