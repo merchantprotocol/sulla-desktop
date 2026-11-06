@@ -49,6 +49,21 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
   });
 
+
+  it('keeps a reopened generation recoverable across restart until the recovered runner settles', async() => {
+    // risk: restart silently strands a claimed reopen generation
+    const input = job('repository-reopen-restart');
+    input.tasks[0] = { ...input.tasks[0], status: 'completed', generation: 1, threadId: 'thread-restart' };
+    await repository.insertJob(input);
+    await repository.complete({ ...input, status: 'completed', finishedAt: Date.now() });
+    const claim = await repository.claimReopen(input.jobId, 0, 1);
+    expect(claim).toMatchObject({ generation: 2 });
+    const recovered = await repository.claimInterruptedJobs(2);
+    expect(recovered.resumable.find(item => item.jobId === input.jobId)?.tasks[0]).toMatchObject({ status: 'running', generation: 2, reopenLeaseId: claim!.leaseId });
+    expect(await repository.releaseReopenLease(input.jobId, 0, 2, claim!.leaseId)).toBe(true);
+    expect((await repository.job(input.jobId))?.tasks[0].reopenLeaseId).toBeUndefined();
+  });
+
   it('refuses reopen claims for stopped, failed, over-limit, and actively leased tasks', async() => {
     // risk: replaying terminal work or running two generations concurrently
     const createSettled = async(id: string, taskStatus: 'completed' | 'blocked' | 'error' | 'stopped', jobStatus: AgentJob['status']) => {

@@ -29,3 +29,18 @@ export class HiddenAgentTaskRunner implements ReopenableTaskRunner {
     return this.execution.execute(input);
   }
 }
+
+/** Instance-owned execution custody with a reconstructible fresh-session fallback. */
+export class HiddenTaskExecutionService {
+  private readonly runners = new Map<string, ReopenableTaskRunner>();
+
+  constructor(private readonly freshExecution: HiddenTaskExecution) {}
+
+  register(jobId: string, taskIndex: number, runner: ReopenableTaskRunner): void { this.runners.set(this.key(jobId, taskIndex), runner); }
+  hasRegistered(jobId: string, taskIndex: number): boolean { return this.runners.has(this.key(jobId, taskIndex)); }
+  async run(input: ReopenableTaskRun & { jobId: string }): Promise<AgentJobResult> {
+    const runner = this.runners.get(this.key(input.jobId, input.taskIndex));
+    return runner ? runner.run(input) : this.freshExecution.execute(input);
+  }
+  private key(jobId: string, taskIndex: number): string { return `${ jobId }:${ taskIndex }`; }
+}

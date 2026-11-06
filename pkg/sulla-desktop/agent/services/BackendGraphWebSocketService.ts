@@ -207,6 +207,18 @@ export class BackendGraphWebSocketService {
     this.initialize();
   }
 
+  receiveAgentInbox(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
+    return this.agentInbox.receive(entry);
+  }
+
+  enqueueAgentInbox(entry: AgentInboxEntry): Promise<'duplicate' | 'queued'> {
+    return this.agentInbox.enqueue(entry);
+  }
+
+  async flushAgentInbox(target: AgentInboxTarget): Promise<number> {
+    return this.agentInbox.flush(target);
+  }
+
   private inboxThread(target: AgentInboxTarget): string | undefined {
     if (target.threadId && this.hasActiveRun(target.channel, target.threadId)) return target.threadId;
     const prefix = `${ target.channel }|`;

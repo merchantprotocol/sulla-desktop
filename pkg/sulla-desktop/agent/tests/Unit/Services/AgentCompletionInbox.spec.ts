@@ -83,6 +83,13 @@ describe('AgentCompletionInbox', () => {
     expect(takeAgentCompletions('sulla-desktop', 'parent')).toEqual([]);
 
   });
+  it('delivers a reopened generation without colliding with its prior result', () => {
+    // risk: generation two result loss
+    const inbox = new AgentCompletionInbox();
+    expect(inbox.enqueue('sulla-desktop', 'parent', { jobId: 'job-1', taskIndex: 0, generation: 1, results: [result('one')] })).toBe(true);
+    expect(inbox.enqueue('sulla-desktop', 'parent', { jobId: 'job-1', taskIndex: 0, generation: 2, results: [result('two')] })).toBe(true);
+    expect(inbox.take('sulla-desktop', 'parent').map(entry => entry.generation)).toEqual([1, 2]);
+  });
   it('formats sibling contracts with separators and bounds oversized results', () => {
     // risk: prompt integrity — sibling contracts must remain distinct and bounded.
     const one = result('one');

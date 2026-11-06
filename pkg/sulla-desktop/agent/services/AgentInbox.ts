@@ -7,7 +7,7 @@ import { ReceiverRunGuard } from './ReceiverRunGuard';
 
 export type AgentMessageKind = 'human' | 'parent' | 'child' | 'peer' | 'contract' | 'blocker';
 export type AgentInboxDeliveryReceipt = 'accepted' | 'deferred' | 'failed';
-export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; ids: { messageId: string; jobId?: string; taskIndex?: number; threadId?: string } }
+export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; ids: { messageId: string; jobId?: string; taskIndex?: number; threadId?: string; generation?: number } }
 export interface AgentInboxTarget { channel: string; threadId?: string; agentId?: string }
 export interface AgentInboxEntry { envelope: AgentMessageEnvelope; target: AgentInboxTarget }
 export interface AgentInboxClaim { owner: string; target: AgentInboxTarget; entries: AgentInboxEntry[] }
@@ -39,6 +39,10 @@ export class AgentInbox {
     private readonly leaseRenewIntervalMs = 30_000,
     private readonly scheduler: AgentInboxScheduler = new ImmediateAgentInboxScheduler(),
   ) {}
+
+  async enqueue(entry: AgentInboxEntry): Promise<'duplicate' | 'queued'> {
+    return await this.repository.enqueue(entry) ? 'queued' : 'duplicate';
+  }
 
   async receive(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
     const inserted = await this.repository.enqueue(entry);

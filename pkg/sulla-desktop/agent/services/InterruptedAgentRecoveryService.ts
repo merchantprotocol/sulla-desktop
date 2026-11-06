@@ -6,6 +6,7 @@ import type { AgentJob } from '../tools/agents/jobRegistry';
 
 export interface InterruptedJobRepository {
   claimInterruptedJobs(maxResumes?: number): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }>;
+  releaseReopenLease?(jobId: string, taskIndex: number, generation: number, leaseId: string): Promise<boolean>;
 }
 
 /** Re-enters durable hidden-agent threads after a runtime restart, with a bounded retry count. */
@@ -26,7 +27,11 @@ export class InterruptedAgentRecoveryService {
       for (let index = 0; index < job.tasks.length; index++) {
         const task = job.tasks[index];
         if (task.status !== 'running' || !task.threadId || task.returnedAt) continue;
-        await this.resume(job, index);
+        try {
+          await this.resume(job, index);
+        } finally {
+          if (task.reopenLeaseId) await this.jobs.releaseReopenLease?.(job.jobId, index, task.generation ?? 1, task.reopenLeaseId);
+        }
       }
     }
   }
