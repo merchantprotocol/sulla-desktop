@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1119,
+  "entries": 1118,
   "files": {
     "background.ts": {
       "rules": {
@@ -2355,13 +2355,6 @@
         "raw-sql": 19
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "pkg/sulla-desktop/main/cloud/runtimeProjection/sync.ts": {
-      "rules": {
-        "mutable-state": 2,
-        "procedural-module": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/cloud/runtimeProjection/workflows.ts": {
       "rules": {
