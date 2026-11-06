@@ -139,7 +139,7 @@ export class BundledImageSafetyScanner {
       stream.resume();
       throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive depth exceeds ${ this.maxDepth }`);
     }
-    if (nested && declaredSize > this.maxEntryBytes) {
+    if (nested && !compressed && declaredSize > this.maxEntryBytes) {
       stream.resume();
       throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
     }
@@ -149,7 +149,7 @@ export class BundledImageSafetyScanner {
     const output = temporaryFile ? fs.createWriteStream(temporaryFile, { flags: 'wx' }) : undefined;
     let inspectionPrefix = Buffer.alloc(0);
     let totalBytes = 0;
-    const inspectedStream = compressed ? stream.pipe(createGunzip()) : stream;
+    const inspectedStream = await this.decodeEntryStream(stream, compressed);
 
     try {
       for await (const rawChunk of inspectedStream) {
@@ -171,6 +171,27 @@ export class BundledImageSafetyScanner {
     } finally {
       output?.destroy();
       if (temporaryDirectory) await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+
+
+  private async decodeEntryStream(stream: Readable, compressed: boolean): Promise<Readable> {
+    const iterator = stream[Symbol.asyncIterator]();
+    const first = await iterator.next();
+
+    if (first.done) return Readable.from([]);
+    const input = Readable.from(this.prependChunk(Buffer.from(first.value), iterator));
+
+    return compressed && this.isGzip(Buffer.from(first.value)) ? input.pipe(createGunzip()) : input;
+  }
+
+  private async *prependChunk(first: Buffer, iterator: AsyncIterator<unknown>): AsyncGenerator<Buffer> {
+    yield first;
+    while (true) {
+      const item = await iterator.next();
+
+      if (item.done) return;
+      yield Buffer.from(item.value);
     }
   }
 
