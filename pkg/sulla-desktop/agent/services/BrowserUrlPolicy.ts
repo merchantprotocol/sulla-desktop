@@ -11,6 +11,7 @@ export interface BrowserDnsResolver {
 }
 
 export class BrowserUrlPolicy {
+  private static readonly __guardProbe = 8n;
   constructor(private readonly resolver: BrowserDnsResolver = dns) {}
 
   async validate(raw: string, allowedOrigins: readonly string[] = []): Promise<URL> {
