@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { PassThrough, Readable } from 'stream';
 import { createGunzip } from 'zlib';
@@ -12,46 +13,76 @@ import tar from 'tar-stream';
 
 import { blobPath, type BundledImageLock } from '../../pkg/sulla-desktop/backend/bundledImages';
 
-const MACH_O_MAGICS = ['feedface', 'feedfacf', 'cafebabe', 'cefaedfe', 'cffaedfe'] as const;
-const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz)$/i;
-const FORBIDDEN_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
+const THIN_MACH_O_MAGICS = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe']);
+const FAT_MAGIC = 0xcafebabe;
+const FAT_CIGAM = 0xbebafeca;
+const MACH_CPU_TYPES = new Set([7, 12, 18, 0x01000007, 0x0100000c, 0x01000012]);
+const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz|\.gz)$/i;
+const PACKAGE_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
+const GZIP_MEDIA_TYPE = /\+gzip$/;
+const ZSTD_MEDIA_TYPE = /\+zstd$/;
+const DEFAULT_MAX_DEPTH = 3;
+const DEFAULT_MAX_ENTRY_BYTES = 256 * 1024 * 1024;
+const MAGIC_PREFIX_BYTES = 12;
 
-export interface BundledImageSafetyProblem {
+export interface BundledImageSafetyFinding {
   image: string;
   layer: string;
   path:  string;
   reason: 'Mach-O binary' | 'package-manager cache';
+  level:  'error' | 'warning';
 }
 
-/** Inspects OCI filesystem layers for host binaries and caches Apple will unpack during notarization. */
+export interface BundledImageSafetyScannerOptions {
+  maxDepth?:      number;
+  maxEntryBytes?: number;
+  temporaryRoot?: string;
+}
+
+/** Inspects OCI filesystem layers for host binaries Apple will inspect during notarization. */
 export class BundledImageSafetyScanner {
-  async scan(imagesDir: string, lock: BundledImageLock): Promise<BundledImageSafetyProblem[]> {
-    const problems: BundledImageSafetyProblem[] = [];
+  private readonly maxDepth: number;
+  private readonly maxEntryBytes: number;
+  private readonly temporaryRoot: string;
+
+  constructor(options: BundledImageSafetyScannerOptions = {}) {
+    this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+    this.maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
+    this.temporaryRoot = options.temporaryRoot ?? os.tmpdir();
+  }
+
+  async scan(imagesDir: string, lock: BundledImageLock): Promise<BundledImageSafetyFinding[]> {
+    const findings: BundledImageSafetyFinding[] = [];
 
     for (const image of lock.images) {
       for (const layer of image.layers) {
+        if (ZSTD_MEDIA_TYPE.test(layer.mediaType)) {
+          throw new Error(`bundled image safety check cannot inspect ${ image.name } ${ layer.digest }: unsupported OCI layer compression/mediaType ${ layer.mediaType }`);
+        }
         const file = blobPath(imagesDir, layer.digest);
+        const input = fs.createReadStream(file).pipe(GZIP_MEDIA_TYPE.test(layer.mediaType) ? createGunzip() : new PassThrough());
 
-        await this.scanTarStream(
-          fs.createReadStream(file).pipe(layer.mediaType.includes('gzip') ? createGunzip() : new PassThrough()),
-          image.name,
-          layer.digest,
-          '',
-          problems,
-        );
+        await this.scanTarStream(input, image.name, layer.digest, '', 0, findings);
       }
     }
 
-    return problems;
+    return findings;
   }
 
-  async scanTarBuffer(buffer: Buffer, image: string, layer: string, prefix = ''): Promise<BundledImageSafetyProblem[]> {
-    const problems: BundledImageSafetyProblem[] = [];
+  async scanTarBuffer(buffer: Buffer, image: string, layer: string, prefix = ''): Promise<BundledImageSafetyFinding[]> {
+    const findings: BundledImageSafetyFinding[] = [];
     const input = this.isGzip(buffer) ? Readable.from(buffer).pipe(createGunzip()) : Readable.from(buffer);
 
-    await this.scanTarStream(input, image, layer, prefix, problems);
+    await this.scanTarStream(input, image, layer, prefix, 0, findings);
 
-    return problems;
+    return findings;
+  }
+
+  private async scanTarFile(file: string, image: string, layer: string, prefix: string, depth: number, findings: BundledImageSafetyFinding[]): Promise<void> {
+    const source = fs.createReadStream(file);
+    const input = this.isGzip(await this.readPrefix(file, 2)) ? source.pipe(createGunzip()) : source;
+
+    await this.scanTarStream(input, image, layer, prefix, depth, findings);
   }
 
   private async scanTarStream(
@@ -59,7 +90,8 @@ export class BundledImageSafetyScanner {
     image: string,
     layer: string,
     prefix: string,
-    problems: BundledImageSafetyProblem[],
+    depth: number,
+    findings: BundledImageSafetyFinding[],
   ): Promise<void> {
     const extract = tar.extract();
     const reportedCacheRoots = new Set<string>();
@@ -71,44 +103,104 @@ export class BundledImageSafetyScanner {
 
     extract.on('entry', (header, stream, next) => {
       const entryPath = prefix ? `${ prefix}!/${ header.name }` : header.name;
-      const chunks: Buffer[] = [];
-      let firstBytes = Buffer.alloc(0);
       const nested = header.type === 'file' && NESTED_ARCHIVE.test(header.name);
-
-      const cacheMatch = FORBIDDEN_CACHE.exec(header.name);
+      const cacheMatch = PACKAGE_CACHE.exec(header.name);
 
       if (cacheMatch) {
         const cacheRoot = header.name.slice(0, cacheMatch.index + cacheMatch[0].length);
 
         if (!reportedCacheRoots.has(cacheRoot)) {
           reportedCacheRoots.add(cacheRoot);
-          problems.push({ image, layer, path: prefix ? `${ prefix}!/${ cacheRoot }` : cacheRoot, reason: 'package-manager cache' });
+          findings.push({ image, layer, path: prefix ? `${ prefix}!/${ cacheRoot }` : cacheRoot, reason: 'package-manager cache', level: 'warning' });
         }
       }
-      stream.on('data', (chunk: Buffer) => {
-        if (firstBytes.length < 4) firstBytes = Buffer.concat([firstBytes, chunk]).subarray(0, 4);
-        if (nested) chunks.push(chunk);
-      });
-      stream.on('error', error => extract.destroy(error));
-      stream.on('end', () => {
-        void (async() => {
-          if (firstBytes.length === 4 && MACH_O_MAGICS.includes(firstBytes.toString('hex') as typeof MACH_O_MAGICS[number])) {
-            problems.push({ image, layer, path: entryPath, reason: 'Mach-O binary' });
-          }
-          if (nested && chunks.length) {
-            const nestedProblems = await this.scanTarBuffer(Buffer.concat(chunks), image, layer, entryPath);
 
-            problems.push(...nestedProblems);
-          }
-        })().then(next, error => extract.destroy(error as Error));
-      });
-      stream.resume();
+      void this.inspectEntry(stream, header.size ?? 0, nested, entryPath, image, layer, depth, findings)
+        .then(next, error => extract.destroy(error as Error));
     });
     input.pipe(extract);
     await completed;
   }
 
+  private async inspectEntry(
+    stream: Readable,
+    declaredSize: number,
+    nested: boolean,
+    entryPath: string,
+    image: string,
+    layer: string,
+    depth: number,
+    findings: BundledImageSafetyFinding[],
+  ): Promise<void> {
+    if (nested && depth >= this.maxDepth) {
+      stream.resume();
+      throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive depth exceeds ${ this.maxDepth }`);
+    }
+    if (nested && declaredSize > this.maxEntryBytes) {
+      stream.resume();
+      throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
+    }
+
+    const temporaryDirectory = nested ? await fs.promises.mkdtemp(path.join(this.temporaryRoot, 'sulla-image-scan-')) : undefined;
+    const temporaryFile = temporaryDirectory ? path.join(temporaryDirectory, 'archive') : undefined;
+    const output = temporaryFile ? fs.createWriteStream(temporaryFile, { flags: 'wx' }) : undefined;
+    let magicPrefix = Buffer.alloc(0);
+    let totalBytes = 0;
+
+    try {
+      for await (const rawChunk of stream) {
+        const chunk = Buffer.from(rawChunk);
+
+        totalBytes += chunk.length;
+        if (magicPrefix.length < MAGIC_PREFIX_BYTES) magicPrefix = Buffer.concat([magicPrefix, chunk]).subarray(0, MAGIC_PREFIX_BYTES);
+        if (nested && totalBytes > this.maxEntryBytes) {
+          throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
+        }
+        if (output && !output.write(chunk)) await new Promise<void>(resolve => output.once('drain', resolve));
+      }
+      if (output) await new Promise<void>(resolve => output.end(resolve));
+
+      if (this.isMachO(magicPrefix)) findings.push({ image, layer, path: entryPath, reason: 'Mach-O binary', level: 'error' });
+      if (temporaryFile) await this.scanTarFile(temporaryFile, image, layer, entryPath, depth + 1, findings);
+    } finally {
+      output?.destroy();
+      if (temporaryDirectory) await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+
+  private isMachO(prefix: Buffer): boolean {
+    if (prefix.length < 4) return false;
+    const magic = prefix.subarray(0, 4).toString('hex');
+
+    if (THIN_MACH_O_MAGICS.has(magic)) return true;
+    if (prefix.length < 12) return false;
+
+    const magicNumber = prefix.readUInt32BE(0);
+    const littleEndian = magicNumber === FAT_CIGAM;
+
+    if (magicNumber !== FAT_MAGIC && !littleEndian) return false;
+    const architectureCount = littleEndian ? prefix.readUInt32LE(4) : prefix.readUInt32BE(4);
+
+    // cafebabe is also the Java class-file magic. A real fat Mach-O has a small
+    // architecture count followed by a recognized Mach CPU type.
+    if (architectureCount < 1 || architectureCount > 64) return false;
+    return MACH_CPU_TYPES.has(littleEndian ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8));
+  }
+
   private isGzip(buffer: Buffer): boolean {
     return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+  }
+
+  private async readPrefix(file: string, bytes: number): Promise<Buffer> {
+    const handle = await fs.promises.open(file, 'r');
+    const buffer = Buffer.alloc(bytes);
+
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+
+      return buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
   }
 }

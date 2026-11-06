@@ -108,7 +108,13 @@ export async function assertBundledImagesSafe(imagesDir: string): Promise<void> 
   const lock = readBundledImageLock(imagesDir);
 
   if (!lock) throw new Error('cannot inspect bundled images without images.lock.json');
-  const problems = await new BundledImageSafetyScanner().scan(imagesDir, lock);
+  const findings = await new BundledImageSafetyScanner().scan(imagesDir, lock);
+  const warnings = findings.filter(finding => finding.level === 'warning');
+  const problems = findings.filter(finding => finding.level === 'error');
+
+  for (const warning of warnings) {
+    console.warn(`bundled image safety warning: ${ warning.image } ${ warning.layer } ${ warning.path }: ${ warning.reason }`);
+  }
 
   if (problems.length) {
     const details = problems.map(problem => `${ problem.image } ${ problem.layer } ${ problem.path }: ${ problem.reason }`).join('\n');
