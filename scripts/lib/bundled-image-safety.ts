@@ -18,12 +18,14 @@ const FAT_MAGIC = 0xcafebabe;
 const FAT_CIGAM = 0xbebafeca;
 const MACH_CPU_TYPES = new Set([7, 12, 18, 0x01000007, 0x0100000c, 0x01000012]);
 const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz|\.gz)$/i;
+const NESTED_COMPRESSED = /(?:\.tar\.gz|\.tgz|\.gz)$/i;
+const NESTED_TAR = /(?:\.tar|\.tar\.gz|\.tgz)$/i;
 const PACKAGE_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
 const GZIP_MEDIA_TYPE = /\+gzip$/;
 const ZSTD_MEDIA_TYPE = /\+zstd$/;
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_ENTRY_BYTES = 256 * 1024 * 1024;
-const MAGIC_PREFIX_BYTES = 12;
+const INSPECTION_PREFIX_BYTES = 265;
 
 export interface BundledImageSafetyFinding {
   image: string;
@@ -79,10 +81,7 @@ export class BundledImageSafetyScanner {
   }
 
   private async scanTarFile(file: string, image: string, layer: string, prefix: string, depth: number, findings: BundledImageSafetyFinding[]): Promise<void> {
-    const source = fs.createReadStream(file);
-    const input = this.isGzip(await this.readPrefix(file, 2)) ? source.pipe(createGunzip()) : source;
-
-    await this.scanTarStream(input, image, layer, prefix, depth, findings);
+    await this.scanTarStream(fs.createReadStream(file), image, layer, prefix, depth, findings);
   }
 
   private async scanTarStream(
@@ -104,6 +103,8 @@ export class BundledImageSafetyScanner {
     extract.on('entry', (header, stream, next) => {
       const entryPath = prefix ? `${ prefix}!/${ header.name }` : header.name;
       const nested = header.type === 'file' && NESTED_ARCHIVE.test(header.name);
+      const compressed = nested && NESTED_COMPRESSED.test(header.name);
+      const nestedTar = nested && NESTED_TAR.test(header.name);
       const cacheMatch = PACKAGE_CACHE.exec(header.name);
 
       if (cacheMatch) {
@@ -115,7 +116,7 @@ export class BundledImageSafetyScanner {
         }
       }
 
-      void this.inspectEntry(stream, header.size ?? 0, nested, entryPath, image, layer, depth, findings)
+      void this.inspectEntry(stream, header.size ?? 0, nested, compressed, nestedTar, entryPath, image, layer, depth, findings)
         .then(next, error => extract.destroy(error as Error));
     });
     input.pipe(extract);
@@ -126,6 +127,8 @@ export class BundledImageSafetyScanner {
     stream: Readable,
     declaredSize: number,
     nested: boolean,
+    compressed: boolean,
+    nestedTar: boolean,
     entryPath: string,
     image: string,
     layer: string,
@@ -144,15 +147,16 @@ export class BundledImageSafetyScanner {
     const temporaryDirectory = nested ? await fs.promises.mkdtemp(path.join(this.temporaryRoot, 'sulla-image-scan-')) : undefined;
     const temporaryFile = temporaryDirectory ? path.join(temporaryDirectory, 'archive') : undefined;
     const output = temporaryFile ? fs.createWriteStream(temporaryFile, { flags: 'wx' }) : undefined;
-    let magicPrefix = Buffer.alloc(0);
+    let inspectionPrefix = Buffer.alloc(0);
     let totalBytes = 0;
+    const inspectedStream = compressed ? stream.pipe(createGunzip()) : stream;
 
     try {
-      for await (const rawChunk of stream) {
+      for await (const rawChunk of inspectedStream) {
         const chunk = Buffer.from(rawChunk);
 
         totalBytes += chunk.length;
-        if (magicPrefix.length < MAGIC_PREFIX_BYTES) magicPrefix = Buffer.concat([magicPrefix, chunk]).subarray(0, MAGIC_PREFIX_BYTES);
+        if (inspectionPrefix.length < INSPECTION_PREFIX_BYTES) inspectionPrefix = Buffer.concat([inspectionPrefix, chunk]).subarray(0, INSPECTION_PREFIX_BYTES);
         if (nested && totalBytes > this.maxEntryBytes) {
           throw new Error(`bundled image safety check cannot inspect ${ image } ${ layer } ${ entryPath }: nested archive entry exceeds ${ this.maxEntryBytes } bytes`);
         }
@@ -160,8 +164,10 @@ export class BundledImageSafetyScanner {
       }
       if (output) await new Promise<void>(resolve => output.end(resolve));
 
-      if (this.isMachO(magicPrefix)) findings.push({ image, layer, path: entryPath, reason: 'Mach-O binary', level: 'error' });
-      if (temporaryFile) await this.scanTarFile(temporaryFile, image, layer, entryPath, depth + 1, findings);
+      if (this.isMachO(inspectionPrefix)) findings.push({ image, layer, path: entryPath, reason: 'Mach-O binary', level: 'error' });
+      if (temporaryFile && (nestedTar || this.isTar(inspectionPrefix))) {
+        await this.scanTarFile(temporaryFile, image, layer, entryPath, depth + 1, findings);
+      }
     } finally {
       output?.destroy();
       if (temporaryDirectory) await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -187,20 +193,13 @@ export class BundledImageSafetyScanner {
     return MACH_CPU_TYPES.has(littleEndian ? prefix.readUInt32LE(8) : prefix.readUInt32BE(8));
   }
 
+
+  private isTar(prefix: Buffer): boolean {
+    return prefix.length >= 262 && prefix.subarray(257, 262).toString('ascii') === 'ustar';
+  }
+
   private isGzip(buffer: Buffer): boolean {
     return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
   }
 
-  private async readPrefix(file: string, bytes: number): Promise<Buffer> {
-    const handle = await fs.promises.open(file, 'r');
-    const buffer = Buffer.alloc(bytes);
-
-    try {
-      const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
-
-      return buffer.subarray(0, bytesRead);
-    } finally {
-      await handle.close();
-    }
-  }
 }
