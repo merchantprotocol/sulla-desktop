@@ -177,12 +177,12 @@ export class BundledImageSafetyScanner {
     const first = await iterator.next();
 
     if (first.done) return Readable.from([]);
-    const input = Readable.from(this.prependChunk(Buffer.from(first.value), iterator));
+    const input = Readable.from(this.prependChunk(Buffer.from(first.value), iterator as AsyncIterator<Uint8Array>));
 
     return compressed && this.isGzip(Buffer.from(first.value)) ? input.pipe(createGunzip()) : input;
   }
 
-  private async *prependChunk(first: Buffer, iterator: AsyncIterator<unknown>): AsyncGenerator<Buffer> {
+  private async *prependChunk(first: Buffer, iterator: AsyncIterator<Uint8Array>): AsyncGenerator<Buffer> {
     yield first;
     while (true) {
       const item = await iterator.next();
