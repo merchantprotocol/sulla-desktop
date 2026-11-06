@@ -174,11 +174,7 @@ export default {
             test: /\.ts$/,
             use:  {
               loader:  'ts-loader',
-              options: {
-                configFile: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'tsconfig.json'),
-                transpileOnly: this.isDevelopment,
-                onlyCompileBundledFiles: true,
-              },
+              options: { transpileOnly: this.isDevelopment, onlyCompileBundledFiles: true },
             },
           },
           {
