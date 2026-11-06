@@ -5,14 +5,15 @@
 
 import buildUtils from './lib/build-utils';
 
-class AgentProductionBundleChecker {
+class ProductionJavaScriptChecker {
   async run(): Promise<void> {
     buildUtils.isDevelopment = false;
-    await buildUtils.buildJavaScript(buildUtils.webpackConfig);
+    await buildUtils.buildPreload();
+    await buildUtils.buildMain();
   }
 }
 
-new AgentProductionBundleChecker().run().catch((error: unknown) => {
+new ProductionJavaScriptChecker().run().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });
