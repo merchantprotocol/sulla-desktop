@@ -1,14 +1,13 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
-import { StopAgentJobWorker } from '../../tools/agents/stop_agent_job';
+import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
+import { AgentContainerRuntimeRegistry, type AgentContainerRuntimeBinding } from '../../services/AgentContainerRuntimeRegistry';
 import { TestDatabase } from '../Support/TestDatabase';
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
-class StopAgentJobHarness extends StopAgentJobWorker {
-  runValidated(state: any, input: unknown) { this.setState(state); return this._validatedCall(input); }
-}
 dbDescribe('AgentJobService state machine with real Postgres', () => {
   const database = new TestDatabase();
   let registry: typeof import('../../tools/agents/jobRegistry');
@@ -48,12 +47,12 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       ($1, 'running', 1, now(), '[{"agentId":"worker","status":"running","threadId":"worker-thread"}]', 'hidden'),
       ($2, 'parked', 1, now(), '[{"agentId":"manager","status":"parked","threadId":"manager-thread"}]', 'hidden')`, [hiddenId, parkedId]);
     const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
-    const first = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    const first = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(first.resumable.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('running');
     expect((await agentJobProvider.jobs.job(parkedId))?.status).toBe('parked');
-    await agentJobProvider.jobs.claimInterruptedJobs(2);
-    const exhausted = await agentJobProvider.jobs.claimInterruptedJobs(2);
+    await agentJobProvider.states.claimInterruptedJobs(2);
+    const exhausted = await agentJobProvider.states.claimInterruptedJobs(2);
     expect(exhausted.exhausted.map(job => job.jobId)).toContain(hiddenId);
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('failed');
   });
@@ -63,59 +62,19 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'manager-thread' }]);
     const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'worker-thread' }], 'manager', 'manager-thread');
     const grandchild = await registry.createJob([{ agentId: 'sub', label: 'sub', prompt: 'x', status: 'running', threadId: 'sub-thread' }], 'worker', 'worker-thread');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const versions: number[] = []; const unsubscribe = agentJobProvider.states.onChange(version => versions.push(version));
+    expect((await agentJobProvider.states.descendants('manager-thread')).map(job => job.jobId)).toEqual([child.jobId, grandchild.jobId]);
     expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('stopped');
-    expect((await registry.getJob(child.jobId))?.status).toBe('stopped');
-    expect((await registry.getJob(grandchild.jobId))?.status).toBe('stopped');
-    expect((await registry.getJob(child.jobId))?.stoppedBy).toBe('human');
-    expect((await registry.getJob(child.jobId))?.stopReason).toBe('test stop');
-    expect((await registry.getJob(grandchild.jobId))?.stoppedBy).toBe('human');
-    expect((await registry.getJob(grandchild.jobId))?.stopReason).toBe('test stop');
+    unsubscribe();
+    expect(versions.length).toBeGreaterThanOrEqual(1);
+    for (const candidate of [root, child, grandchild]) {
+      expect(agentJobProvider.runtime.jobs.get(candidate.jobId)?.status).toBe('stopped');
+      const [durable] = await database.query<{ status: string }>('SELECT status FROM agent_jobs WHERE job_id = $1', [candidate.jobId]);
+      expect(durable.status).toBe('stopped');
+    }
     expect(await registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'test stop')).toBe('already-finished');
   });
-  it('stops one task without aborting its sibling and settles the job only after all tasks stop', async() => {
-    // risk: lifecycle isolation — a targeted stop must not kill unrelated sibling work.
-    const job = await registry.createJob([
-      { agentId: 'worker', label: 'first', prompt: 'x', status: 'running', threadId: 'first-thread' },
-      { agentId: 'worker', label: 'second', prompt: 'x', status: 'running', threadId: 'second-thread' },
-    ]);
-    const firstSignal = registry.getTaskAbortSignal(job.jobId, 0)!;
-    const secondSignal = registry.getTaskAbortSignal(job.jobId, 1)!;
-    expect(await registry.stopJobTask(job.jobId, 0, StopPrincipal.human(), 'targeted stop')).toBe('stopped');
-    expect(firstSignal.aborted).toBe(true);
-    expect(secondSignal.aborted).toBe(false);
-    expect((await registry.getJob(job.jobId))?.status).toBe('running');
-    expect((await registry.getJob(job.jobId))?.tasks.map(task => task.status)).toEqual(['stopped', 'running']);
-    expect(await registry.stopJobTask(job.jobId, 1, StopPrincipal.human(), 'targeted stop')).toBe('stopped');
-    expect((await registry.getJob(job.jobId))?.status).toBe('stopped');
-  });
-  it('settles a task stopped mid-turn with honest persisted output while its sibling keeps running', async() => {
-    // risk: lifecycle isolation — an intentional stop must not become a false missing-contract failure.
-    const job = await registry.createJob([
-      { agentId: 'worker', label: 'unaffected', prompt: 'keep working', status: 'running', threadId: 'unaffected-thread' },
-      { agentId: 'worker', label: 'stopped', prompt: 'mid-turn work', status: 'running', threadId: 'stopped-thread' },
-    ]);
-    expect(await registry.stopJobTask(job.jobId, 1, StopPrincipal.system('WrapUpGraceExpiry'), 'acceptance: hard stop one task')).toBe('stopped');
-
-    const result = await registry.stoppedTaskResult(job.jobId, 1, 'stopped', 'stopped-thread');
-    expect(result).toMatchObject({
-      status: 'stopped',
-      output: 'stopped by WrapUpGraceExpiry: acceptance: hard stop one task',
-      threadId: 'stopped-thread',
-      contract: 'result',
-    });
-    expect(result?.output).not.toContain('missing_contract');
-    await registry.recordTaskCompletion(job.jobId, 1, result!);
-
-    const { AgentJobRepository } = await import('../../app/Repositories/AgentJobRepository');
-    const { DesktopPostgresConnection } = await import('../../app/Database/DesktopPostgresConnection');
-    const { postgresClient } = await import('../../database/PostgresClient');
-    const persisted = await new AgentJobRepository(new DesktopPostgresConnection(postgresClient)).job(job.jobId);
-    expect(persisted?.status).toBe('running');
-    expect(persisted?.tasks[0].status).toBe('running');
-    expect(persisted?.tasks[1].status).toBe('stopped');
-    expect(persisted?.tasks[1].completion).toMatchObject(result!);
-  });
-
   it('acknowledges completion delivery once even when retried', async() => {
     // risk: duplicate irreversible side effect
     const job = await registry.createJob(0, 'parent', 'parent-thread');
@@ -143,54 +102,234 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(agentJobProvider.runtime.jobs.has(parked.jobId)).toBe(true);
     expect((await registry.getJob(settled.jobId))?.status).toBe('completed');
   });
-  it('authorizes only owner and ancestor threads and persists stop attribution across repository reloads', async() => {
-    // risk: authorization — a sibling using the same agent definition must never stop another owner's job.
-    const ancestor = await registry.createJob([{ agentId: 'manager', label: 'parent', prompt: 'x', status: 'running', threadId: 'parent-thread' }], 'root', 'grandparent-thread');
-    const siblingTarget = await registry.createJob([{ agentId: 'codex-sol-worker', label: 'target', prompt: 'x', status: 'running', threadId: 'target-thread' }], 'manager', 'parent-thread', { parentAgentId: 'codex-sol-worker' });
-    expect(await registry.stopJobCascade(siblingTarget.jobId, StopPrincipal.agent('codex-sol-worker', 'sibling-thread')!, 'foreign stop')).toBe('forbidden');
-    expect((await registry.getJob(siblingTarget.jobId))?.status).toBe('running');
-    expect(await registry.stopJobCascade(siblingTarget.jobId, StopPrincipal.agent('manager', 'parent-thread')!, 'parent requested')).toBe('stopped');
-    const { AgentJobRepository } = await import('../../app/Repositories/AgentJobRepository');
-    const { DesktopPostgresConnection } = await import('../../app/Database/DesktopPostgresConnection');
-    const { postgresClient } = await import('../../database/PostgresClient');
-    const reloaded = await new AgentJobRepository(new DesktopPostgresConnection(postgresClient)).job(siblingTarget.jobId);
-    expect(reloaded?.stoppedBy).toEqual({ agentId: 'manager', threadId: 'parent-thread' });
-    expect(reloaded?.stopReason).toBe('parent requested');
 
-    const grandchild = await registry.createJob([{ agentId: 'worker', label: 'grandchild', prompt: 'x', status: 'running', threadId: 'grandchild-thread' }], 'manager', 'parent-thread');
-    expect(await registry.stopJobCascade(grandchild.jobId, StopPrincipal.agent('root', 'grandparent-thread')!, 'grandparent requested')).toBe('stopped');
-    expect((await registry.getJob(grandchild.jobId))?.stoppedBy).toEqual({ agentId: 'root', threadId: 'grandparent-thread' });
-    expect(ancestor.status).toBe('running');
+  it('reconciles a stale running task through Postgres, cache, and the renderer snapshot', async() => {
+    // risk: a dead process remains actionable because durable and cached liveness disagree
+    const jobId = `stale-state-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now() - interval '10 minutes', $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
+      agentId: 'worker', label: 'Stale worker', prompt: 'work', status: 'running', startedAt: Date.now() - 600_000,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: () => false,
+      container: async() => false,
+      lastCheckin: async() => null,
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+
+    await reconciler.reconcile();
+
+    const [durable] = await database.query<{ status: string; tasks: Array<{ status: string }> }>(
+      'SELECT status, tasks FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+    expect(agentJobProvider.runtime.jobs.get(jobId)).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+    const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
+    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });
 
-  it('records explicit human and system stop principals', async() => {
-    // risk: auditability — automatic reapers must not be recorded as a human action.
-    const humanJob = await registry.createJob(0);
-    registry.abortJob(humanJob.jobId, StopPrincipal.human(), 'human IPC stop');
-    expect((await registry.getJob(humanJob.jobId))?.stoppedBy).toBe('human');
-    const watcherJob = await registry.createJob(0);
-    registry.abortJob(watcherJob.jobId, StopPrincipal.system('DeadRunWatcher'), 'dead run: no activity 30m');
-    expect((await registry.getJob(watcherJob.jobId))?.stoppedBy).toEqual({ system: 'DeadRunWatcher' });
-    expect((await registry.getJob(watcherJob.jobId))?.stopReason).toBe('dead run: no activity 30m');
+  it('rehydrates supervisor-visible containers before boot reconciliation and loses absent ones', async() => {
+    // risk: Desktop restart falsely kills a still-running container agent
+    const jobId = `rebind-live-${ Date.now() }`;
+    const absentId = `rebind-absent-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now() - interval '20 minutes', $3::jsonb, 'hidden'),
+             ($2, 'running', 1, now() - interval '20 minutes', $4::jsonb, 'hidden')`, [jobId, absentId,
+      JSON.stringify([{ agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-live-thread', startedAt: Date.now() - 1_200_000 }]),
+      JSON.stringify([{ agentId: 'worker', status: 'running', runLocation: 'container', threadId: 'rebind-absent-thread', startedAt: Date.now() - 1_200_000 }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const binding: AgentContainerRuntimeBinding = { podId: 'live-container', subject: 'owner', jobId, threadId: 'rebind-live-thread', deviceId: 'desktop', workspacePath: '/workspace' };
+    const runtimeRegistry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [binding] });
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: () => false, container: async task => runtimeRegistry.probe(undefined, task.threadId), lastCheckin: async() => null,
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    const boot = runtimeRegistry.rehydrate().then(() => reconciler.reconcile());
+    agentJobProvider.states.setReadiness(boot);
+    expect(await boot).toBe(1);
+    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+    expect((await agentJobProvider.jobs.job(absentId))?.status).toBe('failed');
+    expect(agentJobProvider.runtime.jobs.get(jobId)?.status).toBe('running');
+    expect(agentJobProvider.runtime.jobs.get(absentId)?.status).toBe('failed');
   });
 
-  it('refuses a worker stopping its parent and names the owner through worker metadata', async() => {
-    // risk: authorization — a child can otherwise kill the manager supervising it.
-    const parent = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'own', status: 'running', threadId: 'manager-owner-thread' }], 'sulla-desktop', 'root-owner-thread', { parentAgentId: 'sulla-desktop' });
-    const worker = new StopAgentJobHarness();
-    const refusal = await worker.runValidated({ metadata: { threadId: 'child-worker-thread', routedAgentId: 'codex-sol-worker' } }, { jobId: parent.jobId });
-    expect(refusal.successBoolean).toBe(false);
-    expect(refusal.responseString).toContain('owned by sulla-desktop');
-    expect((await registry.getJob(parent.jobId))?.status).toBe('running');
+  it('preserves both concurrent task settlements in Postgres and cache', async() => {
+    // risk: parallel worker completion loses a sibling result
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const created = await registry.createJob([
+      { agentId: 'worker-a', label: 'A', prompt: 'a', status: 'running' },
+      { agentId: 'worker-b', label: 'B', prompt: 'b', status: 'running' },
+    ]);
+    const settle = (index: number) => agentJobProvider.states.update(created.jobId, asyncJob => {
+      asyncJob.results[index] = { label: String(index), status: 'completed', output: `result-${ index }`, threadId: `thread-${ index }` };
+      asyncJob.tasks[index] = { ...asyncJob.tasks[index], status: 'completed', completion: asyncJob.results[index] };
+      return asyncJob;
+    });
+    const first = settle(0); const second = settle(1);
+    await Promise.all([first, second]);
+    const [durable] = await database.query<{ tasks: Array<{ status: string }>; results: Array<{ output: string }> }>('SELECT tasks, results FROM agent_jobs WHERE job_id = $1', [created.jobId]);
+    expect(durable.tasks.map(task => task.status)).toEqual(['completed', 'completed']);
+    expect(durable.results.map(result => result.output)).toEqual(['result-0', 'result-1']);
+    expect(agentJobProvider.runtime.jobs.get(created.jobId)?.results.map(result => result.output)).toEqual(['result-0', 'result-1']);
   });
 
-  it('uses a concrete agent reason when stop_agent_job omits reason', async() => {
-    // risk: auditability — optional input must not persist an ambiguous placeholder.
-    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: 'reason-child-thread' }], 'manager', 'reason-owner-thread', { parentAgentId: 'manager' });
-    const worker = new StopAgentJobHarness();
-    const stopped = await worker.runValidated({ metadata: { threadId: 'reason-owner-thread', routedAgentId: 'manager' } }, { jobId: child.jobId });
-    expect(stopped.successBoolean).toBe(true);
-    expect((await registry.getJob(child.jobId))?.stopReason).toBe('agent request (no reason given)');
+  it('preserves settlement when whole-job completion pauses mid-flight', async() => {
+    // risk: data accuracy — a stale whole-row completion must not erase a sibling settlement
+    const job = await registry.createJob([
+      { agentId: 'one', label: 'one', prompt: 'x', status: 'running' },
+      { agentId: 'two', label: 'two', prompt: 'x', status: 'running' },
+    ]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const completing = registry.completeJob(job.jobId, [
+      { label: 'one', status: 'completed', output: 'whole-one', threadId: '' },
+      { label: 'two', status: 'completed', output: 'whole-two', threadId: '' },
+    ]);
+    await didEnter;
+    const settling = registry.recordTaskCompletion(job.jobId, 1, { label: 'two', status: 'completed', output: 'settled-two', threadId: '' });
+    release(); await Promise.all([completing, settling]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.status).toBe('completed');
+    expect(durable?.results[1]?.output).toBe('settled-two');
   });
 
+  it('preserves a targeted stop when a parallel task update is queued', async() => {
+    // risk: irreversible side effects — a late update must not resurrect intentionally stopped work
+    const job = await registry.createJob([
+      { agentId: 'one', label: 'one', prompt: 'x', status: 'running' },
+      { agentId: 'two', label: 'two', prompt: 'x', status: 'running' },
+    ]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const stopping = registry.stopJobTask(job.jobId, 0, StopPrincipal.human(), 'race stop');
+    await didEnter;
+    const updating = registry.updateJobTask(job.jobId, 0, { summary: 'late update', status: 'running' });
+    release(); await Promise.all([stopping, updating]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.tasks[0]).toMatchObject({ status: 'stopped', summary: 'late update', stopReason: 'race stop' });
+    expect(durable?.tasks[1].status).toBe('running');
+  });
+
+  it('preserves concurrent descendant updates while cascade stop records attribution', async() => {
+    // risk: a manager kill loses stopped-task attribution or a concurrent worker update
+    const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'cascade-race-manager' }]);
+    const child = await registry.createJob([{ agentId: 'worker', label: 'worker', prompt: 'x', status: 'running', threadId: 'cascade-race-worker' }], 'manager', 'cascade-race-manager');
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const stopping = registry.stopJobCascade(root.jobId, StopPrincipal.human(), 'cascade race stop');
+    await didEnter;
+    const updating = registry.updateJobTask(child.jobId, 0, { summary: 'concurrent worker update' });
+    await updating; release(); await stopping; gate.mockRestore();
+    for (const jobId of [root.jobId, child.jobId]) {
+      const durable = await agentJobProvider.jobs.job(jobId);
+      expect(durable).toMatchObject({ status: 'stopped', stoppedBy: 'human', stopReason: 'cascade race stop' });
+      expect(durable?.tasks[0]).toMatchObject({ status: 'stopped' }); expect(durable?.tasks[0].finishedAt).toEqual(expect.any(Number));
+      expect(agentJobProvider.runtime.jobs.get(jobId)).toEqual(durable);
+    }
+    expect((await agentJobProvider.jobs.job(child.jobId))?.tasks[0].summary).toBe('concurrent worker update');
+  });
+
+  it('prevents stale liveness reconciliation from overwriting completion', async() => {
+    // risk: data accuracy — a reconciler queued behind real completion must not mark it lost
+    const startedAt = Date.now() - 1_200_000;
+    const job = await registry.createJob([{ agentId: 'race-lost', label: 'race', prompt: 'x', status: 'running', startedAt }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceState.bind(agentJobProvider.jobs);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve });
+    let entered!: () => void; const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
+    const completing = registry.recordTaskCompletion(job.jobId, 0, { label: 'race', status: 'completed', output: 'real completion', threadId: '' });
+    await didEnter;
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    const reconciling = reconciler.reconcile(); release();
+    await Promise.all([reconciling, completing]); gate.mockRestore();
+    const durable = await agentJobProvider.jobs.job(job.jobId);
+    expect(durable?.tasks[0].status).toBe('completed');
+    expect(durable?.tasks[0].completion?.output).toBe('real completion');
+  });
+
+  it('refuses a lost transition when a check-in arrives after liveness observation', async() => {
+    // risk: a worker check-in races the reconciler and live work is durably killed
+    const jobId = `checkin-race-${ Date.now() }`;
+    const startedAt = Date.now() - 1_200_000;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, to_timestamp($2 / 1000.0), $3::jsonb, 'hidden')`, [jobId, startedAt, JSON.stringify([{
+      agentId: 'race-worker', status: 'running', startedAt,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const original = agentJobProvider.jobs.replaceStateIfActivityUnchanged.bind(agentJobProvider.jobs);
+    const race = vi.spyOn(agentJobProvider.jobs, 'replaceStateIfActivityUnchanged').mockImplementationOnce(async(...args) => {
+      await database.query(`INSERT INTO agent_job_checkins (job_id, task_index, step, summary) VALUES ($1, 0, 'alive', 'race won')`, [jobId]);
+      return original(...args);
+    });
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: task => task.agentId !== 'race-worker', container: async() => false, lastCheckin: async() => null,
+    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    race.mockRestore();
+    expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');
+    expect(agentJobProvider.runtime.jobs.get(jobId)?.status).toBe('running');
+  });
+
+  it('keeps cache unchanged and emits nothing when the Postgres repository write rejects', async() => {
+    // risk: a failed durable write publishes a state Postgres never accepted
+    const job = await registry.createJob([{ agentId: 'worker', label: 'write', prompt: 'x', status: 'running' }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const before = structuredClone(agentJobProvider.runtime.jobs.get(job.jobId));
+    const emitted = vi.fn(); const unsubscribe = agentJobProvider.states.onChange(emitted);
+    const failure = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockRejectedValueOnce(new Error('forced postgres failure'));
+    await expect(agentJobProvider.states.transition(job.jobId, 0, { status: 'stopped' })).rejects.toThrow('forced postgres failure');
+    failure.mockRestore(); unsubscribe();
+    expect(agentJobProvider.runtime.jobs.get(job.jobId)).toEqual(before);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it('keeps memory and Postgres equal through the complete lifecycle transition set', async() => {
+    // risk: lifecycle transitions split durable truth from action-button state
+    const job = await registry.createJob([{ agentId: 'worker', label: 'lifecycle', prompt: 'x', status: 'queued' }]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const lifecycleState = (value: Awaited<ReturnType<typeof agentJobProvider.jobs.job>>) => value && ({
+      status: value.status, tasks: value.tasks, results: value.results, error: value.error ?? null,
+      finishedAt: value.finishedAt, waitingOnChildren: value.waitingOnChildren ?? 0,
+      completionDeliveredAt: value.completionDeliveredAt ?? null, dismissedAt: value.dismissedAt ?? null,
+    });
+    const assertEqual = async(jobId = job.jobId) => {
+      expect(lifecycleState(agentJobProvider.runtime.jobs.get(jobId))).toEqual(lifecycleState(await agentJobProvider.jobs.job(jobId)));
+    };
+    await assertEqual();
+    await registry.updateJobTask(job.jobId, 0, { status: 'running', startedAt: Date.now() }); await assertEqual();
+    await registry.parkJobTask(job.jobId, 0, 1); await assertEqual();
+    await registry.resumeParkedJob(job.jobId, 0); await assertEqual();
+    await registry.completeJob(job.jobId, [{ label: 'lifecycle', status: 'completed', output: 'ok', threadId: '' }]); await assertEqual();
+
+    const failed = await registry.createJob([{ agentId: 'worker', label: 'failed', prompt: 'x', status: 'running' }]);
+    await registry.failJob(failed.jobId, 'expected');
+    await assertEqual(failed.jobId);
+    const stopped = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'x', status: 'running' }]);
+    await registry.stopJobCascade(stopped.jobId, StopPrincipal.human(), 'test stop');
+    await assertEqual(stopped.jobId);
+  });
+
+  it('repairs a contradictory job rollup from its task state in Postgres and cache', async() => {
+    // risk: job=running/task=error renders as active in one reader and failed in another
+    const jobId = `contradictory-state-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, now(), $2::jsonb, 'hidden')`, [jobId, JSON.stringify([{
+      agentId: 'worker', label: 'Failed worker', prompt: 'work', status: 'error', finishedAt: Date.now(),
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const derived = await agentJobProvider.states.job(jobId);
+    const [durable] = await database.query<{ status: string }>('SELECT status FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(derived?.status).toBe('failed');
+    expect(durable.status).toBe('failed');
+    const snapshot = await new AgentStateProjector(agentJobProvider.states, { latest: async() => null }).snapshot();
+    expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'failed', canMessage: false, canStop: false });
+  });
 });

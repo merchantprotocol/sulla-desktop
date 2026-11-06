@@ -4,7 +4,8 @@
 
 import { AgentTaskWaitRepository } from '../app/Repositories/AgentTaskWaitRepository';
 import { postgresClient } from '../database/PostgresClient';
-import { parkJobTask, getJob } from '../tools/agents/jobRegistry';
+import { getJob } from '../tools/agents/jobRegistry';
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentTaskParkingService } from './AgentTaskParkingService';
 import { AgentWakeScheduler } from './AgentWakeScheduler';
 
@@ -24,7 +25,10 @@ export class AgentWaitServiceProvider {
       await getBackendGraphWebSocketService().wakeParkedAgent(job.parentChannel ?? 'sulla-desktop', task.threadId,
         `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer' });
     });
-    this.parking = new AgentTaskParkingService(this.repository, parkJobTask, this.scheduler);
+    this.parking = new AgentTaskParkingService(this.repository, async(wait) => Boolean(await agentJobProvider.states.mutateJob(wait.jobId, current =>
+      current.tasks[wait.taskIndex]?.status === 'running' ? { ...current, waitingOnChildren: 0,
+        tasks: current.tasks.map((task, index) => index === wait.taskIndex
+          ? { ...task, status: 'parked', waitReason: wait.reason, wakeAt: wait.wakeAt.getTime() } : task) } : undefined)), this.scheduler);
   }
 
   async cancel(jobId: string, taskIndex: number): Promise<boolean> {

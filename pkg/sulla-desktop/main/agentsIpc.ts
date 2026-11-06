@@ -15,8 +15,16 @@
 // the conversation_history rows for that agent's channel, and
 // agents:conversation reads one conversation's JSONL message log.
 
-import { ipcMain } from 'electron';
-import { StopAttributionFormatter } from '@pkg/agent/app/Formatters/StopAttributionFormatter';
+import { app, ipcMain } from 'electron';
+import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
+import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
+import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
+import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydrationCoordinator';
+import { AgentShutdownController } from '@pkg/agent/services/AgentShutdownController';
+import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
+import { AgentStatePublisher } from './AgentStatePublisher';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
 
@@ -59,9 +67,6 @@ export interface AgentsListResponse {
     parentThreadId?: string;
     parentAgentId?: string;
     parentTitle?:   string;
-    stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
-    stopReason?: string;
-    killedByHuman: boolean;
     tasks: {
       taskIndex:      number;
       agentId:        string;
@@ -166,7 +171,6 @@ export interface ThreadAgentCard {
   kind:           'job' | 'tab';
   /** Return contract name; 'result' is the default contract. */
   contract:       string;
-  stopAttribution?: string;
   /** Present for tab cards: what the renderer needs to focus or reopen the tab. */
   agentTab?: {
     contractId:    string;
@@ -200,7 +204,29 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 // ── IPC handler ──────────────────────────────────────────────────────────────
 
+const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
+  latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+});
+const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+  graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
+  container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
+  lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
+});
+const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
+
 export function initAgentsIpc(): void {
+  // Do not decide a container is gone until fail-closed inventory completes. Every state read awaits this same readiness promise.
+  configureAgentContainerRuntimeSupervisor(new GuestAgentContainerRuntimeSupervisor(undefined, { resolve: async(jobId, taskIndex) => {
+    const task = (await agentJobProvider.states.jobForWrite(jobId))?.tasks[taskIndex];
+    return task ? { subject: `legacy:${ task.agentId }`, deviceId: 'legacy-rehydrated', agentId: task.agentId, threadId: task.threadId } : undefined;
+  } }));
+  const runtimeRehydration = new RuntimeRehydrationCoordinator(rehydrateAgentContainerRuntimes, () => agentLivenessReconciler.reconcile());
+  agentLivenessReconciler.setReadinessRecovery(runtimeRehydration);
+  agentJobProvider.states.setReadiness(() => runtimeRehydration.ready());
+  runtimeRehydration.start();
+  agentLivenessReconciler.start();
+  new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
+  agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return (await agentDefinitionService.list()).filter(a => a.status !== 'archive').map(a => ({
@@ -293,6 +319,7 @@ export function initAgentsIpc(): void {
   });
 
   ipcMain.handle('agents:list', async(): Promise<AgentsListResponse> => {
+    await agentJobProvider.states.ready();
     // Gather all four data sources in parallel. Each is wrapped so a
     // failure in one never blocks the others.
 
@@ -310,40 +337,25 @@ export function initAgentsIpc(): void {
     if (!jobId || !Number.isInteger(taskIndex) || taskIndex < 0 || !message?.trim()) {
       return { ok: false, error: 'A job, task, and message are required.' };
     }
+    const job = await agentJobProvider.states.jobForWrite(jobId);
+    if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return {
+      ok: false, stale: true, error: `Job ${ jobId } task ${ taskIndex } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
+    };
     const { sendJobMessage } = await import('@pkg/agent/tools/agents/send_job_message');
     const result = await sendJobMessage({ jobId, taskIndex, message: message.trim() });
-    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
+    return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 
   ipcMain.handle('agents:stop-job', async(_event, jobId: string) => {
     if (!jobId) return { ok: false, error: 'A job is required.' };
+    const job = await agentJobProvider.states.jobForWrite(jobId);
+    if (!job || !job.tasks.some(task => agentJobProvider.states.isLive(job, task))) return {
+      ok: false, stale: true, error: `Job ${ jobId } is no longer live.`, snapshot: await agentStateProjector.snapshot(),
+    };
     const { stopAgentJob } = await import('@pkg/agent/tools/agents/stop_agent_job');
     const { StopPrincipal } = await import('@pkg/agent/app/ValueObjects/StopPrincipal');
     const result = await stopAgentJob(jobId, StopPrincipal.human(), 'Stopped from Live Agents');
-    return { ok: result.successBoolean, error: result.successBoolean ? undefined : result.responseString };
-  });
-
-
-  ipcMain.handle('agents:kill-tree', async(_event, threadId: string) => {
-    if (!threadId) return { ok: false, killedJobs: 0, error: 'A thread is required.' };
-    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
-    return agentKillService.killTree(threadId);
-  });
-
-  ipcMain.handle('agents:kill-all-switch:get', async() => {
-    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
-    return agentKillService.switchState();
-  });
-
-  ipcMain.handle('agents:kill-all-switch:set', async(_event, on: boolean) => {
-    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
-    return agentKillService.setSwitch(on === true);
-  });
-
-  ipcMain.handle('agents:thread-live-children', async(_event, threadId: string) => {
-    if (!threadId) return { count: 0 };
-    const { agentKillService } = await import('@pkg/agent/services/AgentKillService');
-    return { count: await agentKillService.liveDescendantCount(threadId) };
+    return result.successBoolean ? { ok: true } : { ok: false, stale: true, error: result.responseString, snapshot: await agentStateProjector.snapshot() };
   });
 
   ipcMain.handle('agents:conversations', async(_event, channel: string, limit = 50, offset = 0): Promise<AgentConversationSummary[]> => {
@@ -390,12 +402,15 @@ export function initAgentsIpc(): void {
 
   ipcMain.handle('agents:thread-jobs', async(_event, parentThreadId: string): Promise<ThreadAgentCard[]> => {
     if (!parentThreadId || typeof parentThreadId !== 'string') return [];
+    await agentJobProvider.states.ready();
     return fetchThreadAgentCards(parentThreadId);
   });
 
   // "Open in tab": show a running hidden child's thread as a chat tab.
   ipcMain.handle('agents:open-job-in-tab', async(_event, jobId: string, parentThreadId: string, taskIndex: number): Promise<boolean> => {
     if (!jobId || !parentThreadId || typeof jobId !== 'string' || typeof parentThreadId !== 'string' || !Number.isInteger(taskIndex)) return false;
+    const job = await agentJobProvider.states.jobForWrite(jobId);
+    if (!job?.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])) return false;
     const [{ promoteJobTaskToTab }, { markTaskPromoted }] = await Promise.all([
       import('@pkg/agent/services/AgentTabOpener'),
       import('@pkg/agent/tools/agents/jobRegistry'),
@@ -413,15 +428,13 @@ export function initAgentsIpc(): void {
 }
 
 export async function fetchThreadAgentCards(parentThreadId: string): Promise<ThreadAgentCard[]> {
-  const [{ getJobsForParentThread }, { ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
-    import('@pkg/agent/tools/agents/jobRegistry'),
+  const [{ ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
     import('@pkg/agent/database/models/ConversationHistoryModel'),
     import('@pkg/agent/utils/sullaPaths'),
     import('@pkg/agent/services/RunActivity'),
   ]);
-  const jobs = await getJobsForParentThread(parentThreadId);
+  const jobs = await agentJobProvider.states.descendants(parentThreadId);
   const logsDir = resolveSullaLogsDir();
-  const stopFormatter = new StopAttributionFormatter();
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
@@ -463,7 +476,6 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
         ? 'tab'
         : 'job',
       contract: task.contract?.name ?? 'result',
-      stopAttribution: stopFormatter.format(job.stoppedBy, job.stopReason),
       ...(isTab && task.threadId
         ? {
             agentTab: {
@@ -549,7 +561,6 @@ async function fetchHeartbeat(): Promise<AgentsListResponse['heartbeat']> {
 async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
   try {
     const [
-      { getAllJobs },
       { AgentJobMessagingModel },
       { ConversationHistoryModel },
       { resolveSullaLogsDir },
@@ -557,7 +568,6 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       { GraphRegistry },
       { agentDefinitionService },
     ] = await Promise.all([
-      import('@pkg/agent/tools/agents/jobRegistry'),
       import('@pkg/agent/database/models/AgentJobMessagingModel'),
       import('@pkg/agent/database/models/ConversationHistoryModel'),
       import('@pkg/agent/utils/sullaPaths'),
@@ -569,7 +579,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     // from the last hour. Enriching every historical job reads one log file
     // per task on each 3s poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
-    const allJobs = (await getAllJobs()).filter(job => {
+    const allJobs = (await agentJobProvider.states.jobs()).filter(job => {
       if (job.status === 'completed') return false;
       if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
@@ -645,9 +655,6 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         finishedAt: job.finishedAt,
         taskCount: job.taskCount,
         error: job.error,
-        stoppedBy: job.stoppedBy,
-        stopReason: job.stopReason,
-        killedByHuman: job.stoppedBy === 'human',
         parentChannel: job.parentChannel,
         parentThreadId: job.parentThreadId,
         parentAgentId: job.parentAgentId,
