@@ -12,7 +12,7 @@ import tar from 'tar-stream';
 
 import { blobPath, type BundledImageLock } from '../../pkg/sulla-desktop/backend/bundledImages';
 
-const MACH_O_MAGICS = new Set(['feedface', 'feedfacf', 'cafebabe', 'cefaedfe', 'cffaedfe']);
+const MACH_O_MAGICS = ['feedface', 'feedfacf', 'cafebabe', 'cefaedfe', 'cffaedfe'] as const;
 const NESTED_ARCHIVE = /(?:\.tar|\.tar\.gz|\.tgz)$/i;
 const FORBIDDEN_CACHE = /(?:^|\/)(?:\.cache\/yarn|\.npm\/_cacache)(?=\/|$)/;
 
@@ -55,7 +55,7 @@ export class BundledImageSafetyScanner {
   }
 
   private async scanTarStream(
-    input: NodeJS.ReadableStream,
+    input: Readable,
     image: string,
     layer: string,
     prefix: string,
@@ -92,7 +92,7 @@ export class BundledImageSafetyScanner {
       stream.on('error', error => extract.destroy(error));
       stream.on('end', () => {
         void (async() => {
-          if (firstBytes.length === 4 && MACH_O_MAGICS.has(firstBytes.toString('hex'))) {
+          if (firstBytes.length === 4 && MACH_O_MAGICS.includes(firstBytes.toString('hex') as typeof MACH_O_MAGICS[number])) {
             problems.push({ image, layer, path: entryPath, reason: 'Mach-O binary' });
           }
           if (nested && chunks.length) {
