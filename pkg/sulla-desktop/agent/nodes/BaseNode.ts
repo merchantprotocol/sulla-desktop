@@ -15,6 +15,7 @@ import { getAgentOverrideService, getPrimaryService, getServiceByProvider, getSu
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
+import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
 import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
@@ -1225,9 +1226,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
       if ((err as any)?.unsafeToFallback) throw err;
 
-      const candidates = this.routingCandidates.length
-        ? this.routingCandidates.slice(0, this.routingPinned ? 1 : undefined)
-        : [{ provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '' }];
+      const candidates = new ModelRecoveryPolicy().candidates(this.routingCandidates, this.routingPinned, {
+        provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '',
+      });
       let lastErr: unknown = err;
       let lastRecovery = classifyLLMFailure(err);
       const failedFirst = candidates[0];

@@ -127,6 +127,7 @@ export class AgentModelSelectorController {
   }
 
   get agentOptionsValue(): AgentOption[] { return this.agentOptions.value }
+  get isDefaultValue(): boolean { return !this.activePrimaryProvider.value && !this.activeAgentId.value }
 
   async toggleModelMenu(): Promise<void> {
     this.showModelMenu.value = !this.showModelMenu.value;
@@ -179,7 +180,8 @@ export class AgentModelSelectorController {
   selectAgent(agent: AgentOption): void {
     this.hasChatSelection = true;
     this.activeAgentId.value = agent.slug;
-    const providerId = agent.provider ?? this.activePrimaryProvider.value;
+    // A human-picked exact model remains authoritative when they subsequently pick a persona.
+    const providerId = this.activePrimaryProvider.value || agent.provider || '';
     // Keep the chat's concrete selection unchanged. The agent's modelSlot is
     // resolved by the runtime from Preferences, unless this chat explicitly
     // picked a model.

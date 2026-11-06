@@ -208,7 +208,7 @@
                   <span class="block font-medium">Default</span>
                   <span class="block text-xs text-content-muted">Follow Preferences → New chats</span>
                 </span>
-                <span v-if="!modelSelector.activePrimaryProvider.value && !modelSelector.activeAgentId.value" class="text-xs font-semibold text-content-secondary">Active</span>
+                <span v-if="modelSelector.isDefaultValue" class="text-xs font-semibold text-content-secondary">Active</span>
               </button>
               <div class="border-t border-edge" />
 
