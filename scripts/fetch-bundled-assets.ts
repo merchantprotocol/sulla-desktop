@@ -33,6 +33,7 @@ import { blobPath, readBundledImageLock } from '../pkg/sulla-desktop/backend/bun
 import {
   fetchBundledImages, lockIsComplete, ociArch, skippedParts,
 } from './lib/bundled-images';
+import { BundledImageSafetyScanner } from './lib/bundled-image-safety';
 import { download } from './lib/download';
 import { simpleSpawn } from './simple_process';
 
@@ -102,6 +103,20 @@ async function fetchPinned(url: string, file: string, sha256: string, notice: st
   await fs.promises.writeFile(path.join(path.dirname(file), 'NOTICE'), notice);
 }
 
+/** Reject OCI layers that would make Apple notarization inspect unsigned host binaries. */
+export async function assertBundledImagesSafe(imagesDir: string): Promise<void> {
+  const lock = readBundledImageLock(imagesDir);
+
+  if (!lock) throw new Error('cannot inspect bundled images without images.lock.json');
+  const problems = await new BundledImageSafetyScanner().scan(imagesDir, lock);
+
+  if (problems.length) {
+    const details = problems.map(problem => `${ problem.image } ${ problem.layer } ${ problem.path }: ${ problem.reason }`).join('\n');
+
+    throw new Error(`bundled image safety check failed:\n${ details }`);
+  }
+}
+
 /** Fetch every bundled asset for `arch` (`arm64` or `x86_64`). */
 export async function fetchBundledAssets(arch: string, skip = skippedParts(), root = process.cwd()): Promise<void> {
   const darwin = bundleRoot(root);
@@ -114,6 +129,7 @@ export async function fetchBundledAssets(arch: string, skip = skippedParts(), ro
       arch:         ociArch(arch),
       serviceTag:   process.env.SULLA_SERVICE_IMAGE_TAG?.trim() || undefined,
     });
+    await assertBundledImagesSafe(path.join(darwin, 'images'));
   }
   if (!skip.has('whisper')) {
     await fetchPinned(WHISPER_MODEL.url, path.join(darwin, 'whisper', WHISPER_MODEL.file), WHISPER_MODEL.sha256, WHISPER_MODEL.notice);
