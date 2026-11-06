@@ -280,7 +280,10 @@ const modelSelector   = new AgentModelSelectorController({
   modelMode:   _modelMode,
   onSelectForChat: ({ providerId, modelId, agentId, label }) => {
     const known = findModel(modelId);
-    controller.selectForChat(known ?? { id: modelId, name: label || modelId, tier: 'hosted', ctx: '' }, providerId, agentId);
+    const selected = modelId
+      ? known ?? { id: modelId, name: label || modelId, tier: 'hosted' as const, ctx: '' }
+      : { id: '', name: 'Default', tier: 'hosted' as const, ctx: '' };
+    controller.selectForChat(selected, providerId || null, agentId);
   },
 });
 modelSelector.start().then(() => {
@@ -299,7 +302,7 @@ watch(
   [modelSelector.activePrimaryProvider, modelSelector.activeModelId, modelSelector.activeModelLabel],
   ([providerId, id, label]) => {
     if (!providerId) {
-      controller.switchModel({ id: '', name: 'Connect an AI', tier: 'hosted', ctx: '' });
+      controller.switchModel({ id: '', name: 'Default', tier: 'hosted', ctx: '' });
       return;
     }
     if (!id) {
