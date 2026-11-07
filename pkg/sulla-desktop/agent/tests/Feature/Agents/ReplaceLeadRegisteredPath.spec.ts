@@ -72,9 +72,10 @@ suite('agents/replace_lead registered production path',()=>{
   const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
   expect(await database.query<any>(`SELECT job_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' AND owner_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
   for(let index=0;index<3;index++){await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);}
-  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
+  const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
+  expect(takeAgentCompletions(owner.channel,replacement.threadId)).toHaveLength(3);
   expect((await returnResult('worker-h3-0')).success).toBe(false);
-  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
+  expect(takeAgentCompletions(owner.channel,replacement.threadId)).toHaveLength(0);
  });
 
  it('recovers a launch persisted before phase commit without creating a second lead',async()=>{
