@@ -122,15 +122,27 @@ export class SpeakerDriverController {
     if (!this._running) {
       log.info(SpeakerDriverController.TAG, 'First holder — activating lifecycle (BlackHole + CoreAudio)');
       try {
-        await lifecycle.activate({
+        const activation = await lifecycle.activate({
           onLevel:   this._onLevel || (() => {}),
           onRebuild: this._onRebuild || (() => {}),
         });
+        if (!activation.ok || !activation.mirrorActive) {
+          throw new Error('Speaker capture lifecycle did not activate its audio mirror');
+        }
         this._running = true;
         this._persist();
         log.info(SpeakerDriverController.TAG, 'Speaker pipeline started', { holders: [...this._holders.keys()] });
       } catch (e: any) {
         log.error(SpeakerDriverController.TAG, 'lifecycle.activate() failed', { error: e.message });
+        this._removeDestroyListener(serviceId);
+        this._holders.delete(serviceId);
+        this._running = false;
+        try {
+          await lifecycle.deactivate({ removeDriver: false });
+        } catch (cleanupError: any) {
+          log.error(SpeakerDriverController.TAG, 'Failed to clean partial speaker activation', { error: cleanupError.message });
+        }
+        this._persist();
         throw e;
       }
     } else {

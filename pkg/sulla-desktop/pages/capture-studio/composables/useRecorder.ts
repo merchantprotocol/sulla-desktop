@@ -14,6 +14,7 @@
 
 import { ref, onUnmounted } from 'vue';
 
+import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import type { QualityPreset } from './useMediaSources';
 
 const { randomUUID } = require('crypto');
@@ -93,7 +94,7 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-export function useRecorder() {
+export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
   const isRecording = ref(false);
   const sessionId = ref('');
   const elapsedSeconds = ref(0);
@@ -346,7 +347,7 @@ export function useRecorder() {
     })));
 
     // Write manifest (includes both MediaRecorder and external streams)
-    const allStreams = [
+    let allStreams = [
       ...entries.map(e => ({
         id:          e.id,
         type:        e.type,
@@ -381,6 +382,10 @@ export function useRecorder() {
         console.warn('[useRecorder] Could not stat finalized stream', stream.filename, err.message);
       }
     }
+
+    // A finalized 44-byte WAV contains only its header. Do not advertise it
+    // as a successful speaker track; zero-amplitude PCM frames still count.
+    allStreams = allStreams.filter(stream => integrity.shouldPublish(stream));
 
     const totalBytes = allStreams.reduce((sum, s) => sum + s.bytes, 0);
 
