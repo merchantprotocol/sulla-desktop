@@ -40,6 +40,7 @@ export class CloudAgentStateProjection {
       : !job.tasks.some(task => agentJobProvider.states.isLive(job, task)))) return { ok: false, error: 'agent_not_found' };
     if (body.type === 'agent.stop') {
       const result = await stopAgentJob(jobId, StopPrincipal.system('cloud-runtime'), 'Stopped from cloud runtime');
+
       return { ok: result.successBoolean, message: result.responseString };
     }
     if (body.type === 'agent.message') {

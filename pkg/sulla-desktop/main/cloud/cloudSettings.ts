@@ -10,21 +10,19 @@ import { planConsentInit, recommendedConsentPatch } from './cloudConsentInit';
 
 export interface CloudPreferences {
   enabled: boolean;
-  workflows: boolean; skills: boolean; customAgents: boolean; recipes: boolean;
-  useCases: boolean; liveAgents: boolean; usage: boolean; memory: boolean;
+  usage: boolean; memory: boolean;
   conversations: boolean; files: boolean; vault: boolean; remoteAccess: boolean;
 }
 export type CloudDataKind = Exclude<keyof CloudPreferences, 'enabled' | 'remoteAccess'>;
 export const CLOUD_SETTING_KEYS: Record<keyof CloudPreferences, string> = {
-  enabled:'cloudSyncEnabled', workflows:'cloudSyncWorkflows', skills:'cloudSyncSkills', customAgents:'cloudSyncCustomAgents',
-  recipes:'cloudSyncRecipes', useCases:'cloudSyncUseCases', liveAgents:'cloudSyncLiveAgents', usage:'cloudSyncUsage',
+  enabled:'cloudSyncEnabled', usage:'cloudSyncUsage',
   memory:'cloudSyncMemory', conversations:'cloudSyncConversations', files:'cloudSyncFiles', vault:'cloudSyncVault', remoteAccess:'cloudRemoteAccess',
 };
 const INITIALIZED_KEY='cloudSyncPreferencesInitializedV3';
 const LEGACY_CURSOR_KEY='claudeSyncLastSeq';
 /** Explicit user action only: never includes passwords, API credentials, or remote execution. */
 export const RECOMMENDED_CLOUD_DATA_KINDS: readonly CloudDataKind[] = [
-  'workflows','skills','customAgents','recipes','useCases','liveAgents','usage','memory','conversations','files',
+  'usage','memory','conversations','files',
 ];
 type Listener=(prefs:CloudPreferences,changed:(keyof CloudPreferences)[])=>void;
 const listeners:Listener[]=[];
@@ -49,7 +47,7 @@ export async function enableRecommendedCloudPreferences():Promise<CloudPreferenc
 
 export async function getCloudPreferences():Promise<CloudPreferences>{
   await ensureInitialized(); const get=async(k:keyof CloudPreferences,d=true)=>asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS[k],d),d);
-  return {enabled:await get('enabled',false),workflows:await get('workflows'),skills:await get('skills'),customAgents:await get('customAgents'),recipes:await get('recipes'),useCases:await get('useCases'),liveAgents:await get('liveAgents'),usage:await get('usage'),memory:await get('memory'),conversations:await get('conversations',false),files:await get('files'),vault:await get('vault',false),remoteAccess:await get('remoteAccess')};
+  return {enabled:await get('enabled',false),usage:await get('usage'),memory:await get('memory'),conversations:await get('conversations',false),files:await get('files'),vault:await get('vault',false),remoteAccess:await get('remoteAccess')};
 }
 export async function setCloudPreferences(patch:Partial<Record<keyof CloudPreferences,unknown>>):Promise<CloudPreferences>{
   const before=await getCloudPreferences();const changed:(keyof CloudPreferences)[]=[];

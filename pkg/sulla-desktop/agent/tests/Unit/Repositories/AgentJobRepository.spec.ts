@@ -33,6 +33,60 @@ dbDescribe('AgentJobRepository', () => {
     visibility: 'hidden', completionDeliveredAt: null, dismissedAt: null,
   });
 
+  it('allows only one concurrent reopen claim and preserves generation history', async() => {
+    // risk: duplicate worker execution and loss of prior completion evidence
+    const input = job('repository-reopen-cas');
+    input.tasks[0] = { ...input.tasks[0], status: 'completed', generation: 1, result: { answer: 1 },
+      completion: { label: 'lane', status: 'completed', output: 'first', threadId: 'thread-1' },
+      returnedAt: Date.now(), finishedAt: Date.now(), completionDeliveredAt: Date.now() };
+    input.results = [input.tasks[0].completion!];
+    await repository.insertJob(input);
+    await repository.complete({ ...input, status: 'completed', finishedAt: Date.now() });
+    const claims = await Promise.all([repository.claimReopen(input.jobId, 0, 1), repository.claimReopen(input.jobId, 0, 1)]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.find(Boolean)).toMatchObject({ generation: 2 });
+    expect(await database.query(`SELECT generation, result, completion FROM agent_job_result_history WHERE job_id = $1`, [input.jobId]))
+      .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
+  });
+
+  it('refuses reopen claims for stopped, failed, over-limit, and actively leased tasks', async() => {
+    // risk: replaying terminal work or running two generations concurrently
+    const createSettled = async(id: string, taskStatus: 'completed' | 'blocked' | 'error' | 'stopped', jobStatus: AgentJob['status']) => {
+      const input = job(id);
+      input.tasks[0] = { ...input.tasks[0], status: taskStatus, generation: 1 };
+      await repository.insertJob(input);
+      if (jobStatus === 'stopped') await repository.stop(id, input.tasks, 'human', 'stop');
+      else if (jobStatus === 'failed') await repository.fail(id, 'failed', input.tasks);
+      else await repository.complete({ ...input, status: jobStatus, finishedAt: Date.now() });
+      return input;
+    };
+    const stopped = await createSettled('repository-reopen-stopped', 'stopped', 'stopped');
+    const failed = await createSettled('repository-reopen-failed', 'error', 'failed');
+    expect(await repository.claimReopen(stopped.jobId, 0, 1)).toBeUndefined();
+    expect(await repository.claimReopen(failed.jobId, 0, 1)).toBeUndefined();
+    const limited = await createSettled('repository-reopen-limited', 'completed', 'completed');
+    await database.query(`INSERT INTO agent_job_task_reopens (job_id, task_index, generation, reopen_count) VALUES ($1, 0, 1, 5)`, [limited.jobId]);
+    expect(await repository.claimReopen(limited.jobId, 0, 1)).toBeUndefined();
+    const leased = await createSettled('repository-reopen-leased', 'blocked', 'completed');
+    await database.query(`INSERT INTO agent_job_task_reopens (job_id, task_index, generation, reopen_count, lease_id, lease_acquired_at) VALUES ($1, 0, 1, 0, 'held', now())`, [leased.jobId]);
+    expect(await repository.claimReopen(leased.jobId, 0, 1)).toBeUndefined();
+  });
+
+  it('records each generation in history while projecting the latest result', async() => {
+    // risk: audit evidence loss when a reopened worker returns again
+    const input = job('repository-generation-history');
+    await repository.insertJob(input);
+    const first = { label: 'lane', status: 'completed' as const, output: 'first', threadId: 'thread' };
+    input.tasks[0] = { ...input.tasks[0], status: 'completed', generation: 1, completion: first };
+    await repository.updateTaskCompletions(input.jobId, 0, input.tasks, [first]);
+    const second = { ...first, output: 'second' };
+    input.tasks[0] = { ...input.tasks[0], generation: 2, completion: second };
+    await repository.updateTaskCompletions(input.jobId, 0, input.tasks, [second]);
+    expect(await database.query(`SELECT generation, completion->>'output' AS output FROM agent_job_result_history WHERE job_id = $1 ORDER BY generation`, [input.jobId]))
+      .toEqual([{ generation: 1, output: 'first' }, { generation: 2, output: 'second' }]);
+    expect((await repository.job(input.jobId))?.results[0].output).toBe('second');
+  });
+
   it('round-trips rows and persists status transitions', async() => {
     // risk: durable job lifecycle state
     const input = job('repository-round-trip');

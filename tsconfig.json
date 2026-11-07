@@ -22,6 +22,9 @@
       "@pkg/*": [
         "pkg/sulla-desktop/*"
       ],
+      "@sulla/vault-crypto": [
+        "packages/vault-crypto/src/index.ts"
+      ],
       "@sulla/foundation/postgres": [
         "node_modules/@sulla/foundation/dist/drivers/postgres/index.d.ts"
       ],

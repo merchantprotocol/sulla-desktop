@@ -8,7 +8,9 @@ import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRe
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { AgentJobService } from '../Services/AgentJobService';
+
 import { AgentFleetProjectionService } from '../Services/AgentFleetProjectionService';
+
 import { AgentStateService } from '../Services/AgentStateService';
 import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
@@ -27,7 +29,9 @@ export class AgentJobServiceProvider {
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
   readonly states: AgentStateService;
+
   readonly fleet: AgentFleetProjectionService;
+
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
@@ -40,8 +44,10 @@ export class AgentJobServiceProvider {
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime);
+
     const titles = new ConversationTitleRepository(connection);
     this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles);
+
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
