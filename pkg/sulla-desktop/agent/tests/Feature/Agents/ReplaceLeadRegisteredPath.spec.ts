@@ -7,7 +7,6 @@ import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
-import {completionInboxStore} from '../../../services/AgentCompletionInbox';
 
 vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
@@ -125,9 +124,8 @@ suite('agents/replace_lead registered production path',()=>{
   expect(replacementResult.success).toBe(true);expect(reparentResult.success).toBe(true);expect(returnResultReceipt.success).toBe(true);
   const replacement=(replacementResult as any).result.replacement;
   expect(await agentJobProvider.custody.resolveOwner(childId,0)).toMatchObject({threadId:replacement.threadId,agentId:'coding-manager-sol'});
-  expect(await database.query(`SELECT * FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
-  const deliveries=completionInboxStore.take(owner.channel,replacement.threadId).filter(entry=>entry.jobId===childId&&entry.taskIndex===0);
-  expect(deliveries).toHaveLength(1);
+  const deliveries=await database.query<any>(`SELECT completion_delivered_at FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId]);
+  expect(deliveries).toHaveLength(1);expect(deliveries[0].completion_delivered_at).toBeTruthy();
  });
 
  it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{

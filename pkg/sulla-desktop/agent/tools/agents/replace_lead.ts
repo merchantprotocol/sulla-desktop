@@ -17,6 +17,7 @@ import type { VerifiedCustodyActor } from '../../app/Services/CustodyCallerVerif
 class StopPathLeadWrapUp implements LeadWrapUpPort {
  async request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<void>{
    const principal=StopPrincipal.agent(actor.agentId,actor.threadId);
+   if(!principal)throw new Error('Verified custody actor lacks stop attribution.');
    const message=`[Stop requested by ${actor.agentId}] Finish your current step and return your contract now with what you have`;
    // JobWrapUpService owns the idempotency boundary: it checks its per-task
    // request before queueing the message. Calling stopAgentJob here queued the
