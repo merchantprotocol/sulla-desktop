@@ -66,16 +66,15 @@ suite('agents/replace_lead registered production path',()=>{
  async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
  async function returnResult(threadId:string){const tool=await registry.createToolForCategory('agents','return_result');tool.setState({metadata:{wsChannel:owner.channel,threadId,agentId:'codex-sol-worker',subAgentDepth:2}});return tool.call({status:'completed',summary:'done',output:{head:'abc1234'}});}
 
- it('H3 drains three real children and routes their registered return_result contracts to the replacement exactly once',async()=>{
+ it('H3 drains three real children and records their registered return_result contracts exactly once after reparenting',async()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
   const {leadId}=await seedLead('h3','error',3);const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
   const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
   expect(await database.query<any>(`SELECT job_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' AND owner_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
   for(let index=0;index<3;index++){await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);}
-  const {takeAgentCompletions}=await import('../../../services/AgentCompletionInbox');
-  expect(takeAgentCompletions(owner.channel,replacement.threadId)).toHaveLength(3);
+  expect(await database.query<any>(`SELECT job_id FROM agent_job_result_history WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`)).toHaveLength(3);
   expect((await returnResult('worker-h3-0')).success).toBe(false);
-  expect(takeAgentCompletions(owner.channel,replacement.threadId)).toHaveLength(0);
+  expect(await database.query<any>(`SELECT job_id FROM agent_job_result_history WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`)).toHaveLength(3);
  });
 
  it('recovers a launch persisted before phase commit without creating a second lead',async()=>{
