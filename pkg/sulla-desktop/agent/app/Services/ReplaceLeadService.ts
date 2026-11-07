@@ -11,7 +11,7 @@ import type { LeadTaskExecutionPort } from './LeadTaskExecutionPort';
 import type { ReplacementTargetValidationPort } from './ReplacementTargetValidator';
 
 export interface ReplaceLeadInput {jobId:string;taskIndex:number;agentId:string;model?:string;provider?:string;note?:string;actor:VerifiedCustodyActor}
-export interface LeadWrapUpPort { request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<void> }
+export interface LeadWrapUpPort { request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<'pending'|'completed'> }
 export class ReplaceLeadService {
  constructor(private readonly custody:JobCustodyPort,private readonly packets:LeadHandoffPacketAssembler,private readonly launcher:LeadTaskExecutionPort,private readonly messaging:AgentJobMessagingRepository,private readonly wrapUp:LeadWrapUpPort,private readonly targets:ReplacementTargetValidationPort){}
  async replace(input:ReplaceLeadInput):Promise<any>{
@@ -34,8 +34,8 @@ export class ReplaceLeadService {
      }catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    }
    operation=await this.packets.loadOperation(input.jobId,input.taskIndex)??operation;
-   const launched={jobId:operation.replacementJobId!,taskIndex:operation.replacementTaskIndex!,threadId:operation.replacementThreadId!};
-   const replacementOwner:CustodyOwner={channel:owner.channel,threadId:launched.threadId,agentId:input.agentId};
+   const launched={jobId:operation.replacementJobId!,taskIndex:operation.replacementTaskIndex!,channel:operation.replacementChannel!,threadId:operation.replacementThreadId!,agentId:operation.replacementAgentId!};
+   const replacementOwner:CustodyOwner={channel:launched.channel,threadId:launched.threadId,agentId:launched.agentId};
    const oldLeadThread=packet.snapshot.lead.tasks[input.taskIndex]?.threadId??owner.threadId;
    const moved:any[]=[];const failed:any[]=[];
    if(operation.phase==='launched'){
@@ -62,8 +62,12 @@ export class ReplaceLeadService {
      // stopAgentJob(mode=wrap_up) is idempotent: terminal/non-running tasks return a
      // successful no-op. Therefore a retry may safely repeat this request if the
      // process exits before the durable wrapped phase is recorded.
-     await this.wrapUp.request(input.jobId,input.taskIndex,input.actor,audit);
-     await this.packets.finishWrapUp(operation);
+     const stopState=await this.wrapUp.request(input.jobId,input.taskIndex,input.actor,audit);
+     if(stopState==='completed')await this.packets.finishWrapUp(operation);else await this.packets.markWrapRequested(operation);
+   }
+   if(!failed.length&&operation.phase==='wrap_requested'){
+     const stopState=await this.wrapUp.request(input.jobId,input.taskIndex,input.actor,audit);
+     if(stopState==='completed')await this.packets.finishWrapUp(operation);
    }
    if(!failed.length&&operation.phase==='wrapped'){
      const claimed=await this.custody.withOwner(input.jobId,input.taskIndex,client=>this.packets.claimAudit(client,operation!,audit));

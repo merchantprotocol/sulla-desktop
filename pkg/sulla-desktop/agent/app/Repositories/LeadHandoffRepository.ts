@@ -11,8 +11,8 @@ import type { CustodyTransactionClient } from '../Services/JobCustodyTypes';
 
 export interface LeadChildTask { job:AgentJob; taskIndex:number }
 export interface LeadHandoffSnapshot { lead: AgentJob; taskIndex: number; children: LeadChildTask[]; checkins: any[]; messages: any[]; inbox: any[]; completions:any[] }
-export type LeadReplacementPhase='intent'|'launched'|'children_moved'|'wrapped';
-export interface LeadReplacementOperation { oldJobId:string; oldTaskIndex:number; launchKey:string; targetAgentId:string; phase:LeadReplacementPhase; replacementJobId?:string; replacementTaskIndex?:number; replacementThreadId?:string; childProgress:Record<string,{moved:boolean;error?:string}>; auditDone:boolean; wrapUpDone:boolean }
+export type LeadReplacementPhase='intent'|'launched'|'children_moved'|'wrap_requested'|'wrapped';
+export interface LeadReplacementOperation { oldJobId:string; oldTaskIndex:number; launchKey:string; targetAgentId:string; phase:LeadReplacementPhase; replacementJobId?:string; replacementTaskIndex?:number; replacementChannel?:string; replacementThreadId?:string; replacementAgentId?:string; childProgress:Record<string,{moved:boolean;error?:string}>; auditDone:boolean; wrapUpDone:boolean }
 export class LeadHandoffRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
   constructor(connection:any, private readonly jobs:AgentJobRepository, readonly messaging:AgentJobMessagingRepository){ super(connection); }
@@ -29,8 +29,8 @@ export class LeadHandoffRepository extends Repository<AgentJobModel> {
     const rows=await this.connection.select(`SELECT * FROM agent_lead_replacements WHERE old_job_id=$1 AND old_task_index=$2`,[jobId,taskIndex]);
     return rows[0]?this.mapOperation(rows[0]):undefined;
   }
-  async saveLaunched(operation:LeadReplacementOperation,replacement:{jobId:string;taskIndex:number;threadId:string}):Promise<LeadReplacementOperation>{
-    const rows=await this.connection.select(`UPDATE agent_lead_replacements SET replacement_job_id=$3,replacement_task_index=$4,replacement_thread_id=$5,phase='launched',updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2 AND phase='intent' RETURNING *`,[operation.oldJobId,operation.oldTaskIndex,replacement.jobId,replacement.taskIndex,replacement.threadId]);
+  async saveLaunched(operation:LeadReplacementOperation,replacement:{jobId:string;taskIndex:number;channel:string;threadId:string;agentId:string}):Promise<LeadReplacementOperation>{
+    const rows=await this.connection.select(`UPDATE agent_lead_replacements SET replacement_job_id=$3,replacement_task_index=$4,replacement_channel=$5,replacement_thread_id=$6,replacement_agent_id=$7,phase='launched',updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2 AND phase='intent' RETURNING *`,[operation.oldJobId,operation.oldTaskIndex,replacement.jobId,replacement.taskIndex,replacement.channel,replacement.threadId,replacement.agentId]);
     const winner=rows[0]??(await this.connection.select(`SELECT * FROM agent_lead_replacements WHERE old_job_id=$1 AND old_task_index=$2`,[operation.oldJobId,operation.oldTaskIndex]))[0];
     if(!winner)throw new Error('Replacement operation disappeared while saving launch.');
     return this.mapOperation(winner);
@@ -38,7 +38,7 @@ export class LeadHandoffRepository extends Repository<AgentJobModel> {
   async saveOperation(client:CustodyTransactionClient,operation:LeadReplacementOperation):Promise<void>{
     await client.query(`UPDATE agent_lead_replacements SET replacement_job_id=$3,replacement_task_index=$4,replacement_thread_id=$5,child_progress=$6::jsonb,audit_done=$7,wrap_up_done=$8,phase=$9,updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2`,[operation.oldJobId,operation.oldTaskIndex,operation.replacementJobId??null,operation.replacementTaskIndex??null,operation.replacementThreadId??null,JSON.stringify(operation.childProgress),operation.auditDone,operation.wrapUpDone,operation.phase]);
   }
-  private mapOperation(row:any):LeadReplacementOperation{return {oldJobId:String(row.old_job_id),oldTaskIndex:Number(row.old_task_index),launchKey:String(row.launch_key),targetAgentId:String(row.replacement_agent_id),phase:row.phase??(row.wrap_up_done?'wrapped':row.replacement_job_id?'launched':'intent'),replacementJobId:row.replacement_job_id??undefined,replacementTaskIndex:row.replacement_task_index===null?undefined:Number(row.replacement_task_index),replacementThreadId:row.replacement_thread_id??undefined,childProgress:row.child_progress??{},auditDone:Boolean(row.audit_done),wrapUpDone:Boolean(row.wrap_up_done)};}
+  private mapOperation(row:any):LeadReplacementOperation{return {oldJobId:String(row.old_job_id),oldTaskIndex:Number(row.old_task_index),launchKey:String(row.launch_key),targetAgentId:String(row.replacement_agent_id),phase:row.phase??(row.wrap_up_done?'wrapped':row.replacement_job_id?'launched':'intent'),replacementJobId:row.replacement_job_id??undefined,replacementTaskIndex:row.replacement_task_index===null?undefined:Number(row.replacement_task_index),replacementChannel:row.replacement_channel??undefined,replacementThreadId:row.replacement_thread_id??undefined,replacementAgentId:row.replacement_agent_id??undefined,childProgress:row.child_progress??{},auditDone:Boolean(row.audit_done),wrapUpDone:Boolean(row.wrap_up_done)};}
   async markChildrenMoved(client:CustodyTransactionClient,operation:LeadReplacementOperation):Promise<void>{await client.query(`UPDATE agent_lead_replacements SET phase='children_moved',child_progress=$3::jsonb,updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2`,[operation.oldJobId,operation.oldTaskIndex,JSON.stringify(operation.childProgress)]);operation.phase='children_moved';}
   async lockOperation(client:CustodyTransactionClient,operation:LeadReplacementOperation):Promise<LeadReplacementOperation>{const row=(await client.query<any>(`SELECT * FROM agent_lead_replacements WHERE old_job_id=$1 AND old_task_index=$2 FOR UPDATE`,[operation.oldJobId,operation.oldTaskIndex])).rows[0];if(!row)throw new Error('Replacement operation disappeared while draining children.');return this.mapOperation(row);}
   async claimAudit(client:CustodyTransactionClient,operation:LeadReplacementOperation,summary:string):Promise<boolean>{
@@ -46,6 +46,7 @@ export class LeadHandoffRepository extends Repository<AgentJobModel> {
     if(result.rows.length){operation.auditDone=true;return true;} return false;
   }
   async finishWrapUp(operation:LeadReplacementOperation):Promise<void>{operation.wrapUpDone=true;operation.phase='wrapped';await this.connection.run(`UPDATE agent_lead_replacements SET wrap_up_done=TRUE,phase='wrapped',updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2`,[operation.oldJobId,operation.oldTaskIndex]);}
+  async markWrapRequested(operation:LeadReplacementOperation):Promise<void>{operation.phase='wrap_requested';await this.connection.run(`UPDATE agent_lead_replacements SET phase='wrap_requested',updated_at=now() WHERE old_job_id=$1 AND old_task_index=$2 AND phase='children_moved'`,[operation.oldJobId,operation.oldTaskIndex]);}
   async snapshot(jobId:string, taskIndex:number):Promise<LeadHandoffSnapshot|undefined>{
     const lead=await this.jobs.job(jobId); const task=lead?.tasks[taskIndex];
     if(!lead||!task) return undefined;

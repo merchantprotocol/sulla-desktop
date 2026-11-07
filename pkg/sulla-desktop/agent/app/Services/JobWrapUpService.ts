@@ -5,6 +5,7 @@
 import { Service } from '@sulla/foundation';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import type { JobStopService } from './JobStopService';
+import type { DurableWrapUpRequest,JobWrapUpPersistence } from '../Repositories/JobWrapUpRepository';
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 export interface JobWrapUpTimer {
@@ -32,6 +33,7 @@ export class JobWrapUpService extends Service {
     private readonly stops: JobStopService,
     private readonly messages: JobWrapUpMessageSender,
     private readonly timer: JobWrapUpTimer = new SystemJobWrapUpTimer(),
+    private readonly persistence?: JobWrapUpPersistence,
   ) { super(); }
 
   private key(jobId: string, taskIndex: number): string { return `${ jobId }:${ taskIndex }`; }
@@ -44,27 +46,42 @@ export class JobWrapUpService extends Service {
     gracePeriodSeconds: number,
     message: string,
     skipMessage = false,
-  ): Promise<void> {
+  ): Promise<Array<'pending'|'completed'>> {
+    const states:Array<'pending'|'completed'>=[];
     for (const taskIndex of taskIndexes) {
       const key = this.key(jobId, taskIndex);
-      if (this.timers.has(key)) continue;
-      if(!skipMessage)await this.messages.send({ jobId, taskIndex, message });
       const delayMs = Math.max(1, gracePeriodSeconds || 120) * 1_000;
-      const handle = this.timer.schedule(delayMs, () => {
-        this.timers.delete(key);
-        void this.stops.stopTask(jobId, taskIndex, principal, reason);
-      });
-      this.timers.set(key, handle);
+      const durable:DurableWrapUpRequest={jobId,taskIndex,principal,reason,dueAt:new Date(Date.now()+delayMs)};
+      const inserted=this.persistence?await this.persistence.reserve(durable):!this.timers.has(key);
+      const state=this.persistence?await this.persistence.state(jobId,taskIndex):undefined;
+      if(state==='completed'){states.push('completed');continue;}
+      states.push('pending');
+      if(!inserted||this.timers.has(key))continue;
+      if(!skipMessage)await this.messages.send({ jobId, taskIndex, message });
+      this.schedule(durable);
     }
+    return states;
+  }
+
+  async recover():Promise<void>{for(const request of await this.persistence?.pending()??[])this.schedule(request);}
+
+  private schedule(request:DurableWrapUpRequest):void{
+    const key=this.key(request.jobId,request.taskIndex);if(this.timers.has(key))return;
+    const delay=Math.max(1,request.dueAt.getTime()-Date.now());
+    const handle=this.timer.schedule(delay,()=>{this.timers.delete(key);void this.execute(request);});this.timers.set(key,handle);
+  }
+
+  private async execute(request:DurableWrapUpRequest):Promise<void>{
+    const outcome=await this.stops.stopTask(request.jobId,request.taskIndex,request.principal,request.reason);
+    if(outcome==='stopped'||outcome==='already-finished'||outcome==='not-found')await this.persistence?.complete(request.jobId,request.taskIndex);
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */
   taskSettled(jobId: string, taskIndex: number): void {
     const key = this.key(jobId, taskIndex);
     const handle = this.timers.get(key);
-    if (!handle) return;
-    this.timer.cancel(handle);
-    this.timers.delete(key);
+    if (handle){this.timer.cancel(handle);this.timers.delete(key);}
+    void this.persistence?.cancel(jobId,taskIndex);
   }
 
   /** A whole job settlement invalidates every outstanding grace timer. */
@@ -73,7 +90,10 @@ export class JobWrapUpService extends Service {
       if (key.startsWith(`${ jobId }:`)) {
         this.timer.cancel(handle);
         this.timers.delete(key);
+        const taskIndex=Number(key.slice(key.lastIndexOf(':')+1));
+        void this.persistence?.cancel(jobId,taskIndex);
       }
     }
+    void this.persistence?.cancelJob(jobId);
   }
 }

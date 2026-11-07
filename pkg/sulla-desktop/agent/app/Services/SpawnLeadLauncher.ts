@@ -16,6 +16,7 @@ export class SpawnLeadLauncher implements LeadTaskExecutionPort {
     const jobId=String((response.result as any)?.jobId??'');
     const job=jobId?await this.jobs.job(jobId):undefined; const threadId=job?.tasks[0]?.threadId;
     if(!jobId||!threadId) throw new Error('Replacement launch did not return a persisted task thread.');
-    return {jobId,taskIndex:0,threadId};
+    const routing=response.result as any;
+    return {jobId,taskIndex:0,channel:String(routing?.channel??job.tasks[0].agentId),threadId,agentId:String(routing?.agentId??job.tasks[0].agentId)};
   }
 }

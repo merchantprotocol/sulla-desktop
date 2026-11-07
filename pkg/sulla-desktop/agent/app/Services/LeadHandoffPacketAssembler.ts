@@ -16,6 +16,7 @@ export class LeadHandoffPacketAssembler {
   markChildrenMoved(...args:Parameters<LeadHandoffRepository['markChildrenMoved']>){return this.repository.markChildrenMoved(...args);}
   lockOperation(...args:Parameters<LeadHandoffRepository['lockOperation']>){return this.repository.lockOperation(...args);}
   finishWrapUp(...args:Parameters<LeadHandoffRepository['finishWrapUp']>){return this.repository.finishWrapUp(...args);}
+  markWrapRequested(...args:Parameters<LeadHandoffRepository['markWrapRequested']>){return this.repository.markWrapRequested(...args);}
   async assemble(jobId:string,taskIndex:number,note?:string):Promise<{prompt:string;snapshot:LeadHandoffSnapshot}|undefined>{
     const snapshot=await this.repository.snapshot(jobId,taskIndex); if(!snapshot)return undefined;
     const task=snapshot.lead.tasks[taskIndex];

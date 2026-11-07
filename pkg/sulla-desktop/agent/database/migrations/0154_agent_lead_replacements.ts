@@ -11,8 +11,9 @@ CREATE TABLE IF NOT EXISTS agent_lead_replacements (
   replacement_agent_id TEXT NOT NULL,
   replacement_job_id TEXT,
   replacement_task_index INTEGER,
+  replacement_channel TEXT,
   replacement_thread_id TEXT,
-  phase TEXT NOT NULL DEFAULT 'intent' CHECK (phase IN ('intent','launched','children_moved','wrapped')),
+  phase TEXT NOT NULL DEFAULT 'intent' CHECK (phase IN ('intent','launched','children_moved','wrap_requested','wrapped')),
   child_progress JSONB NOT NULL DEFAULT '{}'::jsonb,
   audit_claimed BOOLEAN NOT NULL DEFAULT FALSE,
   audit_done BOOLEAN NOT NULL DEFAULT FALSE,
@@ -20,5 +21,16 @@ CREATE TABLE IF NOT EXISTS agent_lead_replacements (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(old_job_id,old_task_index)
+);
+CREATE TABLE IF NOT EXISTS agent_job_wrap_up_requests (
+  job_id TEXT NOT NULL REFERENCES agent_jobs(job_id) ON DELETE CASCADE,
+  task_index INTEGER NOT NULL,
+  principal JSONB NOT NULL,
+  reason TEXT NOT NULL,
+  due_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(job_id,task_index)
 )`;
-export const down=`DROP TABLE IF EXISTS agent_lead_replacements; DROP INDEX IF EXISTS agent_jobs_launch_key_unique; ALTER TABLE agent_jobs DROP COLUMN IF EXISTS launch_key`;
+export const down=`DROP TABLE IF EXISTS agent_job_wrap_up_requests; DROP TABLE IF EXISTS agent_lead_replacements; DROP INDEX IF EXISTS agent_jobs_launch_key_unique; ALTER TABLE agent_jobs DROP COLUMN IF EXISTS launch_key`;

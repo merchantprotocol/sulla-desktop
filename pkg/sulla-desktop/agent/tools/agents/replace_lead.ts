@@ -15,14 +15,14 @@ import { BaseTool,type ToolResponse } from '../base';
 import type { VerifiedCustodyActor } from '../../app/Services/CustodyCallerVerifier';
 
 class StopPathLeadWrapUp implements LeadWrapUpPort {
- async request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<void>{
+ async request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<'pending'|'completed'>{
    const principal=StopPrincipal.agent(actor.agentId,actor.threadId);
    if(!principal)throw new Error('Verified custody actor lacks stop attribution.');
    const message=`[Stop requested by ${actor.agentId}] Finish your current step and return your contract now with what you have`;
    // JobWrapUpService owns the idempotency boundary: it checks its per-task
    // request before queueing the message. Calling stopAgentJob here queued the
    // message first, so a retry after a durable-phase crash produced duplicates.
-   await agentJobProvider.wrapUp.request(jobId,[taskIndex],principal,reason,120,message);
+   return (await agentJobProvider.wrapUp.request(jobId,[taskIndex],principal,reason,120,message))[0]??'pending';
  }
 }
 export class ReplaceLeadWorker extends BaseTool {

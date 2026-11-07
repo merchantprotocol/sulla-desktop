@@ -72,12 +72,12 @@ export class AgentJobCustodyRepository {
 
   /** Serialize adoption into a lead with its durable drain gate. */
   private async resolveDrainDestination(client:PoolClient,destination:CustodyOwner):Promise<{owner?:CustodyOwner;retry:boolean}>{
-    const row=(await client.query<any>(`SELECT r.phase,r.replacement_thread_id,r.replacement_agent_id
+    const row=(await client.query<any>(`SELECT r.phase,r.replacement_channel,r.replacement_thread_id,r.replacement_agent_id
       FROM agent_lead_replacements r JOIN agent_jobs j ON j.job_id=r.old_job_id
       WHERE j.tasks->r.old_task_index->>'threadId'=$1 FOR UPDATE OF r`,[destination.threadId])).rows[0];
     if(!row)return {retry:false};
     if(!row.replacement_thread_id)return {retry:true};
-    return {retry:false,owner:{channel:String(row.replacement_agent_id),threadId:String(row.replacement_thread_id),agentId:String(row.replacement_agent_id)}};
+    return {retry:false,owner:{channel:String(row.replacement_channel),threadId:String(row.replacement_thread_id),agentId:String(row.replacement_agent_id)}};
   }
 
   async history(jobId: string): Promise<CustodyAuditRecord[]> {

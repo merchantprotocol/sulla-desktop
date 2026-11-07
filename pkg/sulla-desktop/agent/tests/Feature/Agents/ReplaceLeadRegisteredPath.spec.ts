@@ -16,7 +16,8 @@ class ReplacementRuntimeFixture {
  readonly entries=new Map<string,any>();
  failAfterPersist=false;
  adoptDuringLaunch?:()=>Promise<void>;
- reset(){this.entries.clear();this.failAfterPersist=false;this.adoptDuringLaunch=undefined;}
+ replacementChannel?:string; replacementAgentId?:string;
+ reset(){this.entries.clear();this.failAfterPersist=false;this.adoptDuringLaunch=undefined;this.replacementChannel=undefined;this.replacementAgentId=undefined;}
 }
 const runtime=new ReplacementRuntimeFixture();
 vi.mock('../../../services/GraphRegistry',()=>({GraphRegistry:{get:(threadId:string)=>runtime.entries.get(threadId)??null}}));
@@ -30,7 +31,7 @@ vi.mock('../../../tools/agents/spawn_agent',async()=>{
    const persisted=rows[0]?.job_id??(await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE launch_key=$1',[input.launchKey]))[0]?.job_id;
    await runtime.adoptDuringLaunch?.();
    if(runtime.failAfterPersist)throw new Error('simulated process disconnect after persist');
-   return {successBoolean:true,responseString:'ok',result:{jobId:persisted}};
+   return {successBoolean:true,responseString:'ok',result:{jobId:persisted,channel:runtime.replacementChannel,agentId:runtime.replacementAgentId}};
   }
  }
  return {SpawnAgentWorker:ProcessBoundarySpawnAgentWorker};
@@ -73,9 +74,11 @@ suite('agents/replace_lead registered production path',()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
   const {leadId}=await seedLead('h3','error',3);const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
   const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
-  expect(await database.query<any>(`SELECT job_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' AND owner_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
+  expect(await database.query<any>(`SELECT owner_channel,owner_thread_id,owner_agent_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`)).toEqual(Array(3).fill({owner_channel:replacement.channel,owner_thread_id:replacement.threadId,owner_agent_id:replacement.agentId}));
   for(let index=0;index<3;index++){await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);}
   expect(await database.query<any>(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'child-h3-%' AND tasks->0->>'returnedAt' IS NOT NULL ORDER BY job_id`)).toHaveLength(3);
+  const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');
+  expect(completionInboxStore.take(replacement.channel,replacement.threadId).map(item=>item.jobId).sort()).toEqual(['child-h3-0','child-h3-1','child-h3-2']);
   expect((await returnResult('worker-h3-0')).success).toBe(false);
   expect(await database.query<any>(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'child-h3-%' AND tasks->0->>'returnedAt' IS NOT NULL ORDER BY job_id`)).toHaveLength(3);
  });
@@ -85,8 +88,8 @@ suite('agents/replace_lead registered production path',()=>{
   const {leadId}=await seedLead('retry','error',0);runtime.failAfterPersist=true;expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);
   runtime.failAfterPersist=false;expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'replacement-%'`)).toHaveLength(1);
-  expect(await database.query(`SELECT * FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
-  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
+  expect(await database.query(`SELECT * FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
  });
 
  it('atomically reserves one replacement when two registered callers race',async()=>{
@@ -95,7 +98,7 @@ suite('agents/replace_lead registered production path',()=>{
   const [first,second]=await Promise.all([call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'}),call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})]);
   expect(first.success).toBe(true);expect(second.success).toBe(true);
   expect(await database.query(`SELECT job_id FROM agent_jobs WHERE launch_key=$1`,[`lead-replacement:${leadId}:0`])).toHaveLength(1);
-  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
  });
 
  it('moves a child adopted after packet assembly before committing the zero-owner drain',async()=>{
@@ -104,7 +107,7 @@ suite('agents/replace_lead registered production path',()=>{
   const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
   const replacement=(result as any).result.replacement;
   expect(await database.query<any>(`SELECT owner_thread_id FROM agent_job_custody WHERE job_id='child-adopted-9' AND task_index=0`)).toEqual([{owner_thread_id:replacement.threadId}]);
-  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
  });
 
  it('redirects a registered incoming reparent after final zero and records its concurrent registered return once',async()=>{
@@ -128,6 +131,19 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query(`SELECT job_id FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
  });
 
+ it('preserves distinct replacement channel, thread, and agent identities through the post-drain redirect',async()=>{
+  // risk: custody routing — a channel is a transport destination, not an agent identity.
+  runtime.replacementChannel='replacement-transport';runtime.replacementAgentId='replacement-identity';
+  const {leadId,leadThread}=await seedLead('distinct-routing','running',0);
+  const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
+  const incoming='distinct-incoming';await seedChild('distinct-incoming',0,'unrelated-owner');
+  const {agentJobProvider,AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  const actor=await agentJobProvider.custodyCallerVerifier.verify({wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0});
+  const moved=await agentJobProvider.custody.move({jobId:`child-${incoming}-0`,taskIndex:0,to:{channel:'old-transport',threadId:leadThread,agentId:'old-identity'},actor,reason:'post-drain adoption'});
+  expect(moved.ok).toBe(true);
+  expect(await agentJobProvider.custody.resolveOwner(`child-${incoming}-0`,0)).toMatchObject({channel:'replacement-transport',threadId:(result as any).result.replacement.threadId,agentId:'replacement-identity'});
+ });
+
  it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{
   // risk: irreversible stop — replacement must request graceful wrap-up, never hard-stop a live lead.
   const {leadId}=await seedLead('live','running',0);const first=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(first.success).toBe(true);
@@ -135,19 +151,27 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
-  expect(await database.query<any>(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+  expect(await database.query<any>(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
  });
 
  it('recovers a crash after wrap_up request with one effective stop and audit',async()=>{
   // risk: irreversible stop — retry after the request commits must not duplicate the stop side effect.
   const {leadId}=await seedLead('wrap-crash','running',0);
-  await database.query(`CREATE FUNCTION reject_wrapped_phase() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.phase='wrapped' THEN RAISE EXCEPTION 'simulated crash after wrap_up'; END IF; RETURN NEW; END $$`);
-  await database.query(`CREATE TRIGGER reject_wrapped_phase BEFORE UPDATE ON agent_lead_replacements FOR EACH ROW EXECUTE FUNCTION reject_wrapped_phase()`);
-  const crashed=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(crashed.success).toBe(false);expect(JSON.stringify(crashed.error??crashed.result)).toContain('simulated crash after wrap_up');
-  await database.query(`DROP TRIGGER reject_wrapped_phase ON agent_lead_replacements`);await database.query(`DROP FUNCTION reject_wrapped_phase()`);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  // Fault boundary: discard every process-local timer after the durable request commit.
+  const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
+  const restartedProvider=new AgentJobServiceProvider();await restartedProvider.wrapUp.recover();await new Promise(resolve=>setTimeout(resolve,25));
+  expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,tasks->0->'stoppedBy' AS stopped_by,tasks->0->>'stopReason' AS stop_reason FROM agent_jobs WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',stopped_by:{agentId:owner.agentId,threadId:owner.threadId},stop_reason:expect.stringContaining('replaced by')});
+  expect(await database.query(`SELECT * FROM agent_job_wrap_up_requests WHERE job_id=$1 AND completed_at IS NOT NULL`,[leadId])).toHaveLength(1);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
   expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
  });
 
  it('allows the owner, refuses a peer by owner name, and distinguishes missing task/job and disabled agent',async()=>{
