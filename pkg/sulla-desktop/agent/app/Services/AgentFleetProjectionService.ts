@@ -30,6 +30,7 @@ export class AgentFleetProjectionService {
     private readonly telemetry: AgentFleetTelemetryReader,
     private readonly titles: ConversationTitleRepository,
     private readonly now: () => number = Date.now,
+    private readonly stranded?: { deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> },
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
@@ -39,15 +40,34 @@ export class AgentFleetProjectionService {
       ? index.descendants(this.requiredCaller(request.callerThreadId))
       : all;
     const selected = this.bound(scoped, request.limit, request.includeFinished);
-    const telemetry = await this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId));
-    return this.project(selected, all, telemetry, false);
+    const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
+    return this.project(selected, all, telemetry, false, stranded);
+  }
+
+  /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
+  async supervisionCandidates(): Promise<FleetJobView[]> {
+    const all = await this.states.jobs();
+    const childParentThreads = new Set(all.map(job => job.parentThreadId).filter((value): value is string => !!value));
+    const managers = all.filter(job => ['running', 'parked'].includes(job.status) && job.tasks.some(task => !!task.threadId && childParentThreads.has(task.threadId)));
+    const managerThreads = new Set(managers.flatMap(job => job.tasks.map(task => task.threadId).filter((value): value is string => !!value)));
+    const selected = [...managers];
+    const selectedIds = new Set(selected.map(job => job.jobId));
+    for (let cursor = 0; cursor < selected.length; cursor++) {
+      const parent = selected[cursor];
+      for (const task of parent.tasks) if (task.threadId) managerThreads.add(task.threadId);
+      for (const child of all) if (!selectedIds.has(child.jobId) && child.parentThreadId && managerThreads.has(child.parentThreadId)) {
+        selected.push(child); selectedIds.add(child.jobId);
+      }
+    }
+    const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
+    return this.project(selected, all, telemetry, false, stranded);
   }
 
   async job(jobId: string): Promise<FleetJobView | undefined> {
     const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobs()]);
     if (!job) return undefined;
-    const telemetry = await this.telemetry.telemetryForJob(jobId);
-    return (await this.project([job], all, { [jobId]: telemetry }, true))[0];
+    const [telemetry, stranded] = await Promise.all([this.telemetry.telemetryForJob(jobId), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
+    return (await this.project([job], all, { [jobId]: telemetry }, true, stranded))[0];
   }
 
   private bound(jobs: AgentJob[], limit = 25, includeFinished = true): AgentJob[] {
@@ -71,11 +91,12 @@ export class AgentFleetProjectionService {
     all: AgentJob[],
     telemetry: Record<string, Record<number, AgentJobTaskTelemetry>>,
     detailed: boolean,
+    stranded: Map<string, { stateKey: string; reason: string }>,
   ): Promise<FleetJobView[]> {
     const index = new AgentLineageIndex(all);
     const roots = [...new Set(selected.map(job => index.lineage(job).rootThreadId).filter((value): value is string => !!value))];
     const titles = await this.titles.titlesForThreadIds(roots);
-    return selected.map(job => this.jobView(job, index, titles, telemetry[job.jobId] ?? {}, detailed));
+    return selected.map(job => this.jobView(job, index, titles, telemetry[job.jobId] ?? {}, detailed, stranded));
   }
 
   private jobView(
@@ -84,10 +105,12 @@ export class AgentFleetProjectionService {
     titles: Record<string, string | null>,
     telemetry: Record<number, AgentJobTaskTelemetry>,
     detailed: boolean,
+    stranded: Map<string, { stateKey: string; reason: string }>,
   ): FleetJobView {
     const lineage = index.lineage(job);
     const fields = {
       parentThreadId: job.parentThreadId ?? null,
+      parentChannel: job.parentChannel ?? null,
       parentAgentId: job.parentAgentId ?? null,
       parentJobId: lineage.parentJobId,
       parentTaskIndex: lineage.parentTaskIndex,
@@ -107,11 +130,11 @@ export class AgentFleetProjectionService {
       stoppedBy: job.stoppedBy,
       stopReason: job.stopReason,
       ...(detailed ? { error: job.error, results: job.results, orphanedChildNotices: job.orphanedChildNotices ?? [] } : {}),
-      tasks: job.tasks.map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, telemetry[taskIndex], detailed)),
+      tasks: job.tasks.map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, telemetry[taskIndex], detailed, stranded.get(`${ job.jobId }#${ taskIndex }`))),
     };
   }
 
-  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false): FleetTaskView {
+  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false, stranded?: { stateKey: string; reason: string }): FleetTaskView {
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
     // TODO(#1991): include authoritative model/tool RunActivity in the state projection.
@@ -138,6 +161,8 @@ export class AgentFleetProjectionService {
       rootThreadId: fields.rootThreadId as string | null,
       ...fields,
       latestCheckin: this.checkin(latestCheckin, !detailed),
+      wakeAt: task.wakeAt ? new Date(task.wakeAt).toISOString() : null,
+      stranded: stranded ? { ...stranded, detectedAt: 0, alertedAt: 0 } : null,
       result: task.result,
       completion: task.completion,
       undeliveredOrchestratorMessages: telemetry?.undeliveredMessages ?? 0,

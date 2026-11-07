@@ -70,7 +70,6 @@ describe('authoritative live agent state', () => {
     expect(snapshot.rows[0]).toMatchObject({ state: 'failed', canMessage: false, canStop: false });
   });
 
-
   it('keeps a terminal error result failed while tolerating a stale error task with a completed result', async() => {
     // risk: result payload persistence races can either hide a real worker failure or fail a completed worker
     const failedResult = { label: 'Worker', status: 'error' as const, output: 'missing contract', threadId: 'failed-thread' };
@@ -82,7 +81,6 @@ describe('authoritative live agent state', () => {
     expect(derived.find(candidate => candidate.jobId === 'failed-result')?.status).toBe('failed');
     expect(derived.find(candidate => candidate.jobId === 'completed-result')?.status).toBe('completed');
   });
-
 
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
     // risk: an hour-silent task is presented as actively working

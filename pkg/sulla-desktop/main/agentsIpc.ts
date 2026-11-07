@@ -25,6 +25,7 @@ import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydr
 import { AgentShutdownController } from '@pkg/agent/services/AgentShutdownController';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
+import { StrandedManagerLifecycle } from '@pkg/agent/app/Services/StrandedManagerLifecycle';
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry, type AgentConversationLogIdentity } from './agentConversationLog';
 
@@ -214,6 +215,7 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
   lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
 });
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
+const strandedManagerLifecycle = new StrandedManagerLifecycle(agentJobProvider.stranded, app);
 
 export function initAgentsIpc(): void {
   // Do not decide a container is gone until fail-closed inventory completes. Every state read awaits this same readiness promise.
@@ -226,6 +228,7 @@ export function initAgentsIpc(): void {
   agentJobProvider.states.setReadiness(() => runtimeRehydration.ready());
   runtimeRehydration.start();
   agentLivenessReconciler.start();
+  strandedManagerLifecycle.start();
   new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
