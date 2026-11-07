@@ -329,7 +329,7 @@ watch(() => client.snapshot.value, snapshot => {
       selected.value = fresh;
       selectedMissing.value = false;
       if (liveStates.has(fresh.state)) {
-        if (wasUnavailable) detailFeed.start();
+        if (wasUnavailable) detailFeed.resume();
       } else if (!wasUnavailable) {
         void detailFeed.finish();
       }

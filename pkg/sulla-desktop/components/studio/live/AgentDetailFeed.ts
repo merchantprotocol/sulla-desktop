@@ -76,6 +76,14 @@ export class AgentDetailFeed {
     this.generation += 1;
   }
 
+  resume(): void {
+    if (this.finishing) {
+      this.finishing = false;
+      this.generation += 1;
+    }
+    this.start();
+  }
+
   async finish(): Promise<void> {
     if (this.finishing) return;
     const generation = this.generation;
