@@ -81,11 +81,13 @@ export class JobWrapUpService extends Service {
       ?await this.persistence.claim(request.jobId,request.taskIndex,JobWrapUpService.executionLeaseSeconds)
       :{...request,claimToken:'process-local',claimVersion:1};
     if(!claim)return;
-    const outcome=await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);
-    // The task mutation is itself conditional/idempotent. If this process dies
-    // after that mutation, an expired claimant observes already-finished and
-    // fences completion with its newer claim version.
-    if(outcome==='stopped'||outcome==='already-finished'||outcome==='not-found')await this.persistence?.complete(claim);
+    if(!this.persistence){await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);return;}
+    if(!await this.persistence.beginTeardown(claim))return;
+    // beginTeardown is the last durable fence before this idempotent provider
+    // boundary. A crash here leaves teardown_needed_at unacknowledged for boot
+    // or lease-takeover replay; terminal job state is deliberately not a receipt.
+    this.stops.teardownTask(claim.jobId,claim.taskIndex);
+    await this.persistence.acknowledgeTeardown(claim);
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */

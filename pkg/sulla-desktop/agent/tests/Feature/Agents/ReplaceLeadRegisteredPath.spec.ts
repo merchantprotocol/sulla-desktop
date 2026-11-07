@@ -174,7 +174,7 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
  });
 
- it('atomically claims concurrent wrap recovery and fences an expired claimant after the stop effect',async()=>{
+ it('fences an expired claimant before teardown and replays an unacknowledged terminal teardown',async()=>{
   // risk: irreversible stop — two boot providers and a crash after the effect must produce one attributed stop/audit.
   const {leadId}=await seedLead('wrap-claim-race','running',0);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
@@ -183,8 +183,16 @@ suite('agents/replace_lead registered production path',()=>{
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
   await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
   const first=new AgentJobServiceProvider();const second=new AgentJobServiceProvider();
-  await Promise.all([first.wrapUp.recover(),second.wrapUp.recover()]);
-  expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,claim_version,completed_at IS NOT NULL AS completed FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',claim_version:'1',completed:true});
+  const {JobAbortScope}=await import('../../../app/Services/JobAbortScope');
+  const staleScope=new JobAbortScope();let staleTeardowns=0;staleScope.taskSignal(0).addEventListener('abort',()=>staleTeardowns++);first.runtime.abortScopes.set(leadId,staleScope);
+  const winningScope=new JobAbortScope();let winningTeardowns=0;winningScope.taskSignal(0).addEventListener('abort',()=>winningTeardowns++);second.runtime.abortScopes.set(leadId,winningScope);
+  const repository=(first.wrapUp as any).persistence;const staleClaim=await repository.claim(leadId,0,30);
+  expect(staleClaim).toBeDefined();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
+  await second.wrapUp.recover();
+  expect(await repository.beginTeardown(staleClaim)).toBe(false);
+  expect(staleTeardowns).toBe(0);expect(winningTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,claim_version,teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',claim_version:'2',needed:true,acknowledged:true,completed:true});
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
 
@@ -192,15 +200,31 @@ suite('agents/replace_lead registered production path',()=>{
   expect((await call({jobId:crash.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
   await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[crash.leadId]);
-  const repository=(first.wrapUp as any).persistence;const staleClaim=await repository.claim(crash.leadId,0,30);
-  expect(staleClaim).toBeDefined();
-  expect(await (first.wrapUp as any).stops.stopTask(crash.leadId,0,staleClaim.principal,staleClaim.reason)).toBe('stopped');
+  const crashClaim=await repository.claim(crash.leadId,0,30);
+  expect(crashClaim).toBeDefined();
+  // Fault boundary: terminal state + durable teardown intent commit, process dies before AbortSignal.
+  expect(await repository.beginTeardown(crashClaim)).toBe(true);
+  expect((await database.query<any>(`SELECT status,teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[crash.leadId]))[0]).toMatchObject({status:'stopped',needed:true,teardown_acknowledged_at:null});
   await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[crash.leadId]);
-  await second.wrapUp.recover();
-  expect(await repository.complete(staleClaim)).toBe(false);
-  expect((await database.query<any>(`SELECT claim_version,completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[crash.leadId]))[0]).toEqual({claim_version:'2',completed:true});
+  const freshOne=new AgentJobServiceProvider();const freshTwo=new AgentJobServiceProvider();
+  const replayScope=new JobAbortScope();let replayTeardowns=0;replayScope.taskSignal(0).addEventListener('abort',()=>replayTeardowns++);freshOne.runtime.abortScopes.set(crash.leadId,replayScope);
+  await Promise.all([freshOne.wrapUp.recover(),freshTwo.wrapUp.recover()]);
+  expect(await repository.acknowledgeTeardown(crashClaim)).toBe(false);
+  expect(replayTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT claim_version,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[crash.leadId]))[0]).toEqual({claim_version:'2',acknowledged:true,completed:true});
   expect((await call({jobId:crash.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[crash.leadId])).toHaveLength(1);
+
+  const normalRace=await seedLead('normal-stop-wrap-race','running',0);
+  expect((await call({jobId:normalRace.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[normalRace.leadId]);
+  const sharedScope=new JobAbortScope();let effectiveTeardowns=0;sharedScope.taskSignal(0).addEventListener('abort',()=>effectiveTeardowns++);
+  first.runtime.abortScopes.set(normalRace.leadId,sharedScope);second.runtime.abortScopes.set(normalRace.leadId,sharedScope);
+  expect(await (first.wrapUp as any).stops.stopTask(normalRace.leadId,0,{kind:'agent',agentId:owner.agentId,threadId:owner.threadId},'normal stop won race')).toBe('stopped');
+  await second.wrapUp.recover();
+  expect(effectiveTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[normalRace.leadId]))[0]).toEqual({needed:true,acknowledged:true,completed:true});
  });
 
  it('allows the owner, refuses a peer by owner name, and distinguishes missing task/job and disabled agent',async()=>{

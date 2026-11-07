@@ -17,6 +17,9 @@ export class JobStopService extends Service {
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator, private readonly custody?: Pick<JobCustodyPort,'resolveOwner'|'withOwner'>, private readonly custodyLineage?: Pick<CustodyLineagePort,'isAncestor'>) { super(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[JobStopService] persistence write failed:', (error as Error).message); } }
 
+  /** Idempotent provider/process boundary. Durable callers acknowledge only after this returns. */
+  teardownTask(jobId:string,taskIndex:number):void { this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex); }
+
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
     const job = this.runtime.jobs.get(jobId);
     if (!job) return 'not-found';
