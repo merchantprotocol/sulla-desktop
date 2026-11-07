@@ -8,6 +8,8 @@
  * manager's approval: main and renderer are built against this exact shape.
  */
 
+export type AgentStopAttribution = { agentId: string; threadId: string } | { system: string } | 'human';
+
 export type AgentRowState =
  | 'queued' // accepted, not started yet
  | 'working' // its graph is running a turn right now
@@ -39,6 +41,12 @@ export interface AgentStateRow {
  state: AgentRowState;
  /** Human-readable reason for failed / lost / blocked / quiet / stopped. */
  stateReason: string | null;
+ /** Durable actor that stopped this task, preferring task attribution over its job fallback. */
+ stoppedBy?: AgentStopAttribution;
+ /** Durable task stop reason, falling back to the job reason. */
+ stopReason?: string;
+ /** True only when the durable stop attribution identifies a human. */
+ killedByHuman: boolean;
  /** Live (queued/working/parked/quiet/blocked) direct children. */
  waitingOnChildren: number;
  startedAt: string | null;

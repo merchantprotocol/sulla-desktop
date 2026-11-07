@@ -37,13 +37,15 @@ export class AgentStateProjector {
       const checkin = await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
       const state = this.resolveState(job, task, checkin, now);
+      const stoppedBy = task.stoppedBy ?? job.stoppedBy;
+      const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? ordered.filter(candidate => candidate.parentThreadId === task.threadId && ['running', 'parked'].includes(candidate.status)).length : 0;
       rows.push({ key: `${ job.jobId }:${ taskIndex }`, jobId: job.jobId, taskIndex,
         parentJobId: parent?.jobId ?? null, parentTaskIndex: parent?.taskIndex ?? null,
         rootThreadId: parent?.rootThreadId ?? job.parentThreadId ?? null, threadId: task.threadId ?? null,
         depth: parent ? parent.depth + 1 : 0, agentId: task.agentId || null, label: task.label || task.agentId,
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
-        stateReason: this.reason(state, job, task, checkin), waitingOnChildren,
+        stateReason: this.reason(state, job, task, checkin), stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });

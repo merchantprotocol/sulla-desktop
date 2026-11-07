@@ -59,7 +59,7 @@ class LivePageFixture {
   }
 
   publish(label = 'Worker', state: AgentStateRow['state'] = 'working', version = ++this.version): void {
-    const row: AgentStateRow = { key: 'job-1:0', jobId: 'job-1', taskIndex: 0, parentJobId: null, parentTaskIndex: null, rootThreadId: 'root-1', threadId: 'thread-1', depth: 0, agentId: 'worker', label, visibility: 'hidden', state, stateReason: null, waitingOnChildren: 0, startedAt: new Date(1).toISOString(), endedAt: state === 'done' ? new Date().toISOString() : null, lastCheckinAt: new Date(1).toISOString(), lastCheckinSummary: 'Working', canMessage: state === 'working', canStop: state === 'working', canOpen: true };
+    const row: AgentStateRow = { key: 'job-1:0', jobId: 'job-1', taskIndex: 0, parentJobId: null, parentTaskIndex: null, rootThreadId: 'root-1', threadId: 'thread-1', depth: 0, agentId: 'worker', label, visibility: 'hidden', state, stateReason: null, killedByHuman: false, waitingOnChildren: 0, startedAt: new Date(1).toISOString(), endedAt: state === 'done' ? new Date().toISOString() : null, lastCheckinAt: new Date(1).toISOString(), lastCheckinSummary: 'Working', canMessage: state === 'working', canStop: state === 'working', canOpen: true };
     this.client.apply({ version, generatedAt: new Date().toISOString(), rows: [row] });
   }
 
