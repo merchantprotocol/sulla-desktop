@@ -999,7 +999,7 @@ export class BackendGraphWebSocketService {
         // would otherwise sit unread in an idle thread. Run it as a new turn.
         // Skipped when the run was stopped by the user — stop means stop.
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        const completions = takeAgentCompletions(channelId, threadId);
+        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
         if (leftovers.length || completions.length) {
           const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
           const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId && candidate.taskIndex === entry.taskIndex) === index);

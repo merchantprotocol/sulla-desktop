@@ -149,9 +149,10 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
       messages: [{ role: 'user', content: claimed.notice, metadata: { source: 'sub_agent_completion', completionEntries: [claimed], steerDeliveredAt: Date.now() } }],
       llmTools: [], nodeHistory: [],
     };
-    let executions = 0;
+    let executions = 0; const actionableCounts: number[] = [];
     const graph = { execute: vi.fn(async() => {
       executions++;
+      actionableCounts.push(state.messages.filter((message: any) => Array.isArray(message.metadata?.completionEntries) && message.metadata.completionEntries.length > 0).length);
       if (executions === 1) throw new Error('delegated turn failed after consuming steer');
       state.metadata.cycleComplete = true;
       return state;
@@ -168,7 +169,51 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
       expect(episode.status).toBe('delivered');
     }, { timeout: 2_000, interval: 10 });
     expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
+    expect(actionableCounts).toEqual([1, 1]);
     expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
+  });
+
+  it('does not resurrect an aborted parent and leaves its stranded notice pending for an explicit retry', async() => {
+    // risk: user stop -- aborting a parent must not auto-launch another turn merely because its durable alert is retryable
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager-sol', run_location: 'vm' } as any);
+    const managerJobId = `stranded-abort-${ Date.now() }`; const parentThread = `${ managerJobId }-parent`;
+    const stateKey = `stranded:${ managerJobId }:0:parked-without-live-children:1:0:`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, tasks, visibility)
+      VALUES ($1, 'parked', 1, 'coding-manager-sol', $2, $3::jsonb, 'hidden')`, [managerJobId, parentThread,
+      JSON.stringify([{ agentId: 'coding-manager-sol', label: 'Manager', prompt: 'manage', status: 'parked', threadId: parentThread }])]);
+    await database.query(`INSERT INTO agent_stranded_episodes
+      (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason)
+      VALUES ($1, 0, $2, 'coding-manager-sol', $3, 'Manager', 'parked')`, [managerJobId, stateKey, parentThread]);
+    const completion = { jobId: managerJobId, taskIndex: 0, results: [], notice: 'stranded manager Manager', dedupeKey: stateKey };
+    inbox.enqueueAgentCompletion('coding-manager-sol', parentThread, completion);
+    const [claimed] = inbox.takeAgentCompletions('coding-manager-sol', parentThread);
+    const state: any = { metadata: { options: {}, agent: { runLocation: 'vm' }, cycleComplete: false }, messages: [], llmTools: [], nodeHistory: [] };
+    let service: InstanceType<typeof BackendGraphWebSocketService>; let executions = 0;
+    const graph = { execute: vi.fn(async() => {
+      executions++;
+      if (executions === 1) {
+        const abort = [...(service as any).activeAborts.values()][0] as AbortController;
+        abort.abort();
+        throw Object.assign(new Error('stopped'), { name: 'AbortError' });
+      }
+      state.metadata.cycleComplete = true; return state;
+    }) };
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({ graph, state } as any);
+    vi.spyOn(GraphRegistry, 'get').mockReturnValue({ graph, state } as any);
+    service = bareInstance();
+    await (service as any).dispatchToAgent('coding-manager-sol', 'sulla-desktop', claimed.notice, parentThread,
+      undefined, 'coding-manager-sol', 'system', { source: 'sub_agent_completion', completionEntries: [claimed] });
+    expect(graph.execute).toHaveBeenCalledTimes(1);
+    const [pending] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
+    expect(pending.status).toBe('pending');
+    const [retry] = inbox.takeAgentCompletions('coding-manager-sol', parentThread);
+    expect(retry.dedupeKey).toBe(stateKey);
+    await (service as any).dispatchToAgent('coding-manager-sol', 'sulla-desktop', retry.notice, parentThread,
+      undefined, 'coding-manager-sol', 'system', { source: 'sub_agent_completion', completionEntries: [retry] });
+    expect(graph.execute).toHaveBeenCalledTimes(2);
+    const [delivered] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
+    expect(delivered.status).toBe('delivered');
+    expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
   });
 
   it('wakes the manager as itself exactly once, completes its own job, delivers exactly one completion to its parent, and leaves no waiter or Promise behind', async() => {
