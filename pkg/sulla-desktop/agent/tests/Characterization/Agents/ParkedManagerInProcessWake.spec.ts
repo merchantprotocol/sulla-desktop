@@ -185,9 +185,10 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     inbox.enqueueAgentCompletion('coding-manager-sol', parentThread, completion);
     const [claimed] = inbox.takeAgentCompletions('coding-manager-sol', parentThread);
     const state: any = { metadata: { options: {}, agent: { runLocation: 'vm' }, cycleComplete: false }, messages: [], llmTools: [], nodeHistory: [] };
-    let service: InstanceType<typeof BackendGraphWebSocketService>; let executions = 0;
+    let service: InstanceType<typeof BackendGraphWebSocketService>; let executions = 0; const actionableCounts: number[] = [];
     const graph = { execute: vi.fn(async() => {
       executions++;
+      actionableCounts.push(state.messages.filter((message: any) => Array.isArray(message.metadata?.completionEntries) && message.metadata.completionEntries.length > 0).length);
       if (executions === 1) {
         const abort = [...(service as any).activeAborts.values()][0] as AbortController;
         abort.abort();
@@ -211,6 +212,8 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     const [delivered] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
     expect(delivered.status).toBe('delivered');
     expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
+    expect(actionableCounts).toEqual([1, 1]);
+    expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
   });
 
   it('wakes the manager as itself exactly once, completes its own job, delivers exactly one completion to its parent, and leaves no waiter or Promise behind', async() => {
