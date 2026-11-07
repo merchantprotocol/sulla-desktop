@@ -40,7 +40,7 @@ class FakePersistence {
   async state(): Promise<'pending'> { return 'pending'; }
   async pending(): Promise<any[]> { return []; }
   async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1}; }
-  async complete(): Promise<void> { this.completed++; }
+  async complete(): Promise<boolean> { this.completed++; return true; }
   async cancel(): Promise<void> {}
   async cancelJob(): Promise<void> {}
 }
