@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
+import {completionInboxStore} from '../../../services/AgentCompletionInbox';
 
 vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
@@ -125,8 +126,8 @@ suite('agents/replace_lead registered production path',()=>{
   const replacement=(replacementResult as any).result.replacement;
   expect(await agentJobProvider.custody.resolveOwner(childId,0)).toMatchObject({threadId:replacement.threadId,agentId:'coding-manager-sol'});
   expect(await database.query(`SELECT * FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
-  const deliveries=await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE ids->>'jobId'=$1 AND kind='contract'`,[childId]);
-  expect(deliveries).toEqual([{receiver_thread_id:replacement.threadId}]);
+  const deliveries=completionInboxStore.take(owner.channel,replacement.threadId).filter(entry=>entry.jobId===childId&&entry.taskIndex===0);
+  expect(deliveries).toHaveLength(1);
  });
 
  it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{
