@@ -23,15 +23,12 @@ export class ControlledAsyncBarrier {
 export class CustodyTransactionBarrier implements CustodyTransactionObserver {
   private readonly observations:CustodyTransactionObservation[]=[];
   private readonly waiters=new Map<string,Array<()=>void>>();
-  private heldKey?:string;
-  private heldRelease?:()=>void;
-  private heldPromise?:Promise<void>;
+  private readonly holds=new Map<string,{promise:Promise<void>;release:()=>void}>();
 
   hold(kind:CustodyTransactionKind,phase:CustodyTransactionPhase):void{
-    this.heldKey=this.key(kind,phase);
-    this.heldPromise=new Promise(resolve=>{this.heldRelease=resolve;});
+    let release!:()=>void;const promise=new Promise<void>(resolve=>{release=resolve;});this.holds.set(this.key(kind,phase),{promise,release});
   }
-  release():void{this.heldRelease?.();this.heldKey=undefined;this.heldPromise=undefined;this.heldRelease=undefined;}
+  release(kind:CustodyTransactionKind,phase:CustodyTransactionPhase):void{const key=this.key(kind,phase);this.holds.get(key)?.release();this.holds.delete(key);}
   waitFor(kind:CustodyTransactionKind,phase:CustodyTransactionPhase):Promise<void>{
     const key=this.key(kind,phase);
     if(this.observations.some(event=>this.key(event.kind,event.phase)===key))return Promise.resolve();
@@ -43,7 +40,7 @@ export class CustodyTransactionBarrier implements CustodyTransactionObserver {
     const key=this.key(event.kind,event.phase);
     for(const resolve of this.waiters.get(key)??[])resolve();
     this.waiters.delete(key);
-    if(this.heldKey===key&&this.heldPromise)await this.heldPromise;
+    const hold=this.holds.get(key);if(hold)await hold.promise;
   }
   private key(kind:CustodyTransactionKind,phase:CustodyTransactionPhase):string{return `${kind}:${phase}`;}
 }

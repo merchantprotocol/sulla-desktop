@@ -211,13 +211,18 @@ dbDescribe('registered custody transfer tools',()=>{
       const moved=()=>tools.call('reassign_job',{jobId:job.jobId,to:next,reason:`${order} race`},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1});
       const barrier=new CustodyTransactionBarrier();repository.observer=barrier;
       const firstKind=order==='return-first'?'producer':'move';const secondKind=order==='return-first'?'move':'producer';
-      barrier.hold(firstKind,'committing');
+      barrier.hold(firstKind,'committing');barrier.hold(secondKind,'committing');
       const first=order==='return-first'?returned():moved();await barrier.waitFor(firstKind,'committing');
       const second=order==='return-first'?moved():returned();
       expect(barrier.count(secondKind,'locked')).toBe(0); // second registered call is active but waits on the real advisory lock
-      barrier.release();await barrier.waitFor(firstKind,'committed');await barrier.waitFor(secondKind,'locked');
-      const results=await Promise.all([first,second]);await barrier.waitFor(secondKind,'committed');repository.observer=originalObserver;
+      barrier.release(firstKind,'committing');await barrier.waitFor(firstKind,'committed');await barrier.waitFor(secondKind,'committing');
+      const persistedMidRace=await database.query<any>(`SELECT
+        (SELECT count(*)::int FROM agent_job_custody_audit WHERE job_id=$1) AS audits,
+        (SELECT count(*)::int FROM agent_job_result_history WHERE job_id=$1 AND completion IS NOT NULL) AS completions`,[job.jobId]);
+      expect(persistedMidRace[0].audits).toBe(order==='move-first'?1:0);expect(persistedMidRace[0].completions).toBe(1);
+      barrier.release(secondKind,'committing');const results=await Promise.all([first,second]);await barrier.waitFor(secondKind,'committed');repository.observer=originalObserver;
       expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
+      expect(await agentJobProvider.custody.history(job.jobId)).toHaveLength(1);expect(await agentJobProvider.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});
       expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(1);
       expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(0);
     }
@@ -237,7 +242,7 @@ dbDescribe('registered custody transfer tools',()=>{
     const adoption=tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0});
     await barrier.waitFor('move','committing');
     const childReturn=tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2});
-    await barrier.waitFor('producer','committed');barrier.release();const results=await Promise.all([adoption,childReturn]);await barrier.waitFor('move','committed');repository.observer=originalObserver;
+    await barrier.waitFor('producer','committed');barrier.release('move','committing');const results=await Promise.all([adoption,childReturn]);await barrier.waitFor('move','committed');repository.observer=originalObserver;
     expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
     expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(1);
     expect(completionInboxStore.take(adopter,adopter).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(0);GraphRegistry.delete(adopter);
