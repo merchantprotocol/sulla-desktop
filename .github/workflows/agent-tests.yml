@@ -220,27 +220,7 @@ jobs:
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
-        run: |
-          set +e
-          yarn test:pr > "$RUNNER_TEMP/test-pr.log" 2>&1
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            tail -n 120 "$RUNNER_TEMP/test-pr.log" | sed -r 's/\x1B\[[0-9;]*[mK]//g' > "$RUNNER_TEMP/test-pr-failure.txt"
-            summary="$(tail -n 30 "$RUNNER_TEMP/test-pr-failure.txt" | tr '\n' ' ' | cut -c1-1800)"
-            summary="${summary//'%'/'%25'}"; summary="${summary//$'\r'/'%0D'}"; summary="${summary//$'\n'/'%0A'}"
-            echo "::error file=.github/workflows/agent-tests.yml,title=Bounded agent-tests failure::$summary"
-            cat "$RUNNER_TEMP/test-pr-failure.txt"
-          fi
-          exit "$status"
-      - name: Upload bounded agent-test failure diagnostic
-        if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: agent-tests-failure-${{ github.run_id }}
-          path: ${{ runner.temp }}/test-pr-failure.txt
-          if-no-files-found: ignore
-          retention-days: 1
+        run: yarn test:pr
 
   # Full run on push to main (and manual dispatch): yarn test:agent runs the
   # whole agent-runtime suite, measured at 89-123s on #1959/#1964/#1968, plus
