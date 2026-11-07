@@ -94,6 +94,12 @@ export class AgentCompletionInboxService extends Service {
     for (const inbox of this.inboxes.values()) inbox.stopped = true;
   }
 
+  clear(): void {
+    this.inboxes.clear();
+    this.claimedKeys.clear();
+    this.idleDispatcher.clear();
+  }
+
   dispose(): void {
     this.stop();
     this.inboxes.clear();
