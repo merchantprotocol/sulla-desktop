@@ -43,11 +43,12 @@ export class JobWrapUpService extends Service {
     reason: string,
     gracePeriodSeconds: number,
     message: string,
+    skipMessage = false,
   ): Promise<void> {
     for (const taskIndex of taskIndexes) {
       const key = this.key(jobId, taskIndex);
       if (this.timers.has(key)) continue;
-      await this.messages.send({ jobId, taskIndex, message });
+      if(!skipMessage)await this.messages.send({ jobId, taskIndex, message });
       const delayMs = Math.max(1, gracePeriodSeconds || 120) * 1_000;
       const handle = this.timer.schedule(delayMs, () => {
         this.timers.delete(key);

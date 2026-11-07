@@ -478,8 +478,9 @@ export class BackendGraphWebSocketService {
           task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
       },
       (job, reason) => {
-        if (!job.parentChannel || !job.parentThreadId) return;
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
+        void agentJobProvider.custody.withOwner(job.jobId,undefined,async(_client,owner) => {
+          enqueueAgentCompletion(owner.channel,owner.threadId,{jobId:job.jobId,taskIndex:-1,results:[],failureReason:reason});
+        });
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));

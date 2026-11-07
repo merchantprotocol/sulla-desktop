@@ -7,6 +7,7 @@ import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { completionInboxStore, CompletionInboxStore } from './AgentCompletionInbox';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
+import type { JobCustodyPort } from '../app/Services/JobCustodyTypes';
 
 export interface PendingCompletionRepository {
   pendingCompletions(): Promise<AgentJob[]>;
@@ -33,6 +34,7 @@ export class AgentCompletionRecoveryService {
     private readonly repository: PendingCompletionRepository,
     private readonly inbox: CompletionInboxStore,
     private readonly deliveryPolicy: CompletionDeliveryPolicy,
+    private readonly custody?: Pick<JobCustodyPort,'withOwner'>,
   ) {}
 
   recover(): Promise<void> {
@@ -49,12 +51,13 @@ export class AgentCompletionRecoveryService {
       if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) continue;
       this.inFlight.add(job.jobId);
       try {
-        job.tasks.forEach((task, taskIndex) => {
+        for (const [taskIndex,task] of job.tasks.entries()) {
           const result = task.completion ?? job.results[taskIndex];
-          if (result && !this.deliveryPolicy.isDelivered(job, task)) {
-            this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, { jobId: job.jobId, taskIndex, results: [result] });
-          }
-        });
+          if (!result || this.deliveryPolicy.isDelivered(job, task)) continue;
+          const enqueue=(channel:string,threadId:string)=>this.inbox.enqueue(channel,threadId,{jobId:job.jobId,taskIndex,results:[result]});
+          if(this.custody) await this.custody.withOwner(job.jobId,taskIndex,async(_client,owner)=>enqueue(owner.channel,owner.threadId));
+          else enqueue(job.parentChannel!,job.parentThreadId!);
+        }
       } catch (error) {
         console.warn(`[AgentCompletionRecovery] delivery failed for ${ job.jobId }; will retry:`, error);
       } finally {
@@ -64,7 +67,7 @@ export class AgentCompletionRecoveryService {
   }
 }
 
-const recoveryService = new AgentCompletionRecoveryService(agentJobProvider.jobs, completionInboxStore, new CompletionDeliveryPolicy());
+const recoveryService = new AgentCompletionRecoveryService(agentJobProvider.jobs, completionInboxStore, new CompletionDeliveryPolicy(), agentJobProvider.custody);
 
 /** Thin boot adapter retained for BackendGraphWebSocketService. */
 export const recoverPendingAgentCompletions = (): Promise<void> => recoveryService.recover();

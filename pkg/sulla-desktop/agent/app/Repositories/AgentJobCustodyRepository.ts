@@ -7,9 +7,14 @@ import type { PostgresClient } from '../../database/PostgresClient';
 import type { CustodyActor, CustodyAuditRecord, CustodyMoveInput, CustodyMoveResult, CustodyOwner, CustodyRecord } from '../Services/JobCustodyTypes';
 
 export type CustodyLockedOperation<T> = (client: PoolClient, effectiveOwner: CustodyRecord) => Promise<T>;
+export type CustodyTransactionKind = 'move'|'producer';
+export type CustodyTransactionPhase = 'locked'|'committing'|'committed';
+export interface CustodyTransactionObservation {kind:CustodyTransactionKind;phase:CustodyTransactionPhase;jobId:string;taskIndex?:number;}
+export interface CustodyTransactionObserver {observe(event:CustodyTransactionObservation):Promise<void>;}
+export class NoopCustodyTransactionObserver implements CustodyTransactionObserver {async observe(_event:CustodyTransactionObservation):Promise<void>{}}
 
 export class AgentJobCustodyRepository {
-  constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>) {}
+  constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>,private readonly observer:CustodyTransactionObserver=new NoopCustodyTransactionObserver()) {}
 
   async resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
     const rows = await this.database.query<any>(this.resolveSql(false), [jobId, taskIndex ?? null]);
@@ -23,15 +28,20 @@ export class AgentJobCustodyRepository {
    * producer for the same effective scope cannot observe different owners.
    */
   async withCustodyLock<T>(jobId: string, taskIndex: number|undefined, operation: CustodyLockedOperation<T>): Promise<T|undefined> {
-    return this.database.transaction(async client => {
-      const owner = await this.resolveOwnerInTransaction(client, jobId, taskIndex);
-      return owner ? operation(client, owner) : undefined;
+    const result=await this.database.transaction(async client => {
+      const owner = await this.resolveOwnerInTransaction(client, jobId, taskIndex,'producer');
+      if(!owner)return undefined;
+      const value=await operation(client, owner);
+      await this.observe('producer','committing',jobId,taskIndex);
+      return value;
     });
+    await this.observe('producer','committed',jobId,taskIndex);
+    return result;
   }
 
   async move(input: CustodyMoveInput, expected: CustodyRecord, changedAt: Date): Promise<CustodyMoveResult> {
-    return this.database.transaction(async client => {
-      const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex);
+    const result=await this.database.transaction(async client => {
+      const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex,'move');
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
       if (!this.sameSnapshot(current, expected)) {
         return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
@@ -49,19 +59,28 @@ export class AgentJobCustodyRepository {
       await client.query(`UPDATE agent_inbox_messages SET receiver_channel=$3,receiver_thread_id=$4,receiver_agent_id=$5,lease_owner=NULL,lease_expires_at=NULL
         WHERE message_id IN (SELECT message_id FROM (${this.inboxScopeSql(input.taskIndex)}) scoped)`,
       [input.jobId,input.taskIndex ?? null,input.to.channel,input.to.threadId,input.to.agentId]);
+      await this.appendCustodyNotifications(client,input,current,nextVersion,changedAt);
+      await this.observe('move','committing',input.jobId,input.taskIndex);
       return { ok:true, previous:current, current:this.mapRecord(row,input.taskIndex) };
     });
+    await this.observe('move','committed',input.jobId,input.taskIndex);
+    return result;
   }
 
   async history(jobId: string): Promise<CustodyAuditRecord[]> {
     return (await this.database.query<any>(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1 ORDER BY changed_at,id`,[jobId])).map(row=>this.mapAudit(row));
   }
 
-  private async resolveOwnerInTransaction(client: PoolClient, jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
+  private async resolveOwnerInTransaction(client: PoolClient, jobId: string, taskIndex: number|undefined,kind:CustodyTransactionKind): Promise<CustodyRecord|undefined> {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), -1)`, [jobId]);
     if (taskIndex !== undefined) await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), $2)`, [jobId, taskIndex]);
+    await this.observe(kind,'locked',jobId,taskIndex);
     const result = await client.query(this.resolveSql(true), [jobId, taskIndex ?? null]);
     return result.rows[0] ? this.mapRecord(result.rows[0], taskIndex) : undefined;
+  }
+
+  private observe(kind:CustodyTransactionKind,phase:CustodyTransactionPhase,jobId:string,taskIndex?:number):Promise<void>{
+    return this.observer.observe({kind,phase,jobId,...(taskIndex===undefined?{}:{taskIndex})});
   }
 
   private inboxScopeSql(taskIndex?: number): string {
@@ -89,6 +108,28 @@ export class AgentJobCustodyRepository {
         version=EXCLUDED.version,changed_at=EXCLUDED.changed_at
       WHERE agent_job_custody.version=$8 RETURNING *`,
     [input.jobId,input.taskIndex,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt,current.version])).rows[0];
+  }
+
+  private async appendCustodyNotifications(client:PoolClient,input:CustodyMoveInput,current:CustodyRecord,nextVersion:number,changedAt:Date):Promise<void> {
+    const scope=input.taskIndex===undefined?'job':String(input.taskIndex);
+    const prefix=`custody:${input.jobId}:${scope}:${nextVersion}`;
+    const actor=input.actor.agentId;
+    const oldBody=`Job ${input.jobId} (${scope}) moved to ${input.to.agentId} by ${actor}: ${input.reason}`;
+    const newBody=`[Custody handoff] Job ${input.jobId} (${scope}) moved from ${current.agentId}; reason: ${input.reason}`;
+    const ids=(messageId:string)=>JSON.stringify({messageId,jobId:input.jobId,...(input.taskIndex===undefined?{}:{taskIndex:input.taskIndex}),custodyVersion:nextVersion});
+    await client.query(`INSERT INTO agent_inbox_messages
+      (message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,created_at)
+      VALUES ($1,$2,$3,$4,'custody','peer',$5,$6::jsonb,$11),($7,$8,$9,$10,'custody','peer',$12,$13::jsonb,$11)
+      ON CONFLICT(message_id) DO NOTHING`,[
+      `${prefix}:old`,current.channel,current.threadId,current.agentId,oldBody,ids(`${prefix}:old`),
+      `${prefix}:new`,input.to.channel,input.to.threadId,input.to.agentId,changedAt,newBody,ids(`${prefix}:new`),
+    ]);
+    await client.query(`INSERT INTO agent_job_messages(id,job_id,task_index,message,created_at)
+      SELECT $1 || ':' || (task.ordinality-1)::text,$2,task.ordinality-1,$3,$4
+      FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
+      WHERE j.job_id=$2 AND ($5::int IS NULL OR task.ordinality-1=$5)
+        AND task.value->>'status' IN ('queued','running','parked')
+      ON CONFLICT(id) DO NOTHING`,[`${prefix}:worker`,input.jobId,`[Manager changed] Your manager is now ${input.to.agentId}/${input.to.channel} (was ${current.agentId}/${current.channel})`,changedAt,input.taskIndex??null]);
   }
 
   private async appendAudit(client:PoolClient,input:CustodyMoveInput,current:CustodyRecord,nextVersion:number,changedAt:Date):Promise<void> {
