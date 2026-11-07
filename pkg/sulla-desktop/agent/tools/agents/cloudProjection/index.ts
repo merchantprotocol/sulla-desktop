@@ -39,11 +39,8 @@ export class CloudAgentStateProjection {
       ? !Number.isInteger(taskIndex) || !job.tasks[taskIndex] || !agentJobProvider.states.isLive(job, job.tasks[taskIndex])
       : !job.tasks.some(task => agentJobProvider.states.isLive(job, task)))) return { ok: false, error: 'agent_not_found' };
     if (body.type === 'agent.stop') {
-<<<<<<< HEAD
-      const result = await stopAgentJob(jobId, StopPrincipal.system('CloudAgentStateProjection'), 'Stopped from cloud command');
-=======
       const result = await stopAgentJob(jobId, StopPrincipal.system('cloud-runtime'), 'Stopped from cloud runtime');
->>>>>>> origin/epic/live-agents-accurate
+
       return { ok: result.successBoolean, message: result.responseString };
     }
     if (body.type === 'agent.message') {
