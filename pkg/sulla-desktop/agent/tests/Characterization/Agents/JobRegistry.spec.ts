@@ -187,16 +187,17 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     const stamp = Date.now();
     const root = `activity-root-${ stamp }`;
     const startedAt = stamp - 20 * 60_000;
-    const created = await registry.createJob([
+    // Creation and every projection read share one fixture-scoped composition root.
+    // Mixing the registered singleton writer with a fresh reader leaves the new runtime
+    // registry unaware of the task it is expected to project.
+    const provider = new AgentJobServiceProvider();
+    const created = await provider.service.createJob([
       { agentId: 'active-worker', label: 'active-worker', prompt: 'work', status: 'running', threadId: `activity-live-${ stamp }`, startedAt },
       { agentId: 'quiet-sibling', label: 'quiet-sibling', prompt: 'work', status: 'running', threadId: `activity-quiet-${ stamp }`, startedAt },
     ], 'sulla-desktop', root);
     const activityKey = `${ created.jobId }#0`;
     RunActivity.begin(activityKey);
     try {
-      // Use one fixture-scoped composition root. The process singleton owns mutable runtime
-      // state from earlier characterization cases and is not this test's production input.
-      const provider = new AgentJobServiceProvider();
       const fleet = await provider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
       const projected = fleet.find(value => value.jobId === created.jobId)!;
       expect(projected.tasks.map(value => value.state)).toEqual(['working', 'quiet']);
