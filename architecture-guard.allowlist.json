@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1118,
+  "entries": 1114,
   "files": {
     "background.ts": {
       "rules": {
@@ -636,11 +636,9 @@
     },
     "pkg/sulla-desktop/agent/languagemodels/index.ts": {
       "rules": {
-        "long-file": 454,
-        "mutable-state": 1,
-        "procedural-module": 3
+        "long-file": 454
       },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+      "reason": "pre-existing file over the line limit; split into classes"
     },
     "pkg/sulla-desktop/agent/languagemodels/modelDefaults.ts": {
       "rules": {
