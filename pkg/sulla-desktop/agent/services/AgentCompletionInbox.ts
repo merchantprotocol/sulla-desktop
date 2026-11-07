@@ -33,6 +33,7 @@ interface Inbox {
 /** Per-thread, per-task completion queue with no fixed delivery delay. */
 export class CompletionInboxStore {
   private readonly inboxes = new Map<string, Inbox>();
+  private readonly claimedKeys = new Set<string>();
   private idleDispatcher?: (channel: string, threadId: string) => void;
 
   registerIdleDispatcher(dispatcher: (channel: string, threadId: string) => void): void {
@@ -43,7 +44,7 @@ export class CompletionInboxStore {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
     const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
-    const duplicate = inbox.entries.some(entry => (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
+    const duplicate = this.claimedKeys.has(entryKey) || inbox.entries.some(entry => (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
     if (!inbox.stopped && !duplicate) this.idleDispatcher?.(channel, threadId);
@@ -65,9 +66,17 @@ export class CompletionInboxStore {
     const inbox = this.inboxes.get(key);
     if (!inbox?.entries.length) return [];
     const entries = inbox.entries.splice(0);
+    for (const entry of entries) this.claimedKeys.add(this.entryKey(entry));
     inbox.stopped = false;
     this.inboxes.delete(key);
     return entries;
+  }
+
+  acknowledge(entry: PendingCompletion): void { this.claimedKeys.delete(this.entryKey(entry)); }
+
+  requeue(channel: string, threadId: string, entry: PendingCompletion): boolean {
+    this.acknowledge(entry);
+    return this.enqueue(channel, threadId, entry);
   }
 
   format(entries: PendingCompletion[]): string {
@@ -80,7 +89,12 @@ export class CompletionInboxStore {
 
   clear(): void {
     this.inboxes.clear();
+    this.claimedKeys.clear();
     this.idleDispatcher = undefined;
+  }
+
+  private entryKey(entry: PendingCompletion): string {
+    return entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`;
   }
 
   private keyFor(channel: string, threadId: string): string {
@@ -94,6 +108,8 @@ export const registerCompletionIdleDispatcher = (dispatcher: (channel: string, t
 export const enqueueAgentCompletion = (channel: string, threadId: string, completion: PendingCompletion): boolean => completionInboxStore.enqueue(channel, threadId, completion);
 export const notifyAgentCompletionsReady = (channel: string, threadId: string): void => completionInboxStore.notifyReady(channel, threadId);
 export const setCompletionInboxStopped = (channel: string, threadId: string, stopped: boolean): void => completionInboxStore.setStopped(channel, threadId, stopped);
+export const acknowledgeAgentCompletion = (entry: PendingCompletion): void => completionInboxStore.acknowledge(entry);
+export const requeueAgentCompletion = (channel: string, threadId: string, entry: PendingCompletion): boolean => completionInboxStore.requeue(channel, threadId, entry);
 export const takeAgentCompletions = (channel: string, threadId: string): PendingCompletion[] => completionInboxStore.take(channel, threadId);
 export const formatCompletionBatch = (entries: PendingCompletion[]): string => completionInboxStore.format(entries);
 

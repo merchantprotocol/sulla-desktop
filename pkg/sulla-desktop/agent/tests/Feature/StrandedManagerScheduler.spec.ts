@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { StrandedEpisodeRepository } from '../../app/Repositories/StrandedEpisodeRepository';
 import type { StrandedAlertDispatcher } from '../../app/Services/StrandedManagerAlertService';
 import { StrandedManagerDetector, type ManagerActivitySource, type StrandedManagerCandidate } from '../../app/Services/StrandedManagerDetector';
+import { CompletionAcknowledgementService } from '../../app/Services/CompletionAcknowledgementService';
 import { StrandedManagerScheduler } from '../../app/Services/StrandedManagerScheduler';
 import type { FleetJobView, FleetTaskView } from '../../app/Services/AgentFleetTypes';
 import { AgentCompletionInbox } from '../../services/AgentCompletionInbox';
@@ -67,20 +68,34 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     const schedulerA = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     const schedulerB = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     expect((await Promise.all([schedulerA.tick(), schedulerB.tick()])).reduce((sum, value) => sum + value, 0)).toBe(1);
-    expect(inbox.take('sulla-desktop', 'grandparent-thread')).toHaveLength(1);
-    const [row] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
-    expect(row.status).toBe('delivered');
+    const [entry] = inbox.take('sulla-desktop', 'grandparent-thread');
+    expect(entry).toBeDefined();
+    const [pending] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
+    expect(pending.status).toBe('pending');
+    const tasks = { markTaskCompletionDelivered: async() => { throw new Error('stranded notice must not acknowledge a task completion') } };
+    await new CompletionAcknowledgementService(tasks, episodes, inbox).acknowledge(entry);
+    const [delivered] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
+    expect(delivered.status).toBe('delivered');
   });
 
   it('retries after dispatcher failure and after restart between persistence and enqueue', async() => {
     const id = `retry-${ Date.now() }`; await persistManager(id); const fleet = new FakeFleet([manager(id), child(id)]); const failing = new FailingOnceDispatcher();
     const first = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, failing);
     expect(await first.tick()).toBe(0); expect(await first.tick()).toBe(1); expect(failing.calls).toBe(2);
-    const restartId = `${ id }-restart`; await persistManager(restartId); const [candidate] = new StrandedManagerDetector(() => now).detect([manager(restartId), child(restartId)]);
-    await episodes.insertPending(candidate);
-    const inbox = new AgentCompletionInbox();
-    const restarted = new StrandedManagerScheduler(new FakeFleet([]) as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
-    expect(await restarted.tick()).toBe(1); expect(inbox.take('sulla-desktop', 'grandparent-thread')).toHaveLength(1);
+    const restartId = `${ id }-restart`; await persistManager(restartId); const restartFleet = new FakeFleet([manager(restartId), child(restartId)]);
+    const beforeCrashInbox = new AgentCompletionInbox();
+    const beforeCrash = new StrandedManagerScheduler(restartFleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(beforeCrashInbox));
+    expect(await beforeCrash.tick()).toBe(1);
+    const [pendingBeforeRestart] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [restartId]);
+    expect(pendingBeforeRestart.status).toBe('pending');
+    beforeCrashInbox.clear(); // process crash after enqueue, before the parent consumes the notice
+    const restartedInbox = new AgentCompletionInbox();
+    const restarted = new StrandedManagerScheduler(restartFleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(restartedInbox));
+    expect(await restarted.tick()).toBe(1);
+    const [replayed] = restartedInbox.take('sulla-desktop', 'grandparent-thread');
+    expect(replayed.dedupeKey).toContain(`stranded:${ restartId }`);
+    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {} }, episodes, restartedInbox).acknowledge(replayed);
+    expect(await restarted.tick()).toBe(0);
   });
 
   it('serializes deferred ticks, honours future waits and live activity, and alerts a changed episode once', async() => {
@@ -95,6 +110,24 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     const changed = new StrandedManagerScheduler(fleet as never, new StrandedManagerDetector(() => now), episodes, new StrandedManagerAlertService(inbox));
     expect(await changed.tick()).toBe(1); fleet.jobs = [manager(changedId), child(changedId, 'new', { returnedAt: iso(11 * 60_000), finishedAt: iso(11 * 60_000) })];
     expect(await changed.tick()).toBe(1); expect(await changed.tick()).toBe(0);
+  });
+
+  it('retains delivered identity across a temporary exemption and does not alert the identical state twice', async() => {
+    // risk: duplicate irreversible side effects -- transient activity must not erase durable episode identity
+    const id = `temporary-exemption-${ Date.now() }`; await persistManager(id);
+    const fleet = new FakeFleet([manager(id), child(id)]); const inbox = new AgentCompletionInbox();
+    const detector = new StrandedManagerDetector(() => now);
+    const scheduler = new StrandedManagerScheduler(fleet as never, detector, episodes, new StrandedManagerAlertService(inbox));
+    expect(await scheduler.tick()).toBe(1);
+    const [entry] = inbox.take('sulla-desktop', 'grandparent-thread');
+    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {} }, episodes, inbox).acknowledge(entry);
+    fleet.jobs = [manager(id, { wakeAt: iso(-60_000) }), child(id)];
+    expect(await scheduler.tick()).toBe(0);
+    fleet.jobs = [manager(id), child(id)];
+    expect(await scheduler.tick()).toBe(0);
+    expect(inbox.take('sulla-desktop', 'grandparent-thread')).toEqual([]);
+    const rows = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
+    expect(rows.map(row => row.status)).toEqual(['delivered']);
   });
 
   it('detects all 20 managers across more than 100 terminal children', () => {

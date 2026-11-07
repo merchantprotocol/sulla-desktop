@@ -26,13 +26,14 @@ export class StrandedEpisodeRepository {
     for (const ref of managerRefs) {
       const split = ref.lastIndexOf('#');
       const jobId = ref.slice(0, split); const taskIndex = Number(ref.slice(split + 1)); const stateKey = active.get(ref);
-      await this.connection.run(`DELETE FROM agent_stranded_episodes WHERE manager_job_id = $1 AND manager_task_index = $2 AND ($3::text IS NULL OR state_key <> $3)`,
+      await this.connection.run(`DELETE FROM agent_stranded_episodes WHERE manager_job_id = $1 AND manager_task_index = $2 AND status = 'pending' AND $3::text IS NOT NULL AND state_key <> $3`,
         [jobId, taskIndex, stateKey ?? null]);
     }
   }
 
-  async pending(): Promise<PendingStrandedEpisode[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' ORDER BY created_at, state_key`);
+  async pending(stateKeys: string[]): Promise<PendingStrandedEpisode[]> {
+    if (stateKeys.length === 0) return [];
+    const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' AND state_key = ANY($1::text[]) ORDER BY created_at, state_key`, [stateKeys]);
     return rows.map(row => ({ managerJobId: String(row.manager_job_id), managerTaskIndex: Number(row.manager_task_index),
       stateKey: String(row.state_key), parentChannel: String(row.parent_channel), parentThreadId: String(row.parent_thread_id),
       label: String(row.label), reason: String(row.reason), reasonKind: String(row.state_key).includes(':result-not-woken:') ? 'result-not-woken' : 'parked-without-live-children',
@@ -43,10 +44,9 @@ export class StrandedEpisodeRepository {
     await this.connection.run(`UPDATE agent_stranded_episodes SET attempts = attempts + 1 WHERE state_key = $1 AND status = 'pending'`, [stateKey]);
   }
 
-  async markDelivered(candidate: PendingStrandedEpisode): Promise<boolean> {
+  async markDelivered(stateKey: string): Promise<boolean> {
     const rows = await this.connection.select(`UPDATE agent_stranded_episodes SET status = 'delivered', delivered_at = now()
-      WHERE manager_job_id = $1 AND manager_task_index = $2 AND state_key = $3 AND status = 'pending' RETURNING state_key`,
-    [candidate.managerJobId, candidate.managerTaskIndex, candidate.stateKey]);
+      WHERE state_key = $1 AND status = 'pending' RETURNING state_key`, [stateKey]);
     return rows.length === 1;
   }
 

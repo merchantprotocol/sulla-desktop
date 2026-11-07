@@ -38,11 +38,11 @@ export class StrandedManagerScheduler {
     await this.episodes.reconcile(this.detector.managerRefs(jobs), candidates);
     for (const candidate of candidates) await this.episodes.insertPending(candidate);
     let delivered = 0;
-    for (const episode of await this.episodes.pending()) {
+    for (const episode of await this.episodes.pending(candidates.map(candidate => candidate.stateKey))) {
       await this.episodes.markAttempt(episode.stateKey);
       try {
         const acknowledged = await this.alerts.alert(episode);
-        if (acknowledged && await this.episodes.markDelivered(episode)) delivered++;
+        if (acknowledged) delivered++;
       } catch (error) { this.logger.error(`Stranded-manager delivery failed for ${ episode.stateKey }`, error); }
     }
     return delivered;

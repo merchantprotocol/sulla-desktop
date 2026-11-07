@@ -10,7 +10,7 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -32,7 +32,6 @@ import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
-import { markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
@@ -921,7 +920,7 @@ export class BackendGraphWebSocketService {
       for (const message of state.messages as any[]) {
         const steerMeta = message?.metadata;
         if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
-        for (const entry of Array.isArray(steerMeta.completionEntries) ? steerMeta.completionEntries : []) await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
+        for (const entry of Array.isArray(steerMeta.completionEntries) ? steerMeta.completionEntries : []) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
         delete steerMeta.completionEntries;
       }
       turnConsumedInput = true;
@@ -950,7 +949,7 @@ export class BackendGraphWebSocketService {
       if (isCurrentRun()) {
         if (turnConsumedInput) {
           for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-            await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
+            await agentJobProvider.completionAcknowledgements.acknowledge(entry);
           }
           // An orchestrator job message (send_job_message waking a parked
           // manager) is acked only now, after the turn it was handed to
@@ -966,7 +965,7 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
-          for (const entry of metadata?.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+          for (const entry of metadata?.completionEntries ?? []) requeueAgentCompletion(channelId, threadId, entry);
         }
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask

@@ -8,6 +8,7 @@ import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRe
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
+import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
 import { AgentJobService } from '../Services/AgentJobService';
 import { AgentFleetProjectionService } from '../Services/AgentFleetProjectionService';
 import { AgentStateService } from '../Services/AgentStateService';
@@ -35,6 +36,7 @@ export class AgentJobServiceProvider {
   readonly states: AgentStateService;
   readonly fleet: AgentFleetProjectionService;
   readonly stranded: StrandedManagerScheduler;
+  readonly completionAcknowledgements: CompletionAcknowledgementService;
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
@@ -58,6 +60,7 @@ export class AgentJobServiceProvider {
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);
+    this.completionAcknowledgements = new CompletionAcknowledgementService(this.service, strandedEpisodes, completionInboxStore);
     this.delivery = new JobCompletionDelivery(this.service);
   }
 }
