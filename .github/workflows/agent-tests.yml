@@ -225,7 +225,22 @@ jobs:
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
-        run: yarn test:pr
+        shell: bash
+        run: |
+          set -o pipefail
+          output_file="${RUNNER_TEMP}/test-pr-output.log"
+          yarn test:pr 2>&1 | tee "${output_file}"
+          status=${PIPESTATUS[0]}
+          if (( status != 0 )); then
+            # CI's broker can withhold redirected job logs. Surface a bounded,
+            # escaped failure excerpt in the check annotation as a safe fallback.
+            excerpt=$(tail -n 80 "${output_file}" | tail -c 12000)
+            excerpt=${excerpt//'%'/'%25'}
+            excerpt=${excerpt//$'\r'/'%0D'}
+            excerpt=${excerpt//$'\n'/'%0A'}
+            echo "::error file=.github,title=Per-PR agent runtime specs failed::${excerpt}"
+          fi
+          exit "${status}"
 
   # Full run on push to main (and manual dispatch): yarn test:agent runs the
   # whole agent-runtime suite, measured at 89-123s on #1959/#1964/#1968, plus
