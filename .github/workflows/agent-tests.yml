@@ -229,8 +229,12 @@ jobs:
         run: |
           set -o pipefail
           output_file="${RUNNER_TEMP}/test-pr-output.log"
+          # GitHub invokes bash with -e; disable it only while recording the
+          # test status so the fixed-schema annotation can still be emitted.
+          set +e
           yarn test:pr 2>&1 | tee "${output_file}"
           status=${PIPESTATUS[0]}
+          set -e
           if (( status != 0 )); then
             # CI's broker can withhold redirected job logs. Expose only stable
             # suite identifiers: never assertion text, stack traces, or output.
