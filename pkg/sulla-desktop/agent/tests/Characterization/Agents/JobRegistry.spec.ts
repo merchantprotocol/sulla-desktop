@@ -122,7 +122,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
     const check = new CheckAgentJobsHarness();
     for (let index = 0; index < 10; index++) await check.call({ jobId: job.jobId });
-    await check.call({});
+    await check.call({ scope: 'all' });
     expect((await registry.getJobsForParentThread('retention-parent')).map(item => item.jobId)).toContain(job.jobId);
     expect((await sendJobMessage({ jobId: job.jobId, message: 'lookup only' })).successBoolean).toBe(false);
 
@@ -134,6 +134,83 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(Number(messages)).toBe(1);
   });
 
+
+  it('keeps scope mine isolated across two real chat trees and reports persisted lineage titles', async() => {
+    // risk: policy / one chat can inspect another chat's delegated work
+    const stamp = Date.now();
+    const rootA = `fleet-root-a-${ stamp }`;
+    const rootB = `fleet-root-b-${ stamp }`;
+    await database.query(`INSERT INTO conversation_history (id, thread_id, type, title) VALUES
+      ($1, $1, 'chat', 'Root A title'), ($2, $2, 'chat', 'Root B title')`, [rootA, rootB]);
+    const managerA = await registry.createJob([
+      { agentId: 'unused', label: 'unused', prompt: 'work', status: 'running', threadId: `fleet-unused-${ stamp }` },
+      { agentId: 'manager-a', label: 'manager-a', prompt: 'work', status: 'running', threadId: `fleet-manager-a-${ stamp }` },
+    ], 'sulla-desktop', rootA, { parentAgentId: 'sulla' });
+    const workerA = await registry.createJob([
+      { agentId: 'worker-a', label: 'worker-a', prompt: 'work', status: 'running', threadId: `fleet-worker-a-${ stamp }` },
+    ], 'codex-sol-worker', `fleet-manager-a-${ stamp }`, { parentAgentId: 'manager-a' });
+    const grandchildA = await registry.createJob([
+      { agentId: 'grandchild-a', label: 'grandchild-a', prompt: 'work', status: 'running', threadId: `fleet-grandchild-a-${ stamp }` },
+    ], 'codex-sol-worker', `fleet-worker-a-${ stamp }`, { parentAgentId: 'worker-a' });
+    const managerB = await registry.createJob([
+      { agentId: 'manager-b', label: 'manager-b', prompt: 'work', status: 'running', threadId: `fleet-manager-b-${ stamp }` },
+    ], 'sulla-desktop', rootB, { parentAgentId: 'sulla' });
+
+    const check = new CheckAgentJobsHarness();
+    check.setState({ metadata: { threadId: rootA } });
+    const mine = await check.call({ scope: 'mine' });
+    const minePayload = JSON.parse(mine.responseString);
+    expect(minePayload.jobs.map((value: any) => value.jobId)).toEqual(expect.arrayContaining([managerA.jobId, workerA.jobId, grandchildA.jobId]));
+    expect(minePayload.jobs).toHaveLength(3);
+    expect(minePayload.jobs.some((value: any) => value.jobId === managerB.jobId)).toBe(false);
+    const projectedWorkerA = minePayload.jobs.find((value: any) => value.jobId === workerA.jobId);
+    expect(projectedWorkerA).toMatchObject({
+      parentThreadId: `fleet-manager-a-${ stamp }`, parentAgentId: 'manager-a', parentJobId: managerA.jobId,
+      parentTaskIndex: 1, rootThreadId: rootA, rootChatTitle: 'Root A title',
+    });
+    expect(projectedWorkerA.tasks[0]).toMatchObject({ parentJobId: managerA.jobId, parentTaskIndex: 1, rootThreadId: rootA, rootChatTitle: 'Root A title' });
+
+    const all = await check.call({ scope: 'all', limit: 100 });
+    const allPayload = JSON.parse(all.responseString);
+    expect(allPayload.jobs.map((value: any) => value.jobId)).toEqual(expect.arrayContaining([managerA.jobId, workerA.jobId, grandchildA.jobId, managerB.jobId]));
+    expect(allPayload.jobs.find((value: any) => value.jobId === managerB.jobId)).toMatchObject({ rootThreadId: rootB, rootChatTitle: 'Root B title' });
+  });
+
+  it('projects a real manager team tree and clears its unprocessed rollup after task delivery', async() => {
+    // risk: durable worker results are lost or attributed to a sibling manager
+    const stamp = Date.now();
+    const root = `rollup-root-${ stamp }`;
+    const manager = await registry.createJob([
+      { agentId: 'manager-a', label: 'manager-a', prompt: 'own', status: 'running', threadId: `rollup-manager-a-${ stamp }` },
+      { agentId: 'manager-b', label: 'manager-b', prompt: 'own', status: 'running', threadId: `rollup-manager-b-${ stamp }` },
+    ], 'sulla-desktop', root);
+    const worker = await registry.createJob([
+      { agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: `rollup-worker-${ stamp }` },
+    ], 'coding-manager-sol', `rollup-manager-a-${ stamp }`);
+    await messaging.AgentJobMessagingModel.appendCheckin(`rollup-worker-${ stamp }`, { step: 'blocked', summary: 'waiting', blockers: ['dependency'] });
+    const grandchild = await registry.createJob([
+      { agentId: 'grandchild', label: 'grandchild', prompt: 'work', status: 'running', threadId: `rollup-grandchild-${ stamp }` },
+    ], 'codex-sol-worker', `rollup-worker-${ stamp }`);
+    await registry.recordTaskCompletion(grandchild.jobId, 0, { label: 'grandchild', status: 'completed', output: 'done', threadId: `rollup-grandchild-${ stamp }` });
+
+    const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+    const { AgentTeamRollupProjector } = await import('../../../app/Services/AgentTeamRollupProjector');
+    const snapshot = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+    const rollups = new AgentTeamRollupProjector(() => Date.now()).project(snapshot);
+    expect(rollups.get(`${ manager.jobId }#0`)).toMatchObject({ states: { blocked: 1, done: 1 }, openBlockers: 1, unprocessedResults: 1, workerCount: 2 });
+    expect(rollups.has(`${ manager.jobId }#1`)).toBe(false);
+
+    const check = new CheckAgentJobsHarness();
+    check.setState({ metadata: { threadId: root } });
+    const tree = JSON.parse((await check.call({ scope: 'mine', view: 'tree', limit: 100 })).responseString);
+    expect(tree.tasks.map((line: any) => line.ref)).toEqual(expect.arrayContaining([`${ manager.jobId }#0`, `${ worker.jobId }#0`, `${ grandchild.jobId }#0`]));
+    expect(tree.tasks.every((line: any) => Buffer.byteLength(JSON.stringify(line), 'utf8') <= 400)).toBe(true);
+
+    await registry.markTaskCompletionDelivered(grandchild.jobId, 0);
+    const fresh = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+    expect(new AgentTeamRollupProjector(() => Date.now()).project(fresh).get(`${ manager.jobId }#0`)?.unprocessedResults).toBe(0);
+  });
+
   it('serializes stop attribution in list and detail after a repository reload', async() => {
     // risk: audit attribution disappears from supervision after the process cache is cold.
     const job = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'work', status: 'running', threadId: `stop-reload-${ Date.now() }` }]);
@@ -143,7 +220,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
     const check = new CheckAgentJobsHarness();
     const detail = JSON.parse((await check.call({ jobId: job.jobId })).responseString!);
-    const list = JSON.parse((await check.call({ includeFinished: true, limit: 100 })).responseString!);
+    const list = JSON.parse((await check.call({ scope: 'all', includeFinished: true, limit: 100 })).responseString!);
     const listed = list.jobs.find((item: { jobId: string }) => item.jobId === job.jobId);
     expect(detail).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });
     expect(listed).toMatchObject({ stoppedBy: 'human', stopReason: 'operator requested' });

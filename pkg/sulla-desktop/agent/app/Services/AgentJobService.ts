@@ -16,11 +16,13 @@ import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import { SpawnJobCreator } from './SpawnJobCreator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
+
   constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService, spawnDedupe = new SpawnDedupeGuard(clock)) { super(); this.runtime.start(); this.jobCreator = new SpawnJobCreator(repository, runtime, recovery, clock, idGenerator, spawnDedupe, states); }
   private readonly jobCreator: SpawnJobCreator;
   async createJob(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
     return this.jobCreator.create(taskInput, parentChannel, parentThreadId, options);
   }
+
 }
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
@@ -141,7 +143,9 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
     if (!job.tasks[taskIndex]) return job;
     job.results[taskIndex] = result;
     job.tasks[taskIndex] = { ...job.tasks[taskIndex],
+
       status: job.tasks[taskIndex].status === 'stopped' ? 'stopped' : result.status,
+
       threadId: result.threadId || job.tasks[taskIndex].threadId,
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
