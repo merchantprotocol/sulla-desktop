@@ -7,7 +7,7 @@ import { BaseTool, ToolResponse } from '../base';
 import { contractCandidate, contractReturnStatus, normalizeContract, validateContractResult } from './contract';
 import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
-import { completeJob, findTaskByThread, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
+import { completeJob, findTaskByThread, recordTaskCompletion, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
@@ -118,6 +118,7 @@ export class ReturnResultWorker extends BaseTool {
 async function finishRecoveredJob(job: AgentJob): Promise<void> {
   if (!job.tasks.every(task => task.returnedAt)) return;
   const results = job.tasks.map(task => returnedJobResult(task, task.label, task.threadId ?? ''));
+  for (const [taskIndex,result] of results.entries()) await recordTaskCompletion(job.jobId, taskIndex, result);
   await completeJob(job.jobId, results);
   await deliverJobCompletion(job, results);
   const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');

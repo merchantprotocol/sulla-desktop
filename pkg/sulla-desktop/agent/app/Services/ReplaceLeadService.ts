@@ -19,7 +19,7 @@ export class ReplaceLeadService {
    try{await this.targets.validate(input.agentId,input.model,input.provider);}catch(error){return {ok:false,message:(error as Error).message};}
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note);
    if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
-   const locked=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client,pinned)=>{
+   const locked=await this.custody.withOwner(input.jobId,input.taskIndex,async(client,pinned)=>{
      const refusal=await this.custody.authorizeReplacement(pinned,input.actor);if(refusal)return {refusal};
      return {operation:await this.packets.operation(client,input.jobId,input.taskIndex,input.agentId),owner:pinned};
    });
@@ -40,7 +40,7 @@ export class ReplaceLeadService {
    const moved:any[]=[];const failed:any[]=[];
    if(operation.phase==='launched'){
      while(true){
-       const children=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client)=>{
+       const children=await this.custody.withOwner(input.jobId,input.taskIndex,async(client)=>{
          operation=await this.packets.lockOperation(client,operation!);
          const current=await this.packets.listDirectChildren(oldLeadThread,client);
          if(current.length===0)await this.packets.markChildrenMoved(client,operation!);
@@ -66,7 +66,7 @@ export class ReplaceLeadService {
      await this.packets.finishWrapUp(operation);
    }
    if(!failed.length&&operation.phase==='wrapped'){
-     const claimed=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,client=>this.packets.claimAudit(client,operation!,audit));
+     const claimed=await this.custody.withOwner(input.jobId,input.taskIndex,client=>this.packets.claimAudit(client,operation!,audit));
      if(claimed){const target=(await this.messaging.targetsForJob(input.jobId,input.taskIndex))[0];if(target)await this.messaging.queueMessage(target,`[Lead replacement] ${audit}`);}
    }
    return {ok:failed.length===0,replacement:launched,moved,failed,prompt:packet.prompt,message:failed.length?`Replacement launched; ${moved.length} children moved and ${failed.length} failed.`:`Replacement launched and ${moved.length} child tasks moved.`};

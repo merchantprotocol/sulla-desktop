@@ -62,6 +62,7 @@ export class AgentJobCustodyRepository {
       await client.query(`UPDATE agent_inbox_messages SET receiver_channel=$3,receiver_thread_id=$4,receiver_agent_id=$5,lease_owner=NULL,lease_expires_at=NULL
         WHERE message_id IN (SELECT message_id FROM (${this.inboxScopeSql(input.taskIndex)}) scoped)`,
       [input.jobId,input.taskIndex ?? null,effectiveInput.to.channel,effectiveInput.to.threadId,effectiveInput.to.agentId]);
+      await this.appendCustodyNotifications(client,effectiveInput,current,nextVersion,changedAt);
       await this.observe('move','committing',input.jobId,input.taskIndex);
       return { ok:true, previous:current, current:this.mapRecord(row,input.taskIndex) };
     });
@@ -120,6 +121,28 @@ export class AgentJobCustodyRepository {
         version=EXCLUDED.version,changed_at=EXCLUDED.changed_at
       WHERE agent_job_custody.version=$8 RETURNING *`,
     [input.jobId,input.taskIndex,input.to.channel,input.to.threadId,input.to.agentId,nextVersion,changedAt,current.version])).rows[0];
+  }
+
+  private async appendCustodyNotifications(client:PoolClient,input:CustodyMoveInput,current:CustodyRecord,nextVersion:number,changedAt:Date):Promise<void> {
+    const scope=input.taskIndex===undefined?'job':String(input.taskIndex);
+    const prefix=`custody:${input.jobId}:${scope}:${nextVersion}`;
+    const actor=input.actor.agentId;
+    const oldBody=`Job ${input.jobId} (${scope}) moved to ${input.to.agentId} by ${actor}: ${input.reason}`;
+    const newBody=`[Custody handoff] Job ${input.jobId} (${scope}) moved from ${current.agentId}; reason: ${input.reason}`;
+    const ids=(messageId:string)=>JSON.stringify({messageId,jobId:input.jobId,...(input.taskIndex===undefined?{}:{taskIndex:input.taskIndex}),custodyVersion:nextVersion});
+    await client.query(`INSERT INTO agent_inbox_messages
+      (message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,created_at)
+      VALUES ($1,$2,$3,$4,'custody','peer',$5,$6::jsonb,$11),($7,$8,$9,$10,'custody','peer',$12,$13::jsonb,$11)
+      ON CONFLICT(message_id) DO NOTHING`,[
+      `${prefix}:old`,current.channel,current.threadId,current.agentId,oldBody,ids(`${prefix}:old`),
+      `${prefix}:new`,input.to.channel,input.to.threadId,input.to.agentId,changedAt,newBody,ids(`${prefix}:new`),
+    ]);
+    await client.query(`INSERT INTO agent_job_messages(id,job_id,task_index,message,created_at)
+      SELECT $1 || ':' || (task.ordinality-1)::text,$2,task.ordinality-1,$3,$4
+      FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
+      WHERE j.job_id=$2 AND ($5::int IS NULL OR task.ordinality-1=$5)
+        AND task.value->>'status' IN ('queued','running','parked')
+      ON CONFLICT(id) DO NOTHING`,[`${prefix}:worker`,input.jobId,`[Manager changed] Your manager is now ${input.to.agentId}/${input.to.channel} (was ${current.agentId}/${current.channel})`,changedAt,input.taskIndex??null]);
   }
 
   private async appendAudit(client:PoolClient,input:CustodyMoveInput,current:CustodyRecord,nextVersion:number,changedAt:Date):Promise<void> {

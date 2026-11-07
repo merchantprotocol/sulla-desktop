@@ -9,7 +9,7 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobAbortScope } from './JobAbortScope';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
-import { JobStopService } from './JobStopService';
+import { JobStopService, type StopAuthorization } from './JobStopService';
 import { JobWrapUpService } from './JobWrapUpService';
 import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import { SpawnJobCreator } from './SpawnJobCreator';
@@ -91,7 +91,7 @@ async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadI
     contract: task.contract?.name ?? 'result',
   };
 }
-async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {
+async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<StopAuthorization> {
   return this.stops.authorize(jobId, principal);
 }
 async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> {

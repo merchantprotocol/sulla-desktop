@@ -7,6 +7,7 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob } from './jobRegistry';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 /**
  * Persist a message for one or all open tasks of a job and deliver it.
@@ -14,7 +15,7 @@ import { getJob } from './jobRegistry';
  * child is a desktop chat: the message steers its live turn, or starts a turn
  * when it is idle, through the same inject path the old message_tab used.
  */
-export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string }): Promise<ToolResponse> {
+export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string }, metadata?: Record<string,any>): Promise<ToolResponse> {
   const { jobId, taskIndex, message } = input;
   if (!jobId || !message) {
     return { successBoolean: false, responseString: 'jobId and a non-empty message are required.' };
@@ -23,8 +24,21 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
   }
 
-  const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
-  if (targets.length === 0) {
+  const caller=metadata?await agentJobProvider.custodyCallerVerifier.verify(metadata):undefined;
+  const snapshot=caller?await agentJobProvider.custody.resolveOwner(jobId,taskIndex):undefined;
+  const snapshotAncestor=caller&&snapshot&&caller.threadId!==snapshot.threadId?await agentJobProvider.custodyLineage.isAncestor(caller.threadId,snapshot.threadId):false;
+  const locked=await agentJobProvider.custody.withOwner(jobId,taskIndex,async(client,owner)=>{
+    if(caller){
+      const same=caller.threadId===owner.threadId;
+      const unchanged=snapshot?.threadId===owner.threadId&&snapshot.version===owner.version;
+      if(!same&&!(unchanged&&snapshotAncestor))return {kind:'forbidden',owner} as const;
+    }
+    return {kind:'queued',queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
+  });
+  if(!locked)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
+  if(locked.kind==='forbidden')return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${locked.owner.agentId} (${locked.owner.channel}/${locked.owner.threadId}).`};
+  const queued=locked.queued;
+  if (queued.length === 0) {
     return {
       successBoolean: false,
       responseString: taskIndex === undefined
@@ -32,15 +46,11 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         : `Job "${ jobId }" has no task at index ${ taskIndex } (or it has already finished).`,
     };
   }
-  if (targets.some(target => !['running', 'parked'].includes(target.jobStatus))) {
+  if (queued.some(({target}) => !['running', 'parked'].includes(target.jobStatus))) {
     return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
   }
 
   const job = await getJob(jobId);
-  const queued = await Promise.all(targets.map(async(target) => ({
-    target,
-    record: await AgentJobMessagingModel.queueMessage(target, message),
-  })));
   let deliveredLive = 0;
   const notWoken: Array<{ taskIndex: number; reason: string }> = [];
 
@@ -138,6 +148,6 @@ export class SendJobMessageWorker extends BaseTool {
       jobId:     String(input.jobId ?? '').trim(),
       message:   String(input.message ?? '').trim(),
       taskIndex: input.taskIndex === undefined ? undefined : Number(input.taskIndex),
-    });
+    }, (this.state as any)?.metadata);
   }
 }
