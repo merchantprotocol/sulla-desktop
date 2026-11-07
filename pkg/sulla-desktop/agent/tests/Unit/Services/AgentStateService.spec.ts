@@ -168,22 +168,39 @@ describe('authoritative live agent state', () => {
 
   it('rechecks exact-task activity inside the serialized transition boundary', async() => {
     // risk: a live model/tool turn is killed while lost reconciliation waits behind another mutation
-    const { store, states } = harness([job('queued-race', [task({ startedAt: 100_000 })])], 500_000);
-    let release!: () => void; let entered!: () => void;
+    const { store, cache, states } = harness([job('queued-race', [task({ startedAt: 100_000 })])], 500_000);
+    let release!: () => void; let entered!: () => void; let submitted!: () => void;
     const paused = new Promise<void>(resolve => { release = resolve });
     const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const didSubmit = new Promise<void>(resolve => { submitted = resolve });
     const replace = vi.spyOn(store, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; store.durable.set(next.jobId, structuredClone(next)); });
+    const cas = vi.spyOn(store, 'replaceStateIfActivityUnchanged');
+    const realTransition = states.transitionIfActivityUnchanged.bind(states);
+    const transition = vi.spyOn(states, 'transitionIfActivityUnchanged').mockImplementation((...args) => {
+      const pending = realTransition(...args);
+      submitted();
+      return pending;
+    });
+    const emissions: number[] = [];
+    states.onChange(version => emissions.push(version));
     const activityTimes = new Map<string, number>();
     const activity = new AgentTaskActivityProjector({ lastActivityAt: key => activityTimes.get(key) });
     const firstMutation = states.transition('queued-race', 0, { summary: 'queued mutation' });
     await didEnter;
     const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     const reconciling = reconciler.reconcile();
+    await didSubmit;
     activityTimes.set('queued-race#0', 499_500);
     release();
     await firstMutation;
+    const versionAfterFirstMutation = states.version;
     expect(await reconciling).toBe(0);
+    expect(transition).toHaveBeenCalledTimes(1);
+    expect(cas).not.toHaveBeenCalled();
     expect(store.durable.get('queued-race')?.tasks[0]).toMatchObject({ status: 'running', summary: 'queued mutation' });
+    expect(cache.jobs.get('queued-race')?.tasks[0]).toMatchObject({ status: 'running', summary: 'queued mutation' });
+    expect(states.version).toBe(versionAfterFirstMutation);
+    expect(emissions).toEqual([versionAfterFirstMutation]);
     replace.mockRestore();
   });
 
