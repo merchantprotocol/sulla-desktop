@@ -451,6 +451,7 @@ export class SpawnAgentWorker extends BaseTool {
       // Dedupe is intentionally per single-task call; multi-task batches are
       // never partially reused. An omitted label opts out completely.
       dedupeLabel: tasks.length === 1 ? tasks[0].label?.trim() : undefined,
+      launchKey: typeof input.launchKey==='string' ? input.launchKey.trim()||undefined : undefined,
     };
 
     // Abort signal for THIS job (set once the job is created below).

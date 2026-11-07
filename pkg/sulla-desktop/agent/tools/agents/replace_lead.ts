@@ -7,6 +7,7 @@ import { LeadHandoffRepository } from '../../app/Repositories/LeadHandoffReposit
 import { LeadHandoffPacketAssembler } from '../../app/Services/LeadHandoffPacketAssembler';
 import { ReplaceLeadService,type LeadWrapUpPort } from '../../app/Services/ReplaceLeadService';
 import { SpawnLeadLauncher } from '../../app/Services/SpawnLeadLauncher';
+import { ReplacementTargetValidator } from '../../app/Services/ReplacementTargetValidator';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { postgresClient } from '../../database/PostgresClient';
@@ -23,7 +24,7 @@ class StopPathLeadWrapUp implements LeadWrapUpPort {
 }
 export class ReplaceLeadWorker extends BaseTool {
  name=''; description='';
- constructor(private readonly service=new ReplaceLeadService(agentJobProvider.custody,new LeadHandoffPacketAssembler(new LeadHandoffRepository(new DesktopPostgresConnection(postgresClient),agentJobProvider.jobs,agentJobProvider.messaging)),new SpawnLeadLauncher(agentJobProvider.jobs),agentJobProvider.messaging,new StopPathLeadWrapUp())){super();}
+ constructor(private readonly service=new ReplaceLeadService(agentJobProvider.custody,new LeadHandoffPacketAssembler(new LeadHandoffRepository(new DesktopPostgresConnection(postgresClient),agentJobProvider.jobs,agentJobProvider.messaging)),new SpawnLeadLauncher(agentJobProvider.jobs),agentJobProvider.messaging,new StopPathLeadWrapUp(),new ReplacementTargetValidator())){super();}
  protected async _validatedCall(input:any):Promise<ToolResponse>{
    const actor=await agentJobProvider.custodyCallerVerifier.verify(this.state?.metadata);
    const result=await this.service.replace({jobId:input.jobId,taskIndex:Number(input.taskIndex),agentId:input.agentId,model:input.model,provider:input.provider,note:input.note,actor});

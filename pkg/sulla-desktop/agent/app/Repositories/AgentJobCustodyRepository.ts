@@ -37,20 +37,33 @@ export class AgentJobCustodyRepository {
         return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
       }
 
+      const gated=await this.resolveDrainDestination(client,input.to);
+      if(gated.retry)return {ok:false,code:'replacement-draining',message:'Destination lead is being replaced; retry after its replacement is persisted.',current,retryable:true};
+      const effectiveInput={...input,to:gated.owner??input.to};
       const inbox = await client.query<any>(`${this.inboxScopeSql(input.taskIndex)} FOR UPDATE`, [input.jobId, input.taskIndex ?? null]);
       const activeLease = inbox.rows.find(row => row.lease_owner && row.lease_expires_at && new Date(row.lease_expires_at) > changedAt);
       if (activeLease) return { ok:false, code:'lease-active', message:'An inbox delivery lease is active; retry after it expires.', current, retryable:true };
 
       const nextVersion = current.version + 1;
-      const row = await this.writeCustody(client, input, current, nextVersion, changedAt);
+      const row = await this.writeCustody(client, effectiveInput, current, nextVersion, changedAt);
       if (!row) return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
 
-      await this.appendAudit(client, input, current, nextVersion, changedAt);
+      await this.appendAudit(client, effectiveInput, current, nextVersion, changedAt);
       await client.query(`UPDATE agent_inbox_messages SET receiver_channel=$3,receiver_thread_id=$4,receiver_agent_id=$5,lease_owner=NULL,lease_expires_at=NULL
         WHERE message_id IN (SELECT message_id FROM (${this.inboxScopeSql(input.taskIndex)}) scoped)`,
-      [input.jobId,input.taskIndex ?? null,input.to.channel,input.to.threadId,input.to.agentId]);
+      [input.jobId,input.taskIndex ?? null,effectiveInput.to.channel,effectiveInput.to.threadId,effectiveInput.to.agentId]);
       return { ok:true, previous:current, current:this.mapRecord(row,input.taskIndex) };
     });
+  }
+
+  /** Serialize adoption into a lead with its durable drain gate. */
+  private async resolveDrainDestination(client:PoolClient,destination:CustodyOwner):Promise<{owner?:CustodyOwner;retry:boolean}>{
+    const row=(await client.query<any>(`SELECT r.phase,r.replacement_thread_id,r.replacement_agent_id
+      FROM agent_lead_replacements r JOIN agent_jobs j ON j.job_id=r.old_job_id
+      WHERE j.tasks->r.old_task_index->>'threadId'=$1 FOR UPDATE OF r`,[destination.threadId])).rows[0];
+    if(!row)return {retry:false};
+    if(!row.replacement_thread_id)return {retry:true};
+    return {retry:false,owner:{channel:destination.channel,threadId:String(row.replacement_thread_id),agentId:String(row.replacement_agent_id)}};
   }
 
   async history(jobId: string): Promise<CustodyAuditRecord[]> {

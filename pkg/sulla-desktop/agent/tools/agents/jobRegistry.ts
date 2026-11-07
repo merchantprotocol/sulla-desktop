@@ -137,6 +137,8 @@ export interface CreateJobOptions {
   parentAgentId?: string;
   /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
   dedupeLabel?: string;
+  /** Durable caller-owned idempotency key. Unlike dedupeLabel this never expires. */
+  launchKey?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;

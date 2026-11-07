@@ -8,18 +8,20 @@ import type { VerifiedCustodyActor } from './CustodyCallerVerifier';
 import type { CustodyOwner,JobCustodyPort } from './JobCustodyTypes';
 import type { LeadHandoffPacketAssembler } from './LeadHandoffPacketAssembler';
 import type { LeadTaskExecutionPort } from './LeadTaskExecutionPort';
+import type { ReplacementTargetValidationPort } from './ReplacementTargetValidator';
 
 export interface ReplaceLeadInput {jobId:string;taskIndex:number;agentId:string;model?:string;provider?:string;note?:string;actor:VerifiedCustodyActor}
 export interface LeadWrapUpPort { request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<void> }
 export class ReplaceLeadService {
- constructor(private readonly custody:JobCustodyPort,private readonly packets:LeadHandoffPacketAssembler,private readonly launcher:LeadTaskExecutionPort,private readonly messaging:AgentJobMessagingRepository,private readonly wrapUp:LeadWrapUpPort){}
+ constructor(private readonly custody:JobCustodyPort,private readonly packets:LeadHandoffPacketAssembler,private readonly launcher:LeadTaskExecutionPort,private readonly messaging:AgentJobMessagingRepository,private readonly wrapUp:LeadWrapUpPort,private readonly targets:ReplacementTargetValidationPort){}
  async replace(input:ReplaceLeadInput):Promise<any>{
    input.actor.assertVerified();
+   try{await this.targets.validate(input.agentId,input.model,input.provider);}catch(error){return {ok:false,message:(error as Error).message};}
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note);
    if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    const locked=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client,pinned)=>{
      const refusal=await this.custody.authorizeReplacement(pinned,input.actor);if(refusal)return {refusal};
-     return {operation:await this.packets.operation(client,input.jobId,input.taskIndex),owner:pinned};
+     return {operation:await this.packets.operation(client,input.jobId,input.taskIndex,input.agentId),owner:pinned};
    });
    if(!locked)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    if('refusal' in locked)return locked.refusal;
@@ -28,7 +30,7 @@ export class ReplaceLeadService {
      try{
        const launchOwner:CustodyOwner={channel:owner.channel,threadId:owner.threadId,agentId:owner.agentId};
        const launched=await this.launcher.launchReplacement({oldJobId:input.jobId,oldTaskIndex:input.taskIndex,agentId:input.agentId,model:input.model,provider:input.provider,prompt:packet.prompt,owner:launchOwner,launchKey:operation.launchKey});
-       await this.packets.saveLaunched(operation,launched);
+       operation=await this.packets.saveLaunched(operation,launched);
      }catch(error){return {ok:false,message:`Replacement launch failed: ${(error as Error).message}`};}
    }
    operation=await this.packets.loadOperation(input.jobId,input.taskIndex)??operation;
@@ -39,6 +41,7 @@ export class ReplaceLeadService {
    if(operation.phase==='launched'){
      while(true){
        const children=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client)=>{
+         operation=await this.packets.lockOperation(client,operation!);
          const current=await this.packets.listDirectChildren(oldLeadThread,client);
          if(current.length===0)await this.packets.markChildrenMoved(client,operation!);
          return current;

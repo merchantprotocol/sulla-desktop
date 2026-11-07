@@ -28,6 +28,18 @@ suite('AgentJobCustodyRepository',()=>{
  it('allows exactly one of two concurrent adopts and writes one audit row',async()=>{ // risk: concurrent ownership split
    const id=`custody-concurrent-${Date.now()}`;await createJob(id);const [a,b]=await Promise.all([move(service(),id),move(service(),id)]);expect([a.ok,b.ok].filter(Boolean)).toHaveLength(1);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
  });
+ it('serializes an incoming adoption behind the final zero-child drain gate and redirects it',async()=>{ // risk: child stranded after final enumeration
+   const suffix=Date.now();const leadId=`draining-lead-${suffix}`;const childId=`incoming-child-${suffix}`;await createJob(leadId);await createJob(childId);
+   const oldLeadThread=`${leadId}-worker-0`;const replacementThread=`replacement-${suffix}`;
+   await database.query(`INSERT INTO agent_lead_replacements(old_job_id,old_task_index,launch_key,replacement_agent_id,replacement_job_id,replacement_task_index,replacement_thread_id,phase) VALUES($1,0,$2,'replacement-agent',$3,0,$4,'launched')`,[leadId,`lead-replacement:${leadId}:0`,`replacement-job-${suffix}`,replacementThread]);
+   const drain=await pool.connect();await drain.query('BEGIN');await drain.query(`SELECT * FROM agent_lead_replacements WHERE old_job_id=$1 AND old_task_index=0 FOR UPDATE`,[leadId]);
+   expect(await drain.query(`SELECT j.job_id FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality) LEFT JOIN agent_job_custody c ON c.job_id=j.job_id AND c.task_index=(task.ordinality-1) WHERE COALESCE(c.owner_thread_id,j.parent_thread_id)=$1`,[oldLeadThread]).then(result=>result.rows)).toHaveLength(0);
+   const adopting=service().move({jobId:childId,taskIndex:0,to:{channel:'old-channel',threadId:oldLeadThread,agentId:'worker-0'},actor:human,reason:'arrives during final drain'});
+   await new Promise(resolve=>setTimeout(resolve,20));
+   await drain.query(`UPDATE agent_lead_replacements SET phase='children_moved' WHERE old_job_id=$1`,[leadId]);await drain.query('COMMIT');drain.release();
+   expect(await adopting).toMatchObject({ok:true,current:{threadId:replacementThread,agentId:'replacement-agent'}});
+   expect(await database.query<any>(`SELECT owner_thread_id FROM agent_job_custody WHERE job_id=$1 AND task_index=0`,[childId])).toEqual([{owner_thread_id:replacementThread}]);
+ });
  it('allows only a positively verified top-level chat to adopt from a live top-level owner and audits it',async()=>{ // risk: spoofed cross-chat custody theft
    const id=`custody-verified-top-level-${Date.now()}`;await createJob(id);const conversations=new RegisteredConversations(new Set(['caller-channel/caller-thread/caller-agent','old-channel/old-thread/old-agent']));const verifier=new CustodyCallerVerifier(new EmptyTaskLocator() as any,conversations);const verified=await verifier.verify({wsChannel:'caller-channel',threadId:'caller-thread',agentId:'caller-agent',subAgentDepth:0});const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any);const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles(),new TopLevelHumanSessionAuthorityRule(conversations)),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
    expect(await instance.move({jobId:id,to:target,actor:verified,reason:'verified cross-chat adoption'})).toMatchObject({ok:true});expect((await instance.history(id))[0]).toMatchObject({reason:'verified cross-chat adoption',actor:{kind:'agent',threadId:'caller-thread'}});

@@ -55,6 +55,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       [job.jobId, job.taskCount, job.createdAt, job.parentChannel ?? null, job.parentThreadId ?? null, JSON.stringify(job.tasks), job.visibility ?? 'hidden', job.parentAgentId ?? null]);
   }
 
+  async reserveSpawnJob(job:AgentJob,launchKey:string):Promise<{job:AgentJob;inserted:boolean}>{
+    const rows=await this.connection.select(`INSERT INTO agent_jobs (job_id,status,task_count,parent_channel,parent_thread_id,created_at,tasks,visibility,parent_agent_id,launch_key)
+      VALUES($1,'running',$2,$4,$5,to_timestamp($3 / 1000.0),$6::jsonb,$7,$8,$9)
+      ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO UPDATE SET launch_key=EXCLUDED.launch_key
+      RETURNING *, (xmax=0) AS inserted`,
+    [job.jobId,job.taskCount,job.createdAt,job.parentChannel??null,job.parentThreadId??null,JSON.stringify(job.tasks),job.visibility??'hidden',job.parentAgentId??null,launchKey]);
+    if(!rows[0])throw new Error(`Unable to reserve spawn launch key ${launchKey}`);
+    return {job:this.map(rows[0]),inserted:Boolean(rows[0].inserted)};
+  }
+
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $2::jsonb WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks)]);
   }

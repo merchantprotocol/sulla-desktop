@@ -25,11 +25,11 @@ vi.mock('../../../tools/agents/spawn_agent',async()=>{
    if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
    const {postgresClient}=await import('../../../database/PostgresClient');
    const label=String(input.tasks[0].label);const jobId=`replacement-${label.split(':').slice(-2).join('-')}`;
-   const existing=await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE job_id=$1',[jobId]);
-   if(!existing.length)await postgresClient.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,'running',1,$2,$3,$4,$5::jsonb)`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:input.tasks[0].agentId,label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}])]);
+   const rows=await postgresClient.query<any>(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks,launch_key) VALUES($1,'running',1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO NOTHING RETURNING job_id`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:input.tasks[0].agentId,label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}]),input.launchKey]);
+   const persisted=rows[0]?.job_id??(await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE launch_key=$1',[input.launchKey]))[0]?.job_id;
    await runtime.adoptDuringLaunch?.();
    if(runtime.failAfterPersist)throw new Error('simulated process disconnect after persist');
-   return {successBoolean:true,responseString:'ok',result:{jobId}};
+   return {successBoolean:true,responseString:'ok',result:{jobId:persisted}};
   }
  }
  return {SpawnAgentWorker:ProcessBoundarySpawnAgentWorker};
@@ -86,6 +86,15 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
  });
 
+ it('atomically reserves one replacement when two registered callers race',async()=>{
+  // risk: duplicate runners — database launch-key reservation, not process memory, chooses one winner.
+  const {leadId}=await seedLead('concurrent','error',0);
+  const [first,second]=await Promise.all([call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'}),call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})]);
+  expect(first.success).toBe(true);expect(second.success).toBe(true);
+  expect(await database.query(`SELECT job_id FROM agent_jobs WHERE launch_key=$1`,[`lead-replacement:${leadId}:0`])).toHaveLength(1);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+ });
+
  it('moves a child adopted after packet assembly before committing the zero-owner drain',async()=>{
   // risk: stranded children — a child appearing during launch must be included in the drain.
   const {leadId,leadThread}=await seedLead('adopted','error',0);runtime.adoptDuringLaunch=()=>seedChild('adopted',9,leadThread);
@@ -103,6 +112,18 @@ suite('agents/replace_lead registered production path',()=>{
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
   expect(await database.query<any>(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+ });
+
+ it('recovers a crash after wrap_up request with one effective stop and audit',async()=>{
+  // risk: irreversible stop — retry after the request commits must not duplicate the stop side effect.
+  const {leadId}=await seedLead('wrap-crash','running',0);
+  await database.query(`CREATE FUNCTION reject_wrapped_phase() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.phase='wrapped' THEN RAISE EXCEPTION 'simulated crash after wrap_up'; END IF; RETURN NEW; END $$`);
+  await database.query(`CREATE TRIGGER reject_wrapped_phase BEFORE UPDATE ON agent_lead_replacements FOR EACH ROW EXECUTE FUNCTION reject_wrapped_phase()`);
+  const crashed=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(crashed.success).toBe(false);expect(JSON.stringify(crashed.error??crashed.result)).toContain('simulated crash after wrap_up');
+  await database.query(`DROP TRIGGER reject_wrapped_phase ON agent_lead_replacements`);await database.query(`DROP FUNCTION reject_wrapped_phase()`);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
  });
 
  it('allows the owner, refuses a peer by owner name, and distinguishes missing task/job and disabled agent',async()=>{
