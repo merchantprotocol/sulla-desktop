@@ -61,6 +61,7 @@ export interface AgentJobTask {
   provider?: string;
   model?: string;
   runLocation?: 'vm' | 'container';
+  workspacePath?: string;
   /** Restart recovery attempts already consumed. */
   restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
@@ -89,6 +90,12 @@ export interface AgentJobTask {
   /** Durable leaf-worker wait details while status is parked. */
   waitReason?: string;
   wakeAt?: number;
+  /** Monotonic execution generation; legacy tasks are generation 1. */
+  generation?: number;
+  /** Number of manager-requested reopen claims. */
+  reopenCount?: number;
+  /** Opaque ownership token while a reopened generation is active. */
+  reopenLeaseId?: string;
 }
 
 export interface OrphanedChildNotice {
@@ -121,11 +128,15 @@ export interface AgentJob {
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
   orphanedChildNotices?: OrphanedChildNotice[];
+  /** Set only on the in-memory response when a spawn retry reused a recent job. */
+  deduplicated?: boolean;
 }
 
 export interface CreateJobOptions {
   visibility?:    AgentJobVisibility;
   parentAgentId?: string;
+  /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
+  dedupeLabel?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;

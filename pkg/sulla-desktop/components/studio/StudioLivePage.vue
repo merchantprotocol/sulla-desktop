@@ -12,7 +12,7 @@
       search-placeholder="Search live agents"
       @crumb="selected = null"
     />
-    <div class="studio-content">
+    <div ref="contentScroller" class="studio-content">
       <template v-if="selected">
         <button
           class="back"
@@ -66,8 +66,8 @@
               class="tl"
             >
               <div
-                v-for="(entry, index) in detail.entries"
-                :key="index"
+                v-for="entry in detail.entries"
+                :key="entry.offset ?? entry.feedSequence"
                 class="ev"
                 :class="{ tool: entry.kind === 'tool', you: entry.kind === 'user' }"
               >
@@ -77,7 +77,12 @@
                   {{ entry.text }}
                 </div>
               </div>
-            </div><form
+            </div><p
+              v-if="selectedUnavailable"
+              class="finished-label"
+            >
+              Finished — no longer running
+            </p><form
               v-if="selected.canMessage"
               class="composer"
               @submit.prevent="sendMessage(selected)"
@@ -263,7 +268,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import StudioTopbar from './StudioTopbar.vue';
 
@@ -274,15 +279,17 @@ import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/A
 import type { AgentStateRow, AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { LiveAgentsKillController } from './LiveAgentsKillController';
+import { AgentDetailFeed, type FeedDetail } from './live/AgentDetailFeed';
 
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
-const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const detail = ref<AgentConversationDetail | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
+const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const selectedMissing = ref(false); const detail = ref<FeedDetail | null>(null); const contentScroller = ref<HTMLElement | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
 const builder = computed(() => new AgentTreeBuilder(client.snapshot.value.rows));
 const groups = computed(() => builder.value.groups());
 const filteredGroups = computed(() => { const q = search.value.trim().toLowerCase(); if (!q) return groups.value; return groups.value.flatMap(group => { const matching = flatten(group.tree).filter(node => [node.row.label, node.row.agentId, node.row.lastCheckinSummary].some(value => value?.toLowerCase().includes(q))); return matching.length ? [{ ...group, tree: matching.map(node => ({ ...node, children: [] })) }] : [] }) });
 const liveStates = new Set<AgentRowState>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const selectedUnavailable = computed(() => selectedMissing.value || (selected.value !== null && !liveStates.has(selected.value.state)));
 const liveCount = computed(() => client.snapshot.value.rows.filter(row => liveStates.has(row.state)).length); const parkedCount = computed(() => client.snapshot.value.rows.filter(row => row.state === 'parked').length); const attentionCount = computed(() => client.snapshot.value.rows.filter(row => ['quiet', 'blocked', 'failed', 'lost'].includes(row.state)).length);
 function flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] { return builder.value.flatten(tree) }
 function groupName(tree: readonly AgentTreeNode[]): string { return tree[0]?.row.label || 'Agent run' }
@@ -292,8 +299,14 @@ function rootLiveCount(rootThreadId: string): number { return client.snapshot.va
 function requestSwitchChange(event: Event): void { const on = (event.target as HTMLInputElement).checked; if (on) confirmSwitchOn.value = true; else void killController.setSwitch(false) }
 async function enableKillSwitch(): Promise<void> { if (await killController.setSwitch(true)) confirmSwitchOn.value = false }
 async function confirmKillRoot(): Promise<void> { const root = killConfirmRoot.value; if (root && await killController.killTree(root)) killConfirmRoot.value = null }
-async function loadDetail(): Promise<void> { if (!selected.value?.threadId) { detail.value = null; return } detailLoading.value = true; try { detail.value = await ipcRenderer.invoke('agents:conversation', selected.value.threadId) } catch { detail.value = null } finally { detailLoading.value = false } }
-function selectRow(row: AgentStateRow): void { selected.value = row; actionError.value = ''; loadDetail().catch(() => undefined) }
+const invoke = (channel: string, ...args: unknown[]) => (ipcRenderer as unknown as { invoke: (name: string, ...values: unknown[]) => Promise<unknown> }).invoke(channel, ...args);
+const detailFeed = new AgentDetailFeed(invoke, document, setInterval, clearInterval, snapshot => {
+  const container = contentScroller.value; const scrollTop = container?.scrollTop ?? 0;
+  const atBottom = !!container && container.scrollHeight - container.clientHeight - scrollTop <= 8;
+  detail.value = snapshot.detail; detailLoading.value = snapshot.loading;
+  if (container && !snapshot.loading) void nextTick(() => { container.scrollTop = atBottom ? container.scrollHeight : scrollTop });
+});
+function selectRow(row: AgentStateRow): void { selected.value = row; selectedMissing.value = false; actionError.value = '' }
 async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
 async function stopRun(): Promise<void> { const row = stopTarget.value; if (!row || !actions.canStop(row)) return; const key = pendingKey('stop', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.stop(row); if (result.stale) { stopTarget.value = null; selected.value = null; return } if (!result.ok) { actionError.value = result.error || 'The run could not be stopped.'; return } stopTarget.value = null; selected.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
 async function openRow(row: AgentStateRow): Promise<void> {
@@ -305,14 +318,31 @@ function statusClass(state: AgentRowState): string { return ['working', 'queued'
 function statusLabel(row: AgentStateRow): string { if (row.state === 'parked') return `Parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet') return `Quiet · ${ age(row.lastCheckinAt) }`; return row.state.charAt(0).toUpperCase() + row.state.slice(1) }
 function elapsed(value: string | null): string { if (!value) return 'not started'; const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); if (seconds < 60) return `${ seconds }s`; if (seconds < 3600) return `${ Math.floor(seconds / 60) } min`; return `${ Math.floor(seconds / 3600) }h ${ Math.floor(seconds % 3600 / 60) }m` }
 function age(value: string | null): string { return value ? `${ elapsed(value) } ago` : 'not recorded' } function when(value: string | null): string { return value ? new Date(value).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : 'not recorded' } function clock(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) } function entryWho(entry: AgentConversationDetail['entries'][number]): string { if (entry.kind === 'user') return 'You'; if (entry.kind === 'tool') return entry.toolName || 'Tool'; if (entry.kind === 'event') return 'Run'; return selected.value?.label || 'Agent' }
-watch(() => selected.value?.threadId, () => loadDetail().catch(() => undefined));
+watch(() => selected.value?.threadId, threadId => detailFeed.select(threadId));
 watch(() => client.snapshot.value, snapshot => {
   const current = new Map(snapshot.rows.map(row => [row.key, row]));
-  if (selected.value) selected.value = current.get(selected.value.key) ?? null;
+  if (selected.value) {
+    const fresh = current.get(selected.value.key);
+    const wasUnavailable = selectedMissing.value || !liveStates.has(selected.value.state);
+
+    if (fresh) {
+      selected.value = fresh;
+      selectedMissing.value = false;
+      if (liveStates.has(fresh.state)) {
+        if (wasUnavailable) detailFeed.resume();
+      } else if (!wasUnavailable) {
+        void detailFeed.finish();
+      }
+    } else if (!selectedMissing.value) {
+      selected.value = { ...selected.value, canMessage: false, canStop: false };
+      selectedMissing.value = true;
+      void detailFeed.finish();
+    }
+  }
   if (messageTarget.value) messageTarget.value = current.get(messageTarget.value.key) ?? null;
   if (stopTarget.value) stopTarget.value = current.get(stopTarget.value.key) ?? null;
 });
-onMounted(() => { void killController.loadSwitch(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); });
+onMounted(() => { detailFeed.start(); void killController.loadSwitch(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { detailFeed.dispose(); if (clockTimer) clearInterval(clockTimer); });
 </script>
 
 <style scoped lang="scss">

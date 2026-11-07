@@ -4,13 +4,37 @@
 // (.github/workflows/agent-tests.yml) against a real Postgres service.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { compileScript, parse } from '@vue/compiler-sfc';
+import { transformWithEsbuild, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
+class VueSfcTestPlugin implements Plugin {
+  readonly name = 'sulla-vue-sfc-tests';
+  readonly enforce = 'pre' as const;
+
+  async transform(source: string, id: string) {
+    if (!id.endsWith('.vue')) return null;
+    const { descriptor, errors } = parse(source, { filename: id });
+
+    if (errors.length) throw errors[0];
+    const compiled = compileScript(descriptor, {
+      id:       `data-v-${ Buffer.from(id).toString('hex').slice(-8) }`,
+      inlineTemplate: true,
+    });
+
+    return transformWithEsbuild(compiled.content, id, { loader: compiled.lang === 'ts' ? 'ts' : 'js' });
+  }
+}
+
 export default defineConfig({
+  plugins: [new VueSfcTestPlugin()],
   resolve: {
-    alias: [{ find: /^@pkg\/(.*)$/, replacement: path.join(root, 'pkg/sulla-desktop/$1') }],
+    alias: [
+      { find: /^@pkg\/(.*)$/, replacement: path.join(root, 'pkg/sulla-desktop/$1') },
+      { find: '@sulla/vault-crypto', replacement: path.join(root, 'packages/vault-crypto/src/index.ts') },
+    ],
   },
   test: {
     include:     ['pkg/sulla-desktop/agent/tests/**/*.spec.ts'],

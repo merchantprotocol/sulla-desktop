@@ -88,7 +88,7 @@ export class AgentModelSelectorController {
         return model;
       }
 
-      return provider ? 'Auto' : 'Connect an AI';
+      return provider ? 'Auto' : 'Default';
     });
 
     this.isRunningValue = computed(() => this.deps.isRunning.value);
@@ -127,6 +127,7 @@ export class AgentModelSelectorController {
   }
 
   get agentOptionsValue(): AgentOption[] { return this.agentOptions.value }
+  get isDefaultValue(): boolean { return !this.activePrimaryProvider.value && !this.activeAgentId.value }
 
   async toggleModelMenu(): Promise<void> {
     this.showModelMenu.value = !this.showModelMenu.value;
@@ -150,10 +151,20 @@ export class AgentModelSelectorController {
     await Promise.all([this.refreshProviderGroups(), this.refreshAgents()]);
   }
 
-  /**
-   * Select a model for this chat only. Global provider defaults are read to
-   * seed new chats but are never mutated by this picker.
-   */
+  /** Clear chat-local overrides so Preferences owns the next turn. */
+  selectDefault(): void {
+    try {
+      this.hasChatSelection = false;
+      this.activeAgentId.value = null;
+      this.applyState({ primaryProvider: '', activeModelId: '' });
+      this.updateActiveFlags('', '');
+      this.deps.onSelectForChat?.({ providerId: '', modelId: '', agentId: null, label: 'Default' });
+    } finally {
+      this.showModelMenu.value = false;
+    }
+  }
+
+  /** Select a model for this chat only; global Preferences are never mutated. */
   selectModel(option: ModelOption): void {
     try {
       this.hasChatSelection = true;
@@ -169,7 +180,8 @@ export class AgentModelSelectorController {
   selectAgent(agent: AgentOption): void {
     this.hasChatSelection = true;
     this.activeAgentId.value = agent.slug;
-    const providerId = agent.provider ?? this.activePrimaryProvider.value;
+    // A human-picked exact model remains authoritative when they subsequently pick a persona.
+    const providerId = this.activePrimaryProvider.value || agent.provider || '';
     // Keep the chat's concrete selection unchanged. The agent's modelSlot is
     // resolved by the runtime from Preferences, unless this chat explicitly
     // picked a model.
@@ -181,9 +193,9 @@ export class AgentModelSelectorController {
   }
 
   restoreForChat(providerId: string | null | undefined, modelId: string, agentId?: string | null): void {
-    this.hasChatSelection = true;
-    if (providerId) this.activePrimaryProvider.value = providerId;
-    if (modelId) this.activeModelId.value = modelId;
+    this.hasChatSelection = Boolean(providerId || modelId || agentId);
+    this.activePrimaryProvider.value = providerId ?? '';
+    this.activeModelId.value = modelId;
     this.activeAgentId.value = agentId ?? null;
     this.updateActiveFlags(providerId ?? '', modelId);
   }
@@ -192,8 +204,10 @@ export class AgentModelSelectorController {
 
   private async loadActiveSettings(): Promise<void> {
     try {
-      const state = await ipcRenderer.invoke('model-provider:get-state');
-      this.applyState(state);
+      // The legacy primary slot is provider readiness, not a chat selection.
+      // A fresh thread stays Default so Preferences is authoritative.
+      await ipcRenderer.invoke('model-provider:get-state');
+      this.applyState({ primaryProvider: '', activeModelId: '' });
     } catch (err) {
       console.warn('[ModelSelector] Failed to load state from ModelProviderService:', err);
     }

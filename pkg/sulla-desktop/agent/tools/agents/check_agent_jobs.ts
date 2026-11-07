@@ -6,12 +6,17 @@
 import { BaseTool, ToolResponse } from '../base';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import type { AgentFleetProjectionService } from '../../app/Services/AgentFleetProjectionService';
+import { AgentFleetTreeFormatter } from '../../app/Formatters/AgentFleetTreeFormatter';
+import { PullRequestReferenceExtractor } from '../../app/Formatters/PullRequestReferenceExtractor';
 
 export class CheckAgentJobsWorker extends BaseTool {
   name = '';
   description = '';
 
-  constructor(private readonly fleet: AgentFleetProjectionService = agentJobProvider.fleet) { super(); }
+  constructor(
+    private readonly fleet: AgentFleetProjectionService = agentJobProvider.fleet,
+    private readonly tree = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor()),
+  ) { super(); }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const jobId = String(input.jobId ?? '').trim();
@@ -40,6 +45,7 @@ export class CheckAgentJobsWorker extends BaseTool {
       includeFinished: input.includeFinished !== false,
     });
     if (jobs.length === 0) return { successBoolean: true, responseString: 'No active or recent async agent jobs.' };
+    if (input.view === 'tree') return { successBoolean: true, responseString: JSON.stringify(this.tree.format(jobs), null, 2) };
     return { successBoolean: true, responseString: JSON.stringify({ count: jobs.length, jobs }, null, 2) };
   }
 }

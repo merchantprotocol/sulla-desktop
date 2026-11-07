@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1120,
+  "entries": 1110,
   "files": {
     "background.ts": {
       "rules": {
@@ -636,11 +636,9 @@
     },
     "pkg/sulla-desktop/agent/languagemodels/index.ts": {
       "rules": {
-        "long-file": 454,
-        "mutable-state": 1,
-        "procedural-module": 3
+        "long-file": 454
       },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+      "reason": "pre-existing file over the line limit; split into classes"
     },
     "pkg/sulla-desktop/agent/languagemodels/modelDefaults.ts": {
       "rules": {
@@ -774,12 +772,6 @@
         "long-file": 427
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/agent/nodes/ThreadStateStore.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/agent/prompts/ProviderContributions.ts": {
       "rules": {
@@ -1134,12 +1126,6 @@
         "long-file": 581
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/agent/services/SubagentDirectory.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/services/SubconsciousWriterGate.ts": {
       "rules": {
@@ -2006,19 +1992,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/main/SleepPreventionService.ts": {
-      "rules": {
-        "mutable-state": 5,
-        "procedural-module": 9
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/agentConversationLog.ts": {
-      "rules": {
-        "procedural-module": 5
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/agentTabContractIpc.ts": {
       "rules": {
         "procedural-module": 1
@@ -2362,13 +2335,6 @@
         "raw-sql": 19
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "pkg/sulla-desktop/main/cloud/runtimeProjection/sync.ts": {
-      "rules": {
-        "mutable-state": 2,
-        "procedural-module": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/cloud/runtimeProjection/workflows.ts": {
       "rules": {
@@ -3034,8 +3000,7 @@
     },
     "pkg/sulla-desktop/main/sullaSecretsServer.ts": {
       "rules": {
-        "mutable-state": 1,
-        "procedural-module": 2
+        "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },

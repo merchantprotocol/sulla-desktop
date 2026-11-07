@@ -7,6 +7,7 @@ import type { AgentJobCheckin, AgentJobTaskTelemetry } from '../../database/mode
 import type { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import type { AgentStateService } from './AgentStateService';
 import { AgentLineageIndex } from './AgentLineageIndex';
+import type { FleetJobView, FleetTaskView } from './AgentFleetTypes';
 
 export interface AgentFleetTelemetryReader {
   telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>>;
@@ -31,7 +32,7 @@ export class AgentFleetProjectionService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async list(request: AgentFleetRequest): Promise<FleetObject[]> {
+  async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
     const all = await this.states.jobs();
     const index = new AgentLineageIndex(all);
     const scoped = request.scope === 'mine'
@@ -42,7 +43,7 @@ export class AgentFleetProjectionService {
     return this.project(selected, all, telemetry, false);
   }
 
-  async job(jobId: string): Promise<FleetObject | undefined> {
+  async job(jobId: string): Promise<FleetJobView | undefined> {
     const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobs()]);
     if (!job) return undefined;
     const telemetry = await this.telemetry.telemetryForJob(jobId);
@@ -70,7 +71,7 @@ export class AgentFleetProjectionService {
     all: AgentJob[],
     telemetry: Record<string, Record<number, AgentJobTaskTelemetry>>,
     detailed: boolean,
-  ): Promise<FleetObject[]> {
+  ): Promise<FleetJobView[]> {
     const index = new AgentLineageIndex(all);
     const roots = [...new Set(selected.map(job => index.lineage(job).rootThreadId).filter((value): value is string => !!value))];
     const titles = await this.titles.titlesForThreadIds(roots);
@@ -83,7 +84,7 @@ export class AgentFleetProjectionService {
     titles: Record<string, string | null>,
     telemetry: Record<number, AgentJobTaskTelemetry>,
     detailed: boolean,
-  ): FleetObject {
+  ): FleetJobView {
     const lineage = index.lineage(job);
     const fields = {
       parentThreadId: job.parentThreadId ?? null,
@@ -96,6 +97,8 @@ export class AgentFleetProjectionService {
     return {
       jobId: job.jobId,
       status: job.status,
+      createdAt: new Date(job.createdAt).toISOString(),
+      finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : null,
       ...fields,
       waitingOnChildren: job.waitingOnChildren ?? 0,
       taskCount: job.taskCount,
@@ -108,8 +111,11 @@ export class AgentFleetProjectionService {
     };
   }
 
-  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false): FleetObject {
+  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false): FleetTaskView {
     const latestCheckin = telemetry?.latestCheckin ?? null;
+    const startedAt = task.startedAt ?? job.createdAt;
+    // TODO(#1991): include authoritative model/tool RunActivity in the state projection.
+    const lastActivityAt = Math.max(startedAt, latestCheckin?.createdAt ?? 0, task.finishedAt ?? 0, task.returnedAt ?? 0);
     return {
       taskIndex,
       agentId: task.agentId,
@@ -117,23 +123,36 @@ export class AgentFleetProjectionService {
       taskId: task.taskId,
       status: task.status,
       visibility: task.visibility ?? job.visibility ?? 'hidden',
+      promotedToTab: task.promotedToTab === true,
       contract: task.contract?.name ?? 'result',
       returned: !!task.returnedAt,
+      startedAt: new Date(startedAt).toISOString(),
+      finishedAt: task.finishedAt ? new Date(task.finishedAt).toISOString() : null,
+      returnedAt: task.returnedAt ? new Date(task.returnedAt).toISOString() : null,
+      completionDeliveredAt: task.completionDeliveredAt ? new Date(task.completionDeliveredAt).toISOString() : null,
+      lastActivityAt: new Date(lastActivityAt).toISOString(),
       elapsed: this.elapsed(task.startedAt ?? job.createdAt, task.finishedAt),
       threadId: task.threadId ?? null,
+      parentJobId: fields.parentJobId as string | null,
+      parentTaskIndex: fields.parentTaskIndex as number | null,
+      rootThreadId: fields.rootThreadId as string | null,
       ...fields,
       latestCheckin: this.checkin(latestCheckin, !detailed),
+      result: task.result,
+      completion: task.completion,
       undeliveredOrchestratorMessages: telemetry?.undeliveredMessages ?? 0,
       ...(detailed ? { checkins: (telemetry?.checkins ?? []).map(item => this.checkin(item, false)) } : {}),
     };
   }
 
-  private checkin(checkin: AgentJobCheckin | null, compact: boolean): FleetObject | null {
+  private checkin(checkin: AgentJobCheckin | null, compact: boolean) {
     if (!checkin) return null;
     return {
       step: checkin.step,
       summary: compact ? checkin.summary.slice(0, 240) : checkin.summary,
-      ...(compact ? {} : { files: checkin.filesTouched, blockers: checkin.blockers, percent: checkin.percent }),
+      blockers: checkin.blockers,
+      percent: checkin.percent,
+      ...(compact ? {} : { files: checkin.filesTouched }),
       time: new Date(checkin.createdAt).toISOString(),
     };
   }

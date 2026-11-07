@@ -265,3 +265,4 @@ export const unwrapItemKeyForAgent = unwrapKeyFromPublicKey;
 export * from './itemSchema.js';
 export * from './customFields.js';
 export * from './filesKeyBundle.js';
+export { FilesTransportEnvelopeService, type FilesTransportEnvelope } from './filesTransportEnvelope.js';

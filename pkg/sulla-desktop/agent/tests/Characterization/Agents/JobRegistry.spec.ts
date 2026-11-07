@@ -176,6 +176,41 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(allPayload.jobs.find((value: any) => value.jobId === managerB.jobId)).toMatchObject({ rootThreadId: rootB, rootChatTitle: 'Root B title' });
   });
 
+  it('projects a real manager team tree and clears its unprocessed rollup after task delivery', async() => {
+    // risk: durable worker results are lost or attributed to a sibling manager
+    const stamp = Date.now();
+    const root = `rollup-root-${ stamp }`;
+    const manager = await registry.createJob([
+      { agentId: 'manager-a', label: 'manager-a', prompt: 'own', status: 'running', threadId: `rollup-manager-a-${ stamp }` },
+      { agentId: 'manager-b', label: 'manager-b', prompt: 'own', status: 'running', threadId: `rollup-manager-b-${ stamp }` },
+    ], 'sulla-desktop', root);
+    const worker = await registry.createJob([
+      { agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: `rollup-worker-${ stamp }` },
+    ], 'coding-manager-sol', `rollup-manager-a-${ stamp }`);
+    await messaging.AgentJobMessagingModel.appendCheckin(`rollup-worker-${ stamp }`, { step: 'blocked', summary: 'waiting', blockers: ['dependency'] });
+    const grandchild = await registry.createJob([
+      { agentId: 'grandchild', label: 'grandchild', prompt: 'work', status: 'running', threadId: `rollup-grandchild-${ stamp }` },
+    ], 'codex-sol-worker', `rollup-worker-${ stamp }`);
+    await registry.recordTaskCompletion(grandchild.jobId, 0, { label: 'grandchild', status: 'completed', output: 'done', threadId: `rollup-grandchild-${ stamp }` });
+
+    const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+    const { AgentTeamRollupProjector } = await import('../../../app/Services/AgentTeamRollupProjector');
+    const snapshot = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+    const rollups = new AgentTeamRollupProjector(() => Date.now()).project(snapshot);
+    expect(rollups.get(`${ manager.jobId }#0`)).toMatchObject({ states: { blocked: 1, done: 1 }, openBlockers: 1, unprocessedResults: 1, workerCount: 2 });
+    expect(rollups.has(`${ manager.jobId }#1`)).toBe(false);
+
+    const check = new CheckAgentJobsHarness();
+    check.setState({ metadata: { threadId: root } });
+    const tree = JSON.parse((await check.call({ scope: 'mine', view: 'tree', limit: 100 })).responseString);
+    expect(tree.tasks.map((line: any) => line.ref)).toEqual(expect.arrayContaining([`${ manager.jobId }#0`, `${ worker.jobId }#0`, `${ grandchild.jobId }#0`]));
+    expect(tree.tasks.every((line: any) => Buffer.byteLength(JSON.stringify(line), 'utf8') <= 400)).toBe(true);
+
+    await registry.markTaskCompletionDelivered(grandchild.jobId, 0);
+    const fresh = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+    expect(new AgentTeamRollupProjector(() => Date.now()).project(fresh).get(`${ manager.jobId }#0`)?.unprocessedResults).toBe(0);
+  });
+
   it('serializes stop attribution in list and detail after a repository reload', async() => {
     // risk: audit attribution disappears from supervision after the process cache is cold.
     const job = await registry.createJob([{ agentId: 'worker', label: 'stopped', prompt: 'work', status: 'running', threadId: `stop-reload-${ Date.now() }` }]);

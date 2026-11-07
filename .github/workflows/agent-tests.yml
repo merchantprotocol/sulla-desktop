@@ -105,6 +105,11 @@ jobs:
           --baseline .github/typecheck-baseline/renderer.txt
           --
           --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+      - name: Compile production agent bundle
+        if: env.WRITE_BASELINE == 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: node scripts/ts-wrapper.js scripts/check-agent-production-bundle.ts
       - name: Regenerate agent runtime baseline
         if: env.WRITE_BASELINE == 'true'
         env:
