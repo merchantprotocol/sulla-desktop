@@ -7,6 +7,7 @@ import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {agentToolManifests} from '../../../tools/agents/manifests';
 import type {BaseTool} from '../../../tools/base';
+import {ControlledAsyncBarrier} from '../../Support/ControlledAsyncBarrier';
 const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
 
 // The registered catalog reaches AgentContainerLauncher, whose production
@@ -14,6 +15,18 @@ const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:descr
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
 
 class CompletionDispatchCapture {readonly targets:Array<{channel:string;threadId:string}>=[];record(channel:string,threadId:string){this.targets.push({channel,threadId});}}
+
+class ConcurrentCustodyRace {
+  private readonly firstGate=new ControlledAsyncBarrier();
+  private readonly secondGate=new ControlledAsyncBarrier();
+  async run<T,U>(first:()=>Promise<T>,second:()=>Promise<U>):Promise<[T,U]>{
+    const firstCall=(async()=>{await this.firstGate.enterAndWait();return first();})();
+    const secondCall=(async()=>{await this.secondGate.enterAndWait();return second();})();
+    await Promise.all([this.firstGate.entered,this.secondGate.entered]);
+    this.firstGate.release();this.secondGate.release();
+    return Promise.all([firstCall,secondCall]);
+  }
+}
 
 class RegisteredCustodyTool {
   async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job'|'return_result'|'report_progress',input:any,metadata:any){
@@ -91,6 +104,8 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
     expect(await agentJobProvider.custody.resolveOwner(lead.jobId)).toMatchObject({agentId:adopter,threadId:`${adopter}-thread`});
+    expect(completionInboxStore.take(adopter,`${adopter}-thread`).filter(entry=>entry.jobId===lead.jobId&&entry.results.length===1)).toHaveLength(1);
+    expect(completionInboxStore.take(owner,`${owner}-thread`).filter(entry=>entry.jobId===lead.jobId)).toHaveLength(0);
     GraphRegistry.delete(`${adopter}-thread`);
   });
 
@@ -118,18 +133,23 @@ dbDescribe('registered custody transfer tools',()=>{
     const pending=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 ORDER BY created_at`,[job.jobId]);expect(pending.filter(row=>row.message.includes('[Manager changed]'))).toHaveLength(1);
   });
 
-  it('H1 routes a registered blocker check-in only to the new owner after a move',async()=>{
-    // risk: stranded worker question; guards BlockerEscalationService custody injection and locked owner resolution
+  it('H1 routes a registered check-in, blocker, and final result only to the new owner after a move',async()=>{
+    // risk: stranded worker progress/question/result; guards the complete registered worker lifecycle after handoff
     const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
     const old=`block-old-${stamp}`,next=`block-new-${stamp}`,child=`block-worker-${stamp}`;
     await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
     const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
     expect(await tools.call('reassign_job',{jobId:job.jobId,to:next,reason:'route blocker'}, {wsChannel:old,agentId:old,threadId:old,subAgentDepth:1})).toMatchObject({success:true});
     completionInboxStore.take(old,old);completionInboxStore.take(next,next);
+    expect(await tools.call('report_progress',{step:'working',summary:'Work continues under new custody',percent:50},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     expect(await tools.call('report_progress',{step:'blocked',summary:'Need manager input',blockers:['Choose a safe option']},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const newNotices=completionInboxStore.take(next,next).filter(entry=>entry.notice?.startsWith('[Blocker from'));
     const oldNotices=completionInboxStore.take(old,old).filter(entry=>entry.notice?.startsWith('[Blocker from'));
     expect(newNotices).toHaveLength(1);expect(oldNotices).toHaveLength(0);
+    await registry.parkJobTask(job.jobId,0,0);
+    expect(await tools.call('return_result',{status:'completed',summary:'handoff done',output:{ok:true}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
+    expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId&&entry.results.length===1)).toHaveLength(1);
+    expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId)).toHaveLength(0);
   });
 
   it('Stop follows whole-job custody: new owner succeeds and old owner is refused with the current owner',async()=>{
@@ -185,14 +205,15 @@ dbDescribe('registered custody transfer tools',()=>{
       await registry.parkJobTask(job.jobId,0,0);
       const returned=()=>tools.call('return_result',{status:'completed',summary:'race result',output:{order}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1});
       const moved=()=>tools.call('reassign_job',{jobId:job.jobId,to:next,reason:`${order} race`},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1});
-      const results=order==='return-first'?[await returned(),await moved()]:[await moved(),await returned()];
+      const race=new ConcurrentCustodyRace();
+      const results=order==='return-first'?await race.run(returned,moved):await race.run(moved,returned);
       expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
       expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(1);
       expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(0);
     }
   });
 
-  it('H4 keeps an adopted managers worker completion with that manager',async()=>{
+  it('H4 keeps a nested worker completion with its manager during concurrent manager adoption',async()=>{
     // risk: adopter steals nested contracts; guards JobCompletionDelivery custody scope in jobDelivery.ts:188-195
     const {GraphRegistry}=await import('../../../services/GraphRegistry');const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
     completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
@@ -202,8 +223,12 @@ dbDescribe('registered custody transfer tools',()=>{
     await registry.parkJobTask(manager.jobId,0,0);GraphRegistry.delete(owner);
     const child=await registry.createJob([{agentId:'nested-worker',label:'W',prompt:'work',status:'running',threadId:workerThread}], 'nested-manager',managerThread,{parentAgentId:'nested-manager'});
     await registry.parkJobTask(child.jobId,0,0);
-    expect(await tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0})).toMatchObject({success:true});
-    expect(await tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2})).toMatchObject({success:true});
+    const race=new ConcurrentCustodyRace();
+    const results=await race.run(
+      ()=>tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0}),
+      ()=>tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2}),
+    );
+    expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
     expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(1);
     expect(completionInboxStore.take(adopter,adopter).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(0);GraphRegistry.delete(adopter);
   });
@@ -214,11 +239,16 @@ dbDescribe('registered custody transfer tools',()=>{
     const old=`h6-old-${stamp}`,next=`h6-new-${stamp}`,child=`h6-worker-${stamp}`;await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
     const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
     expect(await tools.call('reassign_job',{jobId:job.jobId,to:next,reason:'restart handoff'},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1})).toMatchObject({success:true});
-    await database.query(`UPDATE agent_jobs SET status='completed',results=$2::jsonb,tasks=jsonb_set(jsonb_set(tasks,'{0,status}','"completed"'),'{0,completion}',$3::jsonb) WHERE job_id=$1`,[job.jobId,JSON.stringify([{label:'W',status:'completed',output:'done',threadId:child}]),JSON.stringify({label:'W',status:'completed',output:'done',threadId:child})]);
+    await registry.parkJobTask(job.jobId,0,0);
+    expect(await tools.call('return_result',{status:'completed',summary:'done before restart',output:{ok:true}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),fresh.custody);
     await recovery.recover();await recovery.recover();
     expect(await fresh.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});expect(await fresh.custody.history(job.jobId)).toHaveLength(1);
     expect(inbox.take(next,next).filter(entry=>entry.jobId===job.jobId)).toHaveLength(1);expect(inbox.take(old,old)).toHaveLength(0);
+    await fresh.jobs.markTaskCompletionDelivered(job.jobId,0,Date.now());
+    const acknowledgedInbox=new CompletionInboxStore();acknowledgedInbox.registerIdleDispatcher(()=>{});
+    await new AgentCompletionRecoveryService(fresh.jobs,acknowledgedInbox,new CompletionDeliveryPolicy(),fresh.custody).recover();
+    expect(acknowledgedInbox.take(next,next)).toHaveLength(0);expect(acknowledgedInbox.take(old,old)).toHaveLength(0);
     const notices=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE $1 ORDER BY message_id`,[`custody:${job.jobId}:job:1:%`]);expect(notices).toHaveLength(2);expect(new Set(notices.map(row=>row.receiver_thread_id))).toEqual(new Set([old,next]));
   });
 
