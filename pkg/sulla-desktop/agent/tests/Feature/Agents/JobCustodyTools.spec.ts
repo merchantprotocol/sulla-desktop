@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {agentToolManifests} from '../../../tools/agents/manifests';
-import type {BaseTool} from '../../../tools/base';
+import {ToolRegistry} from '../../../tools/registry';
 import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
 const dbDescribe=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
 
@@ -17,13 +17,12 @@ vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',
 class CompletionDispatchCapture {readonly targets:Array<{channel:string;threadId:string}>=[];record(channel:string,threadId:string){this.targets.push({channel,threadId});}}
 
 class RegisteredCustodyTool {
+  private readonly registry=new ToolRegistry();
+
+  constructor(){this.registry.registerManifests(agentToolManifests);}
+
   async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job'|'return_result'|'report_progress'|'check_agent_jobs',input:any,metadata:any){
-    const manifest=agentToolManifests.find(item=>item.name===name)!;
-    const module:any=await manifest.loader();
-    const classes:any={reassign_job:'ReassignJobWorker',adopt_job:'AdoptJobWorker',send_job_message:'SendJobMessageWorker',stop_agent_job:'StopAgentJobWorker',return_result:'ReturnResultWorker',report_progress:'ReportProgressWorker',check_agent_jobs:'CheckAgentJobsWorker'};
-    const Type=module[classes[name]];
-    const tool:BaseTool=new Type();
-    tool.schemaDef=manifest.schemaDef;
+    const tool=await this.registry.createToolForCategory('agents',name);
     tool.setState({metadata});
     return tool.call(input);
   }
