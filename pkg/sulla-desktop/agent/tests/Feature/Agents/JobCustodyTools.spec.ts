@@ -16,10 +16,10 @@ vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',
 class CompletionDispatchCapture {readonly targets:Array<{channel:string;threadId:string}>=[];record(channel:string,threadId:string){this.targets.push({channel,threadId});}}
 
 class RegisteredCustodyTool {
-  async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job'|'return_result',input:any,metadata:any){
+  async call(name:'reassign_job'|'adopt_job'|'send_job_message'|'stop_agent_job'|'return_result'|'report_progress',input:any,metadata:any){
     const manifest=agentToolManifests.find(item=>item.name===name)!;
     const module:any=await manifest.loader();
-    const classes:any={reassign_job:'ReassignJobWorker',adopt_job:'AdoptJobWorker',send_job_message:'SendJobMessageWorker',stop_agent_job:'StopAgentJobWorker',return_result:'ReturnResultWorker'};
+    const classes:any={reassign_job:'ReassignJobWorker',adopt_job:'AdoptJobWorker',send_job_message:'SendJobMessageWorker',stop_agent_job:'StopAgentJobWorker',return_result:'ReturnResultWorker',report_progress:'ReportProgressWorker'};
     const Type=module[classes[name]];
     const tool:BaseTool=new Type();
     tool.schemaDef=manifest.schemaDef;
@@ -116,6 +116,20 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('send_job_message',{jobId:job.jobId,message:'new instruction'},newMeta)).toMatchObject({success:true});
     const refused=await tools.call('send_job_message',{jobId:job.jobId,message:'stale instruction'},oldMeta);expect(refused.success).toBe(false);expect(JSON.stringify(refused)).toContain('new-owner');
     const pending=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 ORDER BY created_at`,[job.jobId]);expect(pending.filter(row=>row.message.includes('[Manager changed]'))).toHaveLength(1);
+  });
+
+  it('H1 routes a registered blocker check-in only to the new owner after a move',async()=>{
+    // risk: stranded worker question; guards BlockerEscalationService custody injection and locked owner resolution
+    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
+    const old=`block-old-${stamp}`,next=`block-new-${stamp}`,child=`block-worker-${stamp}`;
+    await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
+    const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
+    expect(await tools.call('reassign_job',{jobId:job.jobId,to:next,reason:'route blocker'}, {wsChannel:old,agentId:old,threadId:old,subAgentDepth:1})).toMatchObject({success:true});
+    completionInboxStore.take(old,old);completionInboxStore.take(next,next);
+    expect(await tools.call('report_progress',{step:'blocked',summary:'Need manager input',blockers:['Choose a safe option']},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
+    const newNotices=completionInboxStore.take(next,next).filter(entry=>entry.notice?.startsWith('[Blocker from'));
+    const oldNotices=completionInboxStore.take(old,old).filter(entry=>entry.notice?.startsWith('[Blocker from'));
+    expect(newNotices).toHaveLength(1);expect(oldNotices).toHaveLength(0);
   });
 
   it('Stop follows whole-job custody: new owner succeeds and old owner is refused with the current owner',async()=>{

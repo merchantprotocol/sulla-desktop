@@ -45,7 +45,6 @@ export class AgentJobServiceProvider {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
-    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     const recovery = new JobRecoveryService(this.jobs);
@@ -60,6 +59,7 @@ export class AgentJobServiceProvider {
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage,topLevelSessions);
     const custodyNotifier = new CustodyChangeNotificationService(this.jobs, completionInboxStore);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
+    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore, this.custody);
     const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
     const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
