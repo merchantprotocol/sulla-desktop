@@ -17,9 +17,9 @@ export interface CloudAgentProjection {
 }
 
 export class CloudAgentStateProjection {
-  private readonly projector = new AgentStateProjector(agentJobProvider.states, {
+  constructor(private readonly projector = new AgentStateProjector(agentJobProvider.states, {
     latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
-  }, Date.now, {}, agentJobProvider.activity);
+  }, Date.now, {}, agentJobProvider.activity)) {}
 
   async build(deviceId = ''): Promise<CloudAgentProjection[]> {
     const snapshot = await this.projector.snapshot();

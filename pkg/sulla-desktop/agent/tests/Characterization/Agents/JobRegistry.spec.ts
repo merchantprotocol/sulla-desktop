@@ -13,6 +13,7 @@ import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
 import { AgentTeamRollupProjector } from '../../../app/Services/AgentTeamRollupProjector';
 import { SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
 import { CloudAgentStateProjection } from '../../../tools/agents/cloudProjection';
+import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceProvider';
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
@@ -193,22 +194,24 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     const activityKey = `${ created.jobId }#0`;
     RunActivity.begin(activityKey);
     try {
-      const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
-      const fleet = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+      // Use one fixture-scoped composition root. The process singleton owns mutable runtime
+      // state from earlier characterization cases and is not this test's production input.
+      const provider = new AgentJobServiceProvider();
+      const fleet = await provider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
       const projected = fleet.find(value => value.jobId === created.jobId)!;
       expect(projected.tasks.map(value => value.state)).toEqual(['working', 'quiet']);
       expect(Date.parse(projected.tasks[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
       expect(Date.parse(projected.tasks[1].lastActivityAt)).toBe(startedAt);
 
-      const snapshot = await new AgentStateProjector(agentJobProvider.states, {
-        latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
-      }, Date.now, {}, agentJobProvider.activity).snapshot();
+      const snapshot = await new AgentStateProjector(provider.states, {
+        latest: async(jobId, taskIndex) => (await provider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+      }, Date.now, {}, provider.activity).snapshot();
       const snapshotRows = snapshot.rows.filter(value => value.jobId === created.jobId);
       expect(snapshotRows.map(value => value.state)).toEqual(['working', 'quiet']);
       expect(Date.parse(snapshotRows[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
       expect(Date.parse(snapshotRows[1].lastActivityAt)).toBe(startedAt);
 
-      const check = new CheckAgentJobsHarness();
+      const check = new CheckAgentJobsHarness(provider.fleet);
       check.setState({ metadata: { threadId: root } });
       const list = JSON.parse((await check.call({ scope: 'mine', limit: 100 })).responseString);
       expect(list.jobs.find((value: any) => value.jobId === created.jobId).tasks.map((value: any) => value.state)).toEqual(['working', 'quiet']);
@@ -217,11 +220,13 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
       const rollup = new AgentTeamRollupProjector(() => Date.now()).project(fleet);
       expect(rollup.get(`${ created.jobId }#0`)?.states ?? {}).toEqual({});
-      const directory = await new SubagentDirectoryBuilder(agentJobProvider.fleet, new AgentTeamRollupProjector(() => Date.now()), () => Date.now()).build(root);
+      const directory = await new SubagentDirectoryBuilder(provider.fleet, new AgentTeamRollupProjector(() => Date.now()), () => Date.now()).build(root);
       expect(directory).toContain('active-worker · hidden · working');
       expect(directory).toContain('quiet-sibling · hidden · quiet');
 
-      const cloud = await new CloudAgentStateProjection().build('test-device');
+      const cloud = await new CloudAgentStateProjection(new AgentStateProjector(provider.states, {
+        latest: async(jobId, taskIndex) => (await provider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+      }, Date.now, {}, provider.activity)).build('test-device');
       const cloudRows = cloud.filter(value => value.jobId === created.jobId);
       expect(cloudRows.map(value => value.state)).toEqual(['working', 'quiet']);
       expect(Date.parse(cloudRows[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
