@@ -32,6 +32,13 @@ describe('AgentTaskActivityProjector', () => {
     expect(projector.project(job([task({ status: 'error' })], { status: 'failed', error: 'lost: runtime absent' }), task({ status: 'error' }), 0).state).toBe('lost');
   });
 
+  it('keeps an actionable blocker visible when a stale wake is still scheduled', () => {
+    // risk: an actionable blocked task is hidden as parked by a future wake timestamp
+    const blocked = task({ status: 'blocked', wakeAt: now + 60_000 });
+    const projector = new AgentTaskActivityProjector(new ActivityReader({}), () => now);
+    expect(projector.project(job([blocked], { status: 'running' }), blocked, 0, { createdAt: 100_000, blockers: ['dependency'] }).state).toBe('blocked');
+  });
+
   it('exempts a future wake from quiet classification', () => {
     // risk: an intentional agents/wait sleep is reported stalled or lost
     const parked = task({ status: 'parked', wakeAt: now + 60_000 });

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentLivenessReconciler } from '../../app/Services/AgentLivenessReconciler';
+import { AgentTaskActivityProjector } from '../../app/Services/AgentTaskActivityProjector';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { AgentStateProjector } from '../../app/Services/AgentStateProjector';
 import { AgentContainerRuntimeRegistry, type AgentContainerRuntimeBinding } from '../../services/AgentContainerRuntimeRegistry';
@@ -115,7 +116,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
       graph: () => false,
       container: async() => false,
       lastCheckin: async() => null,
-    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
 
     await reconciler.reconcile();
 
@@ -141,7 +142,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const runtimeRegistry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [binding] });
     const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
       graph: () => false, container: async task => runtimeRegistry.probe(undefined, task.threadId), lastCheckin: async() => null,
-    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
     const boot = runtimeRegistry.rehydrate().then(() => reconciler.reconcile());
     agentJobProvider.states.setReadiness(boot);
     expect(await boot).toBe(1);
@@ -251,7 +252,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     const gate = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; return original(next) });
     const completing = registry.recordTaskCompletion(job.jobId, 0, { label: 'race', status: 'completed', output: 'real completion', threadId: '' });
     await didEnter;
-    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
     const reconciling = reconciler.reconcile(); release();
     await Promise.all([reconciling, completing]); gate.mockRestore();
     const durable = await agentJobProvider.jobs.job(job.jobId);
@@ -275,7 +276,7 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     });
     const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
       graph: task => task.agentId !== 'race-worker', container: async() => false, lastCheckin: async() => null,
-    }, Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), Date.now, { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
     expect(await reconciler.reconcile()).toBe(0);
     race.mockRestore();
     expect((await agentJobProvider.jobs.job(jobId))?.status).toBe('running');

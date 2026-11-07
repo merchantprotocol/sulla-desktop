@@ -213,7 +213,7 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
   container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
   lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
-});
+}, agentJobProvider.activity);
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 const strandedManagerLifecycle = new StrandedManagerLifecycle(agentJobProvider.stranded, app);
 

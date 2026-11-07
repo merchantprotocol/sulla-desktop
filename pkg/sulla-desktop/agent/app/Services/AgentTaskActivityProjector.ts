@@ -32,9 +32,9 @@ export class AgentTaskActivityProjector {
     if (job.status === 'stopped' || task.status === 'stopped') return 'stopped';
     if (job.status === 'failed' || task.status === 'error') return job.error?.startsWith('lost:') ? 'lost' : 'failed';
     if (task.status === 'completed') return 'done';
+    if (checkin?.blockers?.length || task.status === 'blocked') return 'blocked';
     if (task.status === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.now())) return 'parked';
     if (task.status === 'queued') return 'queued';
-    if (checkin?.blockers?.length || task.status === 'blocked') return 'blocked';
     if (task.status === 'running' && this.now() - lastActivityAt >= this.quietAfterMs) return 'quiet';
     return task.status === 'running' ? 'working' : task.status;
   }

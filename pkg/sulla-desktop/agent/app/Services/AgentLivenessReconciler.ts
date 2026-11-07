@@ -4,6 +4,7 @@
 
 import type { AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentStateService } from './AgentStateService';
+import type { AgentTaskActivityCheckin, AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 export interface AgentLivenessProbe { graph(task: AgentJobTask): boolean; container(task: AgentJobTask): Promise<boolean | undefined>; lastCheckin(jobId: string, taskIndex: number): Promise<number | null>; }
 export interface AgentLivenessConfig { quietAfterMs: number; lostAfterMs: number; intervalMs: number; }
 const DEFAULT_CONFIG: AgentLivenessConfig = { quietAfterMs: 5 * 60_000, lostAfterMs: 15 * 60_000, intervalMs: 30_000 };
@@ -14,6 +15,7 @@ export class AgentLivenessReconciler {
   private readonly config: AgentLivenessConfig;
   private readinessRecovery?: { isReady(): boolean; retryNow(): Promise<void> };
   constructor(private readonly states: AgentStateService, private readonly probe: AgentLivenessProbe,
+    private readonly activity: AgentTaskActivityProjector,
     private readonly clock: () => number = Date.now, config: Partial<AgentLivenessConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     if (this.config.lostAfterMs <= this.config.quietAfterMs) throw new Error('lostAfterMs must be greater than quietAfterMs');
@@ -33,7 +35,10 @@ export class AgentLivenessReconciler {
       // restart. Its bounded grace protects only the lost decision, never reads.
       if (this.probe.graph(task) || containerLive !== false) continue;
       const checkinAt = await this.probe.lastCheckin(job.jobId, taskIndex);
-      const lastActivityAt = checkinAt ?? task.startedAt ?? job.createdAt;
+      const checkin: AgentTaskActivityCheckin | null = checkinAt === null ? null : { createdAt: checkinAt };
+      // The shared projector includes task-scoped RunActivity (jobId#taskIndex),
+      // so an active model/tool turn protects this task even with stale durable timestamps.
+      const lastActivityAt = this.activity.project(job, task, taskIndex, checkin).lastActivityAt;
       if (this.clock() - lastActivityAt < this.config.lostAfterMs) continue;
       const reason = `lost: no live graph or container and no activity for ${ this.config.lostAfterMs }ms`;
       const finishedAt = this.clock();

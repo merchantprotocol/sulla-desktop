@@ -31,7 +31,7 @@ describe('authoritative live agent state', () => {
   it('reconciles a stale running task to lost in durable and memory state and disables actions', async() => {
     // risk: stale job remains actionable after a desktop restart
     const { store, cache, states } = harness([job('stale', [task()])], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     expect(await reconciler.reconcile()).toBe(1);
     expect(cache.jobs.get('stale')?.status).toBe('failed');
     expect(store.durable.get('stale')?.tasks[0].status).toBe('error');
@@ -125,11 +125,20 @@ describe('authoritative live agent state', () => {
     await expect(states.jobs()).rejects.toThrow('reconcile failed');
   });
 
+  it('does not mark a stale task lost while its exact RunActivity key is fresh', async() => {
+    // risk: an active model/tool turn is killed because durable start/check-in timestamps are stale
+    const { store, states } = harness([job('live-activity', [task({ startedAt: 100_000 })])], 500_000);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'live-activity#0' ? 499_500 : undefined });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    expect(store.durable.get('live-activity')?.tasks[0].status).toBe('running');
+  });
+
   it('never marks an intentionally parked future-wake task lost', async() => {
     // risk: agents/wait is mistaken for a dead worker after its quiet threshold
     const parked = job('future-wake', [task({ status: 'parked', threadId: 'future-wake-thread' })], { status: 'parked' });
     const { store, states } = harness([parked], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.durable.get('future-wake')).toMatchObject({ status: 'parked', tasks: [{ status: 'parked' }] });
     expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows[0].state).toBe('parked');
