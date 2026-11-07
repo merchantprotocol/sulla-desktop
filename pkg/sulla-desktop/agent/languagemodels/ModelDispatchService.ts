@@ -23,13 +23,18 @@ export class ModelDispatchService {
     private readonly createService: (provider: string, model: string) => Promise<BaseLanguageModel>,
   ) {}
 
+  candidates(target: 'agents'|'subconscious', choice: AgentModelChoice): Promise<ModelCandidate[]> {
+    return this.resolveCandidates(target, choice);
+  }
+
+  service(candidate: ModelCandidate): Promise<BaseLanguageModel> {
+    return this.createService(candidate.provider, candidate.model);
+  }
+
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice): Promise<RoutedModelService | null> {
-    const candidates = await this.resolveCandidates(target, choice);
+    const candidates = await this.candidates(target, choice);
     const selected = candidates[0];
     if (!selected) return null;
-    return {
-      candidates,
-      service: await this.createService(selected.provider, selected.model),
-    };
+    return { candidates, service: await this.service(selected) };
   }
 }

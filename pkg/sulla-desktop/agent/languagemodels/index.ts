@@ -72,7 +72,9 @@ function tryGetModelProviderService(): any | null {
   }
 }
 
-class LLMRegistryImpl {
+export class LLMRegistryImpl {
+  constructor(private readonly dispatchService: () => ModelDispatchService = () => modelDispatchService) {}
+
   private services = new Map<string, BaseLanguageModel>();
 
   /**
@@ -88,11 +90,10 @@ class LLMRegistryImpl {
    * Resolve the active remote provider and create the appropriate service.
    */
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
-    const routed = await getRoutedModelService('agents');
-    if (!routed) throw new Error('No connected AI provider is available in the Agents routing list.');
-    if (!overrideModel) return routed.service;
-    const selected = routed.candidates[0];
-    return this.getServiceByProvider(selected.provider, overrideModel);
+    const candidates = await this.dispatchService().candidates('agents', { mode: 'list' });
+    const selected = candidates[0];
+    if (!selected) throw new Error('No connected AI provider is available in the Agents routing list.');
+    return this.dispatchService().service({ ...selected, model: overrideModel || selected.model });
   }
 
   /**
@@ -150,7 +151,7 @@ class LLMRegistryImpl {
    * falls back to SullaSettingsModel.
    */
   async getPrimaryService(): Promise<BaseLanguageModel> {
-    const routed = await getRoutedModelService('agents');
+    const routed = await this.dispatchService().resolve('agents', { mode: 'list' });
     if (!routed) throw new Error('No connected AI provider is available in the Agents routing list.');
     const selected = routed.candidates[0];
     firstRunTrace('models', 'primary service resolved', { providerId: selected.provider, modelOverride: selected.model });
@@ -180,7 +181,7 @@ class LLMRegistryImpl {
    * model ID. Tier names are resolved dynamically from the provider's live model list.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
-    const routed = await getRoutedModelService('subconscious');
+    const routed = await this.dispatchService().resolve('subconscious', { mode: 'list' });
     if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
     return routed.service;
   }
@@ -200,7 +201,7 @@ class LLMRegistryImpl {
    *   2. Primary provider (default)
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
-    const routed = await getRoutedModelService('subconscious');
+    const routed = await this.dispatchService().resolve('subconscious', { mode: 'list' });
     if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
     const selected = routed.candidates[0];
     const service = routed.service;

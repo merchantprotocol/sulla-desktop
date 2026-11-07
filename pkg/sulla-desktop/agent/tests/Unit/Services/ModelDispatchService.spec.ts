@@ -55,3 +55,28 @@ describe('ModelDispatchService', () => {
     expect(createService).toHaveBeenCalledWith('codex', 'gpt-6.1-sol');
   });
 });
+
+// The registry import is intentionally below the service tests: its production entry points are
+// exercised with constructor DI, without touching provider credentials or global settings.
+import { LLMRegistryImpl } from '../../../languagemodels';
+
+describe('LLMRegistryImpl production dispatch entry', () => {
+  it('uses one selected-service construction for an override model', async () => {
+    // risk: duplicate credential refresh/auth side effects before an explicit override executes
+    const selectedService = {} as BaseLanguageModel;
+    const dispatch = {
+      candidates: vi.fn(async() => [{ provider: 'codex', model: 'auto-model' }]),
+      service: vi.fn(async() => selectedService),
+      resolve: vi.fn(),
+    } as unknown as ModelDispatchService;
+    const registry = new LLMRegistryImpl(() => dispatch);
+
+    const result = await registry.getRemoteService('direct-model');
+
+    expect(result).toBe(selectedService);
+    expect(dispatch.candidates).toHaveBeenCalledOnce();
+    expect(dispatch.service).toHaveBeenCalledOnce();
+    expect(dispatch.service).toHaveBeenCalledWith({ provider: 'codex', model: 'direct-model' });
+    expect(dispatch.resolve).not.toHaveBeenCalled();
+  });
+});
