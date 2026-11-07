@@ -40,7 +40,7 @@ export class AgentJobCustodyRepository {
   }
 
   async move(input: CustodyMoveInput, expected: CustodyRecord, changedAt: Date): Promise<CustodyMoveResult> {
-    const result=await this.database.transaction<CustodyMoveResult>(async client => {
+    const result=await this.database.transaction<CustodyMoveResult>(async (client): Promise<CustodyMoveResult> => {
       const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex,'move');
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
       if (!this.sameSnapshot(current, expected)) {
