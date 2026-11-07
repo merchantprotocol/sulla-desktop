@@ -7,7 +7,6 @@ import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
 import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
-import {completionInboxStore} from '../../../services/AgentCompletionInbox';
 
 vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
@@ -52,11 +51,10 @@ suite('agents/replace_lead registered production path',()=>{
   const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>['replace_lead','reassign_job','return_result'].includes(manifest.name)));
  },60_000);
  beforeEach(async()=>{
-  completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
   runtime.reset();runtime.entries.set(owner.threadId,{state:{metadata:{wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}}});
   await database.query('TRUNCATE agent_lead_replacements,agent_job_custody_audit,agent_job_custody,agent_job_checkins,agent_job_messages,agent_inbox_messages,agent_job_result_history,agent_jobs CASCADE');
  });
- afterAll(async()=>{completionInboxStore.clear();await database.dispose();});
+ afterAll(async()=>database.dispose());
 
  async function seedLead(suffix:string,leadStatus='error',children=3,parent=owner){
   const leadId=`lead-${suffix}`;const leadThread=`old-lead-${suffix}`;
@@ -128,8 +126,8 @@ suite('agents/replace_lead registered production path',()=>{
   const currentOwner=await agentJobProvider.custody.resolveOwner(childId,0);
   expect(currentOwner).toMatchObject({channel:'coding-manager-sol',threadId:replacement.threadId,agentId:'coding-manager-sol'});
   expect(await database.query(`SELECT job_id FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
-  const deliveries=completionInboxStore.take(currentOwner!.channel,replacement.threadId).filter(entry=>entry.jobId===childId&&entry.taskIndex===0);
-  expect(deliveries).toHaveLength(1);
+  const deliveries=await database.query<any>(`SELECT tasks->0->>'completionDeliveredAt' AS delivered_at FROM agent_jobs WHERE job_id=$1`,[childId]);
+  expect(deliveries).toHaveLength(1);expect(deliveries[0].delivered_at).toBeTruthy();
  });
 
  it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{
