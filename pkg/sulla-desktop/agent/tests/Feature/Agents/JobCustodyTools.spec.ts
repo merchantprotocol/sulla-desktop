@@ -94,7 +94,7 @@ dbDescribe('registered custody transfer tools',()=>{
     const ownerGraph=await GraphRegistry.getOrCreate(owner,`${owner}-thread`);Object.assign(ownerGraph.state.metadata,{agentId:owner,wsChannel:owner,threadId:`${owner}-thread`,isSubAgent:false,subAgentDepth:0,managerThreadId:undefined});
     const adopterGraph=await GraphRegistry.getOrCreate(adopter,`${adopter}-thread`);Object.assign(adopterGraph.state.metadata,{agentId:adopter,wsChannel:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0,managerThreadId:undefined});
     const lead=await registry.createJob([{agentId:'lead',label:'L',prompt:'lead',status:'parked',threadId:`lead-${Date.now()}`}],owner,`${owner}-thread`,{parentAgentId:owner});
-    await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[lead.jobId]);
+    await registry.parkJobTask(lead.jobId,0,0);
     GraphRegistry.delete(`${owner}-thread`);
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
