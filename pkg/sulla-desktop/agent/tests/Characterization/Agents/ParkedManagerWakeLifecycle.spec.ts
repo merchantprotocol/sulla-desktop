@@ -136,7 +136,8 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect(inbox.takeAgentCompletions('replay-parent', 'replay-parent-thread').map(e => e.jobId)).toContain(job.jobId);
     expect((await registry.getPendingCompletions()).map(j => j.jobId)).toContain(job.jobId);
 
-    // A boot-time replay sweep must redeliver it — once.
+    // A boot-time replay sweep runs with a fresh process-local claim store and must redeliver it — once.
+    inbox.clearCompletionInboxes();
     await recovery.recoverPendingAgentCompletions();
     const redelivered = inbox.takeAgentCompletions('replay-parent', 'replay-parent-thread');
     expect(redelivered.map(e => e.jobId)).toContain(job.jobId);

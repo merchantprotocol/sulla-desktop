@@ -137,7 +137,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     const stateKey = `stranded:${ managerJobId }:0:parked-without-live-children:1:0:`;
     await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, tasks, visibility)
       VALUES ($1, 'parked', 1, 'coding-manager-sol', $2, $3::jsonb, 'hidden')`, [managerJobId, parentThread,
-      JSON.stringify([{ agentId: 'coding-manager-sol', label: 'Manager', prompt: 'manage', status: 'parked', threadId: parentThread })]);
+      JSON.stringify([{ agentId: 'coding-manager-sol', label: 'Manager', prompt: 'manage', status: 'parked', threadId: parentThread }]);
     await database.query(`INSERT INTO agent_stranded_episodes
       (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason)
       VALUES ($1, 0, $2, 'coding-manager-sol', $3, 'Manager', 'parked')`, [managerJobId, stateKey, parentThread]);
