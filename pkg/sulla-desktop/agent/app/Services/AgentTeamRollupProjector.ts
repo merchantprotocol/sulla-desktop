@@ -54,7 +54,7 @@ export class AgentTeamRollupProjector {
     let oldestQuietAgeMs: number | null = null; let openBlockers = 0; let unprocessedResults = 0;
     for (const task of tasks) {
       const blockers = task.latestCheckin?.blockers.length ?? 0;
-      const state = this.state(task, blockers);
+      const state = task.state;
       states[state] = (states[state] ?? 0) + 1;
       openBlockers += blockers;
       if (state === 'quiet') oldestQuietAgeMs = Math.max(oldestQuietAgeMs ?? 0, this.now() - Date.parse(task.lastActivityAt));
@@ -63,11 +63,4 @@ export class AgentTeamRollupProjector {
     return { states, oldestQuietAgeMs, openBlockers, unprocessedResults, workerCount: tasks.length };
   }
 
-  private state(task: FleetTaskView, blockers: number): string {
-    if (task.status === 'error') return 'failed';
-    if (task.status === 'completed') return 'done';
-    if (blockers || task.status === 'blocked') return 'blocked';
-    if (task.status === 'running' && this.now() - Date.parse(task.lastActivityAt) >= 5 * 60_000) return 'quiet';
-    return task.status === 'running' ? 'working' : task.status;
-  }
 }

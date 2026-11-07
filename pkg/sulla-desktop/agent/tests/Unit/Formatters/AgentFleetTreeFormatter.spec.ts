@@ -8,7 +8,7 @@ import { PullRequestReferenceExtractor } from '../../../app/Formatters/PullReque
 import type { FleetJobView, FleetTaskView } from '../../../app/Services/AgentFleetTypes';
 
 const now = Date.parse('2026-11-05T12:00:00.000Z');
-const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'worker', label: 'worker', status: 'running', returned: false, startedAt: new Date(now - 60_000).toISOString(), finishedAt: null, returnedAt: null, completionDeliveredAt: null, lastActivityAt: new Date(now - 60_000).toISOString(), threadId: 'worker-thread', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null, ...overrides });
+const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'worker', label: 'worker', status: 'running', state: 'working', returned: false, startedAt: new Date(now - 60_000).toISOString(), finishedAt: null, returnedAt: null, completionDeliveredAt: null, lastActivityAt: new Date(now - 60_000).toISOString(), threadId: 'worker-thread', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null, ...overrides });
 const job = (overrides: Partial<FleetJobView> = {}): FleetJobView => ({ jobId: 'manager', status: 'running', createdAt: new Date(now - 60_000).toISOString(), finishedAt: null, parentThreadId: 'root', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', tasks: [task()], ...overrides });
 
 describe('AgentFleetTreeFormatter', () => {
@@ -16,7 +16,7 @@ describe('AgentFleetTreeFormatter', () => {
     // risk: fleet supervision reports the wrong worker or hides a blocker/result
     const formatter = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor(), () => now);
     const manager = job();
-    const child = job({ jobId: 'child', parentJobId: 'manager', parentTaskIndex: 0, createdAt: new Date(now - 50_000).toISOString(), tasks: [task({ label: 'quiet worker', returned: true, lastActivityAt: new Date(now - 16 * 60_000).toISOString(), latestCheckin: { step: 'review', summary: 'ready https://github.com/merchantprotocol/sulla-desktop/pull/2028', blockers: ['CI'], time: new Date(now - 16 * 60_000).toISOString() } })] });
+    const child = job({ jobId: 'child', parentJobId: 'manager', parentTaskIndex: 0, createdAt: new Date(now - 50_000).toISOString(), tasks: [task({ label: 'quiet worker', state: 'blocked', returned: true, lastActivityAt: new Date(now - 16 * 60_000).toISOString(), latestCheckin: { step: 'review', summary: 'ready https://github.com/merchantprotocol/sulla-desktop/pull/2028', blockers: ['CI'], time: new Date(now - 16 * 60_000).toISOString() } })] });
     const output = formatter.format([child, manager]);
     expect(output.tasks).toHaveLength(2);
     expect(output.tasks[1]).toMatchObject({ ref: 'child#0', parent: 'manager#0', depth: 1, state: 'blocked', blockers: 1, returned: true, pr: 'https://github.com/merchantprotocol/sulla-desktop/pull/2028' });

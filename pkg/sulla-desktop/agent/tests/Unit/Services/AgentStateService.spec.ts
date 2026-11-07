@@ -6,6 +6,7 @@ import { AgentStateService, type AgentStateStore } from '../../../app/Services/A
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '../../../app/Services/AgentLivenessReconciler';
 import type { AgentJob, AgentJobTask } from '../../../tools/agents/jobRegistry';
+import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
 
 class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
@@ -87,6 +88,14 @@ describe('authoritative live agent state', () => {
     const { states } = harness([job('quiet', [task({ startedAt: 1_000 })])]);
     const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }).snapshot();
     expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true });
+  });
+
+  it('keeps snapshot state working when task-scoped model activity is fresh but its check-in is old', async() => {
+    // risk: Live Agents snapshot disagrees with fleet/check_agent_jobs during a long model or tool call
+    const { states } = harness([job('active', [task({ startedAt: 100_000 })])]);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'active#0' ? 990_000 : undefined }, () => 1_000_000);
+    const snapshot = await new AgentStateProjector(states, { latest: async() => ({ createdAt: 100_000, summary: 'old', blockers: [] }) }, () => 1_000_000, {}, activity).snapshot();
+    expect(snapshot.rows[0].state).toBe('working');
   });
 
   it('returns the complete descendant set for a root chat', async() => {

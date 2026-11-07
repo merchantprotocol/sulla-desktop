@@ -39,7 +39,7 @@ class DeferredDispatcher implements StrandedAlertDispatcher {
   resolve(): void { this.release?.() }
 }
 
-const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'manager', label: 'Manager', status: 'parked',
+const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'manager', label: 'Manager', status: 'parked', state: 'parked',
   returned: false, startedAt: iso(60 * 60_000), finishedAt: null, returnedAt: null, completionDeliveredAt: null,
   lastActivityAt: iso(60 * 60_000), threadId: 'manager-thread', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null, ...overrides });
 const manager = (id: string, overrides: Partial<FleetTaskView> = {}): FleetJobView => ({ jobId: id, status: 'parked', createdAt: iso(60 * 60_000), finishedAt: null,

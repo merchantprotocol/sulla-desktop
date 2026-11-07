@@ -44,14 +44,14 @@ export class SubagentDirectoryBuilder {
     if (!open && task.completionDeliveredAt && finishedAt && this.now() - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
     const lastActivity = Date.parse(task.lastActivityAt); const stalled = open && this.now() - lastActivity >= SUBAGENT_STALL_MS;
     const visibility = task.promotedToTab ? 'hidden→tab' : String(task.visibility ?? 'hidden');
-    const openState = task.status === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status;
+    const openState = task.state === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : task.state;
     const parts = [task.agentId, visibility, open ? `${ openState } ${ this.span(this.now() - Date.parse(task.startedAt)) }` : `${ task.returned ? 'returned' : task.status }`, `contract ${ String(task.contract ?? 'result') }`];
     if (task.latestCheckin) parts.push(`last check-in ${ this.ago(this.now() - Date.parse(task.latestCheckin.time)) } ${ this.quote(task.latestCheckin.summary) }`);
     else if (open) parts.push('no check-in yet');
     if (task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
     if (team) parts.push(this.team(team));
     if (task.stranded) parts.push(`⚠ stranded: ${ this.quote(task.stranded.reason) }`);
-    if (stalled) parts.push(`⚠ stalled (quiet ${ this.span(this.now() - lastActivity) })`);
+    if (stalled) parts.push(`⚠ stalled (${ task.state } ${ this.span(this.now() - lastActivity) })`);
     parts.push(`job ${ job.tasks.length > 1 ? `${ job.jobId }#${ task.taskIndex }` : job.jobId }`);
     return { line: `- ${ parts.join(' · ') }`, stalled, undelivered: !open && (task.returned || !!task.completion) && !task.completionDeliveredAt, label: task.label || task.agentId, output: this.resultText(task.completion ?? task.result) };
   }

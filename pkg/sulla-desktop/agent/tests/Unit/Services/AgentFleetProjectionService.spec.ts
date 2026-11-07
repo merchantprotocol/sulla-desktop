@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentFleetProjectionService } from '../../../app/Services/AgentFleetProjectionService';
 import { AgentLineageIndex } from '../../../app/Services/AgentLineageIndex';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
+import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
 
 const task = (threadId: string, agentId = 'worker') => ({ agentId, label: agentId, prompt: 'work', status: 'running' as const, threadId });
 const job = (jobId: string, parentThreadId: string, tasks: ReturnType<typeof task>[], createdAt: number, parentAgentId = 'sulla'): AgentJob => ({
@@ -62,5 +63,23 @@ describe('AgentFleetProjectionService', () => {
     expect(index.lineage(first).rootThreadId).toBeTruthy();
     expect(index.descendants('missing-thread').map(value => value.jobId)).toEqual(['orphan']);
     expect(index.descendants('unrelated')).toEqual([]);
+  });
+
+  it('projects task-scoped model activity instead of an old check-in or sibling activity', async() => {
+    // risk: check_agent_jobs and its tree/directory consumers call active work quiet or credit the wrong sibling
+    const values = [job('active', 'root', [task('fresh'), task('quiet')], 100_000)];
+    const telemetry = new FleetTelemetryReader();
+    telemetry.latestTelemetryForJobs = async() => ({ active: {
+      0: { latestCheckin: { step: 'old', summary: 'old', blockers: [], filesTouched: [], createdAt: 100_000 }, checkins: [], undeliveredMessages: 0 },
+      1: { latestCheckin: { step: 'old', summary: 'old', blockers: [], filesTouched: [], createdAt: 100_000 }, checkins: [], undeliveredMessages: 0 },
+    } });
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'active#0' ? 990_000 : undefined }, () => 1_000_000);
+    const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, telemetry, new FleetTitleReader() as any, () => 1_000_000, undefined, activity);
+
+    const [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect(projected.tasks.map(value => ({ state: value.state, lastActivityAt: value.lastActivityAt }))).toEqual([
+      { state: 'working', lastActivityAt: new Date(990_000).toISOString() },
+      { state: 'quiet', lastActivityAt: new Date(100_000).toISOString() },
+    ]);
   });
 });

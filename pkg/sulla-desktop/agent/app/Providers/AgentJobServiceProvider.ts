@@ -27,6 +27,7 @@ import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
+import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -35,6 +36,7 @@ export class AgentJobServiceProvider {
   readonly service: AgentJobService;
   readonly states: AgentStateService;
   readonly fleet: AgentFleetProjectionService;
+  readonly activity: AgentTaskActivityProjector;
   readonly stranded: StrandedManagerScheduler;
   readonly completionAcknowledgements: CompletionAcknowledgementService;
   readonly delivery: JobCompletionDelivery;
@@ -49,9 +51,10 @@ export class AgentJobServiceProvider {
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime);
+    this.activity = new AgentTaskActivityProjector(runActivity);
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);
-    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes);
+    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes, this.activity);
     this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(Date.now, new RunActivityManagerActivitySource(runActivity)),
       strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);

@@ -8,7 +8,7 @@ import type { FleetJobView, FleetTaskView } from '../../../app/Services/AgentFle
 import { SUBAGENT_DIRECTORY_MAX_CHARS, SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
 
 const now = Date.parse('2026-11-05T12:00:00.000Z');
-const task = (index: number, label: string): FleetTaskView => ({ taskIndex: index, agentId: label, label, status: 'running', returned: false, startedAt: new Date(now - 60_000).toISOString(), finishedAt: null, returnedAt: null, completionDeliveredAt: null, lastActivityAt: new Date(now - 60_000).toISOString(), threadId: `${ label }-thread`, parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null });
+const task = (index: number, label: string): FleetTaskView => ({ taskIndex: index, agentId: label, label, status: 'running', state: 'working', returned: false, startedAt: new Date(now - 60_000).toISOString(), finishedAt: null, returnedAt: null, completionDeliveredAt: null, lastActivityAt: new Date(now - 60_000).toISOString(), threadId: `${ label }-thread`, parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null });
 const direct: FleetJobView = { jobId: 'direct', status: 'running', createdAt: new Date(now - 60_000).toISOString(), finishedAt: null, parentThreadId: 'root', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', tasks: [task(0, 'manager')] };
 const child: FleetJobView = { jobId: 'child', status: 'running', createdAt: new Date(now - 30_000).toISOString(), finishedAt: null, parentThreadId: 'manager-thread', parentJobId: 'direct', parentTaskIndex: 0, rootThreadId: 'root', tasks: [task(0, 'worker')] };
 
@@ -32,9 +32,9 @@ describe('SubagentDirectoryBuilder', () => {
 
   it('renders completion output text and preserves promotion and parked-child markers', async() => {
     // risk: a missed wake hides the worker deliverable or management state behind [object Object]
-    const completedTask = { ...task(0, 'finished-worker'), status: 'completed', returned: true, finishedAt: new Date(now - 1_000).toISOString(), completion: { status: 'completed', summary: 'done', output: 'PR #2030 is ready' } };
+    const completedTask = { ...task(0, 'finished-worker'), status: 'completed', state: 'done', returned: true, finishedAt: new Date(now - 1_000).toISOString(), completion: { status: 'completed', summary: 'done', output: 'PR #2030 is ready' } };
     const completed: FleetJobView = { ...direct, jobId: 'completed', status: 'completed', finishedAt: completedTask.finishedAt, tasks: [completedTask] };
-    const parkedTask = { ...task(0, 'manager'), status: 'parked', promotedToTab: true };
+    const parkedTask = { ...task(0, 'manager'), status: 'parked', state: 'parked', promotedToTab: true };
     const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 2, tasks: [parkedTask] };
     const output = await new SubagentDirectoryBuilder(new FleetReader([completed, parked]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
     expect(output).toContain('finished-worker: "PR #2030 is ready"');

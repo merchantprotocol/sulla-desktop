@@ -9,7 +9,7 @@ import type { FleetJobView, FleetTaskView } from '../../../app/Services/AgentFle
 
 const now = Date.parse('2026-11-05T12:00:00.000Z');
 const stale = new Date(now - 60 * 60_000).toISOString();
-const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'manager', label: 'Manager', status: 'parked', returned: false,
+const task = (overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({ taskIndex: 0, agentId: 'manager', label: 'Manager', status: 'parked', state: 'parked', returned: false,
   startedAt: stale, finishedAt: null, returnedAt: null, completionDeliveredAt: null, lastActivityAt: stale, threadId: 'manager-thread', parentJobId: null,
   parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null, ...overrides });
 

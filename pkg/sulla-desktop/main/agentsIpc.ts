@@ -208,7 +208,7 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
   latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
-});
+}, Date.now, {}, agentJobProvider.activity);
 const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
   container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
@@ -432,10 +432,10 @@ export function initAgentsIpc(): void {
 }
 
 export async function fetchThreadAgentCards(parentThreadId: string): Promise<ThreadAgentCard[]> {
-  const [{ ConversationHistoryModel }, { resolveSullaLogsDir }, { RunActivity }] = await Promise.all([
+  const [{ ConversationHistoryModel }, { resolveSullaLogsDir }, { AgentJobMessagingModel }] = await Promise.all([
     import('@pkg/agent/database/models/ConversationHistoryModel'),
     import('@pkg/agent/utils/sullaPaths'),
-    import('@pkg/agent/services/RunActivity'),
+    import('@pkg/agent/database/models/AgentJobMessagingModel'),
   ]);
   const jobs = await agentJobProvider.states.descendants(parentThreadId);
   const logsDir = resolveSullaLogsDir();
@@ -443,7 +443,9 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
-    let lastActivityAt = RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
+    const checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null;
+    const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
+    const lastActivityAt = activity.lastActivityAt;
 
     if (task.threadId) {
       const row = await ConversationHistoryModel.getById(task.threadId);
@@ -455,13 +457,11 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
           lastActivity = latest.kind === 'tool'
             ? `${ latest.toolName || 'Tool' }: ${ text || 'running' }`
             : text || lastActivity;
-          const ts = new Date(latest.ts).getTime();
-          if (Number.isFinite(ts)) lastActivityAt = ts;
         }
       }
     }
 
-    const taskStatus = toCardStatus(task.status, job.status);
+    const taskStatus = toCardStatus(activity.state);
     if (taskStatus === 'done' && (lastActivity === 'Starting…' || lastActivity === 'Working in its own tab')) lastActivity = task.returnedAt ? `Returned ${ task.contract?.name ?? 'result' }` : 'Finished';
     if (taskStatus === 'failed' && job.error) lastActivity = job.error;
 
@@ -509,11 +509,11 @@ function clipLine(text: string, max = 180): string {
  * task parking flips the job's own rollup status to 'parked' only once
  * every task has, so a still-running sibling must never read as parked.
  */
-function toCardStatus(taskStatus: string, jobStatus: string): ThreadAgentCard['status'] {
-  if (taskStatus === 'parked') return 'parked';
-  if (taskStatus === 'completed') return 'done';
-  if (taskStatus === 'error' || taskStatus === 'blocked' || jobStatus === 'failed') return 'failed';
-  if (taskStatus === 'stopped' || jobStatus === 'stopped') return 'stopped';
+function toCardStatus(state: string): ThreadAgentCard['status'] {
+  if (state === 'parked') return 'parked';
+  if (state === 'done') return 'done';
+  if (state === 'failed' || state === 'lost' || state === 'blocked') return 'failed';
+  if (state === 'stopped') return 'stopped';
   return 'running';
 }
 
@@ -568,14 +568,12 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       { AgentJobMessagingModel },
       { ConversationHistoryModel },
       { resolveSullaLogsDir },
-      { RunActivity },
       { GraphRegistry },
       { agentDefinitionService },
     ] = await Promise.all([
       import('@pkg/agent/database/models/AgentJobMessagingModel'),
       import('@pkg/agent/database/models/ConversationHistoryModel'),
       import('@pkg/agent/utils/sullaPaths'),
-      import('@pkg/agent/services/RunActivity'),
       import('@pkg/agent/services/GraphRegistry'),
       import('@pkg/agent/services/AgentDefinitionService'),
     ]);
@@ -600,7 +598,8 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
         const latestCheckin = telemetry[taskIndex]?.latestCheckin ?? null;
-        let lastActivityAt = latestCheckin?.createdAt ?? RunActivity.lastActivityAt(job.jobId) ?? task.startedAt ?? job.createdAt;
+        const activity = agentJobProvider.activity.project(job, task, taskIndex, latestCheckin);
+        const lastActivityAt = activity.lastActivityAt;
         let lastActivity = latestCheckin?.summary || (task.status === 'queued' ? 'Waiting to start' : 'Working');
         if (task.threadId) {
           const row = await ConversationHistoryModel.getById(task.threadId);
@@ -612,8 +611,6 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
               lastActivity = latest.kind === 'tool'
                 ? `${ latest.toolName || 'Tool' }: ${ text || 'running' }`
                 : text || lastActivity;
-              const time = new Date(latest.ts).getTime();
-              if (Number.isFinite(time)) lastActivityAt = Math.max(lastActivityAt, time);
             }
           }
         }
@@ -638,7 +635,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
           agentId: task.agentId,
           label: task.label || task.agentId,
           taskId: task.taskId,
-          status: task.status,
+          status: activity.state,
           threadId: task.threadId,
           startedAt: task.startedAt ?? job.createdAt,
           finishedAt: task.finishedAt,
