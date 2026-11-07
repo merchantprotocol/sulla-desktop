@@ -137,9 +137,9 @@ suite('agents/replace_lead registered production path',()=>{
   const {leadId,leadThread}=await seedLead('distinct-routing','running',0);
   const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
   const incoming='distinct-incoming';await seedChild('distinct-incoming',0,'unrelated-owner');
-  const {agentJobProvider,AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
   const actor=await agentJobProvider.custodyCallerVerifier.verify({wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0});
-  const moved=await agentJobProvider.custody.move({jobId:`child-${incoming}-0`,taskIndex:0,to:{channel:'old-transport',threadId:leadThread,agentId:'old-identity'},actor,reason:'post-drain adoption'});
+  const moved=await agentJobProvider.custody.move({jobId:`child-${incoming}-0`,taskIndex:0,to:{channel:owner.channel,threadId:leadThread,agentId:'codex-sol-worker'},actor,reason:'post-drain adoption'});
   expect(moved.ok).toBe(true);
   expect(await agentJobProvider.custody.resolveOwner(`child-${incoming}-0`,0)).toMatchObject({channel:'replacement-transport',threadId:(result as any).result.replacement.threadId,agentId:'replacement-identity'});
  });
@@ -159,7 +159,7 @@ suite('agents/replace_lead registered production path',()=>{
   // risk: irreversible stop — retry after the request commits must not duplicate the stop side effect.
   const {leadId}=await seedLead('wrap-crash','running',0);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
-  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  const {agentJobProvider,AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
   // Fault boundary: discard every process-local timer after the durable request commit.
   const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
