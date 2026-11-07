@@ -43,7 +43,7 @@ class LivePageFixture {
     agents: [],
     heartbeat: null,
     jobs: [{
-      jobId: 'job-1', status: 'running', createdAt: 1, finishedAt: null, taskCount: 1, parentAgentId: 'lead', parentTitle: 'Keep the feed stable', killedByHuman: false,
+      jobId: 'job-1', status: 'running', createdAt: 1, finishedAt: null, taskCount: 1, parentAgentId: 'lead', parentTitle: 'Keep the feed stable',
       tasks: [{ taskIndex: 0, agentId: 'worker', label: 'Worker', status: 'running', threadId: 'thread-1', startedAt: 1, depth: 1, kind: 'job', lastActivity: 'Working', lastActivityAt: 1, waitingForHuman: false, latestCheckin: null }],
     }],
     workflowRuns: [],

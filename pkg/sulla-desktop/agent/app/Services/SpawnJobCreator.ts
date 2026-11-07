@@ -15,7 +15,7 @@ export interface SpawnJobRepository {
 }
 
 export interface SpawnJobStateWriter {
-  create(job: AgentJob): Promise<void>;
+  create(job: AgentJob): Promise<unknown>;
 }
 
 /** Creates durable jobs and serializes labeled spawn retries. */
