@@ -33,7 +33,7 @@ export class StrandedEpisodeRepository {
 
   async pending(stateKeys: string[]): Promise<PendingStrandedEpisode[]> {
     if (stateKeys.length === 0) return [];
-    const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' AND state_key = ANY($1::text[]) ORDER BY created_at, state_key`, [stateKeys]);
+    const rows = await this.connection.select(`SELECT * FROM agent_stranded_episodes WHERE status = 'pending' AND state_key = ANY($1::text[]) ORDER BY created_at, state_key`, [stateKeys as unknown as string]);
     return rows.map(row => ({ managerJobId: String(row.manager_job_id), managerTaskIndex: Number(row.manager_task_index),
       stateKey: String(row.state_key), parentChannel: String(row.parent_channel), parentThreadId: String(row.parent_thread_id),
       label: String(row.label), reason: String(row.reason), reasonKind: String(row.state_key).includes(':result-not-woken:') ? 'result-not-woken' : 'parked-without-live-children',
