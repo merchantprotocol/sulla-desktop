@@ -5,19 +5,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-// Keep the production registry entry test focused: these collaborators are unrelated to dispatch
-// and importing their application graphs would consume the PR suite's hard 60-second budget.
-vi.mock('../../../languagemodels/BaseLanguageModel', () => ({ BaseLanguageModel: class {} }));
-vi.mock('../../../languagemodels/ModelDiscoveryService', () => ({ modelDiscoveryService: {} }));
-vi.mock('../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => false }));
-vi.mock('../../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {} }));
-vi.mock('../../../services/IntegrationService', () => ({ getIntegrationService: () => ({}) }));
-vi.mock('../../../../main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
-vi.mock('../../../languagemodels/openAICompatibleProviders', () => ({ OPENAI_COMPATIBLE_PROVIDERS: [] }));
-vi.mock('../../../languagemodels/OpenAICompatibleProviderService', () => ({ getOpenAICompatibleProviderService: vi.fn() }));
-
 import type { BaseLanguageModel } from '../../../languagemodels/BaseLanguageModel';
-import { ModelDispatchService } from '../../../languagemodels/ModelDispatchService';
+import { ModelDispatchService, RemoteModelDispatchService } from '../../../languagemodels/ModelDispatchService';
 import type { AgentModelChoice } from '../../../languagemodels/modelRoutingTypes';
 
 describe('ModelDispatchService', () => {
@@ -67,27 +56,20 @@ describe('ModelDispatchService', () => {
   });
 });
 
-// The registry import is intentionally below the service tests: its production entry points are
-// exercised with constructor DI, without touching provider credentials or global settings.
-import { LLMRegistryImpl } from '../../../languagemodels';
-
-describe('LLMRegistryImpl production dispatch entry', () => {
-  it('uses one selected-service construction for an override model', async () => {
+describe('RemoteModelDispatchService production entry policy', () => {
+  it('constructs only the requested override service through the shared dispatch boundary', async () => {
     // risk: duplicate credential refresh/auth side effects before an explicit override executes
     const selectedService = {} as BaseLanguageModel;
-    const dispatch = {
-      candidates: vi.fn(async() => [{ provider: 'codex', model: 'auto-model' }]),
-      service: vi.fn(async() => selectedService),
-      resolve: vi.fn(),
-    } as unknown as ModelDispatchService;
-    const registry = new LLMRegistryImpl(() => dispatch);
+    const dispatch = new ModelDispatchService(
+      async() => [{ provider: 'codex', model: 'auto-model' }],
+      vi.fn(async() => selectedService),
+    );
+    const serviceSpy = vi.spyOn(dispatch, 'service');
 
-    const result = await registry.getRemoteService('direct-model');
+    const result = await new RemoteModelDispatchService(dispatch).resolve('direct-model');
 
     expect(result).toBe(selectedService);
-    expect(dispatch.candidates).toHaveBeenCalledOnce();
-    expect(dispatch.service).toHaveBeenCalledOnce();
-    expect(dispatch.service).toHaveBeenCalledWith({ provider: 'codex', model: 'direct-model' });
-    expect(dispatch.resolve).not.toHaveBeenCalled();
+    expect(serviceSpy).toHaveBeenCalledOnce();
+    expect(serviceSpy).toHaveBeenCalledWith({ provider: 'codex', model: 'direct-model' });
   });
 });

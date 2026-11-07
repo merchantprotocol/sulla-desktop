@@ -24,7 +24,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
-import { ModelDispatchService } from './ModelDispatchService';
+import { ModelDispatchService, RemoteModelDispatchService } from './ModelDispatchService';
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
 // log only when the resolved provider/tier/model/fallback signature changes,
@@ -79,10 +79,9 @@ export class LLMRegistryImpl {
    * Resolve the active remote provider and create the appropriate service.
    */
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
-    const candidates = await this.dispatchService().candidates('agents', { mode: 'list' });
-    const selected = candidates[0];
-    if (!selected) throw new Error('No connected AI provider is available in the Agents routing list.');
-    return this.dispatchService().service({ ...selected, model: overrideModel || selected.model });
+    const service = await new RemoteModelDispatchService(this.dispatchService()).resolve(overrideModel);
+    if (!service) throw new Error('No connected AI provider is available in the Agents routing list.');
+    return service;
   }
   /**
    * Get service by specific provider ID (e.g., 'anthropic', 'grok').
