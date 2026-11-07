@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-
 /**
  * LLM Registry - Central access point for LLM services
  *
@@ -16,7 +15,6 @@
  * Falls back to SullaSettingsModel when the service isn't initialized yet.
  * All services lazy-init / reconfigure on demand.
  */
-
 import { BaseLanguageModel } from './BaseLanguageModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
 import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
@@ -28,13 +26,11 @@ import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
 import { ModelDispatchService, type RoutedModelService } from './ModelDispatchService';
 import type { AgentModelChoice } from './modelRoutingTypes';
-
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
 // log only when the resolved provider/tier/model/fallback signature changes,
 // so the truth surfaces in background.log without spamming every dispatch.
 let lastSubconsciousResolutionSig = '';
-
 // Provider factory map — lazy-loaded to avoid circular imports
 export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
@@ -60,9 +56,7 @@ export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>
   custom:        async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
   ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map(provider => [provider.id, () => getOpenAICompatibleProviderService(provider.id)])),
 };
-
 // ── Helper: resolve provider from ModelProviderService or fallback ──
-
 function tryGetModelProviderService(): any | null {
   try {
     const { getModelProviderService } = require('../services/ModelProviderService');
@@ -71,12 +65,9 @@ function tryGetModelProviderService(): any | null {
     return null;
   }
 }
-
 export class LLMRegistryImpl {
   constructor(private readonly dispatchService: () => ModelDispatchService = () => modelDispatchService) {}
-
   private services = new Map<string, BaseLanguageModel>();
-
   /**
    * Get service by mode or model name
    */
@@ -85,7 +76,6 @@ export class LLMRegistryImpl {
     // Treat any specifier as a remote model request
     return this.getRemoteService(specifier);
   }
-
   /**
    * Resolve the active remote provider and create the appropriate service.
    */
@@ -95,7 +85,6 @@ export class LLMRegistryImpl {
     if (!selected) throw new Error('No connected AI provider is available in the Agents routing list.');
     return this.dispatchService().service({ ...selected, model: overrideModel || selected.model });
   }
-
   /**
    * Get service by specific provider ID (e.g., 'anthropic', 'grok').
    * When modelOverride is provided, a separate cached instance is created with
@@ -108,7 +97,6 @@ export class LLMRegistryImpl {
     }
     const key = modelOverride ? `provider:${ providerId }:${ modelOverride }` : `provider:${ providerId }`;
     let svc = this.services.get(key);
-
     if (!svc) {
       if (modelOverride && providerId === 'claude-code') {
         // ClaudeCodeService is a singleton — create a fresh instance so the model
@@ -138,14 +126,11 @@ export class LLMRegistryImpl {
       this.services.set(key, svc);
       svc.initialize().catch(console.error);
     }
-
     return svc;
   }
-
   // ============================================================================
   // PRIMARY / SECONDARY PROVIDER — reads from ModelProviderService (sync)
   // ============================================================================
-
   /**
    * Get the primary LLM service. Reads from ModelProviderService if available,
    * falls back to SullaSettingsModel.
