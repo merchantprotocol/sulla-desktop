@@ -13,7 +13,6 @@ describe('SpawnLeadLauncher',()=>{
    const launcher=new SpawnLeadLauncher(jobs as any,()=>({runValidated} as any));
    const result=await launcher.launchReplacement({oldJobId:'old-job',oldTaskIndex:2,agentId:'coding-manager-sol',prompt:'handoff',launchKey:'lead-replacement:old-job:2',owner:{channel:'sulla-desktop',threadId:'parent-thread',agentId:'parent-agent'}});
    expect(result).toEqual({jobId:'new-job',taskIndex:0,threadId:'new-thread'});
-   expect(runValidated).toHaveBeenCalledWith(expect.objectContaining({tasks:[expect.objectContaining({agentId:'coding-manager-sol',prompt:'handoff',visibility:'hidden'})],async:true}),expect.objectContaining({metadata:expect.objectContaining({threadId:'parent-thread',routedAgentId:'parent-agent'})}));
-   expect(runValidated.mock.calls[0][0].launchKey).toBe('lead-replacement:old-job:2');
+   expect(runValidated).toHaveBeenCalledWith(expect.objectContaining({tasks:[expect.objectContaining({agentId:'coding-manager-sol',prompt:'handoff',visibility:'hidden'})],async:true,launchKey:'lead-replacement:old-job:2'}),expect.objectContaining({metadata:expect.objectContaining({threadId:'parent-thread',routedAgentId:'parent-agent'})}));
  });
 });

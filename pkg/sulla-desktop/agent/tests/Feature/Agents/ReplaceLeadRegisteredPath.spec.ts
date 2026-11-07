@@ -6,6 +6,7 @@ import '../../Support/TestHomeEnv';
 import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {TestDatabase} from '../../Support/TestDatabase';
+import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
 
 vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
 vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
@@ -43,10 +44,11 @@ const task=(label:string,threadId:string,status='running')=>({agentId:'codex-sol
 suite('agents/replace_lead registered production path',()=>{
  let registry:any;
  beforeAll(async()=>{
-  process.env.SULLA_DATABASE_POOL_MAX='1';await database.initialize();
+  process.env.SULLA_DATABASE_POOL_MAX='4';await database.initialize();
   process.env.SULLA_DATABASE_URL=database.appUrl();process.env.PGOPTIONS=`-csearch_path=${database.schema},public`;
   const {postgresClient}=await import('../../../database/PostgresClient');await postgresClient.initialize();await postgresClient.query(`SET search_path TO "${database.schema}", public`);
-  const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>['replace_lead','return_result'].includes(manifest.name)));
+  await database.query(`INSERT INTO agent_definitions(id,slug,name,status,enabled) VALUES('test-coding-manager-sol','coding-manager-sol','Coding Manager Sol','production',TRUE) ON CONFLICT(slug) DO UPDATE SET status='production',enabled=TRUE`);
+  const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>['replace_lead','reassign_job','return_result'].includes(manifest.name)));
  },60_000);
  beforeEach(async()=>{
   runtime.reset();runtime.entries.set(owner.threadId,{state:{metadata:{wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}}});
@@ -65,6 +67,7 @@ suite('agents/replace_lead registered production path',()=>{
  }
  async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
  async function returnResult(threadId:string){const tool=await registry.createToolForCategory('agents','return_result');tool.setState({metadata:{wsChannel:owner.channel,threadId,agentId:'codex-sol-worker',subAgentDepth:2}});return tool.call({status:'completed',summary:'done',output:{head:'abc1234'}});}
+ async function callAgent(name:string,input:any,metadata:any){const tool=await registry.createToolForCategory('agents',name);tool.setState({metadata});return tool.call(input);}
 
  it('H3 drains three real children and records their registered return_result contracts exactly once after reparenting',async()=>{
   // risk: custody/result routing — a dead manager replacement must preserve every running worker.
@@ -104,6 +107,28 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
  });
 
+ it('redirects a registered incoming reparent after final zero and delivers its concurrent registered return once',async()=>{
+  // risk: stranded result — adoption that starts during final drain must land on, and return to, the replacement.
+  const {leadId,leadThread}=await seedLead('final-race','running',0);
+  const childId='child-final-race-9',childThread='worker-final-race-9',oldManager='incoming-manager-final-race';
+  runtime.entries.set(oldManager,{state:{metadata:{wsChannel:oldManager,threadId:oldManager,agentId:oldManager,subAgentDepth:0}}});
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,restart_resume_count,tasks) VALUES($1,'parked',1,$2,$2,$2,1,$3::jsonb)`,[childId,oldManager,JSON.stringify([task('Incoming worker',childThread,'parked')])]);
+  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');const repository=(agentJobProvider.custody as any).repository;const originalObserver=repository.observer;const barrier=new CustodyTransactionBarrier();barrier.hold('producer','committing');
+  runtime.adoptDuringLaunch=async()=>{repository.observer=barrier;};
+  const replacing=call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});await barrier.waitFor('producer','committing');
+  const reparenting=callAgent('reassign_job',{jobId:childId,taskIndex:0,to:leadThread,reason:'arrive at final drain'},{wsChannel:oldManager,threadId:oldManager,agentId:oldManager,subAgentDepth:1});
+  await barrier.waitFor('move','locked');
+  const returning=returnResult(childThread);expect(barrier.count('producer','locked')).toBe(1); // only replacement drain is locked; return waits on child custody
+  barrier.release('producer','committing');
+  const [replacementResult,reparentResult,returnResultReceipt]=await Promise.all([replacing,reparenting,returning]);repository.observer=originalObserver;
+  expect(replacementResult.success).toBe(true);expect(reparentResult.success).toBe(true);expect(returnResultReceipt.success).toBe(true);
+  const replacement=(replacementResult as any).result.replacement;
+  expect(await agentJobProvider.custody.resolveOwner(childId,0)).toMatchObject({threadId:replacement.threadId,agentId:'coding-manager-sol'});
+  expect(await database.query(`SELECT * FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
+  const deliveries=await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE ids->>'jobId'=$1 AND kind='contract'`,[childId]);
+  expect(deliveries).toEqual([{receiver_thread_id:replacement.threadId}]);
+ });
+
  it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{
   // risk: irreversible stop — replacement must request graceful wrap-up, never hard-stop a live lead.
   const {leadId}=await seedLead('live','running',0);const first=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(first.success).toBe(true);
@@ -131,5 +156,14 @@ suite('agents/replace_lead registered production path',()=>{
   const {leadId}=await seedLead('auth','running',0);const peer=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(JSON.stringify(peer.result??peer.error)).toContain('coding-manager-sol');
   expect((await call({jobId:leadId,taskIndex:7,agentId:'coding-manager-sol'})).success).toBe(false);expect((await call({jobId:'missing',taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);
   const disabled=await call({jobId:leadId,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(JSON.stringify(disabled.result??disabled.error)).toContain('enabled agent');
+ });
+
+ it('allows a verified custody ancestor to replace a descendant lead',async()=>{
+  // risk: recovery authority — a manager's manager must recover a failed descendant without peer privilege.
+  const middle={channel:'middle-manager',threadId:'middle-manager-thread',agentId:'middle-manager'};
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES('middle-manager-job','running',1,$1,$2,$3,$4::jsonb)`,[owner.channel,owner.threadId,owner.agentId,JSON.stringify([task('Middle manager',middle.threadId,'running')])]);
+  const {leadId}=await seedLead('ancestor','error',0,middle);
+  const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});
+  expect(result,JSON.stringify(result)).toMatchObject({success:true});
  });
 });

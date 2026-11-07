@@ -28,7 +28,7 @@ export class AgentJobCustodyRepository {
    * producer for the same effective scope cannot observe different owners.
    */
   async withCustodyLock<T>(jobId: string, taskIndex: number|undefined, operation: CustodyLockedOperation<T>): Promise<T|undefined> {
-    const result=await this.database.transaction(async client => {
+    const result=await this.database.transaction<T|undefined>(async client => {
       const owner = await this.resolveOwnerInTransaction(client, jobId, taskIndex,'producer');
       if(!owner)return undefined;
       const value=await operation(client, owner);
@@ -40,7 +40,7 @@ export class AgentJobCustodyRepository {
   }
 
   async move(input: CustodyMoveInput, expected: CustodyRecord, changedAt: Date): Promise<CustodyMoveResult> {
-    const result=await this.database.transaction(async client => {
+    const result=await this.database.transaction<CustodyMoveResult>(async client => {
       const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex,'move');
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
       if (!this.sameSnapshot(current, expected)) {
