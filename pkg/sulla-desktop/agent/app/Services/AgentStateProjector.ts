@@ -8,6 +8,7 @@ import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '../../../
 /** Derived presentation state. Durable task status remains the lifecycle contract. */
 export type AgentViewStatus = AgentRowState;
 import type { AgentStateService } from './AgentStateService';
+import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 
 export interface AgentTaskCheckin { createdAt: number; summary: string; blockers: string[]; }
 export interface AgentStateTelemetry { latest(jobId: string, taskIndex: number): Promise<AgentTaskCheckin | null>; }
@@ -18,7 +19,8 @@ const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, termin
 export class AgentStateProjector {
   private readonly config: AgentProjectionConfig;
   constructor(private readonly states: AgentStateService, private readonly telemetry: AgentStateTelemetry,
-    private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {}) { this.config = { ...DEFAULT_CONFIG, ...config }; }
+    private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {},
+    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs)) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
   async snapshot(): Promise<AgentStateSnapshot> {
     const jobs = await this.states.jobs();
@@ -36,7 +38,8 @@ export class AgentStateProjector {
       const parent = job.parentThreadId ? taskOwner.get(job.parentThreadId) : undefined;
       const checkin = await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const state = this.resolveState(job, task, checkin, now);
+      const activity = this.activity.project(job, task, taskIndex, checkin);
+      const state = activity.state as AgentViewStatus;
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? ordered.filter(candidate => candidate.parentThreadId === task.threadId && ['running', 'parked'].includes(candidate.status)).length : 0;
@@ -47,23 +50,13 @@ export class AgentStateProjector {
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
         stateReason: this.reason(state, job, task, checkin), stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
+        lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
     return { version: this.states.version, generatedAt: new Date(now).toISOString(), rows };
   }
 
-  private resolveState(job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null, now: number): AgentViewStatus {
-    if (job.status === 'stopped' || task.status === 'stopped') return 'stopped';
-    if (job.status === 'failed' || task.status === 'error') return job.error?.startsWith('lost:') ? 'lost' : 'failed';
-    if (task.status === 'completed') return 'done';
-    if (task.status === 'parked') return 'parked';
-    if (task.status === 'queued') return 'queued';
-    if (checkin?.blockers?.length || task.status === 'blocked') return 'blocked';
-    const lastActivityAt = checkin?.createdAt ?? task.startedAt ?? job.createdAt;
-    if (now - lastActivityAt > this.config.quietAfterMs) return 'quiet';
-    return 'working';
-  }
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
     if (state === 'blocked') return checkin?.blockers.join('; ') || task.summary || 'Blocked';
     if (state === 'quiet') return 'No recent check-in';

@@ -17,16 +17,16 @@ export interface CloudAgentProjection {
 }
 
 export class CloudAgentStateProjection {
-  private readonly projector = new AgentStateProjector(agentJobProvider.states, {
+  constructor(private readonly projector = new AgentStateProjector(agentJobProvider.states, {
     latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
-  });
+  }, Date.now, {}, agentJobProvider.activity)) {}
 
   async build(deviceId = ''): Promise<CloudAgentProjection[]> {
     const snapshot = await this.projector.snapshot();
     return snapshot.rows.filter(row => ['queued', 'working', 'parked', 'quiet', 'blocked'].includes(row.state)).map(row => ({
       jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId ?? '', label: row.label,
       state: row.state, currentTask: row.lastCheckinSummary, progress: null, startedAt: row.startedAt,
-      lastActivityAt: row.lastCheckinAt ?? row.startedAt ?? snapshot.generatedAt, deviceId,
+      lastActivityAt: row.lastActivityAt, deviceId,
     }));
   }
 

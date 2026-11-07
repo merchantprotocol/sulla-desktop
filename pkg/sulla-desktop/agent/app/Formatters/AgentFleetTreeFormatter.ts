@@ -57,7 +57,7 @@ export class AgentFleetTreeFormatter {
       ref: `${ job.jobId }#${ task.taskIndex }`,
       parent: job.parentJobId === null ? null : `${ job.parentJobId }#${ job.parentTaskIndex }`,
       depth,
-      state: task.stranded ? 'stranded' : this.state(job, task, blockers),
+      state: task.stranded ? 'stranded' : task.state,
       activityAge: this.age(task.lastActivityAt),
       step: task.latestCheckin?.step || undefined,
       blockers,
@@ -66,14 +66,6 @@ export class AgentFleetTreeFormatter {
       label: task.label || task.agentId,
     };
     return this.bound(line);
-  }
-
-  private state(job: FleetJobView, task: FleetTaskView, blockers: number): string {
-    if (job.status === 'failed' || task.status === 'error') return 'failed';
-    if (task.status === 'completed') return 'done';
-    if (blockers > 0 || task.status === 'blocked') return 'blocked';
-    if (task.status === 'running' && this.now() - Date.parse(task.lastActivityAt) >= 5 * 60_000) return 'quiet';
-    return task.status === 'running' ? 'working' : task.status;
   }
 
   private age(iso: string): string { return `${ Math.max(0, Math.floor((this.now() - Date.parse(iso)) / 1000)) }s`; }

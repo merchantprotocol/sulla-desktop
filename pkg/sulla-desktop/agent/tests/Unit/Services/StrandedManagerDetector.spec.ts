@@ -9,7 +9,7 @@ import type { FleetJobView, FleetTaskView } from '../../../app/Services/AgentFle
 const now = Date.parse('2026-11-05T12:00:00.000Z');
 const iso = (agoMs: number) => new Date(now - agoMs).toISOString();
 const task = (taskIndex: number, overrides: Partial<FleetTaskView> = {}): FleetTaskView => ({
-  taskIndex, agentId: 'worker', label: 'worker', status: 'completed', returned: true,
+  taskIndex, agentId: 'worker', label: 'worker', status: 'completed', state: 'done', returned: true,
   startedAt: iso(40 * 60_000), finishedAt: iso(20 * 60_000), returnedAt: iso(20 * 60_000),
   completionDeliveredAt: null, lastActivityAt: iso(20 * 60_000), threadId: `thread-${ taskIndex }`,
   parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', latestCheckin: null, ...overrides,
@@ -17,7 +17,7 @@ const task = (taskIndex: number, overrides: Partial<FleetTaskView> = {}): FleetT
 const manager = (activityAgoMs = 31 * 60_000, overrides: Partial<FleetTaskView> = {}): FleetJobView => ({
   jobId: 'manager-job', status: 'parked', createdAt: iso(60 * 60_000), finishedAt: null,
   parentThreadId: 'grandparent-thread', parentChannel: 'sulla-desktop', parentJobId: null,
-  parentTaskIndex: null, rootThreadId: 'root', tasks: [task(0, { agentId: 'manager', label: 'Manager', status: 'parked', returned: false,
+  parentTaskIndex: null, rootThreadId: 'root', tasks: [task(0, { agentId: 'manager', label: 'Manager', status: 'parked', state: 'parked', returned: false,
     finishedAt: null, returnedAt: null, lastActivityAt: iso(activityAgoMs), threadId: 'manager-thread', ...overrides })],
 });
 const child = (overrides: Partial<FleetTaskView> = {}): FleetJobView => ({

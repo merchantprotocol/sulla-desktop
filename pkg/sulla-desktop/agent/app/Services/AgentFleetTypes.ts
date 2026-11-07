@@ -18,6 +18,8 @@ export interface FleetTaskView {
   label: string;
   taskId?: string;
   status: string;
+  lifecycleStatus?: string;
+  state: string;
   returned: boolean;
   startedAt: string;
   finishedAt: string | null;

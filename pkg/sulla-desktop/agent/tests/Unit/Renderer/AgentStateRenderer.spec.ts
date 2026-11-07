@@ -28,7 +28,7 @@ class FakeHost implements AgentStateWindow {
 class RowFactory {
   create(key: string, rootThreadId = 'root', parentKey: string | null = null): AgentStateRow {
     const [jobId, task = '0'] = key.split(':'); const [parentJobId, parentTask = ''] = parentKey?.split(':') ?? [];
-    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${ key }`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, killedByHuman: false, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
+    return { key, jobId, taskIndex: Number(task), parentJobId: parentJobId || null, parentTaskIndex: parentJobId ? Number(parentTask) : null, rootThreadId, threadId: `thread-${ key }`, depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key, visibility: 'hidden', state: 'working', stateReason: null, killedByHuman: false, waitingOnChildren: 0, startedAt: '2026-11-04T20:00:00.000Z', endedAt: null, lastActivityAt: '2026-11-04T20:00:00.000Z', lastCheckinAt: null, lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true };
   }
 }
 const snapshot = (version: number, rows: AgentStateRow[]): AgentStateSnapshot => ({ version, generatedAt: '2026-11-04T20:00:00.000Z', rows });

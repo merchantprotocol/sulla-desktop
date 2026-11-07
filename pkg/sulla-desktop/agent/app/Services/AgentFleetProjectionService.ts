@@ -8,6 +8,7 @@ import type { ConversationTitleRepository } from '../Repositories/ConversationTi
 import type { AgentStateService } from './AgentStateService';
 import { AgentLineageIndex } from './AgentLineageIndex';
 import type { FleetJobView, FleetTaskView } from './AgentFleetTypes';
+import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 
 export interface AgentFleetTelemetryReader {
   telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>>;
@@ -31,6 +32,7 @@ export class AgentFleetProjectionService {
     private readonly titles: ConversationTitleRepository,
     private readonly now: () => number = Date.now,
     private readonly stranded?: { deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> },
+    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, now),
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
@@ -137,14 +139,15 @@ export class AgentFleetProjectionService {
   private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false, stranded?: { stateKey: string; reason: string }): FleetTaskView {
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
-    // TODO(#1991): include authoritative model/tool RunActivity in the state projection.
-    const lastActivityAt = Math.max(startedAt, latestCheckin?.createdAt ?? 0, task.finishedAt ?? 0, task.returnedAt ?? 0);
+    const activity = this.activity.project(job, task, taskIndex, latestCheckin);
     return {
       taskIndex,
       agentId: task.agentId,
       label: task.label,
       taskId: task.taskId,
-      status: task.status,
+      status: activity.state,
+      lifecycleStatus: task.status,
+      state: activity.state,
       visibility: task.visibility ?? job.visibility ?? 'hidden',
       promotedToTab: task.promotedToTab === true,
       contract: task.contract?.name ?? 'result',
@@ -153,7 +156,7 @@ export class AgentFleetProjectionService {
       finishedAt: task.finishedAt ? new Date(task.finishedAt).toISOString() : null,
       returnedAt: task.returnedAt ? new Date(task.returnedAt).toISOString() : null,
       completionDeliveredAt: task.completionDeliveredAt ? new Date(task.completionDeliveredAt).toISOString() : null,
-      lastActivityAt: new Date(lastActivityAt).toISOString(),
+      lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
       elapsed: this.elapsed(task.startedAt ?? job.createdAt, task.finishedAt),
       threadId: task.threadId ?? null,
       parentJobId: fields.parentJobId as string | null,
