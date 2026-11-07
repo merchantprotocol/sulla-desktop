@@ -519,7 +519,8 @@ export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   cohere:    ['api.cohere.ai', 'api.cohere.com'],
   deepseek:  ['api.deepseek.com'],
   arcee:     ['api.arcee.ai'],
-  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDER_BINDINGS.map(provider => [provider.integration, [...provider.hosts]])),
+  ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDER_BINDINGS.flatMap(provider =>
+    'hosts' in provider ? [[provider.integration, [...provider.hosts]]] : [])),
   enterprise_gateway: [],
 };
 

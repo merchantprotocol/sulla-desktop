@@ -55,6 +55,7 @@ import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
+import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -103,6 +104,8 @@ interface LaunchedTab {
   childThreadId: string;
   agentId:       string;
   title:         string;
+  status:        string;
+  deduplicated?: boolean;
 }
 
 /** Projects tasks the calling graph already owns (its parent job). */
@@ -132,6 +135,10 @@ export class SpawnAgentWorker extends BaseTool {
 
   constructor(private readonly turnPreparer = new DelegatedTurnPreparer()) {
     super();
+  }
+
+  private response(payload: Record<string, unknown>, successBoolean = true): ToolResponse {
+    return { successBoolean, responseString: JSON.stringify(payload, null, 2), result: payload };
   }
 
   /** Reuse the canonical spawn path from compatibility wrappers. */
@@ -292,26 +299,19 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     if (hiddenTasks.length === 0) {
-      return {
-        successBoolean: true,
-        responseString: JSON.stringify({
+      return this.response({
           mode:          'tab',
           jobId:         tabs[0].jobId,
           contractId:    tabs[0].contractId,
           childThreadId: tabs[0].childThreadId,
           tabs,
           message:       `${ tabs.length } agent tab(s) opened. Each stays open until its agent returns its contract; the result wakes this graph. Your <subagent_directory> shows their progress every turn.`,
-        }, null, 2),
-      };
+      });
     }
 
     const hidden = await this.launchHidden(hiddenTasks, input, parentDepth);
     if (tabs.length === 0 || !hidden.successBoolean) return hidden;
-    try {
-      return { ...hidden, responseString: JSON.stringify({ ...JSON.parse(hidden.responseString), tabs }, null, 2) };
-    } catch {
-      return { ...hidden, responseString: `${ hidden.responseString }\n\nAgent tabs opened: ${ JSON.stringify(tabs) }` };
-    }
+    return this.response({ ...(hidden.result as Record<string, unknown>), tabs }, hidden.successBoolean);
   }
 
   /**
@@ -332,7 +332,7 @@ export class SpawnAgentWorker extends BaseTool {
       import('../../services/ChatAgentRouting'),
       import('../../services/AgentTabOpener'),
     ]);
-    const childThreadId = nextThreadId();
+    const proposedChildThreadId = nextThreadId();
     const parentName = (await resolveRoutableAgent(parentAgentId))?.name ?? parentAgentId;
 
     const job = await createJob([{
@@ -341,12 +341,24 @@ export class SpawnAgentWorker extends BaseTool {
       prompt:     task.prompt,
       taskId:     task.projectTaskId?.trim(),
       status:     'running',
-      threadId:   childThreadId,
+      threadId:   proposedChildThreadId,
       startedAt:  Date.now(),
       visibility: 'tab',
       contract,
       depth,
-    }], parentChannel, parentThreadId, { visibility: 'tab', parentAgentId });
+    }], parentChannel, parentThreadId, {
+      visibility: 'tab', parentAgentId,
+      dedupeLabel: task.label?.trim() || undefined,
+    });
+
+    const childThreadId = job.tasks[0]?.threadId || proposedChildThreadId;
+    if (job.deduplicated) {
+      return {
+        jobId: job.jobId, contractId: job.jobId, childThreadId,
+        agentId: job.tasks[0]?.agentId || childAgent.graphAgentId,
+        title: job.tasks[0]?.label || title, status: job.status, deduplicated: true,
+      };
+    }
 
     const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId, refId: job.jobId }));
 
@@ -400,7 +412,7 @@ export class SpawnAgentWorker extends BaseTool {
       conversationId: childThreadId,
     });
 
-    return { jobId: job.jobId, contractId: job.jobId, childThreadId, agentId: childAgent.graphAgentId, title };
+    return { jobId: job.jobId, contractId: job.jobId, childThreadId, agentId: childAgent.graphAgentId, title, status: job.status };
   }
 
   /** Background children: one job for the batch, each child a full graph run. */
@@ -425,6 +437,7 @@ export class SpawnAgentWorker extends BaseTool {
         provider:   task.provider?.trim() || undefined,
         model:      task.model?.trim() || undefined,
         runLocation: task.runLocation,
+        workspacePath: task.workspacePath,
         taskId:     task.projectTaskId?.trim(),
         status:     'queued',
         visibility: 'hidden',
@@ -432,7 +445,13 @@ export class SpawnAgentWorker extends BaseTool {
         depth:      parentDepth + 1,
       };
     });
-    const jobOptions = { visibility: 'hidden' as const, parentAgentId };
+    const jobOptions = {
+      visibility: 'hidden' as const,
+      parentAgentId,
+      // Dedupe is intentionally per single-task call; multi-task batches are
+      // never partially reused. An omitted label opts out completely.
+      dedupeLabel: tasks.length === 1 ? tasks[0].label?.trim() : undefined,
+    };
 
     // Abort signal for THIS job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
@@ -443,13 +462,15 @@ export class SpawnAgentWorker extends BaseTool {
     const delegationIds: (string | null)[] = [];
 
     // ── Single task executor ────────────────────────────────────
-    const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
+    const executePersistedTask = async(input: { task: AgentJobTask; taskIndex: number; threadId: string; generation: number }): Promise<AgentJobResult> => {
+      const task: SpawnTask = { ...input.task, agentId: input.task.agentId, projectTaskId: input.task.taskId };
+      const index = input.taskIndex;
+      const threadId = input.threadId;
       const selector = taskAgentSelector(task);
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
       const taskAbortSignal = taskAbortSignals[index];
-      const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
       delegationIds[index] = delegationId;
 
@@ -770,6 +791,17 @@ export class SpawnAgentWorker extends BaseTool {
       }
     };
 
+    const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
+    const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
+      const label = task.label || taskAgentSelector(task) || `task-${ index }`;
+      return taskRunner.run({
+        task: jobTasks[index],
+        taskIndex: index,
+        threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
+        generation: jobTasks[index].generation ?? 1,
+      });
+    };
+
     // ── Execute all tasks (parallel or sequential) ──────────────
     // Each task is committed and offered to the parent as soon as it settles.
     // The final job completion below is bookkeeping only; it never re-delivers.
@@ -807,6 +839,15 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
       const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+      if (job.deduplicated) {
+        const response = {
+          mode: 'async', jobId: job.jobId, taskCount: tasks.length, parallel,
+          deduplicated: true,
+          status: job.status,
+          message: `A matching labeled spawn already exists with status "${ job.status }"; reused the existing job.`,
+        };
+        return this.response(response);
+      }
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       activityJobId = job.jobId;
@@ -843,22 +884,27 @@ export class SpawnAgentWorker extends BaseTool {
         })
         .finally(async() => { stopDeadRunWatch(); });
 
-      return {
-        successBoolean: true,
-        responseString: JSON.stringify({
-          mode:      'async',
-          jobId:     job.jobId,
-          taskCount: tasks.length,
-          parallel,
-          message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
-        }, null, 2),
+      const response = {
+        mode:      'async',
+        jobId:     job.jobId,
+        taskCount: tasks.length,
+        parallel,
+        message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
       };
+      return this.response(response);
     }
 
     // ── Sync mode: block until complete ─────────────────────────
     // Sync launches need a durable job too: otherwise the rail and exchange
     // components would only exist for fire-and-forget work.
     const syncJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+    if (syncJob.deduplicated) {
+      return this.response({
+        mode: 'sync', jobId: syncJob.jobId, taskCount: syncJob.taskCount,
+        parallel, deduplicated: true, status: syncJob.status,
+        message: `A matching labeled spawn already exists with status "${ syncJob.status }"; reused the existing job.`,
+      });
+    }
     let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
     activityJobId = jobId;
@@ -888,11 +934,12 @@ export class SpawnAgentWorker extends BaseTool {
       `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
     ).join('\n\n---\n\n');
 
-    return {
-      successBoolean: allSuccess,
-      responseString: tasks.length === 1
+    return this.response({
+      mode: 'sync', jobId: syncJob.jobId, taskCount: tasks.length, parallel,
+      results,
+      message: tasks.length === 1
         ? results[0].output
         : `${ results.length } sub-agent(s) completed.\n\n${ formatted }`,
-    };
+    }, allSuccess);
   }
 }

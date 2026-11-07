@@ -14,6 +14,8 @@ import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
 import { copyLockedFile } from './fileOperations.js';
 import { mimeForPath as mime } from './mimeTypes.js';
 import { isProtectedPath } from './protectedFiles.js';
+import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
+import { CollectionPolicyRepository } from './Repositories/CollectionPolicyRepository.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { NativeOperationJournal } from './nativeOperationJournal.js';
 import { queryNativeSourcePage, type NativeSourcePage, type NativeSourcePageRow } from './nativeSourcePaging.js';
@@ -170,6 +172,8 @@ export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:stri
 
 export class LocalFilesManager {
   private readonly store: Store;
+  private readonly publicationLifecyclePolicy: PublicationLifecyclePolicy;
+  private readonly collectionPolicyRepository: CollectionPolicyRepository;
   private collectionId?:  string;
   private stopped = false;
   private running?:       Promise<unknown>;
@@ -318,8 +322,10 @@ export class LocalFilesManager {
   }
 
   /** store: the process-wide chunk store, so reads of evicted chunks hydrate through the chunk cache. */
-  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator, store?:Store) {
-    this.store = store ?? new Store(config.chunkRoot); this.paused = config.paused;
+  constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator, store?:Store, publicationLifecyclePolicy?:PublicationLifecyclePolicy, collectionPolicyRepository?:CollectionPolicyRepository) {
+    this.store = store ?? new Store(config.chunkRoot);
+    this.publicationLifecyclePolicy = publicationLifecyclePolicy ?? new PublicationLifecyclePolicy();
+    this.collectionPolicyRepository = collectionPolicyRepository ?? new CollectionPolicyRepository(); this.paused = config.paused;
     this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
       .filter(root => !isSensitiveTrackedPath(root.path));
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
@@ -1427,7 +1433,13 @@ export class LocalFilesManager {
     await this.db.query('INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [collectionId, this.config.deviceId]);
     let cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
-    for (const entry of entries) { await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]) }
+    for (const entry of entries) {
+      const entryCollectionId=String(entry?.file?.collection_id??'');
+      const localCollection=await this.collectionPolicyRepository.findPublicationPolicy(this.db,entryCollectionId);
+      if (!localCollection) {
+        console.warn(`[SullaFiles] quarantined sync journal entry ${ String(entry?.seq??'unknown') } (file ${ String(entry?.file?.id??'unknown') }) for missing local collection ${ entryCollectionId||'unknown' }`);
+      } else await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
+    }
     cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     if (canPush) {
       const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.lifecycle_generation,f.operation_revision) x)) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
@@ -1647,6 +1659,12 @@ export class LocalFilesManager {
         entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
         entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
         entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
+      const collection = entry.collection ?? await this.collectionPolicyRepository.findPublicationPolicy(client, collectionId);
+      if (!collection) throw new Error(`Replication collection ${ collectionId } is unavailable`);
+      const replicatedLifecycle = this.publicationLifecyclePolicy.sanitizeReplication({
+        collection, path:entry.file.path, createdByType:entry.version.created_by_type,
+        lifecycle:{ publication_status:entry.version.publication_status ?? 'draft', published_at:entry.version.published_at ?? null, published_by:entry.version.published_by ?? null },
+      });
       await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
         major_version,minor_version,version_kind,publication_status,published_at,published_by,version_comment)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(id) DO UPDATE SET
@@ -1655,11 +1673,11 @@ export class LocalFilesManager {
         version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id`,
       [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size,
         entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id,
-        entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', entry.version.publication_status ?? 'draft',
-        entry.version.published_at ?? null, entry.version.published_by ?? null, entry.version.version_comment ?? null]);
+        entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', replicatedLifecycle.publication_status ?? 'draft',
+        replicatedLifecycle.published_at ?? null, replicatedLifecycle.published_by ?? null, entry.version.version_comment ?? null]);
       await client.query(`UPDATE files SET current_version_id=$2,
         draft_version_id=CASE WHEN $3='draft' THEN $2 ELSE draft_version_id END,
-        published_version_id=CASE WHEN $3='published' THEN $2 ELSE published_version_id END WHERE id=$1`, [entry.file.id, entry.version.id, entry.version.publication_status ?? 'draft']);
+        published_version_id=CASE WHEN $3='published' THEN $2 WHEN $3='draft' AND published_version_id=$2 THEN NULL ELSE published_version_id END WHERE id=$1`, [entry.file.id, entry.version.id, replicatedLifecycle.publication_status ?? 'draft']);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, entry.file.path, entry.file.id, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
       await client.query('COMMIT'); this.indexer?.wake();

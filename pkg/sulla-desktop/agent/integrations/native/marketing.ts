@@ -6,6 +6,39 @@
 import type { Integration } from '../types';
 
 export const nativeMarketingIntegrations: Record<string, Integration> = {
+  ultimatesweepers: {
+    id:          'ultimatesweepers',
+    sort:        0,
+    paid:        false,
+    beta:        false,
+    comingSoon:  false,
+    connected:   false,
+    name:        'UltimateSweepers',
+    description: 'UltimateSweepers admin API for the sweepstakes collectors',
+    category:    'Marketing',
+    version:     '1.0.0',
+    lastUpdated: '2026-11-05',
+    developer:   'UltimateSweepers',
+    authType:    'credentials',
+    properties:  [
+      {
+        key:         'api',
+        title:       'API base URL',
+        hint:        'The UltimateSweepers API base URL.',
+        type:        'url',
+        required:    true,
+        placeholder: 'https://ultimatesweepers.com',
+      },
+      {
+        key:         'api_token',
+        title:       'Admin API token',
+        hint:        'Create it at https://ultimatesweepers.com/admin/api',
+        type:        'password',
+        required:    true,
+        placeholder: '',
+      },
+    ],
+  },
   mailchimp: {
     id:          'mailchimp',
     sort:        1,

@@ -365,8 +365,9 @@ export class PersonaAdapter {
       ...(inputSource ? { inputSource } : {}),
       ...(voiceTurnId ? { voiceTurnId } : {}),
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
+      modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
-      ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
       ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };

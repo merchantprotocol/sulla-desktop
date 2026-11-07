@@ -12,39 +12,17 @@ import { JobAbortScope } from './JobAbortScope';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobStopService } from './JobStopService';
 import { JobWrapUpService } from './JobWrapUpService';
+import { SpawnDedupeGuard } from './SpawnDedupeGuard';
+import { SpawnJobCreator } from './SpawnJobCreator';
 import type { AgentJob, AgentJobResult, AgentJobTask, CreateJobOptions, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 export class AgentJobService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService) { super(); this.runtime.start(); }
-async createJob(
-  taskInput: number | AgentJobTask[],
-  parentChannel?: string,
-  parentThreadId?: string,
-  options: CreateJobOptions = {},
-): Promise<AgentJob> {
-  await this.recovery.ensureHydrated();
-    const tasks = Array.isArray(taskInput) ? taskInput : [];
-  const taskCount = Array.isArray(taskInput) ? taskInput.length : taskInput;
-  const jobId = this.idGenerator.next();
-  const job: AgentJob = {
-    jobId,
-    status:     'running',
-    createdAt:  this.clock.now().getTime(),
-    finishedAt: null,
-    taskCount,
-    results:    [],
-    tasks,
-    parentChannel,
-    parentThreadId,
-    parentAgentId: options.parentAgentId,
-    visibility: options.visibility ?? 'hidden',
-    completionDeliveredAt: null,
-    dismissedAt: null,
-  };
-  await this.states.create(job);
-  void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
-  this.runtime.abortScopes.set(jobId, new JobAbortScope());
-  return job;
-}
+
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly idGenerator: JobIdGenerator, private readonly taskLocator: JobTaskLocator, private readonly states: AgentStateService, private readonly stops: JobStopService, private readonly wrapUp: JobWrapUpService, spawnDedupe = new SpawnDedupeGuard(clock)) { super(); this.runtime.start(); this.jobCreator = new SpawnJobCreator(repository, runtime, recovery, clock, idGenerator, spawnDedupe, states); }
+  private readonly jobCreator: SpawnJobCreator;
+  async createJob(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
+    return this.jobCreator.create(taskInput, parentChannel, parentThreadId, options);
+  }
+
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
   await this.states.mutateJob(jobId, job => {
@@ -164,7 +142,9 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
     if (!job.tasks[taskIndex]) return job;
     job.results[taskIndex] = result;
     job.tasks[taskIndex] = { ...job.tasks[taskIndex],
-      status: result.status,
+
+      status: job.tasks[taskIndex].status === 'stopped' ? 'stopped' : result.status,
+
       threadId: result.threadId || job.tasks[taskIndex].threadId,
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };

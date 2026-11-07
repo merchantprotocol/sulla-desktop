@@ -38,6 +38,8 @@ type ParsedInput = Record<string, unknown>;
 export interface ToolResponse {
   successBoolean: boolean;
   responseString: string;
+  /** Optional structured payload; BaseTool exposes it without double encoding. */
+  result?: unknown;
 }
 
 export interface ToolRegistration {
