@@ -77,7 +77,12 @@
                   {{ entry.text }}
                 </div>
               </div>
-            </div><form
+            </div><p
+              v-if="selectedUnavailable"
+              class="finished-label"
+            >
+              Finished — no longer running
+            </p><form
               v-if="selected.canMessage"
               class="composer"
               @submit.prevent="sendMessage(selected)"
@@ -279,11 +284,12 @@ import { AgentDetailFeed, type FeedDetail } from './live/AgentDetailFeed';
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
-const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const detail = ref<FeedDetail | null>(null); const contentScroller = ref<HTMLElement | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
+const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const selectedMissing = ref(false); const detail = ref<FeedDetail | null>(null); const contentScroller = ref<HTMLElement | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
 const builder = computed(() => new AgentTreeBuilder(client.snapshot.value.rows));
 const groups = computed(() => builder.value.groups());
 const filteredGroups = computed(() => { const q = search.value.trim().toLowerCase(); if (!q) return groups.value; return groups.value.flatMap(group => { const matching = flatten(group.tree).filter(node => [node.row.label, node.row.agentId, node.row.lastCheckinSummary].some(value => value?.toLowerCase().includes(q))); return matching.length ? [{ ...group, tree: matching.map(node => ({ ...node, children: [] })) }] : [] }) });
 const liveStates = new Set<AgentRowState>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const selectedUnavailable = computed(() => selectedMissing.value || (selected.value !== null && !liveStates.has(selected.value.state)));
 const liveCount = computed(() => client.snapshot.value.rows.filter(row => liveStates.has(row.state)).length); const parkedCount = computed(() => client.snapshot.value.rows.filter(row => row.state === 'parked').length); const attentionCount = computed(() => client.snapshot.value.rows.filter(row => ['quiet', 'blocked', 'failed', 'lost'].includes(row.state)).length);
 function flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] { return builder.value.flatten(tree) }
 function groupName(tree: readonly AgentTreeNode[]): string { return tree[0]?.row.label || 'Agent run' }
@@ -300,7 +306,7 @@ const detailFeed = new AgentDetailFeed(invoke, document, setInterval, clearInter
   detail.value = snapshot.detail; detailLoading.value = snapshot.loading;
   if (container && !snapshot.loading) void nextTick(() => { container.scrollTop = atBottom ? container.scrollHeight : scrollTop });
 });
-function selectRow(row: AgentStateRow): void { selected.value = row; actionError.value = '' }
+function selectRow(row: AgentStateRow): void { selected.value = row; selectedMissing.value = false; actionError.value = '' }
 async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
 async function stopRun(): Promise<void> { const row = stopTarget.value; if (!row || !actions.canStop(row)) return; const key = pendingKey('stop', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.stop(row); if (result.stale) { stopTarget.value = null; selected.value = null; return } if (!result.ok) { actionError.value = result.error || 'The run could not be stopped.'; return } stopTarget.value = null; selected.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
 async function openRow(row: AgentStateRow): Promise<void> {
@@ -315,7 +321,24 @@ function age(value: string | null): string { return value ? `${ elapsed(value) }
 watch(() => selected.value?.threadId, threadId => detailFeed.select(threadId));
 watch(() => client.snapshot.value, snapshot => {
   const current = new Map(snapshot.rows.map(row => [row.key, row]));
-  if (selected.value) selected.value = current.get(selected.value.key) ?? null;
+  if (selected.value) {
+    const fresh = current.get(selected.value.key);
+    const wasUnavailable = selectedMissing.value || !liveStates.has(selected.value.state);
+
+    if (fresh) {
+      selected.value = fresh;
+      selectedMissing.value = false;
+      if (liveStates.has(fresh.state)) {
+        if (wasUnavailable) detailFeed.start();
+      } else if (!wasUnavailable) {
+        void detailFeed.finish();
+      }
+    } else if (!selectedMissing.value) {
+      selected.value = { ...selected.value, canMessage: false, canStop: false };
+      selectedMissing.value = true;
+      void detailFeed.finish();
+    }
+  }
   if (messageTarget.value) messageTarget.value = current.get(messageTarget.value.key) ?? null;
   if (stopTarget.value) stopTarget.value = current.get(stopTarget.value.key) ?? null;
 });

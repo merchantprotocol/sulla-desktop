@@ -54,10 +54,8 @@ class LivePageFixture {
     return this.conversationReadCount;
   }
 
-  finishSelectedRun(): void {
-    this.list.jobs[0].status = 'completed';
-    this.list.jobs[0].tasks[0].status = 'completed';
-    this.publish('Worker', 'done');
+  vanishSelectedRun(): void {
+    this.client.apply({ version: ++this.version, generatedAt: new Date().toISOString(), rows: [] });
   }
 
   publish(label = 'Worker', state: AgentStateRow['state'] = 'working', version = ++this.version): void {
@@ -133,11 +131,12 @@ describe('StudioLivePage activity refresh', () => {
     await flushPromises();
     const timeline = wrapper.get('.tl').element;
 
-    fixture.finishSelectedRun();
+    fixture.vanishSelectedRun();
     await vi.advanceTimersByTimeAsync(3_000);
     await flushPromises();
 
     expect(wrapper.get('.tl').element).toBe(timeline);
+    expect(wrapper.text()).not.toContain('Loading activity…');
     expect(wrapper.text()).toContain('Finished — no longer running');
     expect(wrapper.find('.composer').exists()).toBe(false);
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(false);
