@@ -15,6 +15,7 @@ export interface RelayWatchdogTransport {
 }
 
 export interface RelayWatchdogLogger {
+  info(message: string): void;
   warn(message: string): void;
 }
 
@@ -31,6 +32,8 @@ export class RelayLivenessWatchdog {
   private expectedCheckAt = 0;
   private lastInboundAt = 0;
   private awaitingExplicitPong = false;
+  private probeQueuedAt = 0;
+  private probeSentAt = 0;
 
   constructor(
     private readonly scheduler: RelayWatchdogScheduler,
@@ -51,11 +54,15 @@ export class RelayLivenessWatchdog {
     this.checkTimer = null;
     this.deadlineTimer = null;
     this.awaitingExplicitPong = false;
+    this.probeQueuedAt = 0;
+    this.probeSentAt = 0;
   }
 
   noteInbound(): void {
     this.lastInboundAt = this.scheduler.now();
     if (!this.awaitingExplicitPong) return;
+    const observedAt = this.scheduler.now();
+    this.logger.info(`[DesktopRelayProbe] ${ JSON.stringify({ event: 'pong_observed', queuedAt: this.probeQueuedAt, sentAt: this.probeSentAt, observedAt, elapsedMs: observedAt - this.probeSentAt }) }`);
     if (this.deadlineTimer) this.scheduler.clearTimeout(this.deadlineTimer);
     this.deadlineTimer = null;
     this.awaitingExplicitPong = false;
@@ -78,11 +85,15 @@ export class RelayLivenessWatchdog {
       return;
     }
     if (driftMs > this.options.driftThresholdMs) {
-      this.logger.warn(`[DesktopRelay] Watchdog timer drifted ${ driftMs }ms; probing before reconnect (silent ${ silentMs }ms)`);
+      this.logger.warn(`[DesktopRelayProbe] ${ JSON.stringify({ event: 'watchdog_drift', driftMs, silentMs }) }`);
     }
     this.awaitingExplicitPong = true;
+    this.probeQueuedAt = now;
+    this.logger.info(`[DesktopRelayProbe] ${ JSON.stringify({ event: 'ping_queued', queuedAt: now, driftMs, silentMs }) }`);
     try {
       this.transport.ping();
+      this.probeSentAt = this.scheduler.now();
+      this.logger.info(`[DesktopRelayProbe] ${ JSON.stringify({ event: 'ping_sent', queuedAt: this.probeQueuedAt, sentAt: this.probeSentAt, queueDelayMs: this.probeSentAt - this.probeQueuedAt }) }`);
     } catch {
       this.awaitingExplicitPong = false;
       this.transport.reconnect('explicit liveness ping failed');

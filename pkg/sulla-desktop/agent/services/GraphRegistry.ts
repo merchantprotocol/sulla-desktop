@@ -1578,6 +1578,17 @@ ${ memoryContext }`;
     registry.clear();
   },
 
+  /** Most recently registered durable thread for one exact channel/agent identity. */
+  findThreadByChannel(channel: string): string | undefined {
+    const matches = [...registry.entries()].filter(([key, record]) => {
+      const metadata = record.state?.metadata as any;
+      return String(metadata?.agentId || metadata?.wsChannel || '').trim() === channel
+        && Boolean(String(metadata?.threadId || key || '').trim());
+    });
+    const latest = matches.at(-1);
+    return latest ? String((latest[1].state.metadata as any)?.threadId || latest[0]).trim() : undefined;
+  },
+
   /**
    * Best-effort lookup of the live sulla-desktop chat the user is looking
    * at. Used by the interactive `ask_user_question` tool when it is invoked

@@ -484,7 +484,7 @@ export class MCPServerHost {
         const worker = await toolRegistry.getTool('browse_tools');
         const result = await worker.call({ category, query });
         return {
-          content: [{ type: 'text' as const, text: String(result.result ?? result.error ?? '') }],
+          content: [{ type: 'text' as const, text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? result.error ?? '') }],
           isError: !result.success,
         };
       },

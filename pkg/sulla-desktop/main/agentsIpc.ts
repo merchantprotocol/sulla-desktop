@@ -15,17 +15,18 @@
 // the conversation_history rows for that agent's channel, and
 // agents:conversation reads one conversation's JSONL message log.
 
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { RuntimeRehydrationCoordinator } from '@pkg/agent/services/RuntimeRehydrationCoordinator';
+import { AgentShutdownController } from '@pkg/agent/services/AgentShutdownController';
 import { GuestAgentContainerRuntimeSupervisor } from '@pkg/agent/services/AgentContainerLauncher';
 import { AgentStatePublisher } from './AgentStatePublisher';
 
-import { readConversationLog, readConversationPreview, type AgentConversationEntry } from './agentConversationLog';
+import { readConversationLog, readConversationPreview, type AgentConversationEntry, type AgentConversationLogIdentity } from './agentConversationLog';
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
@@ -151,6 +152,7 @@ export interface AgentConversationDetail {
   createdAt:    string;
   lastActiveAt: string;
   entries:      AgentConversationEntry[];
+  logIdentity?: AgentConversationLogIdentity;
   truncated:    boolean;
   missingLog:   boolean;
 }
@@ -224,6 +226,7 @@ export function initAgentsIpc(): void {
   agentJobProvider.states.setReadiness(() => runtimeRehydration.ready());
   runtimeRehydration.start();
   agentLivenessReconciler.start();
+  new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
