@@ -10,7 +10,7 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -175,6 +175,20 @@ export class BackendGraphWebSocketService {
         source: 'orchestrator_job_message', ...messageMeta,
       });
     return true;
+  }
+
+  /** Every inbox claim owned by this turn, including steers injected into a live delegated run. */
+  private claimedCompletionEntries(state: AgentGraphState | undefined, metadata: Record<string, any> | undefined): PendingCompletion[] {
+    const entries = [
+      ...(Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []),
+      ...((state?.messages ?? []).flatMap((message: any) =>
+        message?.metadata?.source === 'sub_agent_completion' && Array.isArray(message.metadata.completionEntries)
+          ? message.metadata.completionEntries
+          : [])),
+    ] as PendingCompletion[];
+    const unique = new Map<string, PendingCompletion>();
+    for (const entry of entries) unique.set(entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`, entry);
+    return [...unique.values()];
   }
 
   /** True while a turn is in flight for this thread (an idle chat is not running). */
@@ -916,12 +930,10 @@ export class BackendGraphWebSocketService {
       } else {
         await graph.execute(state, startNode);
       }
-      // Completion steers are acknowledged only after a successful graph turn actually consumed them.
+      // Completion claims are acknowledged only after a successful graph turn actually consumed them.
+      for (const entry of this.claimedCompletionEntries(state, metadata)) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       for (const message of state.messages as any[]) {
-        const steerMeta = message?.metadata;
-        if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
-        for (const entry of Array.isArray(steerMeta.completionEntries) ? steerMeta.completionEntries : []) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
-        delete steerMeta.completionEntries;
+        if (message?.metadata?.source === 'sub_agent_completion') delete message.metadata.completionEntries;
       }
       turnConsumedInput = true;
     } catch (err: any) {
@@ -948,9 +960,6 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         if (turnConsumedInput) {
-          for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-            await agentJobProvider.completionAcknowledgements.acknowledge(entry);
-          }
           // An orchestrator job message (send_job_message waking a parked
           // manager) is acked only now, after the turn it was handed to
           // actually ran — not when wakeParkedAgent was first called. A turn
@@ -965,7 +974,7 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
-          for (const entry of metadata?.completionEntries ?? []) requeueAgentCompletion(channelId, threadId, entry);
+          for (const entry of this.claimedCompletionEntries(state, metadata)) requeueAgentCompletion(channelId, threadId, entry);
         }
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask

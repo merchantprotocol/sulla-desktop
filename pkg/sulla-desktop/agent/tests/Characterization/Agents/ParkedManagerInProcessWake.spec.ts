@@ -129,6 +129,48 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
   });
 
+  it('requeues a stranded steer consumed by a delegated turn that fails, then durably acknowledges one successful retry', async() => {
+    // risk: durable alert loss -- a live delegated turn removes the notice from the inbox before graph execution can fail
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager-sol', run_location: 'vm' } as any);
+    const managerJobId = `stranded-steer-${ Date.now() }`;
+    const parentThread = `${ managerJobId }-parent`;
+    const stateKey = `stranded:${ managerJobId }:0:parked-without-live-children:1:0:`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, tasks, visibility)
+      VALUES ($1, 'parked', 1, 'coding-manager-sol', $2, $3::jsonb, 'hidden')`, [managerJobId, parentThread,
+      JSON.stringify([{ agentId: 'coding-manager-sol', label: 'Manager', prompt: 'manage', status: 'parked', threadId: parentThread })]);
+    await database.query(`INSERT INTO agent_stranded_episodes
+      (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason)
+      VALUES ($1, 0, $2, 'coding-manager-sol', $3, 'Manager', 'parked')`, [managerJobId, stateKey, parentThread]);
+    const completion = { jobId: managerJobId, taskIndex: 0, results: [], notice: 'stranded manager Manager', dedupeKey: stateKey };
+    inbox.enqueueAgentCompletion('coding-manager-sol', parentThread, completion);
+    const [claimed] = inbox.takeAgentCompletions('coding-manager-sol', parentThread);
+    const state: any = {
+      metadata: { options: {}, agent: { runLocation: 'vm' }, cycleComplete: false, delegatedRunActive: true },
+      messages: [{ role: 'user', content: claimed.notice, metadata: { source: 'sub_agent_completion', completionEntries: [claimed], steerDeliveredAt: Date.now() } }],
+      llmTools: [], nodeHistory: [],
+    };
+    let executions = 0;
+    const graph = { execute: vi.fn(async() => {
+      executions++;
+      if (executions === 1) throw new Error('delegated turn failed after consuming steer');
+      state.metadata.cycleComplete = true;
+      return state;
+    }) };
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({ graph, state } as any);
+    vi.spyOn(GraphRegistry, 'get').mockReturnValue({ graph, state } as any);
+
+    await (bareInstance() as any).dispatchToAgent('coding-manager-sol', 'sulla-desktop', 'resume', parentThread,
+      undefined, 'coding-manager-sol', 'system', {});
+
+    await vi.waitFor(() => expect(graph.execute).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 10 });
+    await vi.waitFor(async() => {
+      const [episode] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
+      expect(episode.status).toBe('delivered');
+    }, { timeout: 2_000, interval: 10 });
+    expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
+    expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
+  });
+
   it('wakes the manager as itself exactly once, completes its own job, delivers exactly one completion to its parent, and leaves no waiter or Promise behind', async() => {
     // risk: a worker's completion re-enters a parked manager's thread through
     // a brand-new, disconnected dispatchToAgent turn instead of releasing the
