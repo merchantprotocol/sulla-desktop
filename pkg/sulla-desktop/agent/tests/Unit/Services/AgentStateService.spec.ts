@@ -145,6 +145,16 @@ describe('authoritative live agent state', () => {
     expect(store.durable.get('aged-activity')?.tasks[0].status).toBe('error');
   });
 
+  it('uses the repository check-in precedence when it predates task start', async() => {
+    // risk: stale CAS baseline rejects the same lost transition Postgres would accept
+    const { store, states } = harness([job('historic-checkin', [task({ startedAt: 300_000 })])], 500_000);
+    const reconciler = new AgentLivenessReconciler(states, {
+      graph: () => false, container: async() => false, lastCheckin: async() => 200_000,
+    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(1);
+    expect(store.observedActivity).toEqual([200_000]);
+  });
+
   it('rechecks task-scoped RunActivity immediately before the lost transition', async() => {
     // risk: a model/tool turn that starts during reconciliation is falsely marked lost
     const { store, states } = harness([job('activity-race', [task({ startedAt: 100_000 })])], 500_000);
@@ -154,6 +164,27 @@ describe('authoritative live agent state', () => {
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.observedActivity).toEqual([]);
     expect(store.durable.get('activity-race')?.tasks[0].status).toBe('running');
+  });
+
+  it('rechecks exact-task activity inside the serialized transition boundary', async() => {
+    // risk: a live model/tool turn is killed while lost reconciliation waits behind another mutation
+    const { store, states } = harness([job('queued-race', [task({ startedAt: 100_000 })])], 500_000);
+    let release!: () => void; let entered!: () => void;
+    const paused = new Promise<void>(resolve => { release = resolve });
+    const didEnter = new Promise<void>(resolve => { entered = resolve });
+    const replace = vi.spyOn(store, 'replaceState').mockImplementationOnce(async next => { entered(); await paused; store.durable.set(next.jobId, structuredClone(next)); });
+    const activityTimes = new Map<string, number>();
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => activityTimes.get(key) });
+    const firstMutation = states.transition('queued-race', 0, { summary: 'queued mutation' });
+    await didEnter;
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciling = reconciler.reconcile();
+    activityTimes.set('queued-race#0', 499_500);
+    release();
+    await firstMutation;
+    expect(await reconciling).toBe(0);
+    expect(store.durable.get('queued-race')?.tasks[0]).toMatchObject({ status: 'running', summary: 'queued mutation' });
+    replace.mockRestore();
   });
 
   it('protects running and blocked tasks with a future durable wake without hiding blockers', async() => {

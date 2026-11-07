@@ -14,6 +14,7 @@ export interface AgentStateStore {
 }
 export interface AgentStateCache { jobs: Map<string, AgentJob>; }
 export type AgentStateChangeListener = (version: number) => void;
+export type AgentStateMutationPrecondition = (current: AgentJob, candidate: AgentJob) => boolean | Promise<boolean>;
 
 /** Instance-owned serialization for read/modify/write operations on one job. */
 export class AgentJobMutationQueue {
@@ -134,13 +135,15 @@ export class AgentStateService {
 
   /** The only whole-row mutation boundary: latest durable read, mutation, write, cache, and publish share one per-job queue. */
   async mutateJob(jobId: string, mutate: (current: AgentJob) => AgentJob | undefined,
-    persist?: (next: AgentJob) => Promise<boolean>, deriveStatus = true): Promise<AgentJob | undefined> {
+    persist?: (next: AgentJob) => Promise<boolean>, deriveStatus = true,
+    precondition?: AgentStateMutationPrecondition): Promise<AgentJob | undefined> {
     return this.mutations.run(jobId, async() => {
       const current = (await this.store.allJobs()).find(job => job.jobId === jobId);
       if (!current) return undefined;
       const candidate = mutate(structuredClone(current));
       if (!candidate) return undefined;
       const next = deriveStatus ? this.withDerivedStatus(candidate) : candidate;
+      if (precondition && !await precondition(current, next)) return undefined;
       if (persist && !await persist(next)) return undefined;
       if (!persist) await this.store.replaceState(next);
       this.cache.jobs.set(next.jobId, next);
@@ -159,10 +162,11 @@ export class AgentStateService {
     return this.update(jobId, current => ({ ...current, ...jobPatch, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) }));
   }
 
-  async transitionIfActivityUnchanged(jobId: string, taskIndex: number, observedActivity: number | null, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob>): Promise<boolean> {
+  async transitionIfActivityUnchanged(jobId: string, taskIndex: number, observedActivity: number | null, patch: Partial<AgentJobTask>, jobPatch: Partial<AgentJob>,
+    precondition?: AgentStateMutationPrecondition): Promise<boolean> {
     const changed = await this.mutateJob(jobId, current => current.tasks[taskIndex] && ['queued', 'running', 'blocked'].includes(current.tasks[taskIndex].status)
       ? { ...current, ...jobPatch, tasks: current.tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) }
-      : undefined, next => this.store.replaceStateIfActivityUnchanged(next, taskIndex, observedActivity));
+      : undefined, next => this.store.replaceStateIfActivityUnchanged(next, taskIndex, observedActivity), true, precondition);
     return Boolean(changed);
   }
 

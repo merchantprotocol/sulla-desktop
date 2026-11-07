@@ -46,12 +46,23 @@ export class AgentLivenessReconciler {
       const latestCheckinAt = await this.probe.lastCheckin(job.jobId, taskIndex);
       const latestCheckin: AgentTaskActivityCheckin | null = latestCheckinAt === null ? null : { createdAt: latestCheckinAt };
       if (this.clock() - this.activity.project(job, task, taskIndex, latestCheckin).lastActivityAt < this.config.lostAfterMs) continue;
-      const durableActivityAt = Math.max(task.startedAt ?? job.createdAt, latestCheckinAt ?? 0);
+      // The repository CAS compares the latest durable check-in, then the
+      // task start, then the job creation time. Keep this exact nullish
+      // precedence; max() would make a newer task start mask an older check-in
+      // that Postgres can still observe.
+      const durableActivityAt = latestCheckinAt ?? task.startedAt ?? job.createdAt;
       const reason = `lost: no live graph or container and no activity for ${ this.config.lostAfterMs }ms`;
       const finishedAt = this.clock();
       // TODO(F-1): switch to persisted 'lost' once F-1 merges.
       if (await this.states.transitionIfActivityUnchanged(job.jobId, taskIndex, durableActivityAt,
-        { status: 'error', summary: reason, finishedAt }, { error: reason, finishedAt, waitingOnChildren: 0 })) lost++;
+        { status: 'error', summary: reason, finishedAt }, { error: reason, finishedAt, waitingOnChildren: 0 },
+        (current, candidate) => {
+          const currentTask = current.tasks[taskIndex];
+          if (!currentTask || !['queued', 'running', 'blocked'].includes(currentTask.status)) return false;
+          if (currentTask.wakeAt !== undefined && currentTask.wakeAt > this.clock()) return false;
+          const currentActivity = this.activity.project(current, currentTask, taskIndex, latestCheckin).lastActivityAt;
+          return this.clock() - currentActivity >= this.config.lostAfterMs && candidate.tasks[taskIndex]?.status === 'error';
+        })) lost++;
     }
     return lost;
   }
