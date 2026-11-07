@@ -21,7 +21,7 @@ import { GraphRegistry } from '../../services/GraphRegistry';
 import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
-import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
+import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotificationService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
@@ -58,14 +58,15 @@ export class AgentJobServiceProvider {
     const topLevelSessions=new TopLevelHumanSessionAuthorityRule(topLevelConversations);
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage,topLevelSessions);
-    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
+    const custodyNotifier = new CustodyChangeNotificationService(this.jobs, this.messaging, completionInboxStore);
+    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
     const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
     const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
-    this.delivery = new JobCompletionDelivery(this.service);
+    this.delivery = new JobCompletionDelivery(this.service, this.custody);
   }
 }
 

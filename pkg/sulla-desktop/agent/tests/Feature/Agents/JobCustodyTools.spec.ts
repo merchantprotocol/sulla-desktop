@@ -173,8 +173,8 @@ dbDescribe('registered custody transfer tools',()=>{
       const moved=()=>tools.call('reassign_job',{jobId:job.jobId,to:next,reason:`${order} race`},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1});
       const results=order==='return-first'?[await returned(),await moved()]:[await moved(),await returned()];
       expect(results.every(result=>result.success),JSON.stringify(results)).toBe(true);
-      expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId)).toHaveLength(1);
-      expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId)).toHaveLength(0);
+      expect(completionInboxStore.take(next,next).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(1);
+      expect(completionInboxStore.take(old,old).filter(entry=>entry.jobId===job.jobId&&entry.results.length>0)).toHaveLength(0);
     }
   });
 
@@ -190,8 +190,8 @@ dbDescribe('registered custody transfer tools',()=>{
     await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[child.jobId]);
     expect(await tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0})).toMatchObject({success:true});
     expect(await tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2})).toMatchObject({success:true});
-    expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId)).toHaveLength(1);
-    expect(completionInboxStore.take(adopter,adopter).filter(entry=>entry.jobId===child.jobId)).toHaveLength(0);GraphRegistry.delete(adopter);
+    expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(1);
+    expect(completionInboxStore.take(adopter,adopter).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(0);GraphRegistry.delete(adopter);
   });
 
   it('H6 fresh provider recovery preserves custody and dedupes stale completion replay',async()=>{
