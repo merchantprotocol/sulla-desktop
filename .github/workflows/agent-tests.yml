@@ -238,7 +238,9 @@ jobs:
           if (( status != 0 )); then
             # CI's broker can withhold redirected job logs. Expose only stable
             # suite identifiers: never assertion text, stack traces, or output.
-            suite_ids=$(grep -Eo 'pkg/[^[:space:]]+\.spec\.ts' "${output_file}" | sort -u | head -n 50 | paste -sd, - || true)
+            suite_ids=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "${output_file}" \
+              | sed -nE 's/^[[:space:]]*FAIL[[:space:]]+(pkg\/[^[:space:]]+\.spec\.ts).*/\1/p' \
+              | sort -u | head -n 50 | paste -sd, - || true)
             echo "::error file=.github,title=Per-PR agent runtime specs failed::schema=agent-tests.failure.v1;gate=per-pr-agent-runtime-specs;suite_ids=${suite_ids:-unavailable}"
           fi
           exit "${status}"
