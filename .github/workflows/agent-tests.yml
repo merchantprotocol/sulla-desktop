@@ -238,10 +238,30 @@ jobs:
           if (( status != 0 )); then
             # CI's broker can withhold redirected job logs. Expose only stable
             # suite identifiers: never assertion text, stack traces, or output.
-            suite_ids=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "${output_file}" \
-              | sed -nE 's/^[[:space:]]*FAIL[[:space:]]+(pkg\/[^[:space:]]+\.spec\.ts).*/\1/p' \
-              | sort -u | head -n 50 | paste -sd, - || true)
-            echo "::error file=.github,title=Per-PR agent runtime specs failed::schema=agent-tests.failure.v1;gate=per-pr-agent-runtime-specs;suite_ids=${suite_ids:-unavailable}"
+            # Never copy runner output into a workflow command. Match output
+            # only against safe, tracked static spec paths, then emit the
+            # repository-owned path (not the captured bytes). The character
+            # gate is defense in depth for workflow-command separators.
+            suite_ids=""
+            while IFS= read -r suite_path; do
+              [[ "${suite_path}" =~ ^[A-Za-z0-9_./-]+\.spec\.ts$ ]] || continue
+              if grep -Fq "FAIL  ${suite_path}" "${output_file}" || grep -Fq "FAIL ${suite_path}" "${output_file}"; then
+                suite_ids+="${suite_ids:+,}${suite_path}"
+              fi
+            done < <(git ls-files 'pkg/sulla-desktop/agent/tests/**/*.spec.ts')
+
+            # Bounded static identities for the currently failing integration
+            # fixture. Values are constants; no assertion, stack, or test data
+            # can cross into the annotation.
+            test_id=""
+            if grep -Fq "projects one task-scoped RunActivity consistently through every registered supervision surface" "${output_file}"; then
+              test_id="job-registry.activity-surfaces"
+            elif grep -Fq "keeps scope mine isolated across two real chat trees and reports persisted lineage titles" "${output_file}"; then
+              test_id="job-registry.scope-lineage"
+            elif grep -Fq "projects a real manager team tree and clears its unprocessed rollup after task delivery" "${output_file}"; then
+              test_id="job-registry.team-rollup"
+            fi
+            echo "::error file=.github,title=Per-PR agent runtime specs failed::schema=agent-tests.failure.v2;gate=per-pr-agent-runtime-specs;suite_ids=${suite_ids:-unavailable};test_id=${test_id:-unavailable}"
           fi
           exit "${status}"
 
