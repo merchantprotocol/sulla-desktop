@@ -11,7 +11,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getPrimaryService, getRoutedModelService, getServiceByProvider, getSubconsciousService } from '../languagemodels';
+import { getPrimaryService, getServiceByProvider, getSubconsciousService, modelDispatchService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
@@ -522,7 +522,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
     // own Model setting > the list.
     const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
-    const routed = await getRoutedModelService(target, choice);
+    const routed = await modelDispatchService.resolve(target, choice);
     this.routingCandidates = routed ? [...routed.candidates] : [];
     return routed?.service ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
   }

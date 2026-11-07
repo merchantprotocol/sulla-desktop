@@ -24,8 +24,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
-import { ModelDispatchService, type RoutedModelService } from './ModelDispatchService';
-import type { AgentModelChoice } from './modelRoutingTypes';
+import { ModelDispatchService } from './ModelDispatchService';
 // Dedupe key for the one-line subconscious-model resolution log (verify the
 // 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
 // log only when the resolved provider/tier/model/fallback signature changes,
@@ -400,7 +399,7 @@ export class LLMRegistryImpl {
 
 export const LLMRegistry = new LLMRegistryImpl();
 
-const modelDispatchService = new ModelDispatchService(
+export const modelDispatchService = new ModelDispatchService(
   async(target, choice) => {
     const { modelRouter } = await import('./modelRouter');
     return modelRouter.resolve(target, choice);
@@ -408,11 +407,6 @@ const modelDispatchService = new ModelDispatchService(
   (provider, model) => LLMRegistry.getServiceByProvider(provider, model),
 );
 
-/** Auto resolves candidates here; every mode then shares the same provider service/auth/execution route. */
-export const getRoutedModelService = async(
-  target: 'agents'|'subconscious',
-  choice: AgentModelChoice = { mode: 'list' },
-): Promise<RoutedModelService | null> => modelDispatchService.resolve(target, choice);
 
 export const getLLMService = async(spec: string) => await LLMRegistry.getService(spec);
 export const getRemoteService = async(model?: string) => await LLMRegistry.getRemoteService(model);
@@ -426,7 +420,7 @@ export const getSecondaryService = async() => await LLMRegistry.getSecondaryServ
 export const getSecondaryProviderId = async() => await LLMRegistry.getSecondaryProviderId();
 export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string; modelChoice?: import('./modelRoutingTypes').AgentModelChoice }) => {
   if (agentCfg?.modelChoice) {
-    return (await getRoutedModelService('agents', agentCfg.modelChoice))?.service ?? null;
+    return (await modelDispatchService.resolve('agents', agentCfg.modelChoice))?.service ?? null;
   }
   return LLMRegistry.getAgentOverrideService(agentCfg);
 };
