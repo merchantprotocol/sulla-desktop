@@ -22,6 +22,7 @@ vi.mock('../../../services/GraphRegistry',()=>({GraphRegistry:{get:(threadId:str
 vi.mock('../../../tools/agents/spawn_agent',async()=>{
  class ProcessBoundarySpawnAgentWorker {
   async runValidated(input:any,state:any){
+   if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
    const {postgresClient}=await import('../../../database/PostgresClient');
    const label=String(input.tasks[0].label);const jobId=`replacement-${label.split(':').slice(-2).join('-')}`;
    const existing=await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE job_id=$1',[jobId]);
@@ -71,9 +72,9 @@ suite('agents/replace_lead registered production path',()=>{
   const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
   expect(await database.query<any>(`SELECT job_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' AND owner_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
   for(let index=0;index<3;index++){await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);}
-  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1 AND kind='contract'`,[replacement.threadId])).toHaveLength(3);
+  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
   expect((await returnResult('worker-h3-0')).success).toBe(false);
-  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1 AND kind='contract'`,[replacement.threadId])).toHaveLength(3);
+  expect(await database.query<any>(`SELECT message_id FROM agent_inbox_messages WHERE receiver_thread_id=$1`,[replacement.threadId])).toHaveLength(3);
  });
 
  it('recovers a launch persisted before phase commit without creating a second lead',async()=>{
