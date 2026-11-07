@@ -8,6 +8,11 @@ import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 import { TestDatabase } from '../../Support/TestDatabase';
 import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
 import { sendJobMessage } from '../../../tools/agents/send_job_message';
+import { RunActivity } from '../../../services/RunActivity';
+import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
+import { AgentTeamRollupProjector } from '../../../app/Services/AgentTeamRollupProjector';
+import { SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
+import { CloudAgentStateProjection } from '../../../tools/agents/cloudProjection';
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
@@ -174,6 +179,50 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     const allPayload = JSON.parse(all.responseString);
     expect(allPayload.jobs.map((value: any) => value.jobId)).toEqual(expect.arrayContaining([managerA.jobId, workerA.jobId, grandchildA.jobId, managerB.jobId]));
     expect(allPayload.jobs.find((value: any) => value.jobId === managerB.jobId)).toMatchObject({ rootThreadId: rootB, rootChatTitle: 'Root B title' });
+  });
+
+  it('projects one task-scoped RunActivity consistently through every registered supervision surface', async() => {
+    // risk: one live model/tool turn appears working in one surface but stale or attached to its sibling elsewhere
+    const stamp = Date.now();
+    const root = `activity-root-${ stamp }`;
+    const startedAt = stamp - 20 * 60_000;
+    const created = await registry.createJob([
+      { agentId: 'active-worker', label: 'active-worker', prompt: 'work', status: 'running', threadId: `activity-live-${ stamp }`, startedAt },
+      { agentId: 'quiet-sibling', label: 'quiet-sibling', prompt: 'work', status: 'running', threadId: `activity-quiet-${ stamp }`, startedAt },
+    ], 'sulla-desktop', root);
+    const activityKey = `${ created.jobId }#0`;
+    RunActivity.begin(activityKey);
+    try {
+      const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+      const fleet = await agentJobProvider.fleet.list({ scope: 'mine', callerThreadId: root, limit: 100 });
+      const projected = fleet.find(value => value.jobId === created.jobId)!;
+      expect(projected.tasks.map(value => value.state)).toEqual(['working', 'quiet']);
+      expect(Date.parse(projected.tasks[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
+      expect(Date.parse(projected.tasks[1].lastActivityAt)).toBe(startedAt);
+
+      const snapshot = await new AgentStateProjector(agentJobProvider.states, {
+        latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+      }, Date.now, {}, agentJobProvider.activity).snapshot();
+      expect(snapshot.rows.filter(value => value.jobId === created.jobId).map(value => value.state)).toEqual(['working', 'quiet']);
+
+      const check = new CheckAgentJobsHarness();
+      check.setState({ metadata: { threadId: root } });
+      const list = JSON.parse((await check.call({ scope: 'mine', limit: 100 })).responseString);
+      expect(list.jobs.find((value: any) => value.jobId === created.jobId).tasks.map((value: any) => value.state)).toEqual(['working', 'quiet']);
+      const tree = JSON.parse((await check.call({ scope: 'mine', view: 'tree', limit: 100 })).responseString);
+      expect(tree.tasks.filter((value: any) => value.ref.startsWith(`${ created.jobId }#`)).map((value: any) => value.state)).toEqual(['working', 'quiet']);
+
+      const rollup = new AgentTeamRollupProjector(() => Date.now()).project(fleet);
+      expect(rollup.get(`${ created.jobId }#0`)?.states ?? {}).toEqual({});
+      const directory = await new SubagentDirectoryBuilder(agentJobProvider.fleet, new AgentTeamRollupProjector(() => Date.now()), () => Date.now()).build(root);
+      expect(directory).toContain('active-worker · hidden · working');
+      expect(directory).toContain('quiet-sibling · hidden · quiet');
+
+      const cloud = await new CloudAgentStateProjection().build('test-device');
+      expect(cloud.filter(value => value.jobId === created.jobId).map(value => value.state)).toEqual(['working', 'quiet']);
+    } finally {
+      RunActivity.end(activityKey);
+    }
   });
 
   it('projects a real manager team tree and clears its unprocessed rollup after task delivery', async() => {

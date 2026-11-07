@@ -29,7 +29,7 @@ export class AgentLivenessReconciler {
       if (!['queued', 'running', 'parked', 'blocked'].includes(task.status)) continue;
       // Parked includes agents/wait with a durable future wake. It is an
       // intentional dormant lifecycle state, not evidence of a lost runtime.
-      if (task.status === 'parked') continue;
+      if (task.status === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.clock())) continue;
       const containerLive = await this.probe.container(task);
       // Unknown means the runtime supervisor is still rebuilding bindings after
       // restart. Its bounded grace protects only the lost decision, never reads.
@@ -40,10 +40,17 @@ export class AgentLivenessReconciler {
       // so an active model/tool turn protects this task even with stale durable timestamps.
       const lastActivityAt = this.activity.project(job, task, taskIndex, checkin).lastActivityAt;
       if (this.clock() - lastActivityAt < this.config.lostAfterMs) continue;
+      // RunActivity is process-local and intentionally absent from the repository CAS.
+      // Re-read it at transition eligibility, then give Postgres only the durable
+      // baseline it can compare. A concurrent durable check-in still defeats the CAS.
+      const latestCheckinAt = await this.probe.lastCheckin(job.jobId, taskIndex);
+      const latestCheckin: AgentTaskActivityCheckin | null = latestCheckinAt === null ? null : { createdAt: latestCheckinAt };
+      if (this.clock() - this.activity.project(job, task, taskIndex, latestCheckin).lastActivityAt < this.config.lostAfterMs) continue;
+      const durableActivityAt = Math.max(task.startedAt ?? job.createdAt, latestCheckinAt ?? 0);
       const reason = `lost: no live graph or container and no activity for ${ this.config.lostAfterMs }ms`;
       const finishedAt = this.clock();
       // TODO(F-1): switch to persisted 'lost' once F-1 merges.
-      if (await this.states.transitionIfActivityUnchanged(job.jobId, taskIndex, lastActivityAt,
+      if (await this.states.transitionIfActivityUnchanged(job.jobId, taskIndex, durableActivityAt,
         { status: 'error', summary: reason, finishedAt }, { error: reason, finishedAt, waitingOnChildren: 0 })) lost++;
     }
     return lost;

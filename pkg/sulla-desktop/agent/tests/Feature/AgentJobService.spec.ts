@@ -128,6 +128,27 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect(snapshot.rows.find(row => row.jobId === jobId)).toMatchObject({ state: 'lost', canMessage: false, canStop: false });
   });
 
+  it('marks an aged RunActivity task lost using its durable Postgres CAS baseline', async() => {
+    // risk: a historic model/tool timestamp makes a dead task immortal because Postgres cannot compare it
+    const now = Date.now();
+    const jobId = `aged-run-activity-${ now }`;
+    const startedAt = now - 1_200_000;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility)
+      VALUES ($1, 'running', 1, to_timestamp($2 / 1000.0), $3::jsonb, 'hidden')`, [jobId, startedAt, JSON.stringify([{
+      agentId: 'worker', label: 'Aged activity worker', prompt: 'work', status: 'running', startedAt,
+    }])]);
+    const { agentJobProvider } = await import('../../app/Providers/AgentJobServiceProvider');
+    const reconciler = new AgentLivenessReconciler(agentJobProvider.states, {
+      graph: () => false, container: async() => false, lastCheckin: async() => null,
+    }, new AgentTaskActivityProjector({ lastActivityAt: key => key === `${ jobId }#0` ? now - 600_000 : undefined }), () => now,
+    { quietAfterMs: 60_000, lostAfterMs: 5 * 60_000 });
+
+    expect(await reconciler.reconcile()).toBe(1);
+    const [durable] = await database.query<{ status: string; tasks: Array<{ status: string }> }>(
+      'SELECT status, tasks FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(durable).toMatchObject({ status: 'failed', tasks: [{ status: 'error' }] });
+  });
+
   it('rehydrates supervisor-visible containers before boot reconciliation and loses absent ones', async() => {
     // risk: Desktop restart falsely kills a still-running container agent
     const jobId = `rebind-live-${ Date.now() }`;

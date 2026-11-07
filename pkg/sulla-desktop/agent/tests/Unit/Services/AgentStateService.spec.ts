@@ -10,12 +10,13 @@ import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActiv
 
 class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
+  readonly observedActivity: Array<number | null> = [];
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async cascadeJobs(jobId: string): Promise<AgentJob[]> { const job = this.durable.get(jobId); return job ? [structuredClone(job)] : []; }
-  async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { this.durable.set(job.jobId, structuredClone(job)); return true; }
+  async replaceStateIfActivityUnchanged(job: AgentJob, _taskIndex: number, observedActivity: number | null): Promise<boolean> { this.observedActivity.push(observedActivity); this.durable.set(job.jobId, structuredClone(job)); return true; }
 }
 class EmptyTelemetry { async latest(): Promise<null> { return null; } }
 const task = (overrides: Partial<AgentJobTask> = {}): AgentJobTask => ({ agentId: 'worker', label: 'Worker', prompt: 'work', status: 'running', startedAt: 1_000, ...overrides });
@@ -132,6 +133,40 @@ describe('authoritative live agent state', () => {
     const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.durable.get('live-activity')?.tasks[0].status).toBe('running');
+  });
+
+  it('uses the durable baseline for CAS after historic RunActivity ages into lost eligibility', async() => {
+    // risk: an old model/tool activity timestamp permanently prevents a dead task from becoming lost
+    const { store, states } = harness([job('aged-activity', [task({ startedAt: 100_000 })])], 500_000);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'aged-activity#0' ? 200_000 : undefined });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(1);
+    expect(store.observedActivity).toEqual([100_000]);
+    expect(store.durable.get('aged-activity')?.tasks[0].status).toBe('error');
+  });
+
+  it('rechecks task-scoped RunActivity immediately before the lost transition', async() => {
+    // risk: a model/tool turn that starts during reconciliation is falsely marked lost
+    const { store, states } = harness([job('activity-race', [task({ startedAt: 100_000 })])], 500_000);
+    let reads = 0;
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'activity-race#0' && ++reads === 2 ? 499_500 : undefined });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    expect(store.observedActivity).toEqual([]);
+    expect(store.durable.get('activity-race')?.tasks[0].status).toBe('running');
+  });
+
+  it('protects running and blocked tasks with a future durable wake without hiding blockers', async() => {
+    // risk: scheduled work is falsely lost, or an actionable blocker is mislabeled parked
+    const futureWake = 600_000;
+    const scheduled = job('scheduled', [task({ wakeAt: futureWake }), task({ status: 'blocked', wakeAt: futureWake })]);
+    const { store, states } = harness([scheduled], 500_000);
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    expect(await reconciler.reconcile()).toBe(0);
+    expect(store.durable.get('scheduled')?.tasks.map(value => value.status)).toEqual(['running', 'blocked']);
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
+    expect(rows.find(row => row.taskIndex === 0)?.state).toBe('parked');
+    expect(rows.find(row => row.taskIndex === 1)?.state).toBe('blocked');
   });
 
   it('never marks an intentionally parked future-wake task lost', async() => {
