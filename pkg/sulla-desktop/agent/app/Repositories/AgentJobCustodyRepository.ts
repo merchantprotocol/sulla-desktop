@@ -7,9 +7,14 @@ import type { PostgresClient } from '../../database/PostgresClient';
 import type { CustodyActor, CustodyAuditRecord, CustodyMoveInput, CustodyMoveResult, CustodyOwner, CustodyRecord } from '../Services/JobCustodyTypes';
 
 export type CustodyLockedOperation<T> = (client: PoolClient, effectiveOwner: CustodyRecord) => Promise<T>;
+export type CustodyTransactionKind = 'move'|'producer';
+export type CustodyTransactionPhase = 'locked'|'committing'|'committed';
+export interface CustodyTransactionObservation {kind:CustodyTransactionKind;phase:CustodyTransactionPhase;jobId:string;taskIndex?:number;}
+export interface CustodyTransactionObserver {observe(event:CustodyTransactionObservation):Promise<void>;}
+export class NoopCustodyTransactionObserver implements CustodyTransactionObserver {async observe(_event:CustodyTransactionObservation):Promise<void>{}}
 
 export class AgentJobCustodyRepository {
-  constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>) {}
+  constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>,private readonly observer:CustodyTransactionObserver=new NoopCustodyTransactionObserver()) {}
 
   async resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
     const rows = await this.database.query<any>(this.resolveSql(false), [jobId, taskIndex ?? null]);
@@ -23,15 +28,20 @@ export class AgentJobCustodyRepository {
    * producer for the same effective scope cannot observe different owners.
    */
   async withCustodyLock<T>(jobId: string, taskIndex: number|undefined, operation: CustodyLockedOperation<T>): Promise<T|undefined> {
-    return this.database.transaction(async client => {
-      const owner = await this.resolveOwnerInTransaction(client, jobId, taskIndex);
-      return owner ? operation(client, owner) : undefined;
+    const result=await this.database.transaction(async client => {
+      const owner = await this.resolveOwnerInTransaction(client, jobId, taskIndex,'producer');
+      if(!owner)return undefined;
+      const value=await operation(client, owner);
+      await this.observe('producer','committing',jobId,taskIndex);
+      return value;
     });
+    await this.observe('producer','committed',jobId,taskIndex);
+    return result;
   }
 
   async move(input: CustodyMoveInput, expected: CustodyRecord, changedAt: Date): Promise<CustodyMoveResult> {
-    return this.database.transaction(async client => {
-      const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex);
+    const result=await this.database.transaction(async client => {
+      const current = await this.resolveOwnerInTransaction(client, input.jobId, input.taskIndex,'move');
       if (!current) return { ok:false, code:'not-found', message:`Job ${input.jobId} was not found.` };
       if (!this.sameSnapshot(current, expected)) {
         return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
@@ -52,8 +62,11 @@ export class AgentJobCustodyRepository {
       await client.query(`UPDATE agent_inbox_messages SET receiver_channel=$3,receiver_thread_id=$4,receiver_agent_id=$5,lease_owner=NULL,lease_expires_at=NULL
         WHERE message_id IN (SELECT message_id FROM (${this.inboxScopeSql(input.taskIndex)}) scoped)`,
       [input.jobId,input.taskIndex ?? null,effectiveInput.to.channel,effectiveInput.to.threadId,effectiveInput.to.agentId]);
+      await this.observe('move','committing',input.jobId,input.taskIndex);
       return { ok:true, previous:current, current:this.mapRecord(row,input.taskIndex) };
     });
+    await this.observe('move','committed',input.jobId,input.taskIndex);
+    return result;
   }
 
   /** Serialize adoption into a lead with its durable drain gate. */
@@ -70,11 +83,16 @@ export class AgentJobCustodyRepository {
     return (await this.database.query<any>(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1 ORDER BY changed_at,id`,[jobId])).map(row=>this.mapAudit(row));
   }
 
-  private async resolveOwnerInTransaction(client: PoolClient, jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
+  private async resolveOwnerInTransaction(client: PoolClient, jobId: string, taskIndex: number|undefined,kind:CustodyTransactionKind): Promise<CustodyRecord|undefined> {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), -1)`, [jobId]);
     if (taskIndex !== undefined) await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), $2)`, [jobId, taskIndex]);
+    await this.observe(kind,'locked',jobId,taskIndex);
     const result = await client.query(this.resolveSql(true), [jobId, taskIndex ?? null]);
     return result.rows[0] ? this.mapRecord(result.rows[0], taskIndex) : undefined;
+  }
+
+  private observe(kind:CustodyTransactionKind,phase:CustodyTransactionPhase,jobId:string,taskIndex?:number):Promise<void>{
+    return this.observer.observe({kind,phase,jobId,...(taskIndex===undefined?{}:{taskIndex})});
   }
 
   private inboxScopeSql(taskIndex?: number): string {
