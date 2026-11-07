@@ -17,14 +17,13 @@ export class ReplaceLeadService {
    input.actor.assertVerified();
    const packet=await this.packets.assemble(input.jobId,input.taskIndex,input.note);
    if(!packet)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
-   let operation:LeadReplacementOperation|undefined;let owner:any;
    const locked=await this.custody.withOwner(input.jobId,input.taskIndex,input.actor,async(client,pinned)=>{
      const refusal=await this.custody.authorizeReplacement(pinned,input.actor);if(refusal)return {refusal};
      return {operation:await this.packets.operation(client,input.jobId,input.taskIndex),owner:pinned};
    });
    if(!locked)return {ok:false,message:`Job "${input.jobId}" task ${input.taskIndex} not found.`};
    if('refusal' in locked)return locked.refusal;
-   ({operation,owner}=locked);
+   let operation:LeadReplacementOperation=locked.operation;const owner=locked.owner;
    if(operation.phase==='intent'){
      try{
        const launchOwner:CustodyOwner={channel:owner.channel,threadId:owner.threadId,agentId:owner.agentId};
