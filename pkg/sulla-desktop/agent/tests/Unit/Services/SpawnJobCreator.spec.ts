@@ -21,6 +21,11 @@ class InMemorySpawnJobRepository implements SpawnJobRepository {
     await Promise.resolve();
     this.jobs.push(job);
   }
+  async reserveSpawnJob(job:AgentJob,launchKey:string):Promise<{job:AgentJob;inserted:boolean}>{
+    const existing=(this as any).keys?.get(launchKey) as AgentJob|undefined;
+    if(existing)return {job:existing,inserted:false};
+    ((this as any).keys??=new Map()).set(launchKey,job);this.jobs.push(job);return {job,inserted:true};
+  }
 
   async recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined> {
     return [...this.jobs].reverse().find(job =>

@@ -8,6 +8,8 @@ import { BaseTool, ToolResponse } from '../base';
 import { getJob, getJobsForList } from './jobRegistry';
 
 import type { AgentJob } from './jobRegistry';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { JobCustodyFormatter } from '../../app/Services/JobCustodyFormatter';
 
 function elapsedSince(startedAt: number | undefined, fallback: number, finishedAt?: number): string {
   const start = startedAt ?? fallback;
@@ -58,6 +60,7 @@ export function jobTaskViews(job: AgentJob, telemetry: Record<number, AgentJobTa
 
 async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
   const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
+  const custody=await new JobCustodyFormatter(agentJobProvider.custody).format(job);
 
   return {
     jobId: job.jobId,
@@ -72,6 +75,7 @@ async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
     tasks: jobTaskViews(job, telemetry),
     results: job.results,
     orphanedChildNotices: job.orphanedChildNotices ?? [],
+    custody,
   };
 }
 

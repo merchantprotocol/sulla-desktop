@@ -55,6 +55,8 @@ export interface AgentJobResult {
 
 export interface AgentJobTask {
   agentId:    string;
+  /** Canonical graph transport channel used to create and address this child. */
+  agentConfigChannel?: string;
   label:      string;
   prompt:     string;
   /** Per-run routing overrides required to rehydrate this exact agent. */
@@ -137,6 +139,8 @@ export interface CreateJobOptions {
   parentAgentId?: string;
   /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
   dedupeLabel?: string;
+  /** Durable caller-owned idempotency key. Unlike dedupeLabel this never expires. */
+  launchKey?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;

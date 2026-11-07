@@ -23,6 +23,11 @@ export class TopLevelHumanSessionAuthorityRule implements TopLevelHumanSessionAu
 
 export class JobCustodyAuthorityPolicy {
   constructor(private readonly liveness:CustodyOwnerLivenessPort,private readonly lineage:CustodyLineagePort,private readonly topLevelSessions?:TopLevelHumanSessionAuthorityPort) {}
+  async authorizeReplacement(current:CustodyRecord,actor:VerifiedCustodyActor):Promise<CustodyMoveResult|undefined>{
+    if(this.same(current,actor)) return undefined;
+    if(await this.lineage.isAncestor(actor.threadId,current.threadId)) return undefined;
+    return this.refuse('forbidden',`Custody belongs to ${current.agentId} (${current.channel}/${current.threadId}).`,current);
+  }
   async authorize(input:CustodyAuthorityInput):Promise<CustodyMoveResult|undefined>{
     const current=input.current;
     if(this.same(current,input.destination)) return this.refuse('no-op','Destination already owns this job.',current);

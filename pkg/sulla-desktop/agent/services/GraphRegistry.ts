@@ -1588,6 +1588,10 @@ ${ memoryContext }`;
     const latest = matches.at(-1);
     return latest ? String((latest[1].state.metadata as any)?.threadId || latest[0]).trim() : undefined;
   },
+  findThreadsByChannel(channel:string):string[]{
+    return [...registry.entries()].filter(([key,record])=>{const metadata=record.state?.metadata as any;return String(metadata?.agentId||metadata?.wsChannel||'').trim()===channel&&Boolean(String(metadata?.threadId||key||'').trim());})
+      .map(([key,record])=>String((record.state.metadata as any)?.threadId||key).trim()).filter((value,index,all)=>all.indexOf(value)===index);
+  },
 
   /**
    * Best-effort lookup of the live sulla-desktop chat the user is looking

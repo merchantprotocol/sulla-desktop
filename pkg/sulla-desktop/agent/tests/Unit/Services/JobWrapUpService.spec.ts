@@ -26,6 +26,31 @@ class FakeStops {
   async stopTask(jobId: string, taskIndex: number): Promise<'stopped'> { this.stopped.push([jobId, taskIndex]); return 'stopped'; }
 }
 
+
+
+class AttributedFakeStops {
+  readonly stopped: Array<{jobId:string;taskIndex:number}> = [];
+  teardownTask(jobId:string,taskIndex:number):void{this.stopped.push({jobId,taskIndex});}
+}
+
+class FakePersistence {
+  private reserved = false;
+  completed = 0;
+  async reserve(): Promise<boolean> { const inserted = !this.reserved; this.reserved = true; return inserted; }
+  async state(): Promise<'pending'> { return 'pending'; }
+  async pending(): Promise<any[]> { return []; }
+  async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1}; }
+  async beginTeardown(): Promise<boolean> { return true; }
+  async acknowledgeTeardown(): Promise<boolean> { this.completed++; return true; }
+  async cancel(): Promise<void> {}
+  async cancelJob(): Promise<void> {}
+}
+
+class FailingMessages implements JobWrapUpMessageSender {
+  attempts = 0;
+  async send(): Promise<void> { this.attempts++; throw new Error('send failed after reserve'); }
+}
+
 const principal = { kind: 'human' } as StopPrincipalValue;
 
 describe('JobWrapUpService', () => {
@@ -37,6 +62,17 @@ describe('JobWrapUpService', () => {
     expect(messages.sent).toHaveLength(1); expect(messages.sent[0].taskIndex).toBe(1);
     service.taskSettled('job-1', 1); timer.elapse();
     expect(stops.stopped).toEqual([]); expect(timer.cancelled).toHaveLength(1);
+  });
+
+  it('keeps a committed wrap stop armed when messaging fails and an idempotent retry does not need restart', async() => {
+    // risk: irreversible stop — a committed reserve must still execute once with the original attribution.
+    const timer = new FakeTimer(); const messages = new FailingMessages(); const stops = new AttributedFakeStops(); const persistence = new FakePersistence();
+    const service = new JobWrapUpService(stops as any, messages, timer, persistence);
+    await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).rejects.toThrow('send failed after reserve');
+    await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).resolves.toEqual(['pending']);
+    expect(messages.attempts).toBe(1); expect(timer.callbacks.size).toBe(1);
+    timer.elapse(); await Promise.resolve(); await Promise.resolve();
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]); expect(persistence.completed).toBe(1);
   });
 
   it('hard-stops the targeted task after grace while its sibling keeps running', async() => {

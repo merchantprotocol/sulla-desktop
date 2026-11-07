@@ -8,6 +8,7 @@ import { Repository } from '@sulla/foundation';
 
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
 import type { AgentJob, AgentJobResult, AgentJobTask, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
+import type { CustodyTransactionClient } from '../Services/JobCustodyTypes';
 
 export class AgentJobRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
@@ -45,9 +46,24 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async sweepInterruptedJobs(): Promise<void> { /* recovery is driven by claimInterruptedJobs after channels subscribe */ }
 
 
+  async findByParentAndLabel(parentThreadId:string,label:string):Promise<AgentJob|undefined>{
+    const rows=await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id=$1 AND tasks -> 0 ->> 'label'=$2 ORDER BY created_at LIMIT 1`,[parentThreadId,label]);
+    return rows[0]?this.map(rows[0]):undefined;
+  }
+
   async insertJob(job: AgentJob): Promise<void> {
     await this.connection.run(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility, parent_agent_id) VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb, $7, $8) ON CONFLICT (job_id) DO NOTHING`,
       [job.jobId, job.taskCount, job.createdAt, job.parentChannel ?? null, job.parentThreadId ?? null, JSON.stringify(job.tasks), job.visibility ?? 'hidden', job.parentAgentId ?? null]);
+  }
+
+  async reserveSpawnJob(job:AgentJob,launchKey:string):Promise<{job:AgentJob;inserted:boolean}>{
+    const rows=await this.connection.select(`INSERT INTO agent_jobs (job_id,status,task_count,parent_channel,parent_thread_id,created_at,tasks,visibility,parent_agent_id,launch_key)
+      VALUES($1,'running',$2,$4,$5,to_timestamp($3 / 1000.0),$6::jsonb,$7,$8,$9)
+      ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO UPDATE SET launch_key=EXCLUDED.launch_key
+      RETURNING *, (xmax=0) AS inserted`,
+    [job.jobId,job.taskCount,job.createdAt,job.parentChannel??null,job.parentThreadId??null,JSON.stringify(job.tasks),job.visibility??'hidden',job.parentAgentId??null,launchKey]);
+    if(!rows[0])throw new Error(`Unable to reserve spawn launch key ${launchKey}`);
+    return {job:this.map(rows[0]),inserted:Boolean(rows[0].inserted)};
   }
 
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
@@ -145,6 +161,23 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async stop(jobId: string, tasks: AgentJobTask[], stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET status = 'stopped', finished_at = now(), waiting_on_children = 0, completion_delivered_at = now(), tasks = $2::jsonb, stopped_by = $3::jsonb, stop_reason = $4 WHERE job_id = $1 AND status IN ('running', 'parked')`, [jobId, JSON.stringify(tasks), JSON.stringify(stoppedBy), reason]);
+  }
+
+  async stopWithClient(client:CustodyTransactionClient,jobId:string,tasks:AgentJobTask[],stoppedBy:AgentJob['stoppedBy'],reason:string,settlesJob:boolean,taskIndex:number):Promise<boolean>{
+    const result=settlesJob
+      ?await client.query(`UPDATE agent_jobs SET status='stopped',finished_at=now(),waiting_on_children=0,completion_delivered_at=now(),tasks=$2::jsonb,stopped_by=$3::jsonb,stop_reason=$4 WHERE job_id=$1 AND status IN ('running','parked') AND tasks->$5::int->>'status' IN ('queued','running','parked') RETURNING 1`,[jobId,JSON.stringify(tasks),JSON.stringify(stoppedBy),reason,taskIndex])
+      :await client.query(`UPDATE agent_jobs SET tasks=$2::jsonb WHERE job_id=$1 AND status IN ('running','parked') AND tasks->$3::int->>'status' IN ('queued','running','parked') RETURNING 1`,[jobId,JSON.stringify(tasks),taskIndex]);
+    return result.rows.length===1;
+  }
+
+  async stopCascadeWithClient(client:CustodyTransactionClient,jobId:string,stoppedBy:AgentJob['stoppedBy'],reason:string):Promise<string[]>{
+    const result=await client.query<any>(`WITH RECURSIVE descendants AS (
+      SELECT job_id,tasks FROM agent_jobs WHERE job_id=$1 UNION ALL SELECT child.job_id,child.tasks FROM agent_jobs child
+      JOIN descendants parent ON child.parent_thread_id IN (SELECT value->>'threadId' FROM jsonb_array_elements(parent.tasks) value))
+      UPDATE agent_jobs target SET status='stopped',finished_at=now(),waiting_on_children=0,completion_delivered_at=now(),stopped_by=$2::jsonb,stop_reason=$3,
+      tasks=(SELECT COALESCE(jsonb_agg(CASE WHEN value->>'status' IN ('queued','running','parked') THEN value||jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint) ELSE value END),'[]'::jsonb) FROM jsonb_array_elements(target.tasks)value)
+      FROM descendants WHERE target.job_id=descendants.job_id AND target.status IN ('running','parked') RETURNING target.job_id`,[jobId,JSON.stringify(stoppedBy),reason]);
+    return result.rows.map(row=>String(row.job_id));
   }
 
   async stopCascade(jobId: string, stoppedBy: AgentJob['stoppedBy'], reason: string): Promise<string[]> {

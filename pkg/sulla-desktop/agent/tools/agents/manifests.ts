@@ -7,6 +7,21 @@ import type { ToolManifest } from '../registry';
 
 export const agentToolManifests: ToolManifest[] = [
   {
+    name: 'replace_lead',
+    description: 'Replace a lead task with a fresh agent while preserving and re-parenting its existing worker team. The replacement receives a generated handoff packet; the old lead is asked to wrap up.',
+    category: 'agents',
+    schemaDef: {
+      jobId: { type: 'string', description: 'Job containing the lead task.' },
+      taskIndex: { type: 'number', description: 'Zero-based lead task index.' },
+      agentId: { type: 'string', description: 'Enabled agent definition slug for the replacement.' },
+      model: { type: 'string', optional: true, description: 'Optional model override.' },
+      provider: { type: 'string', optional: true, description: 'Optional provider override.' },
+      note: { type: 'string', optional: true, description: 'Context appended to the handoff and custody audit.' },
+    },
+    operationTypes: ['execute'],
+    loader: () => import('./replace_lead'),
+  },
+  {
     name:        'spawn_agent',
     description: 'The one way to delegate. Launch one or more child agents, each with a return contract. Every child runs hidden in the background (visible tabs are disabled; the human can open any child from the sub-agent rail). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
     category:    'meta',
@@ -121,6 +136,31 @@ export const agentToolManifests: ToolManifest[] = [
     },
     operationTypes: ['create'],
     loader:         () => import('./report_progress'),
+  },
+  {
+    name:        'reassign_job',
+    description: 'Transfer custody of a running agent job or one task to yourself, a live agent channel, or a live delegated thread. Results, blockers, authority, and undelivered inbox items follow the new owner.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to transfer.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      to: { type: 'string', description: '"me", a live agent channel, or a delegated thread id.' },
+      reason: { type: 'string', description: 'Audit reason for the custody change.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./reassign_job'),
+  },
+  {
+    name:        'adopt_job',
+    description: 'Adopt custody of a job or task into the calling agent/thread. Allowed for the current owner, its ancestors, the human, or when the old owner is dead or stranded.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to adopt.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      reason: { type: 'string', description: 'Audit reason for the adoption.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./adopt_job'),
   },
   {
     name:        'stop_agent_job',
