@@ -44,11 +44,11 @@ export class JobStopService extends Service {
     const snapshotAncestor=principal.kind==='agent'&&snapshot&&snapshot.threadId!==principal.threadId?await this.authorizedAgainst(snapshot,principal.threadId):false;
     const mutation=async(client:any,owner:CustodyRecord)=>{
       if(principal.kind==='agent'&&owner.threadId!==principal.threadId&&!(snapshotAncestor&&snapshot?.threadId===owner.threadId&&snapshot.version===owner.version))return 'forbidden' as const;
-      await this.repository.stopWithClient(client,jobId,tasks,StopPrincipal.attribution(principal),reason,settlesJob); return 'stopped' as const;
+      const changed=await this.repository.stopWithClient(client,jobId,tasks,StopPrincipal.attribution(principal),reason,settlesJob,taskIndex); return changed?'stopped' as const:'already-finished' as const;
     };
     const outcome=this.custody?await this.custody.withOwner(jobId,taskIndex,mutation):
       (await this.persist(settlesJob?this.repository.stop(jobId,tasks,StopPrincipal.attribution(principal),reason):this.repository.updateTasks(jobId,tasks)),'stopped' as const);
-    if(!outcome)return 'not-found'; if(outcome==='forbidden')return outcome;
+    if(!outcome)return 'not-found'; if(outcome==='forbidden'||outcome==='already-finished')return outcome;
     job.tasks=tasks;
     if (settlesJob) { job.status = 'stopped'; job.finishedAt = stoppedAt; job.stoppedBy = StopPrincipal.attribution(principal); job.stopReason = reason; }
     // Mark stopped before aborting so teardown failures see an intentional stop.

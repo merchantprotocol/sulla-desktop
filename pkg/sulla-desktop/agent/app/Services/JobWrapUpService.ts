@@ -5,7 +5,7 @@
 import { Service } from '@sulla/foundation';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import type { JobStopService } from './JobStopService';
-import type { DurableWrapUpRequest,JobWrapUpPersistence } from '../Repositories/JobWrapUpRepository';
+import type { DurableWrapUpClaim,DurableWrapUpRequest,JobWrapUpPersistence } from '../Repositories/JobWrapUpRepository';
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 export interface JobWrapUpTimer {
@@ -27,6 +27,7 @@ export interface JobWrapUpMessageSender {
 }
 
 export class JobWrapUpService extends Service {
+  private static readonly executionLeaseSeconds=30;
   private readonly timers = new Map<string, TimerHandle>();
 
   constructor(
@@ -64,7 +65,10 @@ export class JobWrapUpService extends Service {
     return states;
   }
 
-  async recover():Promise<void>{for(const request of await this.persistence?.pending()??[])this.schedule(request);}
+  async recover():Promise<void>{
+    const now=Date.now();
+    await Promise.all((await this.persistence?.pending()??[]).map(request=>request.dueAt.getTime()<=now?this.execute(request):Promise.resolve(this.schedule(request))));
+  }
 
   private schedule(request:DurableWrapUpRequest):void{
     const key=this.key(request.jobId,request.taskIndex);if(this.timers.has(key))return;
@@ -73,8 +77,15 @@ export class JobWrapUpService extends Service {
   }
 
   private async execute(request:DurableWrapUpRequest):Promise<void>{
-    const outcome=await this.stops.stopTask(request.jobId,request.taskIndex,request.principal,request.reason);
-    if(outcome==='stopped'||outcome==='already-finished'||outcome==='not-found')await this.persistence?.complete(request.jobId,request.taskIndex);
+    const claim:DurableWrapUpClaim|undefined=this.persistence
+      ?await this.persistence.claim(request.jobId,request.taskIndex,JobWrapUpService.executionLeaseSeconds)
+      :{...request,claimToken:'process-local',claimVersion:1};
+    if(!claim)return;
+    const outcome=await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);
+    // The task mutation is itself conditional/idempotent. If this process dies
+    // after that mutation, an expired claimant observes already-finished and
+    // fences completion with its newer claim version.
+    if(outcome==='stopped'||outcome==='already-finished'||outcome==='not-found')await this.persistence?.complete(claim);
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */
