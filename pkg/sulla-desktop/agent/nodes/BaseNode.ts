@@ -11,7 +11,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getAgentOverrideService, getPrimaryService, getServiceByProvider, getSubconsciousService } from '../languagemodels';
+import { getPrimaryService, getRoutedModelService, getServiceByProvider, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
@@ -522,13 +522,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
     // own Model setting > the list.
     const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
-    this.routingCandidates = await modelRouter.resolve(target, choice);
-    if (this.routingCandidates.length) {
-      const first = this.routingCandidates[0];
-      return getServiceByProvider(first.provider, first.model);
-    }
-    const override = await getAgentOverrideService({ ...(state.metadata as any).agent, modelChoice: choice });
-    return override ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
+    const routed = await getRoutedModelService(target, choice);
+    this.routingCandidates = routed ? [...routed.candidates] : [];
+    return routed?.service ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
