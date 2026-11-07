@@ -38,7 +38,8 @@ export class AgentStateProjector {
       const parent = job.parentThreadId ? taskOwner.get(job.parentThreadId) : undefined;
       const checkin = await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const state = this.activity.project(job, task, taskIndex, checkin).state as AgentViewStatus;
+      const activity = this.activity.project(job, task, taskIndex, checkin);
+      const state = activity.state as AgentViewStatus;
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? ordered.filter(candidate => candidate.parentThreadId === task.threadId && ['running', 'parked'].includes(candidate.status)).length : 0;
