@@ -40,7 +40,7 @@ export class SubagentDirectoryBuilder {
 
   private describe(job: FleetJobView, task: FleetTaskView, team?: AgentTeamRollup): ChildRow | null {
     const finishedAt = task.finishedAt ? Date.parse(task.finishedAt) : job.finishedAt ? Date.parse(job.finishedAt) : undefined;
-    const open = ['running', 'parked'].includes(job.status) && ['running', 'queued', 'parked', 'blocked'].includes(task.status);
+    const open = ['running', 'parked'].includes(job.status) && ['working', 'quiet', 'queued', 'parked', 'blocked'].includes(task.state);
     if (!open && task.completionDeliveredAt && finishedAt && this.now() - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
     const lastActivity = Date.parse(task.lastActivityAt); const stalled = open && this.now() - lastActivity >= SUBAGENT_STALL_MS;
     const visibility = task.promotedToTab ? 'hidden→tab' : String(task.visibility ?? 'hidden');
