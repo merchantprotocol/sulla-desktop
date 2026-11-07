@@ -517,7 +517,7 @@ const modelName = ref('');
 const modelMode = ref<'local' | 'remote'>('remote');
 const systemReady = ref(true);
 const isRunning = computed<boolean>(() => true);
-const chatSelection = ref<Record<string, string>>({});
+const chatSelection = ref<Record<string, string>>({ modelSelection: 'default' });
 
 const modelSelector = new AgentModelSelectorController({
   systemReady,
@@ -526,7 +526,9 @@ const modelSelector = new AgentModelSelectorController({
   modelMode,
   isRunning,
   onSelectForChat: ({ providerId, modelId, agentId }) => {
-    chatSelection.value = { providerId, modelId, ...(agentId ? { agentId } : {}) };
+    chatSelection.value = providerId && modelId
+      ? { modelSelection: 'explicit', providerId, modelId, ...(agentId ? { agentId } : {}) }
+      : { modelSelection: 'default', ...(agentId ? { agentId } : {}) };
   },
 });
 

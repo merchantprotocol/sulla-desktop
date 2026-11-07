@@ -11,15 +11,9 @@
  *   <channel:heartbeat>Are you online?</channel:heartbeat>
  *   <channel:sulla-desktop>The status update is ready</channel:sulla-desktop>
  *
- * Optional action modifiers in the opening tag:
- *   <channel:heartbeat wake>body</channel:heartbeat>
- *     → displays message + sends user_message to trigger a new agent turn
- *   <channel:heartbeat interrupt>body</channel:heartbeat>
- *     → aborts the target's running turn, then wakes with the body
- *
- * Without a modifier the message is display-only (chat_message, current
- * behaviour). With wake or interrupt, a user_message is also sent so the
- * target agent actually executes.
+ * Legacy wake/interrupt modifiers are accepted for compatibility but scheduling is
+ * owned by AgentInbox: every peer message wakes an idle receiver and queues behind
+ * an active run without interrupting it.
  *
  * Lifecycle per LLM call:
  *   • processChunk: strips any fully-closed channel blocks from the visible
@@ -30,7 +24,9 @@
  *     blocks that were split across chunk boundaries.
  */
 
+import * as crypto from 'crypto';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 
 import type { Extractor, StreamContext } from './Extractor';
 import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
@@ -130,7 +126,7 @@ export class ChannelTagExtractor implements Extractor {
   private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string): void {
     try {
       const senderChannel = ctx.channel || (ctx.state as any)?.metadata?.wsChannel || 'unknown';
-      const senderId = senderChannel;
+      const senderId = resolveAgentIdentity((ctx.state as any)?.metadata) || senderChannel;
       const isWake = /\bwake\b/i.test(attrs);
       const isInterrupt = /\binterrupt\b/i.test(attrs);
 
@@ -162,31 +158,23 @@ export class ChannelTagExtractor implements Extractor {
         },
       });
 
-      // interrupt: abort any running turn first.
-      if (isInterrupt) {
-        void ws.send(targetChannel, {
-          type: 'stop_run',
-          data: { reason: `interrupted by ${ senderChannel }` },
-        });
-      }
-
-      // wake or interrupt: send user_message to trigger execution with thread context.
-      if (isWake || isInterrupt) {
-        void ws.send(targetChannel, {
-          type: 'user_message',
-          data: {
-            content:  body,
-            metadata: {
-              source:        'channel_wake',
-              senderId,
-              senderChannel,
-              replyToThread: fromThreadId || undefined,
-            },
+      // Every peer message enters the durable inbox. The receiver decides whether
+      // to wake immediately or batch it after its active turn; senders never interrupt.
+      const messageId = crypto.randomUUID();
+      void ws.send(targetChannel, {
+        type: 'agent_inbox_message',
+        data: {
+          receiverChannel: targetChannel,
+          envelope: {
+            from: senderId,
+            kind: 'peer',
+            body,
+            ids: { messageId, threadId: fromThreadId || undefined },
           },
-        });
-      }
+        },
+      });
 
-      const action = isInterrupt ? 'interrupt+wake' : isWake ? 'wake' : 'message';
+      const action = isInterrupt || isWake ? 'inbox (legacy modifier ignored)' : 'inbox';
       console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } toThread=${ toThreadId.slice(-8) } chars=${ body.length }`);
     } catch (err) {
       console.warn('[ChannelTagExtractor] dispatch failed:', err);

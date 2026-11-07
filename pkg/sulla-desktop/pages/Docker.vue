@@ -99,7 +99,8 @@ function copy(text: string) {
 /* ── Containers ── */
 const containers = computed<Record<string, Container> | null>(() => store.state['container-engine'].containers);
 const volumeMap = computed<Record<string, Volume> | null>(() => store.state['container-engine'].volumes);
-const namespace = computed(() => store.getters['container-engine/namespace']);
+// Only containerd/nerdctl backends have namespaces; `docker logs --namespace=…` is an unknown flag.
+const namespace = computed(() => store.getters['container-engine/supportsNamespaces'] ? store.getters['container-engine/namespace'] : undefined);
 const containerRows = computed(() => Object.values(containers.value || {}));
 const isUp = (c: Container) => c.state === 'running' || c.state === 'restarting';
 const runningCount = computed(() => containerRows.value.filter(c => c.state === 'running').length);

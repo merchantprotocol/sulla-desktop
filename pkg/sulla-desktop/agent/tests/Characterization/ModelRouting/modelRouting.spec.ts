@@ -86,9 +86,13 @@ describe('BL-044 provider health is a temporary routing hint', () => {
     expect(await subject.resolve('agents')).toEqual([{ provider: 'openai', model: 'top' }, { provider: 'anthropic', model: 'next' }]);
   });
 
-  it('a pinned request resolves exactly that model without fallback and does not alter unpinned routing', async () => {
+  it('an explicit request starts with that exact model then follows configured Preferences order', async () => {
     const subject = router();
-    expect(await subject.resolve('agents', { mode: 'pin', provider: 'anthropic', model: 'fixed' })).toEqual([{ provider: 'anthropic', model: 'fixed' }]);
+    expect(await subject.resolve('agents', { mode: 'pin', provider: 'anthropic', model: 'fixed' })).toEqual([
+      { provider: 'anthropic', model: 'fixed' },
+      { provider: 'openai', model: 'top' },
+      { provider: 'anthropic', model: 'next' },
+    ]);
     expect((await subject.resolve('agents'))[0]?.provider).toBe('openai');
   });
 
