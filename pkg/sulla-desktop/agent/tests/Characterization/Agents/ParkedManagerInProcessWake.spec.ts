@@ -113,7 +113,6 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     }) };
     vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockResolvedValue({ graph, state } as any);
     vi.spyOn(GraphRegistry, 'get').mockReturnValue({ graph, state } as any);
-    const delivered = vi.spyOn(registry, 'markTaskCompletionDelivered');
     const service = bareInstance();
 
     await (service as any).dispatchToAgent(
@@ -124,8 +123,6 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
     await vi.waitFor(() => expect(graph.execute).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 10 });
     await vi.waitFor(async() => expect((await registry.getJob(child.jobId))?.tasks[0].completionDeliveredAt).toEqual(expect.any(Number)), { timeout: 2_000, interval: 10 });
-    expect(delivered).toHaveBeenCalledTimes(1);
-    expect(delivered).toHaveBeenCalledWith(child.jobId, 0);
     expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
   });
 

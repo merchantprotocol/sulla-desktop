@@ -975,6 +975,9 @@ export class BackendGraphWebSocketService {
           }
         } else {
           for (const entry of this.claimedCompletionEntries(state, metadata)) requeueAgentCompletion(channelId, threadId, entry);
+          for (const message of state?.messages ?? []) {
+            if ((message as any)?.metadata?.source === 'sub_agent_completion') delete (message as any).metadata.completionEntries;
+          }
         }
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask
