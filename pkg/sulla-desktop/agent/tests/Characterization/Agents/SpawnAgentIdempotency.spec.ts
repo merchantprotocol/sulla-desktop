@@ -75,7 +75,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     const { SpawnLeadLauncher } = await import('../../../app/Services/SpawnLeadLauncher');
     const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
     const launch = await new SpawnLeadLauncher(agentJobProvider.jobs, () => new PersistenceOnlySpawnHarness()).launchReplacement({ oldJobId: 'old', oldTaskIndex: 0, agentId: 'codex-sol-worker', prompt: 'handoff', launchKey: `replacement:${ parent }`, owner: { channel: 'manager-transport', threadId: parent, agentId: 'manager-identity' } });
-    expect(launch).toMatchObject({ channel: 'codex-sol-worker', agentId: 'codex-sol-worker', threadId: expect.stringMatching(/^spawn-agent-Replacement-/) });
+    expect(launch).toMatchObject({ channel: 'codex-sol-worker', agentId: 'codex-sol-worker', threadId: expect.stringMatching(/^spawn-agent-replacement-/) });
   });
 
   it('returns an object after one parse for hidden dedupe and sync dedupe', async() => {
