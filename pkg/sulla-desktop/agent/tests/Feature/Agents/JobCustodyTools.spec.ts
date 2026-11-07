@@ -93,7 +93,7 @@ dbDescribe('registered custody transfer tools',()=>{
     const owner=`h2-owner-${Date.now()}`;const adopter=`h2-adopter-${Date.now()}`;
     const ownerGraph=await GraphRegistry.getOrCreate(owner,`${owner}-thread`);Object.assign(ownerGraph.state.metadata,{agentId:owner,wsChannel:owner,threadId:`${owner}-thread`,isSubAgent:false,subAgentDepth:0,managerThreadId:undefined});
     const adopterGraph=await GraphRegistry.getOrCreate(adopter,`${adopter}-thread`);Object.assign(adopterGraph.state.metadata,{agentId:adopter,wsChannel:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0,managerThreadId:undefined});
-    const lead=await registry.createJob([{agentId:'lead',label:'L',prompt:'lead',status:'parked',threadId:`lead-${Date.now()}`}],owner,`${owner}-thread`,{parentAgentId:owner});
+    const lead=await registry.createJob([{agentId:'lead',label:'L',prompt:'lead',status:'running',threadId:`lead-${Date.now()}`}],owner,`${owner}-thread`,{parentAgentId:owner});
     await registry.parkJobTask(lead.jobId,0,0);
     GraphRegistry.delete(`${owner}-thread`);
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
@@ -144,7 +144,7 @@ dbDescribe('registered custody transfer tools',()=>{
     completionInboxStore.take(old,old);completionInboxStore.take(next,next);
     expect(await tools.call('report_progress',{step:'working',summary:'Work continues under new custody',percent:50},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const receipt=await tools.call('check_agent_jobs',{jobId:job.jobId},{wsChannel:next,agentId:next,threadId:next,subAgentDepth:1});
-    expect(receipt,JSON.stringify(receipt)).toMatchObject({success:true});expect(JSON.stringify(receipt)).toContain('"step": "working"');expect(JSON.stringify(receipt)).toContain('"summary": "Work continues under new custody"');
+    expect(receipt,JSON.stringify(receipt)).toMatchObject({success:true});const receiptBody=JSON.parse(String(receipt.result));const checkIn=receiptBody.tasks[0].latestCheckIn;expect(checkIn).toMatchObject({step:'working',summary:'Work continues under new custody'});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');expect(await agentJobProvider.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});
     expect(await tools.call('report_progress',{step:'blocked',summary:'Need manager input',blockers:['Choose a safe option']},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const newNotices=completionInboxStore.take(next,next).filter(entry=>entry.notice?.startsWith('[Blocker from'));
@@ -258,7 +258,7 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('return_result',{status:'completed',summary:'done before restart',output:{ok:true}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const pendingBeforeRestart=await freshPendingCompletions();
     const pendingTask=pendingBeforeRestart.find(item=>item.jobId===job.jobId)?.tasks[0];
-    expect(pendingTask?.completionDeliveredAt).toBeFalsy();expect(pendingTask?.completion).toMatchObject({status:'completed',summary:'done before restart',output:{ok:true}});
+    expect(pendingTask?.completionDeliveredAt).toBeFalsy();expect(pendingTask).toMatchObject({summary:'done before restart',result:{status:'completed',summary:'done before restart',output:{ok:true}},completion:{status:'completed',result:{status:'completed',summary:'done before restart',output:{ok:true}}}});
     const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),fresh.custody);
     await recovery.recover();await recovery.recover();
     expect(await fresh.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});expect(await fresh.custody.history(job.jobId)).toHaveLength(1);
