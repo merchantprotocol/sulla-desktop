@@ -6,7 +6,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BaseLanguageModel } from '../../../languagemodels/BaseLanguageModel';
-import { ModelDispatchService, RemoteModelDispatchService } from '../../../languagemodels/ModelDispatchService';
+import { ModelDispatchService } from '../../../languagemodels/ModelDispatchService';
+import { ModelRouteService } from '../../../languagemodels/ModelRouteService';
 import type { AgentModelChoice } from '../../../languagemodels/modelRoutingTypes';
 
 describe('ModelDispatchService', () => {
@@ -56,20 +57,49 @@ describe('ModelDispatchService', () => {
   });
 });
 
-describe('RemoteModelDispatchService production entry policy', () => {
-  it('constructs only the requested override service through the shared dispatch boundary', async () => {
+describe('ModelRouteService production entry points', () => {
+  it('routes Auto and pin through the same selected service boundary', async () => {
+    // risk: authentication/service drift between Auto and a direct model selection
+    const service = {} as BaseLanguageModel;
+    const choices: AgentModelChoice[] = [];
+    const createService = vi.fn(async() => service);
+    const dispatch = new ModelDispatchService(
+      async(_target, choice) => {
+        choices.push(choice);
+        return [{ provider: 'codex', model: 'gpt-6.1-sol' }];
+      },
+      createService,
+    );
+    const routes = new ModelRouteService(dispatch, vi.fn());
+
+    const automatic = await routes.resolve('agents', { mode: 'list' });
+    const pinned = await routes.resolve('agents', { mode: 'pin', provider: 'codex', model: 'gpt-6.1-sol' });
+
+    expect(choices).toEqual([
+      { mode: 'list' },
+      { mode: 'pin', provider: 'codex', model: 'gpt-6.1-sol' },
+    ]);
+    expect(createService.mock.calls).toEqual([
+      ['codex', 'gpt-6.1-sol'],
+      ['codex', 'gpt-6.1-sol'],
+    ]);
+    expect(automatic?.service).toBe(service);
+    expect(pinned?.service).toBe(service);
+  });
+
+  it('constructs only the requested override service', async () => {
     // risk: duplicate credential refresh/auth side effects before an explicit override executes
     const selectedService = {} as BaseLanguageModel;
+    const createService = vi.fn(async() => selectedService);
     const dispatch = new ModelDispatchService(
       async() => [{ provider: 'codex', model: 'auto-model' }],
-      vi.fn(async() => selectedService),
+      createService,
     );
-    const serviceSpy = vi.spyOn(dispatch, 'service');
 
-    const result = await new RemoteModelDispatchService(dispatch).resolve('direct-model');
+    const result = await new ModelRouteService(dispatch, vi.fn()).remote('direct-model');
 
     expect(result).toBe(selectedService);
-    expect(serviceSpy).toHaveBeenCalledOnce();
-    expect(serviceSpy).toHaveBeenCalledWith({ provider: 'codex', model: 'direct-model' });
+    expect(createService).toHaveBeenCalledOnce();
+    expect(createService).toHaveBeenCalledWith('codex', 'direct-model');
   });
 });

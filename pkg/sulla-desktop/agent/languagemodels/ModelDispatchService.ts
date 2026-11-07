@@ -38,16 +38,3 @@ export class ModelDispatchService {
     return { candidates, service: await this.service(selected) };
   }
 }
-
-
-/** Production entry policy for legacy remote-service callers, including explicit model overrides. */
-export class RemoteModelDispatchService {
-  constructor(private readonly dispatch: ModelDispatchService) {}
-
-  async resolve(overrideModel?: string): Promise<BaseLanguageModel | null> {
-    const candidates = await this.dispatch.candidates('agents', { mode: 'list' });
-    const selected = candidates[0];
-    if (!selected) return null;
-    return this.dispatch.service({ ...selected, model: overrideModel || selected.model });
-  }
-}

@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
+
 /**
  * LLM Registry - Central access point for LLM services
  *
@@ -15,6 +16,7 @@
  * Falls back to SullaSettingsModel when the service isn't initialized yet.
  * All services lazy-init / reconfigure on demand.
  */
+
 import { BaseLanguageModel } from './BaseLanguageModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
 import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
@@ -24,12 +26,9 @@ import { getIntegrationService } from '../services/IntegrationService';
 import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
-import { ModelDispatchService, RemoteModelDispatchService } from './ModelDispatchService';
-// Dedupe key for the one-line subconscious-model resolution log (verify the
-// 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
-// log only when the resolved provider/tier/model/fallback signature changes,
-// so the truth surfaces in background.log without spamming every dispatch.
-let lastSubconsciousResolutionSig = '';
+import { ModelDispatchService } from './ModelDispatchService';
+import { ModelRouteService } from './ModelRouteService';
+
 // Provider factory map — lazy-loaded to avoid circular imports
 export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
@@ -55,7 +54,9 @@ export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>
   custom:        async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
   ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map(provider => [provider.id, () => getOpenAICompatibleProviderService(provider.id)])),
 };
+
 // ── Helper: resolve provider from ModelProviderService or fallback ──
+
 function tryGetModelProviderService(): any | null {
   try {
     const { getModelProviderService } = require('../services/ModelProviderService');
@@ -64,9 +65,11 @@ function tryGetModelProviderService(): any | null {
     return null;
   }
 }
+
 export class LLMRegistryImpl {
-  constructor(private readonly dispatchService: () => ModelDispatchService = () => modelDispatchService) {}
+  constructor(private readonly routes: () => ModelRouteService = () => modelRouteService) {}
   private services = new Map<string, BaseLanguageModel>();
+
   /**
    * Get service by mode or model name
    */
@@ -75,14 +78,16 @@ export class LLMRegistryImpl {
     // Treat any specifier as a remote model request
     return this.getRemoteService(specifier);
   }
+
   /**
    * Resolve the active remote provider and create the appropriate service.
    */
   async getRemoteService(overrideModel?: string): Promise<BaseLanguageModel> {
-    const service = await new RemoteModelDispatchService(this.dispatchService()).resolve(overrideModel);
+    const service = await this.routes().remote(overrideModel);
     if (!service) throw new Error('No connected AI provider is available in the Agents routing list.');
     return service;
   }
+
   /**
    * Get service by specific provider ID (e.g., 'anthropic', 'grok').
    * When modelOverride is provided, a separate cached instance is created with
@@ -126,6 +131,7 @@ export class LLMRegistryImpl {
     }
     return svc;
   }
+
   // ============================================================================
   // PRIMARY / SECONDARY PROVIDER — reads from ModelProviderService (sync)
   // ============================================================================
@@ -134,11 +140,9 @@ export class LLMRegistryImpl {
    * falls back to SullaSettingsModel.
    */
   async getPrimaryService(): Promise<BaseLanguageModel> {
-    const routed = await this.dispatchService().resolve('agents', { mode: 'list' });
-    if (!routed) throw new Error('No connected AI provider is available in the Agents routing list.');
-    const selected = routed.candidates[0];
-    firstRunTrace('models', 'primary service resolved', { providerId: selected.provider, modelOverride: selected.model });
-    return routed.service;
+    const service = await this.routes().primary();
+    if (!service) throw new Error('No connected AI provider is available in the Agents routing list.');
+    return service;
   }
 
   /** The backup provider the owner chose, or '' when none is set. */
@@ -164,9 +168,9 @@ export class LLMRegistryImpl {
    * model ID. Tier names are resolved dynamically from the provider's live model list.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
-    const routed = await this.dispatchService().resolve('subconscious', { mode: 'list' });
-    if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
-    return routed.service;
+    const service = await this.routes().subconscious();
+    if (!service) throw new Error('No connected AI provider is available in the Subconscious routing list.');
+    return service;
   }
 
   /**
@@ -184,15 +188,8 @@ export class LLMRegistryImpl {
    *   2. Primary provider (default)
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
-    const routed = await this.dispatchService().resolve('subconscious', { mode: 'list' });
-    if (!routed) throw new Error('No connected AI provider is available in the Subconscious routing list.');
-    const selected = routed.candidates[0];
-    const service = routed.service;
-    const sig = `${ selected.provider }|${ selected.model }`;
-    if (sig !== lastSubconsciousResolutionSig) {
-      lastSubconsciousResolutionSig = sig;
-      console.log(`[SubconsciousLLM] provider=${ selected.provider } effectiveModel=${ selected.model }`);
-    }
+    const service = await this.routes().subconscious();
+    if (!service) throw new Error('No connected AI provider is available in the Subconscious routing list.');
     return service;
   }
 
@@ -406,6 +403,8 @@ export const modelDispatchService = new ModelDispatchService(
   (provider, model) => LLMRegistry.getServiceByProvider(provider, model),
 );
 
+export const modelRouteService = new ModelRouteService(modelDispatchService, firstRunTrace);
+
 
 export const getLLMService = async(spec: string) => await LLMRegistry.getService(spec);
 export const getRemoteService = async(model?: string) => await LLMRegistry.getRemoteService(model);
@@ -419,7 +418,7 @@ export const getSecondaryService = async() => await LLMRegistry.getSecondaryServ
 export const getSecondaryProviderId = async() => await LLMRegistry.getSecondaryProviderId();
 export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string; modelChoice?: import('./modelRoutingTypes').AgentModelChoice }) => {
   if (agentCfg?.modelChoice) {
-    return (await modelDispatchService.resolve('agents', agentCfg.modelChoice))?.service ?? null;
+    return (await modelRouteService.resolve('agents', agentCfg.modelChoice))?.service ?? null;
   }
   return LLMRegistry.getAgentOverrideService(agentCfg);
 };
