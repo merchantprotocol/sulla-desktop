@@ -5,6 +5,17 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+// Keep the production registry entry test focused: these collaborators are unrelated to dispatch
+// and importing their application graphs would consume the PR suite's hard 60-second budget.
+vi.mock('../../../languagemodels/BaseLanguageModel', () => ({ BaseLanguageModel: class {} }));
+vi.mock('../../../languagemodels/ModelDiscoveryService', () => ({ modelDiscoveryService: {} }));
+vi.mock('../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => false }));
+vi.mock('../../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {} }));
+vi.mock('../../../services/IntegrationService', () => ({ getIntegrationService: () => ({}) }));
+vi.mock('../../../../main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
+vi.mock('../../../languagemodels/openAICompatibleProviders', () => ({ OPENAI_COMPATIBLE_PROVIDERS: [] }));
+vi.mock('../../../languagemodels/OpenAICompatibleProviderService', () => ({ getOpenAICompatibleProviderService: vi.fn() }));
+
 import type { BaseLanguageModel } from '../../../languagemodels/BaseLanguageModel';
 import { ModelDispatchService } from '../../../languagemodels/ModelDispatchService';
 import type { AgentModelChoice } from '../../../languagemodels/modelRoutingTypes';
