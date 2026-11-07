@@ -104,7 +104,7 @@ dbDescribe('registered custody transfer tools',()=>{
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
     expect(await agentJobProvider.custody.resolveOwner(lead.jobId)).toMatchObject({agentId:adopter,threadId:`${adopter}-thread`});
     const receipts=completionInboxStore.take(adopter,`${adopter}-thread`).filter(entry=>entry.jobId===lead.jobId&&entry.results.length===1);
-    expect(receipts).toHaveLength(1);expect(receipts[0].results[0]).toMatchObject({status:'completed',summary:'lead done',output:{ok:true}});
+    expect(receipts).toHaveLength(1);expect(receipts[0].results[0]).toMatchObject({status:'completed',output:expect.stringContaining('lead done'),result:{status:'completed',summary:'lead done',output:{ok:true}}});
     expect(completionInboxStore.take(owner,`${owner}-thread`).filter(entry=>entry.jobId===lead.jobId)).toHaveLength(0);
     GraphRegistry.delete(`${adopter}-thread`);
   });
@@ -143,7 +143,7 @@ dbDescribe('registered custody transfer tools',()=>{
     completionInboxStore.take(old,old);completionInboxStore.take(next,next);
     expect(await tools.call('report_progress',{step:'working',summary:'Work continues under new custody',percent:50},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const receipt=await tools.call('check_agent_jobs',{jobId:job.jobId},{wsChannel:next,agentId:next,threadId:next,subAgentDepth:1});
-    expect(receipt,JSON.stringify(receipt)).toMatchObject({success:true});const receiptBody=JSON.parse(String(receipt.result));const checkIn=receiptBody.tasks[0].latestCheckIn;expect(checkIn).toMatchObject({step:'working',summary:'Work continues under new custody'});
+    expect(receipt,JSON.stringify(receipt)).toMatchObject({success:true});const receiptBody=JSON.parse(String(receipt.result));const checkIn=receiptBody.tasks[0].latestCheckin;expect(checkIn).toMatchObject({step:'working',summary:'Work continues under new custody'});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');expect(await agentJobProvider.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});
     expect(await tools.call('report_progress',{step:'blocked',summary:'Need manager input',blockers:['Choose a safe option']},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const newNotices=completionInboxStore.take(next,next).filter(entry=>entry.notice?.startsWith('[Blocker from'));
@@ -257,7 +257,7 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('return_result',{status:'completed',summary:'done before restart',output:{ok:true}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1})).toMatchObject({success:true});
     const pendingBeforeRestart=await freshPendingCompletions();
     const pendingTask=pendingBeforeRestart.find(item=>item.jobId===job.jobId)?.tasks[0];
-    expect(pendingTask?.completionDeliveredAt).toBeFalsy();expect(pendingTask).toMatchObject({summary:'done before restart',result:{status:'completed',summary:'done before restart',output:{ok:true}},completion:{status:'completed',result:{status:'completed',summary:'done before restart',output:{ok:true}}}});
+    expect(pendingTask?.completionDeliveredAt).toBeFalsy();expect(pendingTask?.result).toEqual({status:'completed',summary:'done before restart',output:{ok:true}});expect(pendingTask?.completion?.result).toEqual({status:'completed',summary:'done before restart',output:{ok:true}});
     const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),fresh.custody);
     await recovery.recover();await recovery.recover();
     expect(await fresh.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});expect(await fresh.custody.history(job.jobId)).toHaveLength(1);
