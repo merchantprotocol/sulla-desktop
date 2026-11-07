@@ -23,7 +23,6 @@ export class AgentJobService extends Service {
     return this.jobCreator.create(taskInput, parentChannel, parentThreadId, options);
   }
 
-}
 /** Update one task in the hot cache and its durable display copy. */
 async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>): Promise<void> {
   await this.states.mutateJob(jobId, job => {
