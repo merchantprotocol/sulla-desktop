@@ -20,6 +20,10 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
   let registry: typeof import('../../../tools/agents/jobRegistry');
   let agentDefinitionService: typeof import('../../../services/AgentDefinitionService').agentDefinitionService;
 
+  class PersistenceOnlySpawnHarness extends SpawnAgentWorker {
+    protected taskRunner(): any { return { run: async() => new Promise(() => {}) }; }
+  }
+
   class SpawnHarness extends SpawnAgentWorker {
     name = 'spawn_agent';
     schemaDef: any = {
@@ -58,6 +62,21 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     agentId: 'codex-sol-worker', label, prompt: 'existing work', status: visibility === 'tab' ? 'running' : 'queued',
     threadId: visibility === 'tab' ? `${ label }-thread` : undefined, visibility,
   }], 'coding-manager-sol', parentThreadId, { visibility, parentAgentId: 'coding-manager-sol' });
+
+  it('persists the production async routing identity before returning its real response shape', async() => {
+    // risk: custody routing — replacement launch must not invent identity fields absent from spawn_agent output.
+    const parent = `routing-${ Date.now() }`; const worker = new PersistenceOnlySpawnHarness();
+    const response = await worker.runValidated({ tasks: [{ agentId: 'codex-sol-worker', label: 'routing', prompt: 'handoff' }], async: true, parallel: true, launchKey: `routing:${ parent }` }, { metadata: { wsChannel: 'manager-transport', threadId: parent, agentId: 'manager-identity' } });
+    expect(response.successBoolean).toBe(true);
+    expect(response.result).toEqual(expect.objectContaining({ mode: 'async', taskCount: 1, parallel: true }));
+    expect(response.result).not.toEqual(expect.objectContaining({ channel: expect.anything(), agentId: expect.anything() }));
+    const job = await registry.getJob(String((response.result as any).jobId));
+    expect(job?.tasks[0]).toMatchObject({ agentConfigChannel: 'codex-sol-worker', agentId: 'codex-sol-worker', threadId: expect.stringMatching(/^spawn-agent-routing-/) });
+    const { SpawnLeadLauncher } = await import('../../../app/Services/SpawnLeadLauncher');
+    const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
+    const launch = await new SpawnLeadLauncher(agentJobProvider.jobs, () => new PersistenceOnlySpawnHarness()).launchReplacement({ oldJobId: 'old', oldTaskIndex: 0, agentId: 'codex-sol-worker', prompt: 'handoff', launchKey: `replacement:${ parent }`, owner: { channel: 'manager-transport', threadId: parent, agentId: 'manager-identity' } });
+    expect(launch).toMatchObject({ channel: 'codex-sol-worker', agentId: 'codex-sol-worker', threadId: expect.stringMatching(/^spawn-agent-Replacement-/) });
+  });
 
   it('returns an object after one parse for hidden dedupe and sync dedupe', async() => {
     const parent = `hidden-${ Date.now() }`;

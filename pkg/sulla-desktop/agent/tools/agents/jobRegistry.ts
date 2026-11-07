@@ -55,6 +55,8 @@ export interface AgentJobResult {
 
 export interface AgentJobTask {
   agentId:    string;
+  /** Canonical graph transport channel used to create and address this child. */
+  agentConfigChannel?: string;
   label:      string;
   prompt:     string;
   /** Per-run routing overrides required to rehydrate this exact agent. */

@@ -14,9 +14,8 @@ export class SpawnLeadLauncher implements LeadTaskExecutionPort {
     const response=await worker.runValidated({tasks:[{agentId:input.agentId,model:input.model,provider:input.provider,prompt:input.prompt,label,visibility:'hidden'}],parallel:true,async:true,launchKey:input.launchKey},{metadata:{wsChannel:input.owner.channel,threadId:input.owner.threadId,routedAgentId:input.owner.agentId,agentId:input.owner.agentId}});
     if(!response.successBoolean) throw new Error(response.responseString);
     const jobId=String((response.result as any)?.jobId??'');
-    const job=jobId?await this.jobs.job(jobId):undefined; const threadId=job?.tasks[0]?.threadId;
-    if(!jobId||!threadId) throw new Error('Replacement launch did not return a persisted task thread.');
-    const routing=response.result as any;
-    return {jobId,taskIndex:0,channel:String(routing?.channel??job.tasks[0].agentId),threadId,agentId:String(routing?.agentId??job.tasks[0].agentId)};
+    const job=jobId?await this.jobs.job(jobId):undefined; const task=job?.tasks[0];
+    if(!jobId||!task?.threadId||!task.agentConfigChannel||!task.agentId) throw new Error('Replacement launch did not persist its complete routing identity.');
+    return {jobId,taskIndex:0,channel:task.agentConfigChannel,threadId:task.threadId,agentId:task.agentId};
   }
 }

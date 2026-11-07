@@ -55,7 +55,7 @@ import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
-import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { HiddenAgentTaskRunner, type HiddenTaskExecution } from '../../services/HiddenAgentTaskRunner';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -128,6 +128,9 @@ function taskVisibility(task: SpawnTask, allowVisibleTabs = false): AgentJobVisi
 
 export class SpawnAgentWorker extends BaseTool {
   name = '';
+
+  /** Test seam at the process-start boundary; persistence and response stay production. */
+  protected taskRunner(execution: HiddenTaskExecution): HiddenAgentTaskRunner { return new HiddenAgentTaskRunner(execution); }
   description = '';
 
   /** Code-only switch for visible tabs. Agents can't set it: tool input never reaches it. */
@@ -429,9 +432,12 @@ export class SpawnAgentWorker extends BaseTool {
     const parentAgentId = resolveAgentIdentity((this.state as any)?.metadata) || undefined;
     const contracts: AgentContractSpec[] = tasks.map(task => normalizeContract(task.contract));
     const jobTasks: AgentJobTask[] = tasks.map((task, index) => {
-      const agentId = taskAgentSelector(task) || parentChannel;
+      const selector = taskAgentSelector(task);
+      const agentId = selector || parentChannel;
+      const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       return {
         agentId,
+        agentConfigChannel,
         label:      task.label || agentId || `task-${ index }`,
         prompt:     task.prompt,
         provider:   task.provider?.trim() || undefined,
@@ -443,6 +449,7 @@ export class SpawnAgentWorker extends BaseTool {
         visibility: 'hidden',
         contract:   contracts[index],
         depth:      parentDepth + 1,
+        threadId:   `spawn-agent-${ threadSlug(task.label || agentId || `task-${ index }`) }-${ Date.now() }-${ index }`,
       };
     });
     const jobOptions = {
@@ -469,7 +476,7 @@ export class SpawnAgentWorker extends BaseTool {
       const threadId = input.threadId;
       const selector = taskAgentSelector(task);
       const label = task.label || selector || `task-${ index }`;
-      const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
+      const agentConfigChannel = input.task.agentConfigChannel || selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
       const taskAbortSignal = taskAbortSignals[index];
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
@@ -792,13 +799,13 @@ export class SpawnAgentWorker extends BaseTool {
       }
     };
 
-    const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
+    const taskRunner = this.taskRunner({ execute: executePersistedTask });
     const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
       return taskRunner.run({
         task: jobTasks[index],
         taskIndex: index,
-        threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
+        threadId: jobTasks[index].threadId!,
         generation: jobTasks[index].generation ?? 1,
       });
     };

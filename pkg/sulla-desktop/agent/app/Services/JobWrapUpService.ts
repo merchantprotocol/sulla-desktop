@@ -56,9 +56,10 @@ export class JobWrapUpService extends Service {
       const state=this.persistence?await this.persistence.state(jobId,taskIndex):undefined;
       if(state==='completed'){states.push('completed');continue;}
       states.push('pending');
-      if(!inserted||this.timers.has(key))continue;
-      if(!skipMessage)await this.messages.send({ jobId, taskIndex, message });
+      // The durable request owns the stop timer. Arm it before best-effort
+      // messaging so a committed reservation cannot be stranded by send failure.
       this.schedule(durable);
+      if(inserted&&!skipMessage)await this.messages.send({ jobId, taskIndex, message });
     }
     return states;
   }

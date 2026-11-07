@@ -27,11 +27,11 @@ vi.mock('../../../tools/agents/spawn_agent',async()=>{
    if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
    const {postgresClient}=await import('../../../database/PostgresClient');
    const label=String(input.tasks[0].label);const jobId=`replacement-${label.split(':').slice(-2).join('-')}`;
-   const rows=await postgresClient.query<any>(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks,launch_key) VALUES($1,'running',1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO NOTHING RETURNING job_id`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:input.tasks[0].agentId,label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}]),input.launchKey]);
+   const rows=await postgresClient.query<any>(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks,launch_key) VALUES($1,'running',1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO NOTHING RETURNING job_id`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:runtime.replacementAgentId??input.tasks[0].agentId,agentConfigChannel:runtime.replacementChannel??input.tasks[0].agentId,label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}]),input.launchKey]);
    const persisted=rows[0]?.job_id??(await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE launch_key=$1',[input.launchKey]))[0]?.job_id;
    await runtime.adoptDuringLaunch?.();
    if(runtime.failAfterPersist)throw new Error('simulated process disconnect after persist');
-   return {successBoolean:true,responseString:'ok',result:{jobId:persisted,channel:runtime.replacementChannel,agentId:runtime.replacementAgentId}};
+   return {successBoolean:true,responseString:'ok',result:{mode:'async',jobId:persisted,taskCount:1,parallel:true,message:'launched'}};
   }
  }
  return {SpawnAgentWorker:ProcessBoundarySpawnAgentWorker};
@@ -164,7 +164,7 @@ suite('agents/replace_lead registered production path',()=>{
   const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
   await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
-  const restartedProvider=new AgentJobServiceProvider();await restartedProvider.wrapUp.recover();await new Promise(resolve=>setTimeout(resolve,25));
+  const restartedProvider=new AgentJobServiceProvider();await restartedProvider.start();await new Promise(resolve=>setTimeout(resolve,25));
   expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,tasks->0->'stoppedBy' AS stopped_by,tasks->0->>'stopReason' AS stop_reason FROM agent_jobs WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',stopped_by:{agentId:owner.agentId,threadId:owner.threadId},stop_reason:expect.stringContaining('replaced by')});
   expect(await database.query(`SELECT * FROM agent_job_wrap_up_requests WHERE job_id=$1 AND completed_at IS NOT NULL`,[leadId])).toHaveLength(1);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);

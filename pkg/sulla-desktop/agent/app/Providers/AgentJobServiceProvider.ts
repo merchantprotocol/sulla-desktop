@@ -41,6 +41,7 @@ export class AgentJobServiceProvider {
   readonly custodyCallerVerifier: CustodyCallerVerifier;
   readonly custodyDestinations: CustodyDestinationResolver;
   readonly custodyLineage: JobTaskCustodyLineage;
+  readonly recovery: JobRecoveryService;
 
   constructor() {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -67,10 +68,13 @@ export class AgentJobServiceProvider {
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages, undefined, wrapUpRepository);
-    const recovery = new JobRecoveryService(this.jobs, this.wrapUp);
-    this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
+    this.recovery = new JobRecoveryService(this.jobs, this.wrapUp);
+    this.service = new AgentJobService(this.jobs, this.runtime, this.recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
     this.delivery = new JobCompletionDelivery(this.service, this.custody);
   }
+
+  /** Boot hook invoked after migrations make durable recovery tables available. */
+  start(): Promise<void> { return this.recovery.ensureHydrated(); }
 }
 
 export const agentJobProvider = new AgentJobServiceProvider();
