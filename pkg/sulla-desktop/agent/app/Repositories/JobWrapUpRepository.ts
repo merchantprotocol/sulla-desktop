@@ -51,7 +51,7 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
     ), stopped AS (
       UPDATE agent_jobs job SET
         tasks=jsonb_set(job.tasks,ARRAY[$2::text],
-          (job.tasks->$2::int)||jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint,'stoppedBy',$5::jsonb,'stopReason',$6),false),
+          (job.tasks->$2::int)||jsonb_build_object('status','stopped','finishedAt',(extract(epoch from now())*1000)::bigint,'stoppedBy',$5::jsonb,'stopReason',$6::text),false),
         status=CASE WHEN NOT EXISTS (
           SELECT 1 FROM jsonb_array_elements(job.tasks) WITH ORDINALITY task(value,ordinality)
           WHERE ordinality<>$2+1 AND value->>'status' IN ('queued','running','parked')
@@ -75,7 +75,7 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
         stop_reason=CASE WHEN NOT EXISTS (
           SELECT 1 FROM jsonb_array_elements(job.tasks) WITH ORDINALITY task(value,ordinality)
           WHERE ordinality<>$2+1 AND value->>'status' IN ('queued','running','parked')
-        ) THEN $6 ELSE job.stop_reason END
+        ) THEN $6::text ELSE job.stop_reason END
       FROM current_claim WHERE job.job_id=current_claim.job_id
         AND job.tasks->$2::int IS NOT NULL
         AND job.tasks->$2::int->>'status' IN ('queued','running','parked') RETURNING job.job_id

@@ -29,8 +29,8 @@ class FakeStops {
 
 
 class AttributedFakeStops {
-  readonly stopped: Array<{jobId:string;taskIndex:number;principal:StopPrincipalValue;reason:string}> = [];
-  async stopTask(jobId:string,taskIndex:number,principal:StopPrincipalValue,reason:string):Promise<'stopped'>{this.stopped.push({jobId,taskIndex,principal,reason});return 'stopped';}
+  readonly stopped: Array<{jobId:string;taskIndex:number}> = [];
+  teardownTask(jobId:string,taskIndex:number):void{this.stopped.push({jobId,taskIndex});}
 }
 
 class FakePersistence {
@@ -40,7 +40,8 @@ class FakePersistence {
   async state(): Promise<'pending'> { return 'pending'; }
   async pending(): Promise<any[]> { return []; }
   async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1}; }
-  async complete(): Promise<boolean> { this.completed++; return true; }
+  async beginTeardown(): Promise<boolean> { return true; }
+  async acknowledgeTeardown(): Promise<boolean> { this.completed++; return true; }
   async cancel(): Promise<void> {}
   async cancelJob(): Promise<void> {}
 }
@@ -71,7 +72,7 @@ describe('JobWrapUpService', () => {
     await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).resolves.toEqual(['pending']);
     expect(messages.attempts).toBe(1); expect(timer.callbacks.size).toBe(1);
     timer.elapse(); await Promise.resolve(); await Promise.resolve();
-    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,principal,reason:'attributed reason'}]); expect(persistence.completed).toBe(1);
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]); expect(persistence.completed).toBe(1);
   });
 
   it('hard-stops the targeted task after grace while its sibling keeps running', async() => {
