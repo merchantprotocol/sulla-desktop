@@ -12,14 +12,16 @@ import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool,type ToolResponse } from '../base';
-import { stopAgentJob } from './stop_agent_job';
 import type { VerifiedCustodyActor } from '../../app/Services/CustodyCallerVerifier';
 
 class StopPathLeadWrapUp implements LeadWrapUpPort {
  async request(jobId:string,taskIndex:number,actor:VerifiedCustodyActor,reason:string):Promise<void>{
    const principal=StopPrincipal.agent(actor.agentId,actor.threadId);
-   const result=await stopAgentJob(jobId,principal,reason,{taskIndex,mode:'wrap_up'});
-   if(!result.successBoolean&&!/not running|already completed/i.test(result.responseString)) throw new Error(result.responseString);
+   const message=`[Stop requested by ${actor.agentId}] Finish your current step and return your contract now with what you have`;
+   // JobWrapUpService owns the idempotency boundary: it checks its per-task
+   // request before queueing the message. Calling stopAgentJob here queued the
+   // message first, so a retry after a durable-phase crash produced duplicates.
+   await agentJobProvider.wrapUp.request(jobId,[taskIndex],principal,reason,120,message);
  }
 }
 export class ReplaceLeadWorker extends BaseTool {
