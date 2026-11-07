@@ -2,72 +2,56 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { Service, type Clock } from '@sulla/foundation';
-import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
+import type { AgentStateService } from './AgentStateService';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
 
-/** Applies authorization, attribution, persistence, and aborts for job stops. */
+/** Applies authorization, attribution, persistence, publication, and aborts for job stops. */
 export class JobStopService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator) { super(); }
-  private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[JobStopService] persistence write failed:', (error as Error).message); } }
+  constructor(private readonly states: AgentStateService, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator) { super(); }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
-    const job = this.runtime.jobs.get(jobId);
-    if (!job) return 'not-found';
-    if (!['running', 'parked'].includes(job.status)) return 'already-finished';
-    job.status = 'stopped'; job.finishedAt = this.clock.now().getTime();
-    job.tasks = job.tasks.map(task => ['running', 'queued', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: job.finishedAt! } : task);
-    job.stoppedBy = StopPrincipal.attribution(principal); job.stopReason = reason;
-    // Persist the terminal state before aborting. Provider teardown can report a
-    // container failure synchronously; the repository guard must already see stopped.
-    void this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason));
+    const job = this.runtime.jobs.get(jobId); if (!job) return 'not-found';
+    if (!['running', 'parked'].includes(job.status) || this.states.hasPendingTerminalWrite(jobId)) return 'already-finished';
+    this.states.markPendingTerminalWrite(jobId);
+    const stoppedBy = StopPrincipal.attribution(principal); const finishedAt = this.clock.now().getTime();
+    const persistence = this.states.mutateJob(jobId, current => !['running','parked'].includes(current.status) ? undefined : ({ ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, stoppedBy, stopReason: reason,
+      tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt } : task) }));
+    // Register the mutation queue entry before aborting so teardown failures line up behind the durable stop.
     this.runtime.abortScopes.get(jobId)?.abortJob();
+    void persistence.catch(error => console.warn('[JobStopService] stop persistence failed:', (error as Error).message));
     return 'stopped';
   }
 
   async stopTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<StopOutcome> {
-    const job = this.runtime.jobs.get(jobId) ?? await this.repository.job(jobId);
-    const task = job?.tasks[taskIndex];
+    const job = await this.states.jobForWrite(jobId); const task = job?.tasks[taskIndex];
     if (!job || !task) return 'not-found';
-    if (!['running', 'parked'].includes(job.status) || !['queued', 'running', 'parked'].includes(task.status)) return 'already-finished';
+    if (!['running','parked'].includes(job.status) || !['queued','running','parked'].includes(task.status)) return 'already-finished';
     if (principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(job, principal.threadId)) return 'forbidden';
-    const stoppedAt = this.clock.now().getTime();
-    job.tasks[taskIndex] = { ...task, status: 'stopped', finishedAt: stoppedAt, stoppedBy: StopPrincipal.attribution(principal), stopReason: reason };
-    const settlesJob = job.tasks.every(item => !['queued', 'running', 'parked'].includes(item.status));
-    if (settlesJob) { job.status = 'stopped'; job.finishedAt = stoppedAt; job.stoppedBy = StopPrincipal.attribution(principal); job.stopReason = reason; }
-    // Mark stopped before aborting so teardown failures see an intentional stop.
-    this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);
-    if (settlesJob) await this.persist(this.repository.stop(jobId, job.tasks, job.stoppedBy, reason));
-    else await this.persist(this.repository.updateTasks(jobId, job.tasks));
-    return 'stopped';
+    const stoppedAt = this.clock.now().getTime(); const stoppedBy = StopPrincipal.attribution(principal);
+    const updated = await this.states.mutateJob(jobId, current => {
+      const currentTask = current.tasks[taskIndex]; if (!currentTask || !['queued','running','parked'].includes(currentTask.status)) return undefined;
+      const tasks = current.tasks.map((item, index) => index === taskIndex ? { ...item, status: 'stopped' as const, finishedAt: stoppedAt, stoppedBy, stopReason: reason } : item);
+      const settlesJob = tasks.every(item => !['queued','running','parked'].includes(item.status));
+      return { ...current, tasks, ...(settlesJob ? { status: 'stopped' as const, finishedAt: stoppedAt, stoppedBy, stopReason: reason } : {}) };
+    });
+    if (!updated) return 'already-finished'; this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex); return 'stopped';
   }
 
   async authorize(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {
-    const job = this.runtime.jobs.get(jobId) ?? await this.repository.job(jobId);
-    if (!job) return 'not-found';
+    const job = await this.states.jobForWrite(jobId); if (!job) return 'not-found';
     return principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(job, principal.threadId) ? 'forbidden' : 'allowed';
   }
 
   async stopCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<StopOutcome> {
-    const root = this.runtime.jobs.get(jobId) ?? await this.repository.job(jobId);
-    if (!root) return 'not-found';
-    if (!['running', 'parked'].includes(root.status)) return 'already-finished';
+    const root = await this.states.jobForWrite(jobId); if (!root) return 'not-found';
+    if (!['running','parked'].includes(root.status)) return 'already-finished';
     if (principal.kind === 'agent' && !await this.taskLocator.isAncestorThread(root, principal.threadId)) return 'forbidden';
-    const stoppedBy = StopPrincipal.attribution(principal);
-    const stoppedIds = await this.repository.stopCascade(jobId, stoppedBy, reason);
-    const stoppedAt = this.clock.now().getTime();
-    for (const stoppedId of stoppedIds) {
-      const job = this.runtime.jobs.get(stoppedId);
-      if (job && ['running', 'parked'].includes(job.status)) {
-        job.status = 'stopped'; job.finishedAt = stoppedAt; job.waitingOnChildren = 0; job.stoppedBy = stoppedBy; job.stopReason = reason;
-        job.tasks = job.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: stoppedAt } : task);
-      }
-      // Abort only after the in-memory job reads stopped, so teardown never delivers a failure.
-      this.runtime.abortScopes.get(stoppedId)?.abortJob();
-    }
-    return 'stopped';
+    const stoppedIds = await this.states.stopCascade(jobId, StopPrincipal.attribution(principal), reason);
+    for (const stoppedId of stoppedIds) this.runtime.abortScopes.get(stoppedId)?.abortJob();
+    return stoppedIds.length ? 'stopped' : 'already-finished';
   }
 }

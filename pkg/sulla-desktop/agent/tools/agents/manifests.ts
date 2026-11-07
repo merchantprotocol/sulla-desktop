@@ -86,12 +86,14 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'check_agent_jobs',
-    description: 'Inspect delegated jobs. A jobId returns full detail; the bounded list returns every active job plus recent compact summaries.',
+    description: 'Inspect delegated jobs with lineage. A jobId returns global full detail; scope mine (default) lists only descendants of this chat, while all returns the fleet.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
       limit: { type: 'number', optional: true, description: 'Maximum finished jobs in the list (default 25, maximum 100). Active jobs are always included.' },
       includeFinished: { type: 'boolean', optional: true, description: 'Include recent finished jobs in the list. Defaults to true.' },
+      scope: { type: 'enum', enum: ['mine', 'all'], optional: true, default: 'mine', description: 'mine returns only this calling chat’s children and descendants; all returns the fleet. Ignored for explicit jobId history lookups.' },
+      view: { type: 'enum', enum: ['list', 'tree'], optional: true, default: 'list', description: 'list returns full job projections (default); tree returns a compact depth-first task tree.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -20,17 +21,17 @@ export class ReportProgressWorker extends BaseTool {
         responseString: 'report_progress is only available inside a delegated agent task (hidden or tab).',
       };
     }
-    const step = String(input.step ?? 'progress').trim() || 'progress';
+    const step = String(input.step ?? 'progress').trim();
     const summary = String(input.summary ?? '').trim();
     if (!summary) {
-      return { successBoolean: false, responseString: 'A non-empty summary is required.' };
+      return { successBoolean: false, responseString: 'a non-empty summary is required.' };
     }
     const percent = input.percent === undefined ? undefined : Number(input.percent);
     if (percent !== undefined && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
       return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
     }
 
-    const result = await agentJobProvider.blockerEscalation.record(threadId, {
+    const result = await AgentJobMessagingModel.appendCheckin(threadId, {
       step,
       summary,
       filesTouched: Array.isArray(input.filesTouched) ? input.filesTouched.map(String) : [],
@@ -40,6 +41,8 @@ export class ReportProgressWorker extends BaseTool {
     if (!result) {
       return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.' };
     }
+
+    agentJobProvider.states.touch();
 
     return {
       successBoolean: true,

@@ -46,7 +46,7 @@ export class ReturnResultWorker extends BaseTool {
     // A manager owns its children until they settle or are explicitly stopped.
     // Returning here would make its thread terminal and strand every later
     // child completion, so parking is expressed only by ending the turn.
-    const runningChildren = await agentJobProvider.jobs.openChildrenForThread(threadId);
+    const runningChildren = await agentJobProvider.service.openChildrenForThread(threadId);
     if (runningChildren > 0) {
       return {
         successBoolean: false,

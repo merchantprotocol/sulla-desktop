@@ -41,7 +41,7 @@ class SpawnCreatorHarness {
     this.guard = new SpawnDedupeGuard(clock as any);
     this.creator = new SpawnJobCreator(
       this.repository, this.runtime, { ensureHydrated: async() => {} } as any,
-      clock as any, new JobIdGenerator(clock as any), this.guard,
+      clock as any, new JobIdGenerator(clock as any), this.guard, { create: async(job) => { await this.repository.insertJob(job); this.runtime.jobs.set(job.jobId, job); } },
     );
   }
 

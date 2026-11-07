@@ -390,7 +390,7 @@ export class SpawnAgentWorker extends BaseTool {
         depth,
         focus:           task.focus === true,
         prompt:          `[Agent tab launched by ${ parentName }]\n\n${ task.prompt }\n\n${ contractFooter({ jobId: job.jobId, contract, visibility: 'tab' }) }`,
-        activityKeys:    RunActivity.inherit(metadata, job.jobId),
+        activityKeys:    RunActivity.inherit(metadata, job.jobId, `${ job.jobId }#0`),
         runOverrides: { model: task.model, provider: task.provider, runLocation: task.runLocation },
       });
     } catch (err) {
@@ -546,7 +546,7 @@ export class SpawnAgentWorker extends BaseTool {
         // Activity flows up: anything this sub-agent does keeps its parent run
         // (and this job) alive for dead-run detection.
         subState.metadata.activityKeys = RunActivity.inherit(
-          (this.state as any)?.metadata, ...(activityJobId ? [activityJobId] : []),
+          (this.state as any)?.metadata, ...(activityJobId ? [activityJobId, `${ activityJobId }#${ index }`] : []),
         );
         // Propagate abort so both the user's stop button (parent AbortService)
         // AND stop_agent_job(jobId) (this job's signal) reach the sub-agents.

@@ -12,12 +12,15 @@ import type { AgentJob, AgentJobTask, CreateJobOptions } from '../../tools/agent
 
 export interface SpawnJobRepository {
   recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined>;
-  insertJob(job: AgentJob): Promise<void>;
+}
+
+export interface SpawnJobStateWriter {
+  create(job: AgentJob): Promise<unknown>;
 }
 
 /** Creates durable jobs and serializes labeled spawn retries. */
 export class SpawnJobCreator {
-  constructor(private readonly repository: SpawnJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly ids: JobIdGenerator, private readonly dedupe: SpawnDedupeGuard) {}
+  constructor(private readonly repository: SpawnJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly recovery: JobRecoveryService, private readonly clock: Clock, private readonly ids: JobIdGenerator, private readonly dedupe: SpawnDedupeGuard, private readonly states: SpawnJobStateWriter) {}
 
   async create(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
     await this.recovery.ensureHydrated();
@@ -44,10 +47,9 @@ export class SpawnJobCreator {
       taskCount: tasks.length, results: [], tasks, parentChannel, parentThreadId, parentAgentId: options.parentAgentId,
       visibility: options.visibility ?? 'hidden', completionDeliveredAt: null, dismissedAt: null,
     };
-    this.runtime.jobs.set(job.jobId, job);
+    await this.states.create(job);
     this.runtime.abortScopes.set(job.jobId, new JobAbortScope());
     void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId: job.jobId, taskCount: tasks.length, parentAgentId: options.parentAgentId }));
-    try { await this.repository.insertJob(job); } catch (error) { console.warn('[SpawnJobCreator] persistence write failed (job continues in-memory):', (error as Error).message); }
     return job;
   }
 }

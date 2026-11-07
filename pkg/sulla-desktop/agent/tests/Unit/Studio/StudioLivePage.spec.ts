@@ -7,8 +7,12 @@
 
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { shallowRef } from 'vue';
 
 import type { AgentConversationDetail, AgentsListResponse } from '@pkg/main/agentsIpc';
+import type { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 const invoke = vi.hoisted(() => vi.fn());
 
@@ -16,19 +20,21 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke } }));
 
 import StudioLivePage from '@pkg/components/studio/StudioLivePage.vue';
 
-class Deferred<T> {
-  readonly promise: Promise<T>;
-  resolve!: (value: T) => void;
 
-  constructor() {
-    this.promise = new Promise(resolve => {
-      this.resolve = resolve;
-    });
+class FakeAgentStateClient {
+  readonly snapshot = shallowRef<AgentStateSnapshot>({ version: 0, generatedAt: new Date(0).toISOString(), rows: [] });
+
+  apply(next: AgentStateSnapshot): boolean {
+    if (next.version <= this.snapshot.value.version) return false;
+    this.snapshot.value = next;
+    return true;
   }
 }
 
 class LivePageFixture {
   private conversationReadCount = 0;
+  private version = 0;
+  readonly client = new FakeAgentStateClient();
 
   readonly firstEntry = { kind: 'assistant' as const, ts: '2026-11-05T01:00:00Z', text: 'Initial activity' };
   readonly appendedEntry = { kind: 'tool' as const, ts: '2026-11-05T01:00:01Z', text: '{}', toolName: 'check_status' };
@@ -37,7 +43,7 @@ class LivePageFixture {
     agents: [],
     heartbeat: null,
     jobs: [{
-      jobId: 'job-1', status: 'running', createdAt: 1, finishedAt: null, taskCount: 1, parentAgentId: 'lead', parentTitle: 'Keep the feed stable', killedByHuman: false,
+      jobId: 'job-1', status: 'running', createdAt: 1, finishedAt: null, taskCount: 1, parentAgentId: 'lead', parentTitle: 'Keep the feed stable',
       tasks: [{ taskIndex: 0, agentId: 'worker', label: 'Worker', status: 'running', threadId: 'thread-1', startedAt: 1, depth: 1, kind: 'job', lastActivity: 'Working', lastActivityAt: 1, waitingForHuman: false, latestCheckin: null }],
     }],
     workflowRuns: [],
@@ -48,21 +54,20 @@ class LivePageFixture {
     return this.conversationReadCount;
   }
 
-  finishSelectedRun(): void {
-    this.list.jobs[0].status = 'completed';
-    this.list.jobs[0].tasks[0].status = 'completed';
+  vanishSelectedRun(): void {
+    this.client.apply({ version: ++this.version, generatedAt: new Date().toISOString(), rows: [] });
   }
 
-  responseWithLabel(label: string): AgentsListResponse {
-    return {
-      ...this.list,
-      jobs: this.list.jobs.map(job => ({
-        ...job,
-        label,
-        tasks: job.tasks.map(task => ({ ...task, label })),
-      })),
-    };
+  publish(label = 'Worker', state: AgentStateRow['state'] = 'working', version = ++this.version): void {
+    const row: AgentStateRow = { key: 'job-1:0', jobId: 'job-1', taskIndex: 0, parentJobId: null, parentTaskIndex: null, rootThreadId: 'root-1', threadId: 'thread-1', depth: 0, agentId: 'worker', label, visibility: 'hidden', state, stateReason: null, killedByHuman: false, waitingOnChildren: 0, startedAt: new Date(1).toISOString(), endedAt: state === 'done' ? new Date().toISOString() : null, lastActivityAt: new Date(1).toISOString(), lastCheckinAt: new Date(1).toISOString(), lastCheckinSummary: 'Working', canMessage: state === 'working', canStop: state === 'working', canOpen: true };
+    this.client.apply({ version, generatedAt: new Date().toISOString(), rows: [row] });
   }
+
+  mount() {
+    this.publish();
+    return mount(StudioLivePage, { attachTo: document.body, global: { provide: { [AGENT_STATE_CLIENT_KEY as symbol]: this.client as unknown as AgentStateClient } } });
+  }
+
 
   install(): void {
     invoke.mockImplementation(async(channel: string) => {
@@ -95,7 +100,7 @@ describe('StudioLivePage activity refresh', () => {
     const fixture = new LivePageFixture();
 
     fixture.install();
-    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+    const wrapper = fixture.mount();
 
     await flushPromises();
     await wrapper.get('.agent-row').trigger('click');
@@ -119,18 +124,19 @@ describe('StudioLivePage activity refresh', () => {
     const fixture = new LivePageFixture();
 
     fixture.install();
-    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+    const wrapper = fixture.mount();
 
     await flushPromises();
     await wrapper.get('.agent-row').trigger('click');
     await flushPromises();
     const timeline = wrapper.get('.tl').element;
 
-    fixture.finishSelectedRun();
+    fixture.vanishSelectedRun();
     await vi.advanceTimersByTimeAsync(3_000);
     await flushPromises();
 
     expect(wrapper.get('.tl').element).toBe(timeline);
+    expect(wrapper.text()).not.toContain('Loading activity…');
     expect(wrapper.text()).toContain('Finished — no longer running');
     expect(wrapper.find('.composer').exists()).toBe(false);
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(false);
@@ -142,97 +148,52 @@ describe('StudioLivePage activity refresh', () => {
     wrapper.unmount();
   });
 
-  it('applies every overlapping slow list response once it resolves', async() => {
-    // risk: activity continuity — polling must not starve when each request takes longer than the interval.
+  it('applies every newer authoritative state snapshot', async() => {
+    // risk: activity continuity — every newer push must update the visible fleet.
     const fixture = new LivePageFixture();
-    const responses = [new Deferred<AgentsListResponse>(), new Deferred<AgentsListResponse>(), new Deferred<AgentsListResponse>()];
-    let listReads = 0;
+    fixture.install();
+    const wrapper = fixture.mount();
 
-    invoke.mockImplementation(async(channel: string) => {
-      if (channel === 'agents:list') return responses[listReads++].promise;
-      throw new Error(`Unexpected IPC channel: ${ channel }`);
-    });
-
-    const wrapper = mount(StudioLivePage, { attachTo: document.body });
-    await vi.advanceTimersByTimeAsync(6_000);
-    expect(listReads).toBe(3);
-
-    responses[0].resolve(fixture.responseWithLabel('First response'));
-    await flushPromises();
+    fixture.publish('First response'); await flushPromises();
     expect(wrapper.text()).toContain('First response');
-
-    responses[1].resolve(fixture.responseWithLabel('Second response'));
-    await flushPromises();
+    fixture.publish('Second response'); await flushPromises();
     expect(wrapper.text()).toContain('Second response');
-
-    responses[2].resolve(fixture.responseWithLabel('Third response'));
-    await flushPromises();
+    fixture.publish('Third response'); await flushPromises();
     expect(wrapper.text()).toContain('Third response');
     wrapper.unmount();
   });
 
-  it('applies an earlier response before a later response when it resolves first', async() => {
-    // risk: activity continuity — valid responses must update the visible fleet in resolution order.
+  it('applies an earlier snapshot before a later snapshot', async() => {
+    // risk: activity continuity — increasing versions must remain visible in order.
     const fixture = new LivePageFixture();
-    const first = new Deferred<AgentsListResponse>();
-    const second = new Deferred<AgentsListResponse>();
-    let listReads = 0;
+    fixture.install();
+    const wrapper = fixture.mount();
 
-    invoke.mockImplementation(async(channel: string) => {
-      if (channel === 'agents:list') return (listReads++ === 0 ? first.promise : second.promise);
-      throw new Error(`Unexpected IPC channel: ${ channel }`);
-    });
-
-    const wrapper = mount(StudioLivePage, { attachTo: document.body });
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(listReads).toBe(2);
-
-    first.resolve(fixture.responseWithLabel('First response'));
-    await flushPromises();
+    fixture.publish('First response', 'working', 10); await flushPromises();
     expect(wrapper.text()).toContain('First response');
-
-    second.resolve(fixture.responseWithLabel('Second response'));
-    await flushPromises();
+    fixture.publish('Second response', 'working', 11); await flushPromises();
     expect(wrapper.text()).toContain('Second response');
     wrapper.unmount();
   });
 
-  it('discards an older missing-list response that resolves after a newer live response', async() => {
-    // risk: activity continuity — stale list data must not permanently stop a live selected detail feed.
+  it('discards an older snapshot delivered after a newer live snapshot', async() => {
+    // risk: activity continuity — stale state must not stop a live selected detail feed.
     const fixture = new LivePageFixture();
-
     fixture.install();
-    const wrapper = mount(StudioLivePage, { attachTo: document.body });
+    const wrapper = fixture.mount();
     await flushPromises();
     await wrapper.get('.agent-row').trigger('click');
     await flushPromises();
 
-    const stale = new Deferred<AgentsListResponse>();
-    const current = new Deferred<AgentsListResponse>();
-    let listReads = 0;
-    invoke.mockImplementation(async(channel: string) => {
-      if (channel === 'agents:list') {
-        listReads += 1;
-        return listReads === 1 ? stale.promise : current.promise;
-      }
-      if (channel === 'agents:conversation') return { id: 'thread-1', channel: 'worker', title: 'Run', status: 'running', createdAt: '', lastActiveAt: '', entries: [fixture.firstEntry], truncated: false, missingLog: false };
-      throw new Error(`Unexpected IPC channel: ${ channel }`);
-    });
+    fixture.publish('Current response', 'working', 20); await flushPromises();
+    fixture.publish('Stale finished response', 'done', 19); await flushPromises();
 
-    await vi.advanceTimersByTimeAsync(6_000);
-    expect(listReads).toBe(2);
-    current.resolve(fixture.list);
-    await flushPromises();
-    stale.resolve({ ...fixture.list, jobs: [], updatedAt: fixture.list.updatedAt - 1 });
-    await flushPromises();
-
+    expect(wrapper.text()).toContain('Current response');
     expect(wrapper.text()).not.toContain('Finished — no longer running');
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(true);
-    const readsBeforeNextPoll = invoke.mock.calls.filter(([channel]) => channel === 'agents:conversation').length;
-    await vi.advanceTimersByTimeAsync(3_000);
-    await flushPromises();
-    expect(invoke.mock.calls.filter(([channel]) => channel === 'agents:conversation').length).toBeGreaterThan(readsBeforeNextPoll);
+    const readsBeforeNextPoll = fixture.conversationReads;
+    await vi.advanceTimersByTimeAsync(3_000); await flushPromises();
+    expect(fixture.conversationReads).toBeGreaterThan(readsBeforeNextPoll);
     wrapper.unmount();
   });
-
 });
