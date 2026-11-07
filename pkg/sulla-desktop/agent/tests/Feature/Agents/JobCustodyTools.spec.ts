@@ -168,7 +168,7 @@ dbDescribe('registered custody transfer tools',()=>{
       const old=`h4-old-${order}-${stamp}`,next=`h4-new-${order}-${stamp}`,child=`h4-child-${order}-${stamp}`;
       await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
       const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
-      await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[job.jobId]);
+      await registry.parkJobTask(job.jobId,0,0);
       const returned=()=>tools.call('return_result',{status:'completed',summary:'race result',output:{order}},{wsChannel:'worker',agentId:'worker',threadId:child,subAgentDepth:1});
       const moved=()=>tools.call('reassign_job',{jobId:job.jobId,to:next,reason:`${order} race`},{wsChannel:old,agentId:old,threadId:old,subAgentDepth:1});
       const results=order==='return-first'?[await returned(),await moved()]:[await moved(),await returned()];
@@ -185,9 +185,9 @@ dbDescribe('registered custody transfer tools',()=>{
     const owner=`h4po-owner-${stamp}`,adopter=`h4po-adopter-${stamp}`,managerThread=`h4po-manager-${stamp}`,workerThread=`h4po-worker-${stamp}`;
     for(const [agent,thread] of [[owner,owner],[adopter,adopter]] as const){const graph=await GraphRegistry.getOrCreate(agent,thread);Object.assign(graph.state.metadata,{agentId:agent,wsChannel:agent,threadId:thread,isSubAgent:false,subAgentDepth:0});}
     const manager=await registry.createJob([{agentId:'nested-manager',label:'M',prompt:'manage',status:'parked',threadId:managerThread}],owner,owner,{parentAgentId:owner});
-    await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[manager.jobId]);GraphRegistry.delete(owner);
+    await registry.parkJobTask(manager.jobId,0,0);GraphRegistry.delete(owner);
     const child=await registry.createJob([{agentId:'nested-worker',label:'W',prompt:'work',status:'running',threadId:workerThread}], 'nested-manager',managerThread,{parentAgentId:'nested-manager'});
-    await database.query(`UPDATE agent_jobs SET status='parked',tasks=jsonb_set(tasks,'{0,status}','"parked"') WHERE job_id=$1`,[child.jobId]);
+    await registry.parkJobTask(child.jobId,0,0);
     expect(await tools.call('adopt_job',{jobId:manager.jobId,reason:'adopt manager'},{wsChannel:adopter,agentId:adopter,threadId:adopter,isSubAgent:false,subAgentDepth:0})).toMatchObject({success:true});
     expect(await tools.call('return_result',{status:'completed',summary:'nested done',output:{ok:true}},{wsChannel:'nested-worker',agentId:'nested-worker',threadId:workerThread,subAgentDepth:2})).toMatchObject({success:true});
     expect(completionInboxStore.take('nested-manager',managerThread).filter(entry=>entry.jobId===child.jobId&&entry.results.length>0)).toHaveLength(1);

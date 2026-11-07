@@ -58,7 +58,7 @@ export class AgentJobServiceProvider {
     const topLevelSessions=new TopLevelHumanSessionAuthorityRule(topLevelConversations);
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator,custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage,topLevelSessions);
-    const custodyNotifier = new CustodyChangeNotificationService(this.jobs, this.messaging, completionInboxStore);
+    const custodyNotifier = new CustodyChangeNotificationService(this.jobs, completionInboxStore);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
     const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
     const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
