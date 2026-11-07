@@ -49,6 +49,7 @@ export class AgentStateProjector {
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
         stateReason: this.reason(state, job, task, checkin), stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
+        lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }

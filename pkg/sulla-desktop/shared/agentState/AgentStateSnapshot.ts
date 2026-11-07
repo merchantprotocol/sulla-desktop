@@ -51,6 +51,8 @@ export interface AgentStateRow {
  waitingOnChildren: number;
  startedAt: string | null;
  endedAt: string | null;
+ /** Latest task-scoped activity across start, check-in, model/tool turn, and settlement. */
+ lastActivityAt: string;
  lastCheckinAt: string | null;
  lastCheckinSummary: string | null;
  /** True only when the source of truth says a message can be delivered right now. */

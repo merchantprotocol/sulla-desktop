@@ -203,7 +203,10 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
       const snapshot = await new AgentStateProjector(agentJobProvider.states, {
         latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
       }, Date.now, {}, agentJobProvider.activity).snapshot();
-      expect(snapshot.rows.filter(value => value.jobId === created.jobId).map(value => value.state)).toEqual(['working', 'quiet']);
+      const snapshotRows = snapshot.rows.filter(value => value.jobId === created.jobId);
+      expect(snapshotRows.map(value => value.state)).toEqual(['working', 'quiet']);
+      expect(Date.parse(snapshotRows[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
+      expect(Date.parse(snapshotRows[1].lastActivityAt)).toBe(startedAt);
 
       const check = new CheckAgentJobsHarness();
       check.setState({ metadata: { threadId: root } });
@@ -219,7 +222,10 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
       expect(directory).toContain('quiet-sibling · hidden · quiet');
 
       const cloud = await new CloudAgentStateProjection().build('test-device');
-      expect(cloud.filter(value => value.jobId === created.jobId).map(value => value.state)).toEqual(['working', 'quiet']);
+      const cloudRows = cloud.filter(value => value.jobId === created.jobId);
+      expect(cloudRows.map(value => value.state)).toEqual(['working', 'quiet']);
+      expect(Date.parse(cloudRows[0].lastActivityAt)).toBeGreaterThanOrEqual(stamp);
+      expect(Date.parse(cloudRows[1].lastActivityAt)).toBe(startedAt);
     } finally {
       RunActivity.end(activityKey);
     }

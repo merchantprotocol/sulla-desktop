@@ -26,7 +26,7 @@ export class CloudAgentStateProjection {
     return snapshot.rows.filter(row => ['queued', 'working', 'parked', 'quiet', 'blocked'].includes(row.state)).map(row => ({
       jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId ?? '', label: row.label,
       state: row.state, currentTask: row.lastCheckinSummary, progress: null, startedAt: row.startedAt,
-      lastActivityAt: row.lastCheckinAt ?? row.startedAt ?? snapshot.generatedAt, deviceId,
+      lastActivityAt: row.lastActivityAt, deviceId,
     }));
   }
 
