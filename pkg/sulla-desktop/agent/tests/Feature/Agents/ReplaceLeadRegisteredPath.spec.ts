@@ -125,9 +125,10 @@ suite('agents/replace_lead registered production path',()=>{
   const [replacementResult,reparentResult,returnResultReceipt]=await Promise.all([replacing,reparenting,returning]);repository.observer=originalObserver;
   expect(replacementResult.success).toBe(true);expect(reparentResult.success).toBe(true);expect(returnResultReceipt.success).toBe(true);
   const replacement=(replacementResult as any).result.replacement;
-  expect(await agentJobProvider.custody.resolveOwner(childId,0)).toMatchObject({threadId:replacement.threadId,agentId:'coding-manager-sol'});
+  const currentOwner=await agentJobProvider.custody.resolveOwner(childId,0);
+  expect(currentOwner).toMatchObject({channel:'coding-manager-sol',threadId:replacement.threadId,agentId:'coding-manager-sol'});
   expect(await database.query(`SELECT job_id FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
-  const deliveries=completionInboxStore.take(owner.channel,replacement.threadId).filter(entry=>entry.jobId===childId&&entry.taskIndex===0);
+  const deliveries=completionInboxStore.take(currentOwner!.channel,replacement.threadId).filter(entry=>entry.jobId===childId&&entry.taskIndex===0);
   expect(deliveries).toHaveLength(1);
  });
 
