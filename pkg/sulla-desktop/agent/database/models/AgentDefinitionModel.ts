@@ -171,7 +171,6 @@ function toAgentModelSlot(value: unknown): AgentModelSlot | null {
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-
 function toObject(value: unknown): Record<string, any> {
   if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
   if (typeof value === 'string') {
