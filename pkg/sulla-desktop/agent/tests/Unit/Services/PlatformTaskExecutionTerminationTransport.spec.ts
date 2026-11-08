@@ -12,8 +12,10 @@ class ContainerBoundary {
   async remove(id:string):Promise<void>{this.removed.push(id);this.current=undefined;}
 }
 class GuestBoundary {calls:string[][]=[];constructor(private readonly error?:any){}async run(args:string[]){this.calls.push(args);if(this.error)throw this.error;return {stdout:'',stderr:''};}}
-const labels={'com.sulla.job-id':'job-a','com.sulla.task-index':'2','com.sulla.capability-jti':'generation-a'};
-const container:TaskExecutionIdentity={kind:'container',generation:'cid-a',containerId:'cid-a',containerName:'sulla-agent-job-a-2',labels};
+const containerGeneration='cid-a';
+const capabilityJti='capability-a';
+const labels={'com.sulla.job-id':'job-a','com.sulla.task-index':'2','com.sulla.generation':containerGeneration,'com.sulla.capability-jti':capabilityJti};
+const container:TaskExecutionIdentity={kind:'container',generation:containerGeneration,containerId:containerGeneration,containerName:'sulla-agent-job-a-2',labels};
 
 describe('PlatformTaskExecutionTerminationTransport',()=>{
  it('discovers and confirms the persisted real container generation after a boundary restart',async()=>{ // risk: orphan external execution
@@ -21,8 +23,8 @@ describe('PlatformTaskExecutionTerminationTransport',()=>{
   expect(await service.terminate(container,{jobId:'job-a',taskIndex:2})).toBe('confirmed');expect(runtime.removed).toEqual(['cid-a']);
   expect(await service.terminate(container,{jobId:'job-a',taskIndex:2})).toBe('confirmed');expect(runtime.removed).toEqual(['cid-a']);
  });
- it('refuses a replacement container that recycled the deterministic name',async()=>{ // risk: wrong execution killed
-  const runtime=new ContainerBoundary({Id:'cid-b',Config:{Labels:labels}});const service=new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any);
+ it('refuses a replacement container with the same id, job, and task but a different generation',async()=>{ // risk: wrong execution killed
+  const runtime=new ContainerBoundary({Id:containerGeneration,Config:{Labels:{...labels,'com.sulla.generation':'cid-b'}}});const service=new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any);
   expect(await service.terminate(container,{jobId:'job-a',taskIndex:2})).toBe('unavailable');expect(runtime.removed).toEqual([]);
  });
  it('confirms an already-gone recorded generation on replay without another removal',async()=>{ // risk: teardown replay
