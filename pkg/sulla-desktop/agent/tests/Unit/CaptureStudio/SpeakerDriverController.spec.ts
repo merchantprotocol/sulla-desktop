@@ -50,4 +50,38 @@ describe('SpeakerDriverController activation accounting', () => {
     expect(controller.running).toBe(false);
     expect(controller.isHolder('capture-studio')).toBe(false);
   });
+
+  it('orders a stop behind pending activation so the pipeline cannot be stranded', async() => { // risk: leaked audio pipeline after rapid stop
+    let finishActivation!: (value: { ok: boolean; mirrorActive: boolean }) => void;
+    lifecycle.activate.mockReturnValue(new Promise(resolve => { finishActivation = resolve }));
+
+    const started = controller.start('capture-studio');
+    const stopped = controller.stop('capture-studio');
+    await Promise.resolve();
+    finishActivation({ ok: true, mirrorActive: true });
+
+    await Promise.all([started, stopped]);
+    expect(controller.running).toBe(false);
+    expect(controller.holders).toEqual([]);
+    expect(lifecycle.deactivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes failed activation cleanup before activating the next holder', async() => { // risk: one holder tears down another holder's pipeline
+    let failActivation!: (value: { ok: boolean; mirrorActive: boolean }) => void;
+    lifecycle.activate
+      .mockReturnValueOnce(new Promise(resolve => { failActivation = resolve }))
+      .mockResolvedValueOnce({ ok: true, mirrorActive: true });
+
+    const first = controller.start('first-holder');
+    const second = controller.start('second-holder');
+    await Promise.resolve();
+    failActivation({ ok: false, mirrorActive: false });
+
+    await expect(first).rejects.toThrow('did not activate');
+    await expect(second).resolves.toBeUndefined();
+    expect(controller.running).toBe(true);
+    expect(controller.holders).toEqual(['second-holder']);
+    expect(lifecycle.activate).toHaveBeenCalledTimes(2);
+    expect(lifecycle.deactivate).toHaveBeenCalledTimes(1);
+  });
 });
