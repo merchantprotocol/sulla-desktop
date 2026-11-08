@@ -73,7 +73,7 @@ export class AgentJobServiceProvider {
     const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
-    this.wrapUp = new JobWrapUpService(stops, messages, undefined, wrapUpRepository);
+    this.wrapUp = new JobWrapUpService(stops, messages, undefined, wrapUpRepository, this.executionIdentities);
     this.recovery = new JobRecoveryService(this.jobs, this.wrapUp);
     this.service = new AgentJobService(this.jobs, this.runtime, this.recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
     this.delivery = new JobCompletionDelivery(this.service, this.custody);

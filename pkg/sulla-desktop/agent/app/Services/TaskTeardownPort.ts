@@ -7,5 +7,5 @@ export type TaskTeardownOutcome = 'confirmed' | 'still-running' | 'unavailable';
 
 /** Stops only the durable execution generation assigned to one task. */
 export interface TaskTeardownPort {
-  teardown(jobId: string, taskIndex: number): Promise<TaskTeardownOutcome>;
+  teardown(jobId: string, taskIndex: number, generation: string): Promise<TaskTeardownOutcome>;
 }

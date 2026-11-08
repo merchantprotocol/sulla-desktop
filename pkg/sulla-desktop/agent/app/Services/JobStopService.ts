@@ -19,10 +19,10 @@ export class JobStopService extends Service {
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[JobStopService] persistence write failed:', (error as Error).message); } }
 
   /** Idempotent provider/process boundary. Durable callers acknowledge only after this returns. */
-  async teardownTask(jobId:string,taskIndex:number):Promise<TaskTeardownOutcome> {
+  async teardownTask(jobId:string,taskIndex:number,generation:string):Promise<TaskTeardownOutcome> {
     // Abort is a same-process hint, never evidence that an external CLI exited.
     this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);
-    return this.taskTeardown?.teardown(jobId,taskIndex) ?? 'unavailable';
+    return this.taskTeardown?.teardown(jobId,taskIndex,generation) ?? 'unavailable';
   }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {

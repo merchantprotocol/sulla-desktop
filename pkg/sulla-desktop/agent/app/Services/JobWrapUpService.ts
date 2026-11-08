@@ -6,6 +6,7 @@ import { Service } from '@sulla/foundation';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import type { JobStopService } from './JobStopService';
 import type { DurableWrapUpClaim,DurableWrapUpRequest,JobWrapUpPersistence } from '../Repositories/JobWrapUpRepository';
+import type { TaskExecutionIdentityStore } from '../Repositories/TaskExecutionIdentityRepository';
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 export interface JobWrapUpTimer {
@@ -35,6 +36,7 @@ export class JobWrapUpService extends Service {
     private readonly messages: JobWrapUpMessageSender,
     private readonly timer: JobWrapUpTimer = new SystemJobWrapUpTimer(),
     private readonly persistence?: JobWrapUpPersistence,
+    private readonly identities?: Pick<TaskExecutionIdentityStore,'currentGeneration'>,
   ) { super(); }
 
   private key(jobId: string, taskIndex: number): string { return `${ jobId }:${ taskIndex }`; }
@@ -52,7 +54,10 @@ export class JobWrapUpService extends Service {
     for (const taskIndex of taskIndexes) {
       const key = this.key(jobId, taskIndex);
       const delayMs = Math.max(1, gracePeriodSeconds || 120) * 1_000;
-      const durable:DurableWrapUpRequest={jobId,taskIndex,principal,reason,dueAt:new Date(Date.now()+delayMs)};
+      // Capture the exact execution generation now. A later reopen may launch a
+      // replacement under the same job/task key; this request must never follow it.
+      const executionGeneration=await this.identities?.currentGeneration(jobId,taskIndex)??'unavailable';
+      const durable:DurableWrapUpRequest={jobId,taskIndex,executionGeneration,principal,reason,dueAt:new Date(Date.now()+delayMs)};
       const inserted=this.persistence?await this.persistence.reserve(durable):!this.timers.has(key);
       const state=this.persistence?await this.persistence.state(jobId,taskIndex):undefined;
       if(state==='completed'){states.push('completed');continue;}
@@ -76,21 +81,27 @@ export class JobWrapUpService extends Service {
     const handle=this.timer.schedule(delay,()=>{this.timers.delete(key);void this.execute(request);});this.timers.set(key,handle);
   }
 
+  private retry(request:DurableWrapUpRequest,dueAt:Date):void{
+    this.schedule({...request,dueAt});
+  }
+
   private async execute(request:DurableWrapUpRequest):Promise<void>{
-    const claim:DurableWrapUpClaim|undefined=this.persistence
-      ?await this.persistence.claim(request.jobId,request.taskIndex,JobWrapUpService.executionLeaseSeconds)
-      :{...request,claimToken:'process-local',claimVersion:1};
-    if(!claim)return;
-    if(!this.persistence){await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);return;}
-    if(!await this.persistence.beginTeardown(claim))return;
-    // beginTeardown is the last durable fence before this idempotent provider
-    // boundary. A crash here leaves teardown_needed_at unacknowledged for boot
-    // or lease-takeover replay; terminal job state is deliberately not a receipt.
-    const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex);
-    // A lost AbortController, missing handle, transport error, or a process still
-    // alive is not an exit receipt. Leave the durable request pending so boot
-    // recovery or the next expired claim retries it.
-    if(teardown==='confirmed')await this.persistence.acknowledgeTeardown(claim);
+    let claim:DurableWrapUpClaim|undefined;
+    try{
+      claim=this.persistence
+        ?await this.persistence.claim(request.jobId,request.taskIndex,JobWrapUpService.executionLeaseSeconds)
+        :{...request,claimToken:'process-local',claimVersion:1,claimExpiresAt:new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000)};
+      if(!claim){this.retry(request,new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000));return;}
+      if(!this.persistence){await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);return;}
+      if(!await this.persistence.beginTeardown(claim)){this.retry(request,claim.claimExpiresAt);return;}
+      // Only this reservation's immutable generation may cross the external
+      // boundary. AbortController loss is a hint, never an exit receipt.
+      const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex,claim.executionGeneration);
+      if(teardown!=='confirmed'){this.retry(request,claim.claimExpiresAt);return;}
+      if(!await this.persistence.acknowledgeTeardown(claim))this.retry(request,claim.claimExpiresAt);
+    }catch{
+      this.retry(request,claim?.claimExpiresAt??new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000));
+    }
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */

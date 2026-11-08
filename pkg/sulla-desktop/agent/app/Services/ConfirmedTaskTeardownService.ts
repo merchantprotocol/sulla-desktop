@@ -12,8 +12,8 @@ export interface TaskExecutionTerminationTransport {
 /** Resolves the persisted generation before asking the platform transport to stop it. */
 export class ConfirmedTaskTeardownService extends Service implements TaskTeardownPort {
   constructor(private readonly identities:TaskExecutionIdentityStore,private readonly transport:TaskExecutionTerminationTransport){super();}
-  async teardown(jobId:string,taskIndex:number):Promise<TaskTeardownOutcome>{
-    const identity=await this.identities.find(jobId,taskIndex);
+  async teardown(jobId:string,taskIndex:number,generation:string):Promise<TaskTeardownOutcome>{
+    const identity=await this.identities.find(jobId,taskIndex,generation);
     if(!identity)return 'unavailable';
     try{return await this.transport.terminate(identity,{jobId,taskIndex});}catch{return 'unavailable';}
   }

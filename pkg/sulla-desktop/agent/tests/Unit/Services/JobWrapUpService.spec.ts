@@ -29,20 +29,20 @@ class FakeStops {
 
 
 class AttributedFakeStops {
-  readonly stopped: Array<{jobId:string;taskIndex:number}> = [];
+  readonly stopped: Array<{jobId:string;taskIndex:number;generation:string}> = [];
   outcome:'confirmed'|'still-running'|'unavailable'='confirmed';
-  async teardownTask(jobId:string,taskIndex:number):Promise<'confirmed'|'still-running'|'unavailable'>{this.stopped.push({jobId,taskIndex});return this.outcome;}
+  async teardownTask(jobId:string,taskIndex:number,generation:string):Promise<'confirmed'|'still-running'|'unavailable'>{this.stopped.push({jobId,taskIndex,generation});return this.outcome;}
 }
 
 class FakePersistence {
   private reserved = false;
-  completed = 0;
+  completed = 0; acknowledgeResult=true;
   async reserve(): Promise<boolean> { const inserted = !this.reserved; this.reserved = true; return inserted; }
   async state(): Promise<'pending'> { return 'pending'; }
   async pending(): Promise<any[]> { return []; }
-  async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1}; }
+  async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,executionGeneration:'generation-old',principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1,claimExpiresAt:new Date(Date.now()+30_000)}; }
   async beginTeardown(): Promise<boolean> { return true; }
-  async acknowledgeTeardown(): Promise<boolean> { this.completed++; return true; }
+  async acknowledgeTeardown(): Promise<boolean> { this.completed++; return this.acknowledgeResult; }
   async cancel(): Promise<void> {}
   async cancelJob(): Promise<void> {}
 }
@@ -73,18 +73,45 @@ describe('JobWrapUpService', () => {
     await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).resolves.toEqual(['pending']);
     expect(messages.attempts).toBe(1); expect(timer.callbacks.size).toBe(1);
     timer.elapse(); await Promise.resolve(); await Promise.resolve();
-    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]); expect(persistence.completed).toBe(1);
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]); expect(persistence.completed).toBe(1);
   });
 
 
   it.each(['still-running','unavailable'] as const)('does not acknowledge an %s external teardown', async(outcome) => {
     // risk: lifecycle — restart recovery must retry until the original execution is proven gone.
     const stops = new AttributedFakeStops(); stops.outcome=outcome; const persistence = new FakePersistence();
-    const service = new JobWrapUpService(stops as any, new FakeMessages(), new FakeTimer(), persistence);
+    const timer=new FakeTimer(); const service = new JobWrapUpService(stops as any, new FakeMessages(), timer, persistence);
     await service.request('job-1',[0],principal,'attributed reason',0,'',true);
-    await service.recover();
-    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]);
-    expect(persistence.completed).toBe(0);
+    timer.elapse(); await Promise.resolve(); await Promise.resolve();
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]);
+    expect(persistence.completed).toBe(0); expect(timer.callbacks.size).toBe(1);
+  });
+
+  it('captures the old generation so a reopen cannot redirect teardown to the new execution',async()=>{
+    // risk: irreversible stop — a stale wrap claim must not kill the replacement execution.
+    const timer=new FakeTimer();const stops=new AttributedFakeStops();const persistence=new FakePersistence();
+    const identities={current:'generation-old',async currentGeneration(){return this.current;}};
+    const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence,identities);
+    await service.request('job-1',[0],principal,'attributed reason',1,'',true);identities.current='generation-new';
+    timer.elapse();await Promise.resolve();await Promise.resolve();
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]);
+  });
+
+  it('re-arms the durable retry when acknowledgement loses its lease fence',async()=>{
+    // risk: false receipt — an ack=false race must retry rather than strand teardown.
+    const timer=new FakeTimer();const stops=new AttributedFakeStops();const persistence=new FakePersistence();persistence.acknowledgeResult=false;
+    const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence);
+    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await Promise.resolve();await Promise.resolve();
+    expect(timer.callbacks.size).toBe(1);expect(stops.stopped).toHaveLength(1);
+  });
+
+  it('re-arms one retry after a transient nonconfirmed teardown without reboot',async()=>{
+    // risk: orphan execution — transient runtime failure must not strand the durable claim.
+    const timer=new FakeTimer();const stops=new AttributedFakeStops();stops.outcome='unavailable';const persistence=new FakePersistence();
+    const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence);
+    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await Promise.resolve();await Promise.resolve();
+    expect(timer.callbacks.size).toBe(1);stops.outcome='confirmed';timer.elapse();await Promise.resolve();await Promise.resolve();
+    expect(stops.stopped).toHaveLength(2);expect(persistence.completed).toBe(1);
   });
 
   it('hard-stops the targeted task after grace while its sibling keeps running', async() => {

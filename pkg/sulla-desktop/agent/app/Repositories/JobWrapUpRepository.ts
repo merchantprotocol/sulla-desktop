@@ -5,8 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 
-export interface DurableWrapUpRequest { jobId:string; taskIndex:number; principal:StopPrincipalValue; reason:string; dueAt:Date }
-export interface DurableWrapUpClaim extends DurableWrapUpRequest { claimToken:string; claimVersion:number }
+export interface DurableWrapUpRequest { jobId:string; taskIndex:number; executionGeneration:string; principal:StopPrincipalValue; reason:string; dueAt:Date }
+export interface DurableWrapUpClaim extends DurableWrapUpRequest { claimToken:string; claimVersion:number; claimExpiresAt:Date }
 export interface JobWrapUpPersistence {
   reserve(input:DurableWrapUpRequest):Promise<boolean>;
   pending():Promise<DurableWrapUpRequest[]>;
@@ -21,14 +21,14 @@ export interface JobWrapUpPersistence {
 export class JobWrapUpRepository implements JobWrapUpPersistence {
   constructor(private readonly database:{query<T=any>(sql:string,parameters?:unknown[]):Promise<T[]>}){}
   async reserve(input:DurableWrapUpRequest):Promise<boolean>{
-    const rows=await this.database.query(`INSERT INTO agent_job_wrap_up_requests(job_id,task_index,principal,reason,due_at)
-      VALUES($1,$2,$3::jsonb,$4,$5) ON CONFLICT(job_id,task_index) DO NOTHING RETURNING 1`,
-    [input.jobId,input.taskIndex,JSON.stringify(input.principal),input.reason,input.dueAt]);
+    const rows=await this.database.query(`INSERT INTO agent_job_wrap_up_requests(job_id,task_index,execution_generation,principal,reason,due_at)
+      VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(job_id,task_index) DO NOTHING RETURNING 1`,
+    [input.jobId,input.taskIndex,input.executionGeneration,JSON.stringify(input.principal),input.reason,input.dueAt]);
     return rows.length===1;
   }
   async pending():Promise<DurableWrapUpRequest[]>{
     const rows=await this.database.query<any>(`SELECT * FROM agent_job_wrap_up_requests WHERE completed_at IS NULL AND cancelled_at IS NULL ORDER BY due_at`);
-    return rows.map(row=>({jobId:String(row.job_id),taskIndex:Number(row.task_index),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at)}));
+    return rows.map(row=>({jobId:String(row.job_id),taskIndex:Number(row.task_index),executionGeneration:String(row.execution_generation),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at)}));
   }
   async state(jobId:string,taskIndex:number):Promise<'pending'|'completed'|'cancelled'|undefined>{
     const row=(await this.database.query<any>(`SELECT completed_at,cancelled_at FROM agent_job_wrap_up_requests WHERE job_id=$1 AND task_index=$2`,[jobId,taskIndex]))[0];
@@ -40,12 +40,12 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
       SET claim_token=$3,claim_version=claim_version+1,claim_expires_at=now()+make_interval(secs=>$4)
       WHERE job_id=$1 AND task_index=$2 AND due_at<=now() AND completed_at IS NULL AND cancelled_at IS NULL
         AND (claim_expires_at IS NULL OR claim_expires_at<=now()) RETURNING *`,[jobId,taskIndex,token,leaseSeconds]))[0];
-    return row?{jobId:String(row.job_id),taskIndex:Number(row.task_index),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at),claimToken:token,claimVersion:Number(row.claim_version)}:undefined;
+    return row?{jobId:String(row.job_id),taskIndex:Number(row.task_index),executionGeneration:String(row.execution_generation),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at),claimToken:token,claimVersion:Number(row.claim_version),claimExpiresAt:new Date(row.claim_expires_at)}:undefined;
   }
   async beginTeardown(claim:DurableWrapUpClaim):Promise<boolean>{
     const stoppedBy=StopPrincipal.attribution(claim.principal);
     const rows=await this.database.query(`WITH current_claim AS (
-      SELECT job_id,task_index FROM agent_job_wrap_up_requests
+      SELECT job_id,task_index,execution_generation FROM agent_job_wrap_up_requests
       WHERE job_id=$1 AND task_index=$2 AND claim_token=$3 AND claim_version=$4
         AND claim_expires_at>now() AND completed_at IS NULL AND cancelled_at IS NULL FOR UPDATE
     ), stopped AS (
@@ -77,6 +77,11 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
           WHERE ordinality<>$2+1 AND value->>'status' IN ('queued','running','parked')
         ) THEN $6::text ELSE job.stop_reason END
       FROM current_claim WHERE job.job_id=current_claim.job_id
+        AND EXISTS (SELECT 1 FROM agent_task_execution_identities identity
+          WHERE identity.job_id=current_claim.job_id AND identity.task_index=current_claim.task_index
+            AND identity.generation=current_claim.execution_generation
+            AND identity.recorded_at=(SELECT MAX(latest.recorded_at) FROM agent_task_execution_identities latest
+              WHERE latest.job_id=current_claim.job_id AND latest.task_index=current_claim.task_index))
         AND job.tasks->$2::int IS NOT NULL
         AND job.tasks->$2::int->>'status' IN ('queued','running','parked') RETURNING job.job_id
     ) UPDATE agent_job_wrap_up_requests request
