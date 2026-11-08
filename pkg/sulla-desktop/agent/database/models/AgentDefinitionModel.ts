@@ -5,8 +5,8 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { postgresClient } from '../PostgresClient';
 import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
+import { postgresClient } from '../PostgresClient';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
@@ -160,25 +160,14 @@ export interface AgentDefinitionPatch {
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : [];
 }
-
-function toModelPriority(value: unknown): ModelPriorityEntry[] {
-  if (!Array.isArray(value)) return [];
-  return value.map(entry => ({
-    provider: String(entry?.provider ?? '').trim(),
-    model:    String(entry?.model ?? '').trim(),
-  })).filter(entry => entry.provider && entry.model);
-}
-
 function toCostTier(value: unknown): AgentCostTier | null {
   const tier = String(value ?? '').trim().toLowerCase();
   return (AGENT_COST_TIERS as readonly string[]).includes(tier) ? tier as AgentCostTier : null;
 }
-
 function toAgentModelSlot(value: unknown): AgentModelSlot | null {
   const tier = String(value ?? '').trim().toLowerCase();
   return (AGENT_MODEL_SLOTS as readonly string[]).includes(tier) ? tier as AgentModelSlot : null;
 }
-
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
