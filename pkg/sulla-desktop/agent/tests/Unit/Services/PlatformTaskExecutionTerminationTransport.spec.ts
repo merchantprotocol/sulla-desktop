@@ -19,6 +19,7 @@ describe('PlatformTaskExecutionTerminationTransport',()=>{
  it('discovers and confirms the persisted real container generation after a boundary restart',async()=>{ // risk: orphan external execution
   const runtime=new ContainerBoundary({Id:'cid-a',Config:{Labels:labels}});const service=new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any);
   expect(await service.terminate(container,{jobId:'job-a',taskIndex:2})).toBe('confirmed');expect(runtime.removed).toEqual(['cid-a']);
+  expect(await service.terminate(container,{jobId:'job-a',taskIndex:2})).toBe('confirmed');expect(runtime.removed).toEqual(['cid-a']);
  });
  it('refuses a replacement container that recycled the deterministic name',async()=>{ // risk: wrong execution killed
   const runtime=new ContainerBoundary({Id:'cid-b',Config:{Labels:labels}});const service=new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any);
