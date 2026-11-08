@@ -243,6 +243,8 @@ export interface AgentContainerLifecycle {
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
   /** Stable key for long-lived chat state. Workspace and provider homes survive container reaping. */
   persistenceKey?: string;
+  /** External runtime boundary; production defaults to the guest Docker adapter. */
+  containerRuntime?: ContainerRuntimeDriver;
 };
 
 /**
@@ -1088,7 +1090,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     throw new AgentLaunchError('Sulla is still starting its tools', true, (error as Error)?.message ?? String(error));
   });
   log.info('[AgentContainer] Host relay ready');
-  const runtime = new GuestDockerRuntimeDriver();
+  const runtime = run.containerRuntime ?? new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
   const lifecycleAbort = new AbortController();
@@ -1244,13 +1246,23 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
-    const executionLabels={
-      'com.sulla.workload':'agent','com.sulla.agent-id':agentId,'com.sulla.job-id':run.jobId,
-      'com.sulla.task-index':String(run.taskIndex),'com.sulla.capability-jti':capabilityJti,
-      'com.sulla.capability-exp':String(capabilityExpiresAt),
-    };
-    launchReservation=run.executionIdentities
-      ?await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex,{kind:'container',containerName,labels:executionLabels})):undefined;
+    let executionLabels:Record<string,string>={};
+    if(run.executionIdentities){
+      launchReservation=await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex,generation=>{
+        executionLabels={
+          'com.sulla.workload':'agent','com.sulla.agent-id':agentId,'com.sulla.job-id':run.jobId,
+          'com.sulla.task-index':String(run.taskIndex),'com.sulla.generation':generation,
+          'com.sulla.capability-jti':capabilityJti,'com.sulla.capability-exp':String(capabilityExpiresAt),
+        };
+        return {kind:'container',containerName,labels:executionLabels};
+      }));
+    }else{
+      executionLabels={
+        'com.sulla.workload':'agent','com.sulla.agent-id':agentId,'com.sulla.job-id':run.jobId,
+        'com.sulla.task-index':String(run.taskIndex),'com.sulla.capability-jti':capabilityJti,
+        'com.sulla.capability-exp':String(capabilityExpiresAt),
+      };
+    }
     containerId = await phase('create', () => runtime.create({
       name: containerName, image, labels: executionLabels,
       autoRemove: true,
@@ -1514,7 +1526,6 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       get closed() { return closePromise !== undefined || lifecycleAbort.signal.aborted; },
     };
   } catch (error) {
-    if(launchReservation&&run.executionIdentities)await run.executionIdentities.failLaunch(launchReservation,(error as Error).message).catch(()=>undefined);
     lifecycleAbort.abort();
     if (renewTimer) clearInterval(renewTimer);
     if (livenessTimer) clearInterval(livenessTimer);
@@ -1533,6 +1544,10 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       })).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
+    // Retire a launching reservation only after cleanup has positively removed
+    // every possibly-created container. If cleanup throws, the reservation stays
+    // discoverable for boot reconciliation instead of hiding a live execution.
+    if(launchReservation&&run.executionIdentities)await run.executionIdentities.failLaunch(launchReservation,(error as Error).message).catch(()=>undefined);
     if (receipt.recoveryWorkspacePath && error instanceof Error) {
       error.message += ` Guest recovery workspace retained at ${ receipt.recoveryWorkspacePath }.`;
     }

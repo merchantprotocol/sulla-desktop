@@ -28,7 +28,7 @@ export class PlatformTaskExecutionTerminationTransport implements TaskExecutionT
     try{inspected=await this.containers.inspect(handle.containerName);}catch(error){if(isContainerGoneError(error))return undefined;throw error;}
     const labels=Object.fromEntries(Object.entries(inspected?.Config?.Labels??{}).map(([key,value])=>[key,String(value)]));
     const containerId=String(inspected?.Id??'');
-    if(!containerId||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return undefined;
+    if(!containerId||!labels['com.sulla.generation']||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return undefined;
     for(const [key,value] of Object.entries(handle.labels)){if(labels[key]!==value)return undefined;}
     return {kind:'container',containerId,containerName:handle.containerName,labels};
   }
@@ -46,7 +46,7 @@ export class PlatformTaskExecutionTerminationTransport implements TaskExecutionT
     let inspected:any;
     try{inspected=await this.containers.inspect(identity.containerName);}catch(error){return isContainerGoneError(error)?'confirmed':'unavailable';}
     const labels=inspected?.Config?.Labels??{};const actualId=String(inspected?.Id??'');
-    if(actualId!==identity.containerId||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return 'unavailable';
+    if(actualId!==identity.containerId||labels['com.sulla.generation']!==identity.generation||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return 'unavailable';
     for(const [key,value] of Object.entries(identity.labels)){if(String(labels[key]??'')!==value)return 'unavailable';}
     try{await this.containers.remove(identity.containerId,true);}catch(error){if(!isContainerGoneError(error))return 'unavailable';}
     try{await this.containers.inspect(identity.containerId);return 'still-running';}catch(error){return isContainerGoneError(error)?'confirmed':'unavailable';}

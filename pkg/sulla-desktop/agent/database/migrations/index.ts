@@ -18,6 +18,7 @@ import { up as up_0153, down as down_0153 } from './0153_agent_job_custody';
 import { up as up_0154, down as down_0154 } from './0154_agent_lead_replacements';
 import { up as up_0155, down as down_0155 } from './0155_agent_wrap_up_execution_claims';
 import { up as up_0156, down as down_0156 } from './0156_agent_task_execution_identities';
+import { up as up_0157, down as down_0157 } from './0157_bound_wrap_up_reconciliation';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -288,4 +289,5 @@ export const migrationsRegistry = [
   { name: '0154_agent_lead_replacements', up: up_0154, down: down_0154 },
   { name: '0155_agent_wrap_up_execution_claims', up: up_0155, down: down_0155 },
   { name: '0156_agent_task_execution_identities', up: up_0156, down: down_0156 },
+  { name: '0157_bound_wrap_up_reconciliation', up: up_0157, down: down_0157 },
 ] as const;

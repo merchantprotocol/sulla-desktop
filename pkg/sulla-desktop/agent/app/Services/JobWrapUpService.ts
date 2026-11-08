@@ -29,6 +29,7 @@ export interface JobWrapUpMessageSender {
 
 export class JobWrapUpService extends Service {
   private static readonly executionLeaseSeconds=30;
+  private static readonly maxTeardownAttempts=5;
   private readonly timers = new Map<string, TimerHandle>();
 
   constructor(
@@ -88,6 +89,13 @@ export class JobWrapUpService extends Service {
     this.schedule({...request,dueAt});
   }
 
+  private async failOrRetry(request:DurableWrapUpRequest,claim:DurableWrapUpClaim,reason:string):Promise<void>{
+    const outcome=await this.persistence!.recordTeardownFailure(claim,reason,JobWrapUpService.maxTeardownAttempts);
+    if(outcome==='retry'){this.retry(request,claim.claimExpiresAt);return;}
+    const key=this.key(request.jobId,request.taskIndex);const handle=this.timers.get(key);
+    if(handle){this.timer.cancel(handle);this.timers.delete(key);}
+  }
+
   private async execute(request:DurableWrapUpRequest):Promise<void>{
     let claim:DurableWrapUpClaim|undefined;
     try{
@@ -102,10 +110,11 @@ export class JobWrapUpService extends Service {
       const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex,claim.executionGeneration);
       if(teardown!=='confirmed'){
         if(claim.executionGeneration==='unavailable'){await this.persistence.requireManualReconciliation(claim.jobId,claim.taskIndex,'No persisted execution identity exists; automatic teardown is unsafe');return;}
-        this.retry(request,claim.claimExpiresAt);return;
+        await this.failOrRetry(request,claim,`Execution teardown ${ teardown }`);return;
       }
       if(!await this.persistence.acknowledgeTeardown(claim))this.retry(request,claim.claimExpiresAt);
-    }catch{
+    }catch(error){
+      if(this.persistence&&claim){await this.failOrRetry(request,claim,`Execution teardown failed: ${ (error as Error).message }`);return;}
       this.retry(request,claim?.claimExpiresAt??new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000));
     }
   }

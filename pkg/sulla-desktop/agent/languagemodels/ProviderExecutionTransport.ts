@@ -171,7 +171,8 @@ class GuestProviderFileTransport implements ProviderFileTransport {
   }
 }
 
-class GuestProviderExecutionTransport implements ProviderExecutionTransport {
+export class GuestProviderExecutionTransport implements ProviderExecutionTransport {
+  constructor(private readonly processes:Pick<typeof childProcess,'spawn'>=childProcess){}
   readonly runtime = 'guest' as const;
   readonly files = new GuestProviderFileTransport();
 
@@ -195,19 +196,24 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     const reservation=assignment&&request.remotePidFile
       ?await assignment.store.reserveLaunch(assignment.jobId,assignment.taskIndex,{kind:'vm-process',pidFile:request.remotePidFile}):undefined;
     let process:childProcess.ChildProcessWithoutNullStreams|undefined;
+    let externalSpawned=false;
     try{
-      process=childProcess.spawn(command.executable, command.args, {
+      process=this.processes.spawn(command.executable, command.args, {
         cwd: command.cwd, env: command.env, stdio: request.stdio,
       }) as childProcess.ChildProcessWithoutNullStreams;
       await new Promise<void>((resolve,reject)=>{process!.once('spawn',resolve);process!.once('error',reject);});
+      externalSpawned=true;
       if(reservation&&request.remotePidFile){
         const identity=await this.readVmIdentity(request.remotePidFile);
         await assignment!.store.activate(reservation,{kind:'vm-process',pid:identity.pid,startTime:identity.startTime,pidFile:request.remotePidFile});
       }
       return process;
     }catch(error){
-      if(reservation)await assignment!.store.failLaunch(reservation,(error as Error).message).catch(()=>undefined);
-      try{process?.kill('SIGKILL');}catch{/* process never started or already exited */}
+      // Once the wrapper has spawned, the guest command may already have detached.
+      // Keep its pidfile reservation discoverable for boot reconciliation; killing
+      // only the local wrapper is not proof that the guest execution is gone.
+      if(reservation&&!externalSpawned)await assignment!.store.failLaunch(reservation,(error as Error).message).catch(()=>undefined);
+      if(!externalSpawned){try{process?.kill('SIGKILL');}catch{/* process never started or already exited */}}
       throw error;
     }
   }
@@ -217,7 +223,7 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     for(let attempt=0;attempt<100;attempt++){
       try{
         const record=await new Promise<string>((resolve,reject)=>{
-          const child=childProcess.spawn(paths.sullaRuntime,['exec','--','cat',pidFile],{env:{...process.env,TERM:'dumb'},stdio:['ignore','pipe','ignore']});
+          const child=this.processes.spawn(paths.sullaRuntime,['exec','--','cat',pidFile],{env:{...process.env,TERM:'dumb'},stdio:['ignore','pipe','ignore']});
           let output='';child.stdout.on('data',chunk=>output+=String(chunk));child.once('error',reject);child.once('close',code=>code===0?resolve(output.trim()):reject(new Error(`pid record unavailable (${code})`)));
         });
         const match=/^(\d+) (\d+)$/.exec(record);if(!match)throw new Error('invalid pid record');
@@ -247,7 +253,7 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
         else resolve();
       };
       try {
-        const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
+        const proc = this.processes.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
           env:      { ...process.env, TERM: 'dumb' },
           stdio:    'ignore',
           detached: true,

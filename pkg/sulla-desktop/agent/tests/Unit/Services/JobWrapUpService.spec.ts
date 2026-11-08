@@ -46,6 +46,7 @@ class FakePersistence {
   async cancel(): Promise<void> {}
   async cancelJob(): Promise<void> {}
   async requireManualReconciliation(): Promise<void> {}
+  async recordTeardownFailure(): Promise<'retry'> { return 'retry'; }
 }
 
 class FailingMessages implements JobWrapUpMessageSender {

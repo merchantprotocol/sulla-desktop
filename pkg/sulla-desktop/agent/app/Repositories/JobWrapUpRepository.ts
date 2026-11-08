@@ -17,6 +17,7 @@ export interface JobWrapUpPersistence {
   cancel(jobId:string,taskIndex:number):Promise<void>;
   cancelJob(jobId:string):Promise<void>;
   requireManualReconciliation(jobId:string,taskIndex:number,reason:string):Promise<void>;
+  recordTeardownFailure(claim:DurableWrapUpClaim,reason:string,maxAttempts:number):Promise<'retry'|'manual-reconciliation'>;
 }
 
 export class JobWrapUpRepository implements JobWrapUpPersistence {
@@ -105,6 +106,18 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
         AND teardown_needed_at IS NOT NULL AND teardown_acknowledged_at IS NULL
         AND completed_at IS NULL AND cancelled_at IS NULL RETURNING 1`,[claim.jobId,claim.taskIndex,claim.claimToken,claim.claimVersion]);
     return rows.length===1;
+  }
+  async recordTeardownFailure(claim:DurableWrapUpClaim,reason:string,maxAttempts:number):Promise<'retry'|'manual-reconciliation'>{
+    const row=(await this.database.query<{outcome:string|null}>(`UPDATE agent_job_wrap_up_requests SET
+      teardown_attempts=teardown_attempts+1,teardown_last_error=$5,
+      reconciliation_outcome=CASE WHEN teardown_attempts+1 >= $6 OR teardown_deadline_at<=now() THEN 'manual-reconciliation' ELSE reconciliation_outcome END,
+      reconciliation_reason=CASE WHEN teardown_attempts+1 >= $6 OR teardown_deadline_at<=now() THEN $5 ELSE reconciliation_reason END,
+      reconciled_at=CASE WHEN teardown_attempts+1 >= $6 OR teardown_deadline_at<=now() THEN now() ELSE reconciled_at END,
+      claim_expires_at=CASE WHEN teardown_attempts+1 >= $6 OR teardown_deadline_at<=now() THEN NULL ELSE claim_expires_at END
+      WHERE job_id=$1 AND task_index=$2 AND claim_token=$3 AND claim_version=$4
+        AND completed_at IS NULL AND cancelled_at IS NULL AND reconciliation_outcome IS NULL
+      RETURNING reconciliation_outcome AS outcome`,[claim.jobId,claim.taskIndex,claim.claimToken,claim.claimVersion,reason.slice(0,1000),maxAttempts]))[0];
+    return row?.outcome==='manual-reconciliation'?'manual-reconciliation':'retry';
   }
   async cancel(jobId:string,taskIndex:number):Promise<void>{await this.database.query(`UPDATE agent_job_wrap_up_requests SET cancelled_at=COALESCE(cancelled_at,now()) WHERE job_id=$1 AND task_index=$2 AND completed_at IS NULL AND teardown_needed_at IS NULL`,[jobId,taskIndex]);}
   async requireManualReconciliation(jobId:string,taskIndex:number,reason:string):Promise<void>{await this.database.query(`UPDATE agent_job_wrap_up_requests SET reconciliation_outcome='manual-reconciliation',reconciliation_reason=$3,reconciled_at=now(),claim_expires_at=NULL WHERE job_id=$1 AND task_index=$2 AND completed_at IS NULL AND cancelled_at IS NULL`,[jobId,taskIndex,reason]);}

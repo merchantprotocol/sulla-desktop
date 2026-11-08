@@ -19,8 +19,10 @@ export type TaskExecutionDiscoveryHandle =
 export interface TaskExecutionLaunchReservation { jobId:string; taskIndex:number; generation:string }
 export interface LaunchingTaskExecution extends TaskExecutionLaunchReservation { discoveryHandle?:TaskExecutionDiscoveryHandle }
 
+export type TaskExecutionDiscoveryHandleFactory=(generation:string)=>TaskExecutionDiscoveryHandle;
+
 export interface TaskExecutionIdentityStore {
-  reserveLaunch(jobId:string,taskIndex:number,discoveryHandle?:TaskExecutionDiscoveryHandle):Promise<TaskExecutionLaunchReservation>;
+  reserveLaunch(jobId:string,taskIndex:number,discoveryHandle?:TaskExecutionDiscoveryHandle|TaskExecutionDiscoveryHandleFactory):Promise<TaskExecutionLaunchReservation>;
   activate(reservation:TaskExecutionLaunchReservation,identity:TaskExecutionIdentityInput):Promise<TaskExecutionIdentity>;
   failLaunch(reservation:TaskExecutionLaunchReservation,reason:string):Promise<void>;
   record(jobId:string,taskIndex:number,identity:TaskExecutionIdentity):Promise<void>;
@@ -31,11 +33,12 @@ export interface TaskExecutionIdentityStore {
 /** Durable launch journal. The advisory task lock is shared with reopen and wrap-up reservation. */
 export class TaskExecutionIdentityRepository implements TaskExecutionIdentityStore {
   constructor(private readonly database:{query<T=any>(sql:string,parameters?:unknown[]):Promise<T[]>}){}
-  async reserveLaunch(jobId:string,taskIndex:number,discoveryHandle?:TaskExecutionDiscoveryHandle):Promise<TaskExecutionLaunchReservation>{
+  async reserveLaunch(jobId:string,taskIndex:number,discoveryHandle?:TaskExecutionDiscoveryHandle|TaskExecutionDiscoveryHandleFactory):Promise<TaskExecutionLaunchReservation>{
     const generation=randomUUID();
+    const durableHandle=typeof discoveryHandle==='function'?discoveryHandle(generation):discoveryHandle;
     await this.database.query(`WITH task_lock AS (SELECT pg_advisory_xact_lock(hashtext($1),$2)), inserted AS (
       INSERT INTO agent_task_execution_identities(job_id,task_index,generation,launch_state,discovery_handle)
-      SELECT $1,$2,$3,'launching',$4::jsonb FROM task_lock RETURNING generation) SELECT generation FROM inserted`,[jobId,taskIndex,generation,discoveryHandle?JSON.stringify(discoveryHandle):null]);
+      SELECT $1,$2,$3,'launching',$4::jsonb FROM task_lock RETURNING generation) SELECT generation FROM inserted`,[jobId,taskIndex,generation,durableHandle?JSON.stringify(durableHandle):null]);
     return {jobId,taskIndex,generation};
   }
   async activate(reservation:TaskExecutionLaunchReservation,identity:TaskExecutionIdentityInput):Promise<TaskExecutionIdentity>{

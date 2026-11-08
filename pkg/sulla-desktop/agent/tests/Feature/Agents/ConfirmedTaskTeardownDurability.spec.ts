@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 import {Pool,type PoolClient} from 'pg';
 import {afterAll,beforeAll,beforeEach,describe,expect,it} from 'vitest';
+import {GuestProviderExecutionTransport} from '../../../languagemodels/ProviderExecutionTransport';
+import {taskExecutionIdentityScope} from '../../../app/Services/TaskExecutionIdentityScope';
 import {JobWrapUpRepository} from '../../../app/Repositories/JobWrapUpRepository';
 import {TaskExecutionIdentityRepository,type TaskExecutionDiscoveryHandle,type TaskExecutionIdentity,type TaskExecutionIdentityInput} from '../../../app/Repositories/TaskExecutionIdentityRepository';
 import {ConfirmedTaskTeardownService,type TaskExecutionTerminationTransport} from '../../../app/Services/ConfirmedTaskTeardownService';
@@ -52,6 +56,20 @@ class GuestBoundary {
   async run(args:string[]){this.calls.push(args);if(this.error)throw this.error;return {stdout:'',stderr:''};}
 }
 
+class SpawnedProcess extends EventEmitter {
+  readonly stdout=new PassThrough();readonly stderr=new PassThrough();readonly stdin=new PassThrough();killed=false;
+  kill(){this.killed=true;return true;}unref(){}
+}
+class GuestSpawnBoundary {
+  readonly wrapper=new SpawnedProcess();
+  spawn(_command:string,args:string[]){const child=args.includes('cat')?new SpawnedProcess():this.wrapper;queueMicrotask(()=>{if(args.includes('cat')){child.stdout.end('4321 9911');child.emit('close',0);}else child.emit('spawn');});return child as any;}
+}
+class ActivationFailingIdentityStore extends TaskExecutionIdentityRepository {
+  readonly failed:string[]=[];
+  override async activate():Promise<any>{throw new Error('activation write unavailable');}
+  override async failLaunch(_reservation:any,reason:string):Promise<void>{this.failed.push(reason);}
+}
+
 const database=new TestDatabase();
 const suite=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
 let pool:Pool;let connection:PgConnection;let identities:TaskExecutionIdentityRepository;let wraps:JobWrapUpRepository;
@@ -66,6 +84,14 @@ suite('confirmed task teardown durability with real Postgres repositories',()=>{
   async function seedJob(id:string,status='running'){await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,$2,1,'sulla-desktop','manager-thread','manager',$3::jsonb)`,[id,status,JSON.stringify([task(status)])]);}
   async function activateContainer(jobId:string,containerId:string){const reservation=await identities.reserveLaunch(jobId,0);return identities.activate(reservation,{kind:'container',containerId,containerName:`sulla-agent-${jobId}-0`,labels:{'com.sulla.job-id':jobId,'com.sulla.task-index':'0'}});}
   function service(boundary:SequencedTerminationBoundary,timer=new ManualTimer()){const runtime=new JobRuntimeRegistry();expect(runtime.abortScopes.size).toBe(0);const teardown=new ConfirmedTaskTeardownService(identities,boundary);return {runtime,timer,wrapUp:new JobWrapUpService(new ConfirmedStopBoundary(teardown) as any,{send:async()=>undefined},timer,wraps,identities)};}
+
+  it('keeps the production guest spawn reservation discoverable when activation persistence fails',async()=>{
+    // risk: orphan process — an activation write failure after external spawn must not retire the pidfile reservation or kill only its wrapper.
+    await seedJob('guest-activation-failure');const store=new ActivationFailingIdentityStore(connection as any);const processes=new GuestSpawnBoundary();const transport=new GuestProviderExecutionTransport(processes as any);
+    await expect(taskExecutionIdentityScope.run({jobId:'guest-activation-failure',taskIndex:0,store},()=>transport.spawn({context:{runtime:'guest',provider:'codex',conversationId:'conversation',auth:{kind:'guest-host'}},providerCommand:{executable:'unused',args:[]},guestCommand:{executable:'sulla-runtime',args:['launch']},remotePidFile:'/run/sulla/guest.pid'}))).rejects.toThrow('activation write unavailable');
+    expect(store.failed).toEqual([]);expect(processes.wrapper.killed).toBe(false);
+    expect((await identities.launching()).some(launch=>launch.jobId==='guest-activation-failure'&&launch.discoveryHandle?.kind==='vm-process')).toBe(true);
+  });
 
   it('recovers a durable generation with a fresh runtime whose abortScopes are empty',async()=>{
     // risk: orphan process — restart recovery must use durable launch identity, never a synthetic AbortScope.
@@ -105,6 +131,16 @@ suite('confirmed task teardown durability with real Postgres repositories',()=>{
     expect((await database.query<any>(`SELECT completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[jobId]))[0].completed).toBe(true);
   });
 
+  it('bounds repeated unavailable teardown and preserves its last error for manual reconciliation',async()=>{
+    // risk: retry storm — an unreachable runtime must not renew thirty-second claims forever.
+    const jobId='exhausted-unavailable';await seedJob(jobId);await activateContainer(jobId,'container-exhausted');await wraps.reserveCurrent({jobId,taskIndex:0,principal,reason:'bounded retry',dueAt:new Date(0)});
+    const boundary=new SequencedTerminationBoundary(Array(5).fill('unavailable'));const running=service(boundary);
+    for(let attempt=0;attempt<5;attempt++){await running.wrapUp.recover();await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[jobId]);}
+    expect(await wraps.state(jobId,0)).toBe('manual-reconciliation');
+    expect((await database.query<any>(`SELECT teardown_attempts,teardown_last_error,completed_at FROM agent_job_wrap_up_requests WHERE job_id=$1`,[jobId]))[0]).toMatchObject({teardown_attempts:5,teardown_last_error:'Execution teardown unavailable',completed_at:null});
+    expect(running.timer.callbacks).toHaveLength(0);
+  });
+
   it('does not arm an infinite retry for a legacy manual-reconciliation or terminal request',async()=>{
     // risk: retry storm — non-automatable legacy and terminal rows must stay out of boot timers.
     const jobId='legacy-manual';await seedJob(jobId);await database.query(`INSERT INTO agent_job_wrap_up_requests(job_id,task_index,execution_generation,principal,reason,due_at,reconciliation_outcome,reconciliation_reason,reconciled_at) VALUES($1,0,'unavailable',$2::jsonb,'legacy',now()-interval '1 day','manual-reconciliation','identity missing',now())`,[jobId,JSON.stringify(principal)]);
@@ -125,9 +161,11 @@ suite('confirmed task teardown durability with real Postgres repositories',()=>{
 
   it('reconciles a crash after the durable discovery handle but before identity activation',async()=>{
     // risk: orphan process — boot recovery must bind the exact discoverable execution to its reserved generation.
-    const jobId='post-handle-crash';await seedJob(jobId);const handle:TaskExecutionDiscoveryHandle={kind:'container',containerName:'sulla-agent-post-handle-crash-0',labels:{'com.sulla.job-id':jobId,'com.sulla.task-index':'0'}};
-    const launch=await identities.reserveLaunch(jobId,0,handle);const discovered:TaskExecutionIdentityInput={kind:'container',containerId:'container-post-handle',containerName:handle.containerName,labels:handle.labels};const boundary=new DiscoveryBoundary(discovered);
-    await new LaunchingTaskExecutionReconciler(identities,boundary).reconcile();expect(boundary.calls).toEqual([handle]);
+    const jobId='post-handle-crash';await seedJob(jobId);let handle!:TaskExecutionDiscoveryHandle;
+    const launch=await identities.reserveLaunch(jobId,0,generation=>handle={kind:'container',containerName:'sulla-agent-post-handle-crash-0',labels:{'com.sulla.job-id':jobId,'com.sulla.task-index':'0','com.sulla.generation':generation}});
+    const discovered:TaskExecutionIdentityInput={kind:'container',containerId:'container-post-handle',containerName:handle.containerName,labels:handle.labels};
+    const runtime=new ContainerBoundary({Id:discovered.containerId,Config:{Labels:discovered.labels}});
+    await new LaunchingTaskExecutionReconciler(identities,new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any)).reconcile();
     expect(await identities.find(jobId,0,launch.generation)).toEqual({...discovered,generation:launch.generation});
   });
 
