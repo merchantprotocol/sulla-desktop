@@ -8,6 +8,7 @@ import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRe
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
 import { JobWrapUpRepository } from '../Repositories/JobWrapUpRepository';
+import { TaskExecutionIdentityRepository } from '../Repositories/TaskExecutionIdentityRepository';
 import { AgentJobService } from '../Services/AgentJobService';
 import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
@@ -24,6 +25,8 @@ import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '..
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
 import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotificationService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
+import { ConfirmedTaskTeardownService } from '../Services/ConfirmedTaskTeardownService';
+import { PlatformTaskExecutionTerminationTransport } from '../Services/PlatformTaskExecutionTerminationTransport';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
@@ -36,6 +39,7 @@ export class AgentJobServiceProvider {
   readonly service: AgentJobService;
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
+  readonly executionIdentities: TaskExecutionIdentityRepository;
   readonly blockerEscalation: BlockerEscalationService;
   readonly custody: JobCustodyService;
   readonly custodyCallerVerifier: CustodyCallerVerifier;
@@ -50,6 +54,8 @@ export class AgentJobServiceProvider {
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     const wrapUpRepository = new JobWrapUpRepository(postgresClient);
+    this.executionIdentities = new TaskExecutionIdentityRepository(connection);
+    const taskTeardown = new ConfirmedTaskTeardownService(this.executionIdentities,new PlatformTaskExecutionTerminationTransport());
     const taskLocatorRecovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, taskLocatorRecovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
@@ -63,7 +69,7 @@ export class AgentJobServiceProvider {
     const custodyNotifier = new CustodyChangeNotificationService(this.jobs, completionInboxStore);
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, custodyNotifier, clock);
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore, this.custody);
-    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage);
+    const stops = new JobStopService(this.jobs, this.runtime, clock, taskLocator, this.custody, this.custodyLineage, taskTeardown);
     const inboxReceivers = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel),this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 export type TaskExecutionIdentity =
-  | { kind:'container'; generation:string; containerName:string }
+  | { kind:'container'; generation:string; containerId:string; containerName:string; labels:Record<string,string> }
   | { kind:'vm-process'; generation:string; pid:number; startTime:string; pidFile?:string };
 
 export interface TaskExecutionIdentityStore {

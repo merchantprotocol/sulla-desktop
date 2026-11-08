@@ -11,7 +11,7 @@ describe('ConfirmedTaskTeardownService',()=>{
   const transport=new Transport('confirmed');expect(await new ConfirmedTaskTeardownService(new IdentityStore(),transport).teardown('job',0)).toBe('unavailable');expect(transport.calls).toEqual([]);
  });
  it.each(['confirmed','still-running','unavailable'] as const)('preserves the transport %s result for the recorded generation',async(outcome)=>{ // risk: external side effect
-  const identity={kind:'container',generation:'container-generation-a',containerName:'sulla-agent-job-0'} as const;const transport=new Transport(outcome);
+  const identity={kind:'container',generation:'container-generation-a',containerId:'container-generation-a',containerName:'sulla-agent-job-0',labels:{'com.sulla.job-id':'job','com.sulla.task-index':'0'}} as const;const transport=new Transport(outcome);
   expect(await new ConfirmedTaskTeardownService(new IdentityStore(identity),transport).teardown('job',0)).toBe(outcome);expect(transport.calls).toEqual([identity]);
  });
 });

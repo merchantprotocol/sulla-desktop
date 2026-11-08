@@ -8,6 +8,7 @@ import * as childProcess from 'node:child_process';
 import * as path from 'node:path';
 
 import { buildRemoteKillCommand } from './claudeLaunchCommand';
+import { taskExecutionIdentityScope, type TaskExecutionAssignment } from '../app/Services/TaskExecutionIdentityScope';
 import {
   createGuestRuntimeDirectory,
   GUEST_PROVIDER_FILES_ROOT,
@@ -77,6 +78,8 @@ export interface ProviderProcessLaunch {
   /** Existing Desktop guest launch. Omitted entirely for container requests. */
   guestCommand?:    ProviderCommand;
   stdio?:          childProcess.StdioOptions;
+  /** VM-side record written by the canonical provider shell after exec identity is known. */
+  remotePidFile?:   string;
 }
 
 export interface ProviderTerminationRequest {
@@ -189,11 +192,27 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     const command = request.guestCommand;
     if (!command) throw new Error('Guest provider transport requires a guest launch command');
 
-    return childProcess.spawn(command.executable, command.args, {
-      cwd:   command.cwd,
-      env:   command.env,
-      stdio: request.stdio,
+    const process=childProcess.spawn(command.executable, command.args, {
+      cwd: command.cwd, env: command.env, stdio: request.stdio,
     }) as childProcess.ChildProcessWithoutNullStreams;
+    const assignment=taskExecutionIdentityScope.current();
+    if(request.remotePidFile&&assignment){
+      process.once('spawn',()=>{ void this.recordVmIdentity(assignment,request.remotePidFile!); });
+    }
+    return process;
+  }
+
+  private async recordVmIdentity(assignment: TaskExecutionAssignment,pidFile:string):Promise<void>{
+    for(let attempt=0;attempt<100;attempt++){
+      try{
+        const record=await new Promise<string>((resolve,reject)=>{
+          const child=childProcess.spawn(paths.sullaRuntime,['exec','--','cat',pidFile],{env:{...process.env,TERM:'dumb'},stdio:['ignore','pipe','ignore']});
+          let output='';child.stdout.on('data',chunk=>output+=String(chunk));child.once('error',reject);child.once('close',code=>code===0?resolve(output.trim()):reject(new Error(`pid record unavailable (${code})`)));
+        });
+        const match=/^(\d+) (\d+)$/.exec(record);if(!match)throw new Error('invalid pid record');
+        await assignment.store.record(assignment.jobId,assignment.taskIndex,{kind:'vm-process',generation:`${match[1]}:${match[2]}`,pid:Number(match[1]),startTime:match[2],pidFile});return;
+      }catch{await new Promise(resolve=>setTimeout(resolve,50));}
+    }
   }
 
   terminate(request: ProviderTerminationRequest): Promise<void> | void {

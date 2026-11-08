@@ -50,6 +50,8 @@ import {
 } from '../../database/models/AgentDelegationModel';
 import { combineAborts } from '../../services/AbortService';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
+import { taskExecutionIdentityScope } from '../../app/Services/TaskExecutionIdentityScope';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
@@ -606,6 +608,7 @@ export class SpawnAgentWorker extends BaseTool {
             // A scheduled wait may exceed the container idle limit. Recreated
             // runtimes must resume the same workspace and provider home.
             persistenceKey: threadId,
+            executionIdentities: agentJobProvider.executionIdentities,
           });
           containerLifecycle = new ParkedContainerLifecycle(await createLifecycle(), createLifecycle);
         }
@@ -613,9 +616,10 @@ export class SpawnAgentWorker extends BaseTool {
         // Execute and settle every delegated turn through one policy loop.
         // The loop is intentionally re-entered after every wake/reminder so a
         // worker can schedule any number of waits on the same thread.
-        const executeGraph = () => containerLifecycle
-          ? containerLifecycle.execute(() => graph.execute(subState))
-          : graph.execute(subState);
+        const executeGraph = () => taskExecutionIdentityScope.run(
+          {jobId:activityJobId!,taskIndex:index,store:agentJobProvider.executionIdentities},
+          () => containerLifecycle ? containerLifecycle.execute(() => graph.execute(subState)) : graph.execute(subState),
+        );
         const acknowledgeCompletionInput = async(wakeInput: any) => {
           const entries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
           await Promise.all(entries.map((entry: any) => markTaskCompletionDelivered(

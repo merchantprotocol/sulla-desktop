@@ -976,6 +976,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
       context: transportContext,
       providerCommand,
+      remotePidFile: pidFile,
       ...(transportContext.runtime === 'guest'
         ? {
           guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },

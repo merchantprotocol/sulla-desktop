@@ -74,6 +74,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { TaskExecutionIdentityStore } from '../app/Repositories/TaskExecutionIdentityRepository';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 const log = Logging.background;
@@ -212,6 +213,8 @@ export interface AgentContainerRun {
   workspacePath?: string;
   state:          BaseThreadState;
   signal?:        AbortSignal;
+  /** Injected durable launch identity sink for restart-safe teardown. */
+  executionIdentities?: TaskExecutionIdentityStore;
 }
 
 export interface AgentContainerResult {
@@ -274,7 +277,7 @@ export function isContainerGoneError(error: unknown): boolean {
   return /no such container|is not running/i.test(text);
 }
 
-function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
+export function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
       env:   { ...process.env },
@@ -304,7 +307,7 @@ function guestExec(args: string[], input?: string): Promise<{ stdout: string; st
 }
 
 /** Docker runtime adapter for Electron, whose Docker daemon lives in the Sulla VM. */
-class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
+export class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   async create(spec: ContainerSpec): Promise<string> {
     const args = ['docker', 'create'];
     if (spec.autoRemove) args.push('--rm');
@@ -1239,17 +1242,13 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
+    const executionLabels={
+      'com.sulla.workload':'agent','com.sulla.agent-id':agentId,'com.sulla.job-id':run.jobId,
+      'com.sulla.task-index':String(run.taskIndex),'com.sulla.capability-jti':capabilityJti,
+      'com.sulla.capability-exp':String(capabilityExpiresAt),
+    };
     containerId = await phase('create', () => runtime.create({
-      name:   containerName,
-      image,
-      labels: {
-        'com.sulla.workload':       'agent',
-        'com.sulla.agent-id':       agentId,
-        'com.sulla.job-id':         run.jobId,
-        'com.sulla.task-index':     String(run.taskIndex),
-        'com.sulla.capability-jti': capabilityJti,
-        'com.sulla.capability-exp': String(capabilityExpiresAt),
-      },
+      name: containerName, image, labels: executionLabels,
       autoRemove: true,
       stdinOpen:  true,
       env:        {
@@ -1280,6 +1279,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     await phase('start', () => retryIdempotent(
       () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
     ));
+    if(run.executionIdentities){
+      const inspected=await phase('recordIdentityInspect',()=>runtime.inspect(containerId!));
+      const actualId=String(inspected?.Id??containerId);
+      const actualLabels=Object.fromEntries(Object.entries(inspected?.Config?.Labels??{}).map(([key,value])=>[key,String(value)]));
+      await phase('recordIdentity',()=>run.executionIdentities!.record(run.jobId,run.taskIndex,{kind:'container',generation:actualId,containerId:actualId,containerName,labels:actualLabels}));
+    }
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
     const probeMcp = () => guestExec([
