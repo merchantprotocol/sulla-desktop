@@ -16,6 +16,7 @@
  */
 
 import { ref, onUnmounted, type Ref } from 'vue';
+import { ipcRenderer } from 'electron';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
@@ -23,8 +24,6 @@ import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-
-const { ipcRenderer } = require('electron');
 
 const SAMPLE_RATE = 16000;
 const CHANNELS = 1;
