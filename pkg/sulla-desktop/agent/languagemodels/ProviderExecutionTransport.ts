@@ -193,7 +193,7 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     if (!command) throw new Error('Guest provider transport requires a guest launch command');
     const assignment=taskExecutionIdentityScope.current();
     const reservation=assignment&&request.remotePidFile
-      ?await assignment.store.reserveLaunch(assignment.jobId,assignment.taskIndex):undefined;
+      ?await assignment.store.reserveLaunch(assignment.jobId,assignment.taskIndex,{kind:'vm-process',pidFile:request.remotePidFile}):undefined;
     let process:childProcess.ChildProcessWithoutNullStreams|undefined;
     try{
       process=childProcess.spawn(command.executable, command.args, {

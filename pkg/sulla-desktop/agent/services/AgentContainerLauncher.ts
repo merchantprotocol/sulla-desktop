@@ -1250,7 +1250,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       'com.sulla.capability-exp':String(capabilityExpiresAt),
     };
     launchReservation=run.executionIdentities
-      ?await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex)):undefined;
+      ?await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex,{kind:'container',containerName,labels:executionLabels})):undefined;
     containerId = await phase('create', () => runtime.create({
       name: containerName, image, labels: executionLabels,
       autoRemove: true,

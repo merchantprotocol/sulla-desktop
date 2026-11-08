@@ -27,6 +27,7 @@ import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotif
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { ConfirmedTaskTeardownService } from '../Services/ConfirmedTaskTeardownService';
 import { PlatformTaskExecutionTerminationTransport } from '../Services/PlatformTaskExecutionTerminationTransport';
+import { LaunchingTaskExecutionReconciler } from '../Services/LaunchingTaskExecutionReconciler';
 import { postgresClient } from '../../database/PostgresClient';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
@@ -55,7 +56,8 @@ export class AgentJobServiceProvider {
     this.runtime = new JobRuntimeRegistry();
     const wrapUpRepository = new JobWrapUpRepository(postgresClient);
     this.executionIdentities = new TaskExecutionIdentityRepository(connection);
-    const taskTeardown = new ConfirmedTaskTeardownService(this.executionIdentities,new PlatformTaskExecutionTerminationTransport());
+    const executionTransport=new PlatformTaskExecutionTerminationTransport();
+    const taskTeardown = new ConfirmedTaskTeardownService(this.executionIdentities,executionTransport);
     const taskLocatorRecovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, taskLocatorRecovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
@@ -74,7 +76,8 @@ export class AgentJobServiceProvider {
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, inboxReceivers, async channel => GraphRegistry.findThreadByChannel(channel));
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages, undefined, wrapUpRepository, this.executionIdentities);
-    this.recovery = new JobRecoveryService(this.jobs, this.wrapUp);
+    const launchReconciler=new LaunchingTaskExecutionReconciler(this.executionIdentities,executionTransport);
+    this.recovery = new JobRecoveryService(this.jobs,this.wrapUp,launchReconciler);
     this.service = new AgentJobService(this.jobs, this.runtime, this.recovery, clock, new JobIdGenerator(clock), taskLocator, stops, this.wrapUp);
     this.delivery = new JobCompletionDelivery(this.service, this.custody);
   }
