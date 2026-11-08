@@ -76,9 +76,7 @@ describe('useSpeakerCapture native request lifecycle', () => {
 
   it('does not stop request B when older request A rejects after B succeeds', async() => { // risk: old rejection tears down current native capture
     const requestA = new Deferred<MediaStream>();
-    const audioA = new TrackStub();
     const audioB = new TrackStub();
-    const streamA = new StreamStub([audioA]);
     const streamB = new StreamStub([audioB]);
     const getDisplayMedia = vi.fn()
       .mockReturnValueOnce(requestA.promise)
