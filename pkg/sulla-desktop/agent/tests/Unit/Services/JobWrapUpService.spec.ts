@@ -30,7 +30,8 @@ class FakeStops {
 
 class AttributedFakeStops {
   readonly stopped: Array<{jobId:string;taskIndex:number}> = [];
-  teardownTask(jobId:string,taskIndex:number):void{this.stopped.push({jobId,taskIndex});}
+  outcome:'confirmed'|'still-running'|'unavailable'='confirmed';
+  async teardownTask(jobId:string,taskIndex:number):Promise<'confirmed'|'still-running'|'unavailable'>{this.stopped.push({jobId,taskIndex});return this.outcome;}
 }
 
 class FakePersistence {
@@ -73,6 +74,17 @@ describe('JobWrapUpService', () => {
     expect(messages.attempts).toBe(1); expect(timer.callbacks.size).toBe(1);
     timer.elapse(); await Promise.resolve(); await Promise.resolve();
     expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]); expect(persistence.completed).toBe(1);
+  });
+
+
+  it.each(['still-running','unavailable'] as const)('does not acknowledge an %s external teardown', async(outcome) => {
+    // risk: lifecycle — restart recovery must retry until the original execution is proven gone.
+    const stops = new AttributedFakeStops(); stops.outcome=outcome; const persistence = new FakePersistence();
+    const service = new JobWrapUpService(stops as any, new FakeMessages(), new FakeTimer(), persistence);
+    await service.request('job-1',[0],principal,'attributed reason',0,'',true);
+    await service.recover();
+    expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0}]);
+    expect(persistence.completed).toBe(0);
   });
 
   it('hard-stops the targeted task after grace while its sibling keeps running', async() => {

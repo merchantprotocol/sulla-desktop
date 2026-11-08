@@ -86,8 +86,11 @@ export class JobWrapUpService extends Service {
     // beginTeardown is the last durable fence before this idempotent provider
     // boundary. A crash here leaves teardown_needed_at unacknowledged for boot
     // or lease-takeover replay; terminal job state is deliberately not a receipt.
-    this.stops.teardownTask(claim.jobId,claim.taskIndex);
-    await this.persistence.acknowledgeTeardown(claim);
+    const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex);
+    // A lost AbortController, missing handle, transport error, or a process still
+    // alive is not an exit receipt. Leave the durable request pending so boot
+    // recovery or the next expired claim retries it.
+    if(teardown==='confirmed')await this.persistence.acknowledgeTeardown(claim);
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */

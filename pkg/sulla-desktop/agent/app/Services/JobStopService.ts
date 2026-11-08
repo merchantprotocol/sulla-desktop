@@ -8,17 +8,22 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
 import type { CustodyOwner, CustodyRecord, JobCustodyPort } from './JobCustodyTypes';
 import type { CustodyLineagePort } from './JobCustodyAuthorityPolicy';
+import type { TaskTeardownOutcome, TaskTeardownPort } from './TaskTeardownPort';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
 export type StopAuthorization={outcome:'allowed'|'not-found'|'forbidden';owner?:CustodyOwner};
 
 /** Applies authorization, attribution, persistence, and aborts for job stops. */
 export class JobStopService extends Service {
-  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator, private readonly custody?: Pick<JobCustodyPort,'resolveOwner'|'withOwner'>, private readonly custodyLineage?: Pick<CustodyLineagePort,'isAncestor'>) { super(); }
+  constructor(private readonly repository: AgentJobRepository, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator, private readonly custody?: Pick<JobCustodyPort,'resolveOwner'|'withOwner'>, private readonly custodyLineage?: Pick<CustodyLineagePort,'isAncestor'>, private readonly taskTeardown?: TaskTeardownPort) { super(); }
   private async persist(operation: Promise<void>): Promise<void> { try { await operation; } catch (error) { console.warn('[JobStopService] persistence write failed:', (error as Error).message); } }
 
   /** Idempotent provider/process boundary. Durable callers acknowledge only after this returns. */
-  teardownTask(jobId:string,taskIndex:number):void { this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex); }
+  async teardownTask(jobId:string,taskIndex:number):Promise<TaskTeardownOutcome> {
+    // Abort is a same-process hint, never evidence that an external CLI exited.
+    this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);
+    return this.taskTeardown?.teardown(jobId,taskIndex) ?? 'unavailable';
+  }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
     const job = this.runtime.jobs.get(jobId);
