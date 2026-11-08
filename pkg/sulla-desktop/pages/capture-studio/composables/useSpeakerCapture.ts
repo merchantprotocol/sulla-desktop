@@ -18,6 +18,7 @@
 import { ref, onUnmounted, type Ref } from 'vue';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
+import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
 
 const fs = require('fs');
 const net = require('net');
@@ -88,6 +89,7 @@ function computePcmRms(pcm: Buffer): number {
 }
 
 export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
+  const nativeCustody = new NativeCaptureCustody(integrity);
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -101,7 +103,6 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
   let pending = Buffer.alloc(0);
   let analyserContext: AudioContext | null = null;
   let analyserFrame: number | null = null;
-  let nativeRequestGeneration = 0;
 
   function stopNativeMeter(): void {
     if (analyserFrame !== null) cancelAnimationFrame(analyserFrame);
@@ -136,7 +137,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
   /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
   async function acquireNative(): Promise<MediaStream | null> {
     releaseNative();
-    const requestGeneration = nativeRequestGeneration;
+    const requestGeneration = nativeCustody.begin();
     let displayStream: MediaStream | null = null;
     try {
       // Electron's main-process display-media handler supplies the display and
@@ -146,10 +147,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
         audio: true,
         video: true,
       });
-      if (requestGeneration !== nativeRequestGeneration) {
-        integrity.stopTracks(displayStream.getTracks());
-        return null;
-      }
+      if (!nativeCustody.accept(requestGeneration, displayStream)) return null;
       const audioTracks = displayStream.getAudioTracks();
       displayStream.getVideoTracks().forEach(track => track.stop());
       const usableTracks = integrity.usableTracks(audioTracks);
@@ -192,7 +190,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
   }
 
   function releaseNative(): void {
-    nativeRequestGeneration += 1;
+    nativeCustody.release();
     const stream = nativeStream.value;
     nativeStream.value = null;
     if (stream) stream.getTracks().forEach(track => track.stop());
