@@ -87,7 +87,8 @@ describe('useSpeakerCapture native request lifecycle', () => {
 
     const acquiringA = capture.acquireNative();
     const acquiringB = capture.acquireNative();
-    await expect(acquiringB).resolves.toBe(capture.nativeStream.value);
+    const acquiredB = await acquiringB;
+    expect(acquiredB).toBe(capture.nativeStream.value);
     expect(capture.nativeStream.value?.getAudioTracks()).toEqual([audioB]);
 
     requestA.reject(new Error('request A failed'));
