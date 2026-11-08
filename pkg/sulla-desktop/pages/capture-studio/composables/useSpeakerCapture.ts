@@ -88,8 +88,10 @@ function computePcmRms(pcm: Buffer): number {
   return Math.min(1, Math.sqrt(sum / samples) * 3);
 }
 
-export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
-  const nativeCustody = new NativeCaptureCustody(integrity);
+export function useSpeakerCapture(
+  integrity = new SpeakerCaptureIntegrity(),
+  nativeCustody = new NativeCaptureCustody(integrity),
+) {
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);

@@ -85,6 +85,20 @@ describe('SpeakerDriverController activation accounting', () => {
     expect(lifecycle.deactivate).toHaveBeenCalledTimes(1);
   });
 
+  it('marks a failed last-holder stop as stopped so the next start activates', async() => { // risk: failed teardown leaves false running state and skips reactivation
+    lifecycle.activate.mockResolvedValue({ ok: true, mirrorActive: true });
+    await controller.start('first-holder');
+    lifecycle.deactivate.mockRejectedValueOnce(new Error('deactivate failed'));
+
+    await expect(controller.stop('first-holder')).rejects.toThrow('deactivate failed');
+    expect(controller.running).toBe(false);
+    expect(controller.holders).toEqual([]);
+
+    await controller.start('next-holder');
+    expect(lifecycle.activate).toHaveBeenCalledTimes(2);
+    expect(controller.running).toBe(true);
+  });
+
   it('clears holder custody when shutdown deactivation rejects', async() => { // risk: failed teardown strands stale holders and singleton state
     lifecycle.activate.mockResolvedValue({ ok: true, mirrorActive: true });
     const sender = new SenderStub();

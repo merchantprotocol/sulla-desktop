@@ -183,10 +183,14 @@ export class SpeakerDriverController {
 
     if (this._running && this._holders.size === 0) {
       log.info(SpeakerDriverController.TAG, 'Last holder released — deactivating lifecycle');
-      await this._lifecycle.deactivate({ removeDriver: false });
-
-      this._running = false;
-      this._persist();
+      try {
+        await this._lifecycle.deactivate({ removeDriver: false });
+      } finally {
+        // The holder is gone even when hardware teardown reports a failure.
+        // Keep logical custody honest so the next start retries activation.
+        this._running = false;
+        this._persist();
+      }
       log.info(SpeakerDriverController.TAG, 'Speaker pipeline stopped');
     } else if (this._holders.size > 0) {
       log.info(SpeakerDriverController.TAG, 'Speaker still held by other services', { remaining: [...this._holders.keys()] });
