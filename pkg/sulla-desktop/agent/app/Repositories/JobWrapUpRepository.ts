@@ -8,37 +8,46 @@ import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrin
 export interface DurableWrapUpRequest { jobId:string; taskIndex:number; executionGeneration:string; principal:StopPrincipalValue; reason:string; dueAt:Date }
 export interface DurableWrapUpClaim extends DurableWrapUpRequest { claimToken:string; claimVersion:number; claimExpiresAt:Date }
 export interface JobWrapUpPersistence {
-  reserve(input:DurableWrapUpRequest):Promise<boolean>;
+  reserveCurrent(input:Omit<DurableWrapUpRequest,'executionGeneration'>):Promise<{inserted:boolean;request?:DurableWrapUpRequest;state?:'pending'|'completed'|'cancelled'|'manual-reconciliation'}>;
   pending():Promise<DurableWrapUpRequest[]>;
-  state(jobId:string,taskIndex:number):Promise<'pending'|'completed'|'cancelled'|undefined>;
+  state(jobId:string,taskIndex:number):Promise<'pending'|'completed'|'cancelled'|'manual-reconciliation'|undefined>;
   claim(jobId:string,taskIndex:number,leaseSeconds:number):Promise<DurableWrapUpClaim|undefined>;
   beginTeardown(claim:DurableWrapUpClaim):Promise<boolean>;
   acknowledgeTeardown(claim:DurableWrapUpClaim):Promise<boolean>;
   cancel(jobId:string,taskIndex:number):Promise<void>;
   cancelJob(jobId:string):Promise<void>;
+  requireManualReconciliation(jobId:string,taskIndex:number,reason:string):Promise<void>;
 }
 
 export class JobWrapUpRepository implements JobWrapUpPersistence {
   constructor(private readonly database:{query<T=any>(sql:string,parameters?:unknown[]):Promise<T[]>}){}
-  async reserve(input:DurableWrapUpRequest):Promise<boolean>{
-    const rows=await this.database.query(`INSERT INTO agent_job_wrap_up_requests(job_id,task_index,execution_generation,principal,reason,due_at)
-      VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(job_id,task_index) DO NOTHING RETURNING 1`,
-    [input.jobId,input.taskIndex,input.executionGeneration,JSON.stringify(input.principal),input.reason,input.dueAt]);
-    return rows.length===1;
+  async reserveCurrent(input:Omit<DurableWrapUpRequest,'executionGeneration'>):Promise<{inserted:boolean;request?:DurableWrapUpRequest;state?:'pending'|'completed'|'cancelled'|'manual-reconciliation'}>{
+    const rows=await this.database.query<any>(`WITH task_lock AS (SELECT pg_advisory_xact_lock(hashtext($1),$2)), current_identity AS (
+      SELECT generation FROM agent_task_execution_identities,task_lock WHERE job_id=$1 AND task_index=$2 AND launch_state='active'
+      ORDER BY activated_at DESC NULLS LAST,recorded_at DESC LIMIT 1), inserted AS (
+      INSERT INTO agent_job_wrap_up_requests(job_id,task_index,execution_generation,principal,reason,due_at)
+      SELECT $1,$2,current_identity.generation,$3::jsonb,$4,$5 FROM current_identity ON CONFLICT(job_id,task_index) DO NOTHING RETURNING *)
+      SELECT inserted.*,TRUE AS inserted FROM inserted
+      UNION ALL
+      SELECT request.*,FALSE AS inserted FROM agent_job_wrap_up_requests request,task_lock
+      WHERE request.job_id=$1 AND request.task_index=$2 AND NOT EXISTS(SELECT 1 FROM inserted)`,[input.jobId,input.taskIndex,JSON.stringify(input.principal),input.reason,input.dueAt]);
+    const row=rows[0];if(!row)return {inserted:false};
+    const state=row.reconciliation_outcome?'manual-reconciliation':row.completed_at?'completed':row.cancelled_at?'cancelled':'pending';
+    return {inserted:Boolean(row.inserted),state,request:{...input,executionGeneration:String(row.execution_generation),dueAt:new Date(row.due_at)}};
   }
   async pending():Promise<DurableWrapUpRequest[]>{
-    const rows=await this.database.query<any>(`SELECT * FROM agent_job_wrap_up_requests WHERE completed_at IS NULL AND cancelled_at IS NULL ORDER BY due_at`);
+    const rows=await this.database.query<any>(`SELECT * FROM agent_job_wrap_up_requests WHERE completed_at IS NULL AND cancelled_at IS NULL AND reconciliation_outcome IS NULL ORDER BY due_at`);
     return rows.map(row=>({jobId:String(row.job_id),taskIndex:Number(row.task_index),executionGeneration:String(row.execution_generation),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at)}));
   }
-  async state(jobId:string,taskIndex:number):Promise<'pending'|'completed'|'cancelled'|undefined>{
-    const row=(await this.database.query<any>(`SELECT completed_at,cancelled_at FROM agent_job_wrap_up_requests WHERE job_id=$1 AND task_index=$2`,[jobId,taskIndex]))[0];
-    return !row?undefined:row.completed_at?'completed':row.cancelled_at?'cancelled':'pending';
+  async state(jobId:string,taskIndex:number):Promise<'pending'|'completed'|'cancelled'|'manual-reconciliation'|undefined>{
+    const row=(await this.database.query<any>(`SELECT completed_at,cancelled_at,reconciliation_outcome FROM agent_job_wrap_up_requests WHERE job_id=$1 AND task_index=$2`,[jobId,taskIndex]))[0];
+    return !row?undefined:row.reconciliation_outcome?'manual-reconciliation':row.completed_at?'completed':row.cancelled_at?'cancelled':'pending';
   }
   async claim(jobId:string,taskIndex:number,leaseSeconds:number):Promise<DurableWrapUpClaim|undefined>{
     const token=randomUUID();
     const row=(await this.database.query<any>(`UPDATE agent_job_wrap_up_requests
       SET claim_token=$3,claim_version=claim_version+1,claim_expires_at=now()+make_interval(secs=>$4)
-      WHERE job_id=$1 AND task_index=$2 AND due_at<=now() AND completed_at IS NULL AND cancelled_at IS NULL
+      WHERE job_id=$1 AND task_index=$2 AND due_at<=now() AND completed_at IS NULL AND cancelled_at IS NULL AND reconciliation_outcome IS NULL
         AND (claim_expires_at IS NULL OR claim_expires_at<=now()) RETURNING *`,[jobId,taskIndex,token,leaseSeconds]))[0];
     return row?{jobId:String(row.job_id),taskIndex:Number(row.task_index),executionGeneration:String(row.execution_generation),principal:row.principal as StopPrincipalValue,reason:String(row.reason),dueAt:new Date(row.due_at),claimToken:token,claimVersion:Number(row.claim_version),claimExpiresAt:new Date(row.claim_expires_at)}:undefined;
   }
@@ -98,5 +107,6 @@ export class JobWrapUpRepository implements JobWrapUpPersistence {
     return rows.length===1;
   }
   async cancel(jobId:string,taskIndex:number):Promise<void>{await this.database.query(`UPDATE agent_job_wrap_up_requests SET cancelled_at=COALESCE(cancelled_at,now()) WHERE job_id=$1 AND task_index=$2 AND completed_at IS NULL AND teardown_needed_at IS NULL`,[jobId,taskIndex]);}
+  async requireManualReconciliation(jobId:string,taskIndex:number,reason:string):Promise<void>{await this.database.query(`UPDATE agent_job_wrap_up_requests SET reconciliation_outcome='manual-reconciliation',reconciliation_reason=$3,reconciled_at=now(),claim_expires_at=NULL WHERE job_id=$1 AND task_index=$2 AND completed_at IS NULL AND cancelled_at IS NULL`,[jobId,taskIndex,reason]);}
   async cancelJob(jobId:string):Promise<void>{await this.database.query(`UPDATE agent_job_wrap_up_requests SET cancelled_at=COALESCE(cancelled_at,now()) WHERE job_id=$1 AND completed_at IS NULL AND teardown_needed_at IS NULL`,[jobId]);}
 }

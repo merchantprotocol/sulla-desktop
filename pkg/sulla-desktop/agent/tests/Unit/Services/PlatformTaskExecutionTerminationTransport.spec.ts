@@ -34,10 +34,10 @@ describe('PlatformTaskExecutionTerminationTransport',()=>{
   const identity:TaskExecutionIdentity={kind:'vm-process',generation:'42:100',pid:42,startTime:'100',pidFile:'/tmp/sulla-codex-generation.pid'};
   expect(await service.terminate(identity,{jobId:'job-a',taskIndex:2})).toBe('unavailable');expect(guest.calls[0].join(' ')).toContain('[ "$p" = \'42\' ]');
  });
- it('confirms a VM generation that is already gone while refusing ambiguous records',async()=>{ // risk: restart replay
+ it('refuses a missing VM pidfile and malformed durable records',async()=>{ // risk: restart replay
   const gone=new GuestBoundary(Object.assign(new Error('pidfile gone'),{exitCode:2}));const service=new PlatformTaskExecutionTerminationTransport(new ContainerBoundary(undefined) as any,gone as any);
-  expect(await service.terminate({kind:'vm-process',generation:'42:100',pid:42,startTime:'100',pidFile:'/tmp/sulla-codex-generation.pid'},{jobId:'job-a',taskIndex:2})).toBe('confirmed');
-  expect(await service.terminate({kind:'vm-process',generation:'42:other',pid:42,startTime:'100'},{jobId:'job-a',taskIndex:2})).toBe('unavailable');
+  expect(await service.terminate({kind:'vm-process',generation:'42:100',pid:42,startTime:'100',pidFile:'/tmp/sulla-codex-generation.pid'},{jobId:'job-a',taskIndex:2})).toBe('unavailable');
+  expect(await service.terminate({kind:'vm-process',generation:'42:other',pid:42,startTime:'bad',pidFile:'/tmp/sulla-codex-generation.pid'},{jobId:'job-a',taskIndex:2})).toBe('unavailable');
  });
  it('keeps unavailable infrastructure pending for retry',async()=>{ // risk: false teardown acknowledgement
   const runtime=new ContainerBoundary(undefined,new Error('runtime unavailable'));const service=new PlatformTaskExecutionTerminationTransport(runtime as any,new GuestBoundary() as any);

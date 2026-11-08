@@ -37,7 +37,7 @@ class AttributedFakeStops {
 class FakePersistence {
   private reserved = false;
   completed = 0; acknowledgeResult=true;
-  async reserve(): Promise<boolean> { const inserted = !this.reserved; this.reserved = true; return inserted; }
+  async reserveCurrent(input:any): Promise<any> { const inserted = !this.reserved; this.reserved = true; return {inserted,state:'pending',request:{...input,executionGeneration:'generation-old'}}; }
   async state(): Promise<'pending'> { return 'pending'; }
   async pending(): Promise<any[]> { return []; }
   async claim(): Promise<any> { return {jobId:'job-1',taskIndex:0,executionGeneration:'generation-old',principal,reason:'attributed reason',dueAt:new Date(0),claimToken:'claim',claimVersion:1,claimExpiresAt:new Date(Date.now()+30_000)}; }
@@ -45,6 +45,7 @@ class FakePersistence {
   async acknowledgeTeardown(): Promise<boolean> { this.completed++; return this.acknowledgeResult; }
   async cancel(): Promise<void> {}
   async cancelJob(): Promise<void> {}
+  async requireManualReconciliation(): Promise<void> {}
 }
 
 class FailingMessages implements JobWrapUpMessageSender {
@@ -61,7 +62,7 @@ describe('JobWrapUpService', () => {
     const service = new JobWrapUpService(stops as any, messages, timer);
     await service.request('job-1', [1], principal, 'reason', 1, 'return now');
     expect(messages.sent).toHaveLength(1); expect(messages.sent[0].taskIndex).toBe(1);
-    service.taskSettled('job-1', 1); timer.elapse();
+    service.taskSettled('job-1', 1, true); timer.elapse();
     expect(stops.stopped).toEqual([]); expect(timer.cancelled).toHaveLength(1);
   });
 

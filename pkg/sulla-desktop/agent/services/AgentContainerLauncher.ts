@@ -74,7 +74,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
-import type { TaskExecutionIdentityStore } from '../app/Repositories/TaskExecutionIdentityRepository';
+import type { TaskExecutionIdentityStore, TaskExecutionLaunchReservation } from '../app/Repositories/TaskExecutionIdentityRepository';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 const log = Logging.background;
@@ -951,7 +951,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     };
   }
 
-  spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): childProcess.ChildProcessWithoutNullStreams {
+  async spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): Promise<childProcess.ChildProcessWithoutNullStreams> {
     if (request.context.runtime !== 'container' || request.context.workspaceRoot !== this.options.workspacePath ||
         request.context.auth.kind !== 'broker' || !this.options.ownsBridge(request.context.auth.opaqueConfigRef)) {
       throw new Error('Provider process is outside this container lifecycle');
@@ -989,6 +989,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       env:   { ...process.env, TERM: 'dumb' },
       stdio: request.stdio ?? ['pipe', 'pipe', 'pipe'],
     }) as childProcess.ChildProcessWithoutNullStreams;
+    await new Promise<void>((resolve,reject)=>{proc.once('spawn',resolve);proc.once('error',reject);});
     proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
     proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
     this.processPids.set(proc, pidFile);
@@ -1107,6 +1108,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let closePromise: Promise<AgentContainerCleanupReceipt> | undefined;
   let closeRemoval = { reason: 'lifecycle-abort', caller: 'createAgentContainerLifecycle.abort' };
   let providerFiles: ContainerProviderFileTransport | undefined;
+  let launchReservation: TaskExecutionLaunchReservation | undefined;
 
   try {
     const launchStartedAt = Date.now();
@@ -1247,6 +1249,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       'com.sulla.task-index':String(run.taskIndex),'com.sulla.capability-jti':capabilityJti,
       'com.sulla.capability-exp':String(capabilityExpiresAt),
     };
+    launchReservation=run.executionIdentities
+      ?await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex)):undefined;
     containerId = await phase('create', () => runtime.create({
       name: containerName, image, labels: executionLabels,
       autoRemove: true,
@@ -1276,15 +1280,16 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
       phase('network', () => connectServiceNetwork(containerName)),
     ]);
+    if(run.executionIdentities&&launchReservation){
+      const inspected=await phase('recordIdentityInspect',()=>runtime.inspect(containerId!));
+      const actualId=String(inspected?.Id??'');
+      if(!actualId)throw new Error('Container runtime did not return a durable container identity');
+      const actualLabels=Object.fromEntries(Object.entries(inspected?.Config?.Labels??{}).map(([key,value])=>[key,String(value)]));
+      await phase('recordIdentity',()=>run.executionIdentities!.activate(launchReservation!,{kind:'container',containerId:actualId,containerName,labels:actualLabels}));
+    }
     await phase('start', () => retryIdempotent(
       () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
     ));
-    if(run.executionIdentities){
-      const inspected=await phase('recordIdentityInspect',()=>runtime.inspect(containerId!));
-      const actualId=String(inspected?.Id??containerId);
-      const actualLabels=Object.fromEntries(Object.entries(inspected?.Config?.Labels??{}).map(([key,value])=>[key,String(value)]));
-      await phase('recordIdentity',()=>run.executionIdentities!.record(run.jobId,run.taskIndex,{kind:'container',generation:actualId,containerId:actualId,containerName,labels:actualLabels}));
-    }
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
     const probeMcp = () => guestExec([
@@ -1509,6 +1514,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       get closed() { return closePromise !== undefined || lifecycleAbort.signal.aborted; },
     };
   } catch (error) {
+    if(launchReservation&&run.executionIdentities)await run.executionIdentities.failLaunch(launchReservation,(error as Error).message).catch(()=>undefined);
     lifecycleAbort.abort();
     if (renewTimer) clearInterval(renewTimer);
     if (livenessTimer) clearInterval(livenessTimer);

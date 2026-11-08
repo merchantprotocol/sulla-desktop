@@ -23,14 +23,14 @@ export class PlatformTaskExecutionTerminationTransport implements TaskExecutionT
     let inspected:any;
     try{inspected=await this.containers.inspect(identity.containerName);}catch(error){return isContainerGoneError(error)?'confirmed':'unavailable';}
     const labels=inspected?.Config?.Labels??{};const actualId=String(inspected?.Id??'');
-    if(actualId!==identity.containerId||identity.generation!==identity.containerId||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return 'unavailable';
+    if(actualId!==identity.containerId||labels['com.sulla.job-id']!==expected.jobId||labels['com.sulla.task-index']!==String(expected.taskIndex))return 'unavailable';
     for(const [key,value] of Object.entries(identity.labels)){if(String(labels[key]??'')!==value)return 'unavailable';}
     try{await this.containers.remove(identity.containerId,true);}catch(error){if(!isContainerGoneError(error))return 'unavailable';}
     try{await this.containers.inspect(identity.containerId);return 'still-running';}catch(error){return isContainerGoneError(error)?'confirmed':'unavailable';}
   }
   private async terminateVmProcess(identity:Extract<TaskExecutionIdentity,{kind:'vm-process'}>):Promise<TaskTeardownOutcome>{
-    if(!identity.pidFile||identity.generation!==`${identity.pid}:${identity.startTime}`)return 'unavailable';
+    if(!identity.pidFile||!Number.isSafeInteger(identity.pid)||identity.pid<=0||!/^[0-9]+$/.test(identity.startTime))return 'unavailable';
     try{await this.guest.run(['sh','-c',buildRemoteKillCommand(identity.pidFile,'KILL',{pid:identity.pid,startTime:identity.startTime})]);return 'confirmed';}
-    catch(error){const code=(error as {exitCode?:number}).exitCode;return code===4?'still-running':code===2?'confirmed':'unavailable';}
+    catch(error){const code=(error as {exitCode?:number}).exitCode;return code===4?'still-running':code===0?'confirmed':'unavailable';}
   }
 }

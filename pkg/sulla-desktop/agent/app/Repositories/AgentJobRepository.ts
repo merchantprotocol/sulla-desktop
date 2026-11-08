@@ -110,9 +110,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         COALESCE((tasks -> $2::int ->> 'reopenCount')::int, 0)
       FROM agent_jobs WHERE job_id = $1 AND (tasks -> $2::int) IS NOT NULL
       ON CONFLICT (job_id, task_index) DO NOTHING`, [jobId, taskIndex]);
-    const rows = await this.connection.select(`WITH current_task AS (
+    const rows = await this.connection.select(`WITH task_lock AS (SELECT pg_advisory_xact_lock(hashtext($1),$2)), current_task AS (
       SELECT job_id, tasks -> $2::int AS task
-      FROM agent_jobs WHERE job_id = $1 FOR UPDATE
+      FROM agent_jobs,task_lock WHERE job_id = $1 FOR UPDATE
     ), eligible AS (
       SELECT current_task.task, state.generation, state.reopen_count
       FROM current_task JOIN agent_job_task_reopens state ON state.job_id = $1 AND state.task_index = $2

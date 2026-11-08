@@ -8,7 +8,7 @@ import * as childProcess from 'node:child_process';
 import * as path from 'node:path';
 
 import { buildRemoteKillCommand } from './claudeLaunchCommand';
-import { taskExecutionIdentityScope, type TaskExecutionAssignment } from '../app/Services/TaskExecutionIdentityScope';
+import { taskExecutionIdentityScope } from '../app/Services/TaskExecutionIdentityScope';
 import {
   createGuestRuntimeDirectory,
   GUEST_PROVIDER_FILES_ROOT,
@@ -97,12 +97,12 @@ export interface ProviderTerminationRequest {
 }
 
 /**
- * Exit codes of buildRemoteKillCommand that mean the process is gone: 0 (gone,
- * or the pidfile now names a different process) and 2 (no readable pidfile).
- * 3 (kill failed) and 4 (still alive after KILL) are unconfirmed.
+ * Only exit 0 is a positive, PID/start-time-fenced observation that the recorded
+ * execution is gone. Exit 2 means the durable handle is missing or unreadable and
+ * is unsafe: absence of the handle is not evidence that the process stopped.
  */
 export function remoteKillConfirmed(code: number | null): boolean {
-  return code === 0 || code === 2;
+  return code === 0;
 }
 
 export type ProviderFilePurpose = 'attachment' | 'mcp-config' | 'system-prompt';
@@ -139,7 +139,7 @@ export interface ProviderExecutionTransport {
     providerSessionId?: string;
     toolSessionId?:     string;
   }): ProviderTransportContext | Promise<ProviderTransportContext>;
-  spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams;
+  spawn(request: ProviderProcessLaunch): Promise<childProcess.ChildProcessWithoutNullStreams>;
   terminate(request: ProviderTerminationRequest): void | Promise<void>;
   readonly files: ProviderFileTransport;
 }
@@ -188,21 +188,32 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     };
   }
 
-  spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams {
+  async spawn(request: ProviderProcessLaunch): Promise<childProcess.ChildProcessWithoutNullStreams> {
     const command = request.guestCommand;
     if (!command) throw new Error('Guest provider transport requires a guest launch command');
-
-    const process=childProcess.spawn(command.executable, command.args, {
-      cwd: command.cwd, env: command.env, stdio: request.stdio,
-    }) as childProcess.ChildProcessWithoutNullStreams;
     const assignment=taskExecutionIdentityScope.current();
-    if(request.remotePidFile&&assignment){
-      process.once('spawn',()=>{ void this.recordVmIdentity(assignment,request.remotePidFile!); });
+    const reservation=assignment&&request.remotePidFile
+      ?await assignment.store.reserveLaunch(assignment.jobId,assignment.taskIndex):undefined;
+    let process:childProcess.ChildProcessWithoutNullStreams|undefined;
+    try{
+      process=childProcess.spawn(command.executable, command.args, {
+        cwd: command.cwd, env: command.env, stdio: request.stdio,
+      }) as childProcess.ChildProcessWithoutNullStreams;
+      await new Promise<void>((resolve,reject)=>{process!.once('spawn',resolve);process!.once('error',reject);});
+      if(reservation&&request.remotePidFile){
+        const identity=await this.readVmIdentity(request.remotePidFile);
+        await assignment!.store.activate(reservation,{kind:'vm-process',pid:identity.pid,startTime:identity.startTime,pidFile:request.remotePidFile});
+      }
+      return process;
+    }catch(error){
+      if(reservation)await assignment!.store.failLaunch(reservation,(error as Error).message).catch(()=>undefined);
+      try{process?.kill('SIGKILL');}catch{/* process never started or already exited */}
+      throw error;
     }
-    return process;
   }
 
-  private async recordVmIdentity(assignment: TaskExecutionAssignment,pidFile:string):Promise<void>{
+  private async readVmIdentity(pidFile:string):Promise<{pid:number;startTime:string}>{
+    let lastError:Error=new Error('pid record unavailable');
     for(let attempt=0;attempt<100;attempt++){
       try{
         const record=await new Promise<string>((resolve,reject)=>{
@@ -210,9 +221,10 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
           let output='';child.stdout.on('data',chunk=>output+=String(chunk));child.once('error',reject);child.once('close',code=>code===0?resolve(output.trim()):reject(new Error(`pid record unavailable (${code})`)));
         });
         const match=/^(\d+) (\d+)$/.exec(record);if(!match)throw new Error('invalid pid record');
-        await assignment.store.record(assignment.jobId,assignment.taskIndex,{kind:'vm-process',generation:`${match[1]}:${match[2]}`,pid:Number(match[1]),startTime:match[2],pidFile});return;
-      }catch{await new Promise(resolve=>setTimeout(resolve,50));}
+        return {pid:Number(match[1]),startTime:match[2]};
+      }catch(error){lastError=error as Error;await new Promise(resolve=>setTimeout(resolve,50));}
     }
+    throw lastError;
   }
 
   terminate(request: ProviderTerminationRequest): Promise<void> | void {

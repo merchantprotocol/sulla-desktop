@@ -777,7 +777,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const setupParts = Object.entries(marks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
         perf.log(`[RunPhase] provider=codex convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTextAt) } totalToTextMs=${ d(runPhaseStart, firstTextAt) }`);
       };
-      const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
+      const proc: childProcess.ChildProcessWithoutNullStreams = await transport.spawn({
         context: transportContext,
         providerCommand,
         remotePidFile: pidFile,

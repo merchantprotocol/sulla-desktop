@@ -973,7 +973,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     }
 
     const setupDoneAt = Date.now();
-    const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
+    const proc: childProcess.ChildProcessWithoutNullStreams = await transport.spawn({
       context: transportContext,
       providerCommand,
       remotePidFile: pidFile,

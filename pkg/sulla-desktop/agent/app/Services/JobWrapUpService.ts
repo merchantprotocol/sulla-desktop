@@ -54,13 +54,16 @@ export class JobWrapUpService extends Service {
     for (const taskIndex of taskIndexes) {
       const key = this.key(jobId, taskIndex);
       const delayMs = Math.max(1, gracePeriodSeconds || 120) * 1_000;
-      // Capture the exact execution generation now. A later reopen may launch a
-      // replacement under the same job/task key; this request must never follow it.
-      const executionGeneration=await this.identities?.currentGeneration(jobId,taskIndex)??'unavailable';
-      const durable:DurableWrapUpRequest={jobId,taskIndex,executionGeneration,principal,reason,dueAt:new Date(Date.now()+delayMs)};
-      const inserted=this.persistence?await this.persistence.reserve(durable):!this.timers.has(key);
-      const state=this.persistence?await this.persistence.state(jobId,taskIndex):undefined;
+      const draft={jobId,taskIndex,principal,reason,dueAt:new Date(Date.now()+delayMs)};
+      // Selection and reservation share the task advisory lock with launch/reopen.
+      // There is deliberately no "current generation" fallback outside that lock.
+      const reservation=this.persistence?await this.persistence.reserveCurrent(draft):undefined;
+      const durable:DurableWrapUpRequest|undefined=reservation?.request??(!this.persistence
+        ? {...draft,executionGeneration:await this.identities?.currentGeneration(jobId,taskIndex)??'unavailable'}:undefined);
+      const inserted=this.persistence?Boolean(reservation?.inserted):!this.timers.has(key);
+      const state=this.persistence?reservation?.state:undefined;
       if(state==='completed'){states.push('completed');continue;}
+      if(state==='manual-reconciliation'||!durable){states.push('pending');continue;}
       states.push('pending');
       // The durable request owns the stop timer. Arm it before best-effort
       // messaging so a committed reservation cannot be stranded by send failure.
@@ -97,7 +100,10 @@ export class JobWrapUpService extends Service {
       // Only this reservation's immutable generation may cross the external
       // boundary. AbortController loss is a hint, never an exit receipt.
       const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex,claim.executionGeneration);
-      if(teardown!=='confirmed'){this.retry(request,claim.claimExpiresAt);return;}
+      if(teardown!=='confirmed'){
+        if(claim.executionGeneration==='unavailable'){await this.persistence.requireManualReconciliation(claim.jobId,claim.taskIndex,'No persisted execution identity exists; automatic teardown is unsafe');return;}
+        this.retry(request,claim.claimExpiresAt);return;
+      }
       if(!await this.persistence.acknowledgeTeardown(claim))this.retry(request,claim.claimExpiresAt);
     }catch{
       this.retry(request,claim?.claimExpiresAt??new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000));
@@ -105,7 +111,9 @@ export class JobWrapUpService extends Service {
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */
-  taskSettled(jobId: string, taskIndex: number): void {
+  taskSettled(jobId: string, taskIndex: number, platformExitConfirmed = false): void {
+    // A database terminal status or lost AbortScope is not an execution receipt.
+    if(!platformExitConfirmed)return;
     const key = this.key(jobId, taskIndex);
     const handle = this.timers.get(key);
     if (handle){this.timer.cancel(handle);this.timers.delete(key);}
@@ -113,7 +121,8 @@ export class JobWrapUpService extends Service {
   }
 
   /** A whole job settlement invalidates every outstanding grace timer. */
-  jobSettled(jobId: string): void {
+  jobSettled(jobId: string, platformExitConfirmed = false): void {
+    if(!platformExitConfirmed)return;
     for (const [key, handle] of this.timers) {
       if (key.startsWith(`${ jobId }:`)) {
         this.timer.cancel(handle);
