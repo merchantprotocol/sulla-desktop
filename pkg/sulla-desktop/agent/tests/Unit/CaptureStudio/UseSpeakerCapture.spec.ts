@@ -7,7 +7,7 @@ vi.mock('vue', () => ({
   ref: <T>(value: T) => ({ value }),
   onUnmounted: vi.fn(),
 }));
-vi.mock('electron', () => ({ ipcRenderer: { invoke: vi.fn() } }));
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn() } }));
 
 import { useSpeakerCapture } from '@pkg/pages/capture-studio/composables/useSpeakerCapture';
 import { NativeCaptureCustody } from '@pkg/pages/capture-studio/services/NativeCaptureCustody';

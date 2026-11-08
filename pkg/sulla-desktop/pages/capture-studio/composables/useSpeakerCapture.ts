@@ -16,7 +16,7 @@
  */
 
 import { ref, onUnmounted, type Ref } from 'vue';
-import { ipcRenderer } from 'electron';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
