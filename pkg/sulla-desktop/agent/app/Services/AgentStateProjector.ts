@@ -18,12 +18,25 @@ const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, termin
 /** Pure projection of the authoritative job graph into the renderer contract. */
 export class AgentStateProjector {
   private readonly config: AgentProjectionConfig;
+  private inFlight?: Promise<AgentStateSnapshot>;
   constructor(private readonly states: AgentStateService, private readonly telemetry: AgentStateTelemetry,
     private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {},
     private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs)) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
-  async snapshot(): Promise<AgentStateSnapshot> {
+  snapshot(): Promise<AgentStateSnapshot> {
+    if (this.inFlight) return this.inFlight;
+    const pending = this.buildSnapshot().finally(() => {
+      if (this.inFlight === pending) this.inFlight = undefined;
+    });
+    this.inFlight = pending;
+    return pending;
+  }
+
+  private async buildSnapshot(): Promise<AgentStateSnapshot> {
     const jobs = await this.states.jobs();
+    // A change while telemetry loads must retain its own later version so the
+    // renderer can accept the following snapshot instead of discarding it.
+    const version = this.states.version;
     const now = this.clock();
     const taskOwner = new Map<string, { jobId: string; taskIndex: number; rootThreadId: string | null; depth: number }>();
     const ordered = [...jobs].sort((a, b) => a.createdAt - b.createdAt);
@@ -54,7 +67,7 @@ export class AgentStateProjector {
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
-    return { version: this.states.version, generatedAt: new Date(now).toISOString(), rows };
+    return { version, generatedAt: new Date(now).toISOString(), rows };
   }
 
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {

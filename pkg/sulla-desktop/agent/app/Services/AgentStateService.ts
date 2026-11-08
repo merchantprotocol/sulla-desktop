@@ -7,6 +7,8 @@ import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 
 export interface AgentStateStore {
   allJobs(): Promise<AgentJob[]>;
+  job(jobId: string): Promise<AgentJob | undefined>;
+  jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]>;
   insertJob(job: AgentJob): Promise<void>;
   replaceState(job: AgentJob): Promise<void>;
   cascadeJobs(jobId: string): Promise<AgentJob[]>;
@@ -38,6 +40,7 @@ export class AgentJobMutationQueue {
 /** Sole write-through owner for durable and process-local agent state. */
 export class AgentStateService {
   private versionValue: number;
+  private refreshInFlight?: Promise<AgentJob[]>;
   private readonly changes = new EventEmitter();
   private readiness: () => Promise<void> = async() => undefined;
   private readonly pendingTerminalWrites = new Set<string>();
@@ -60,29 +63,62 @@ export class AgentStateService {
     return () => this.changes.off('change', listener);
   }
 
-  private async refreshUnsafe(): Promise<AgentJob[]> {
+  private refreshUnsafe(): Promise<AgentJob[]> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    const refresh = this.loadJobs().finally(() => {
+      if (this.refreshInFlight === refresh) this.refreshInFlight = undefined;
+    });
+    this.refreshInFlight = refresh;
+    return refresh;
+  }
+
+  private async loadJobs(): Promise<AgentJob[]> {
     const durable = await this.store.allJobs();
     const durableIds = new Set(durable.map(job => job.jobId));
     for (const cachedId of this.cache.jobs.keys()) if (!durableIds.has(cachedId)) this.cache.jobs.delete(cachedId);
+    const jobs: AgentJob[] = [];
     for (const persisted of durable) {
       const derived = this.withDerivedStatus(persisted);
-      if (derived.status !== persisted.status) await this.mutateJob(persisted.jobId, current => this.withDerivedStatus(current));
-      else this.cache.jobs.set(persisted.jobId, persisted);
+      const current = derived.status !== persisted.status
+        ? await this.mutateJob(persisted.jobId, current => this.withDerivedStatus(current)) : persisted;
+      if (!current) continue;
+      this.cache.jobs.set(current.jobId, current);
+      jobs.push(current);
     }
-    return Array.from(this.cache.jobs.values()).filter(job => durableIds.has(job.jobId));
+    this.trimTerminalCache();
+    return jobs;
+  }
+
+  /** Keep active/parked work and unsettled results, but do not pin durable history in memory. */
+  private trimTerminalCache(): void {
+    const settled = Array.from(this.cache.jobs.values()).filter(job =>
+      ['completed', 'failed', 'stopped'].includes(job.status)
+      && !job.tasks.some(task => ['queued', 'running', 'parked', 'blocked'].includes(task.status))
+      && (job.status !== 'completed' || job.tasks.every(task => task.returnedAt || ['stopped', 'error'].includes(task.status))))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    for (const job of settled.slice(100)) this.cache.jobs.delete(job.jobId);
   }
 
   /** Reconciliation-only read, used to establish the readiness gate itself. */
   async jobsBeforeReady(): Promise<AgentJob[]> { return this.refreshUnsafe(); }
   async refresh(): Promise<AgentJob[]> { await this.ready(); return this.refreshUnsafe(); }
   async jobs(): Promise<AgentJob[]> { return this.refresh(); }
-  async job(jobId: string): Promise<AgentJob | undefined> { await this.refresh(); return this.cache.jobs.get(jobId); }
+  async job(jobId: string): Promise<AgentJob | undefined> { await this.ready(); return this.loadJob(jobId); }
+  private async loadJob(jobId: string): Promise<AgentJob | undefined> {
+    const persisted = await this.store.job(jobId);
+    if (!persisted) { this.cache.jobs.delete(jobId); return undefined; }
+    const derived = this.withDerivedStatus(persisted);
+    const current = derived.status !== persisted.status
+      ? await this.mutateJob(jobId, job => this.withDerivedStatus(job)) : persisted;
+    if (current) this.cache.jobs.set(jobId, current);
+    this.trimTerminalCache();
+    return current;
+  }
   /** Write-side lookup. Lifecycle writes must not wait for boot reconciliation. */
   async jobForWrite(jobId: string): Promise<AgentJob | undefined> {
     const cached = this.cache.jobs.get(jobId);
     if (cached) return cached;
-    await this.refreshUnsafe();
-    return this.cache.jobs.get(jobId);
+    return this.loadJob(jobId);
   }
 
   async descendants(parentThreadId: string): Promise<AgentJob[]> {
@@ -96,10 +132,14 @@ export class AgentStateService {
   }
 
   async list(limit = 25, includeFinished = true): Promise<AgentJob[]> {
-    const jobs = (await this.jobs()).filter(job => !job.dismissedAt);
+    await this.ready();
+    const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 25));
+    const compact = await this.store.jobsForList(safeLimit, includeFinished);
+    // Compact rows are presentation-only: never cache or persist them as whole jobs.
+    const jobs = compact.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt).sort((a, b) => b.createdAt - a.createdAt);
     const active = jobs.filter(job => ['running', 'parked'].includes(job.status));
-    if (!includeFinished) return active.sort((a, b) => b.createdAt - a.createdAt);
-    const terminal = jobs.filter(job => !['running', 'parked'].includes(job.status)).sort((a, b) => b.createdAt - a.createdAt).slice(0, Math.min(100, Math.max(1, limit)));
+    if (!includeFinished) return active;
+    const terminal = jobs.filter(job => !['running', 'parked'].includes(job.status)).slice(0, safeLimit);
     return [...active, ...terminal].sort((a, b) => b.createdAt - a.createdAt);
   }
 
@@ -116,7 +156,7 @@ export class AgentStateService {
   }
 
   async create(job: AgentJob): Promise<AgentJob> {
-    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.emitChange(); return next;
+    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
   }
 
   async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
@@ -138,7 +178,7 @@ export class AgentStateService {
     persist?: (next: AgentJob) => Promise<boolean>, deriveStatus = true,
     precondition?: AgentStateMutationPrecondition): Promise<AgentJob | undefined> {
     return this.mutations.run(jobId, async() => {
-      const current = (await this.store.allJobs()).find(job => job.jobId === jobId);
+      const current = await this.store.job(jobId);
       if (!current) return undefined;
       const candidate = mutate(structuredClone(current));
       if (!candidate) return undefined;
@@ -147,6 +187,7 @@ export class AgentStateService {
       if (persist && !await persist(next)) return undefined;
       if (!persist) await this.store.replaceState(next);
       this.cache.jobs.set(next.jobId, next);
+      this.trimTerminalCache();
       this.emitChange();
       this.pendingTerminalWrites.delete(next.jobId);
       return next;

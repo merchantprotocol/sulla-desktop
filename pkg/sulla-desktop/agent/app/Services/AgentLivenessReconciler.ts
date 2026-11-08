@@ -12,6 +12,7 @@ const DEFAULT_CONFIG: AgentLivenessConfig = { quietAfterMs: 5 * 60_000, lostAfte
 /** Eager and periodic repair of durable rows that no longer have a live run. */
 export class AgentLivenessReconciler {
   private timer?: ReturnType<typeof setInterval>;
+  private inFlight?: Promise<number>;
   private readonly config: AgentLivenessConfig;
   private readinessRecovery?: { isReady(): boolean; retryNow(): Promise<void> };
   constructor(private readonly states: AgentStateService, private readonly probe: AgentLivenessProbe,
@@ -21,7 +22,15 @@ export class AgentLivenessReconciler {
     if (this.config.lostAfterMs <= this.config.quietAfterMs) throw new Error('lostAfterMs must be greater than quietAfterMs');
   }
   setReadinessRecovery(recovery: { isReady(): boolean; retryNow(): Promise<void> }): void { this.readinessRecovery = recovery; }
-  async reconcile(): Promise<number> {
+  reconcile(): Promise<number> {
+    if (this.inFlight) return this.inFlight;
+    const run = this.reconcileOnce().finally(() => {
+      if (this.inFlight === run) this.inFlight = undefined;
+    });
+    this.inFlight = run;
+    return run;
+  }
+  private async reconcileOnce(): Promise<number> {
     if (this.readinessRecovery && !this.readinessRecovery.isReady()) void this.readinessRecovery.retryNow();
     let lost = 0;
     const jobs = await this.states.jobsBeforeReady();
@@ -66,6 +75,8 @@ export class AgentLivenessReconciler {
     }
     return lost;
   }
-  start(): void { this.stop(); this.timer = setInterval(() => void this.reconcile(), this.config.intervalMs); this.timer.unref?.(); }
+  start(): void { this.stop(); this.timer = setInterval(() => {
+    void this.reconcile().catch(error => console.error('[AgentLivenessReconciler] reconciliation failed:', error));
+  }, this.config.intervalMs); this.timer.unref?.(); }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 }

@@ -13,6 +13,14 @@ class InMemoryAgentStateStore implements AgentStateStore {
   readonly observedActivity: Array<number | null> = [];
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
+  async job(jobId: string): Promise<AgentJob | undefined> {
+    const job = this.durable.get(jobId); return job ? structuredClone(job) : undefined;
+  }
+  async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
+    const jobs = (await this.allJobs()).filter(job => !job.dismissedAt).sort((a, b) => b.createdAt - a.createdAt);
+    return [...jobs.filter(job => ['running', 'parked'].includes(job.status)),
+      ...(includeFinished ? jobs.filter(job => !['running', 'parked'].includes(job.status)).slice(0, limit) : [])];
+  }
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async cascadeJobs(jobId: string): Promise<AgentJob[]> { const job = this.durable.get(jobId); return job ? [structuredClone(job)] : []; }
@@ -29,6 +37,96 @@ function harness(jobs: AgentJob[], now = 10_000) {
 }
 
 describe('authoritative live agent state', () => {
+  it('uses point reads for mutation and on-demand job lookup without loading history', async() => {
+    const { states, store, cache } = harness([job('worker', [task()])]);
+    const history = vi.spyOn(store, 'allJobs');
+    const point = vi.spyOn(store, 'job');
+    await states.transition('worker', 0, { status: 'parked' });
+    expect((await states.job('worker'))?.tasks[0].status).toBe('parked');
+    cache.jobs.clear();
+    expect((await states.jobForWrite('worker'))?.jobId).toBe('worker');
+    expect(point).toHaveBeenCalledTimes(3);
+    expect(history).not.toHaveBeenCalled();
+  });
+
+  it('shares an outstanding history refresh and permits another after it settles', async() => {
+    const { states, store } = harness([job('worker', [task()])]);
+    const durable = await store.allJobs();
+    let release!: (jobs: AgentJob[]) => void;
+    const read = vi.spyOn(store, 'allJobs').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const first = states.jobsBeforeReady();
+    const second = states.jobsBeforeReady();
+    expect(read).toHaveBeenCalledTimes(1);
+    release(durable);
+    expect(await first).toEqual(await second);
+    await states.jobsBeforeReady();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears a failed refresh so the next read can recover', async() => {
+    const { states, store } = harness([]);
+    vi.spyOn(store, 'allJobs').mockRejectedValueOnce(new Error('temporary database failure'));
+    await expect(states.jobsBeforeReady()).rejects.toThrow('temporary database failure');
+    expect(await states.jobsBeforeReady()).toEqual([]);
+  });
+
+  it('returns compact bounded lists without caching or persisting partial jobs', async() => {
+    const original = job('worker', [task({ prompt: 'keep this complete prompt' })]);
+    const { states, store, cache } = harness([original]);
+    cache.jobs.set(original.jobId, original);
+    const compact = job('worker', [task({ status: 'error', completion: { status: 'completed' } as never })]);
+    const read = vi.spyOn(store, 'jobsForList').mockResolvedValue([compact]);
+    const history = vi.spyOn(store, 'allJobs');
+    const write = vi.spyOn(store, 'replaceState');
+    expect((await states.list(500))[0].status).toBe('completed');
+    expect(read).toHaveBeenCalledWith(100, true);
+    expect(cache.jobs.get('worker')?.tasks[0].prompt).toBe('keep this complete prompt');
+    expect(history).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('filters derived terminal compact rows from active-only lists and bounds newest history', async() => {
+    const { states, store } = harness([]);
+    const stale = job('stale-running', [task({ status: 'stopped' })], { createdAt: 3 });
+    const live = job('live', [task()], { createdAt: 1 });
+    const older = job('old', [], { status: 'completed', createdAt: 2 });
+    const read = vi.spyOn(store, 'jobsForList').mockResolvedValue([older, live, stale]);
+    expect((await states.list(1, false)).map(job => job.jobId)).toEqual(['live']);
+    expect(read).toHaveBeenLastCalledWith(1, false);
+    expect((await states.list(1, true)).map(job => job.jobId)).toEqual(['stale-running', 'live']);
+    await states.list(Number.NaN);
+    expect(read).toHaveBeenLastCalledWith(25, true);
+    await states.list(2.9);
+    expect(read).toHaveBeenLastCalledWith(2, true);
+  });
+
+  it('bounds settled cache history while preserving complete reads and parked work', async() => {
+    const finished = Array.from({ length: 105 }, (_, index) => job(`done-${ index }`, [], { status: 'completed', createdAt: index }));
+    const parked = job('parked', [task({ status: 'parked' })], { status: 'parked' });
+    const { states, cache } = harness([...finished, parked, job('live', [task()])]);
+    const all = await states.jobs();
+    expect(all).toHaveLength(107);
+    expect(cache.jobs.size).toBe(102);
+    expect(cache.jobs.has('done-0')).toBe(false);
+    expect(cache.jobs.has('parked')).toBe(true);
+    expect(cache.jobs.has('live')).toBe(true);
+    expect((await states.job('done-0'))?.status).toBe('completed');
+  });
+
+  it('shares slow liveness reconciliation instead of retaining another history per tick', async() => {
+    const { states } = harness([job('worker', [task()])]);
+    let release!: (live: boolean) => void;
+    const container = vi.fn(() => new Promise<boolean>(resolve => { release = resolve; }));
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container, lastCheckin: async() => null },
+      new AgentTaskActivityProjector({ lastActivityAt: () => undefined }));
+    const first = reconciler.reconcile();
+    const second = reconciler.reconcile();
+    expect(first).toBe(second);
+    await vi.waitFor(() => expect(container).toHaveBeenCalledTimes(1));
+    release(true);
+    expect(await first).toBe(0);
+  });
+
   it('reconciles a stale running task to lost in durable and memory state and disables actions', async() => {
     // risk: stale job remains actionable after a desktop restart
     const { store, cache, states } = harness([job('stale', [task()])], 500_000);
