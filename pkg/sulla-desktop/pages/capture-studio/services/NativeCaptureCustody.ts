@@ -7,7 +7,10 @@ import { SpeakerCaptureIntegrity } from './SpeakerCaptureIntegrity';
 export class NativeCaptureCustody {
   private generation = 0;
 
-  constructor(private readonly integrity: SpeakerCaptureIntegrity) {}
+  constructor(
+    private readonly integrity: SpeakerCaptureIntegrity,
+    private readonly yieldTurn: () => Promise<void> = () => Promise.resolve(),
+  ) {}
 
   begin(): number {
     return ++this.generation;
@@ -21,5 +24,14 @@ export class NativeCaptureCustody {
     if (requestGeneration === this.generation) return true;
     this.integrity.stopTracks(stream.getTracks());
     return false;
+  }
+
+  async acceptAfterYield(requestGeneration: number, stream: MediaStream): Promise<boolean> {
+    await this.yieldTurn();
+    return this.accept(requestGeneration, stream);
+  }
+
+  reject(stream: MediaStream | null): void {
+    if (stream) this.integrity.stopTracks(stream.getTracks());
   }
 }

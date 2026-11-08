@@ -84,4 +84,20 @@ describe('SpeakerDriverController activation accounting', () => {
     expect(lifecycle.activate).toHaveBeenCalledTimes(2);
     expect(lifecycle.deactivate).toHaveBeenCalledTimes(1);
   });
+
+  it('clears holder custody when shutdown deactivation rejects', async() => { // risk: failed teardown strands stale holders and singleton state
+    lifecycle.activate.mockResolvedValue({ ok: true, mirrorActive: true });
+    const sender = new SenderStub();
+    await controller.start('capture-studio', sender as any);
+    lifecycle.deactivate.mockRejectedValueOnce(new Error('deactivate failed'));
+
+    await expect(controller.shutdown()).rejects.toThrow('deactivate failed');
+
+    expect(controller.running).toBe(false);
+    expect(controller.holders).toEqual([]);
+    expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function));
+    const replacement = SpeakerDriverController.getInstance();
+    expect(replacement).not.toBe(controller);
+    await replacement.shutdown();
+  });
 });

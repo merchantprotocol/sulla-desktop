@@ -37,4 +37,35 @@ describe('NativeCaptureCustody', () => {
     expect(custody.accept(request, new StreamStub([audio]) as any)).toBe(true);
     expect(audio.stop).not.toHaveBeenCalled();
   });
+
+  it('rejects a request cancelled during the readiness yield', async() => { // risk: cancellation during readiness publishes stale capture
+    let finishYield!: () => void;
+    const yieldTurn = () => new Promise<void>(resolve => { finishYield = resolve });
+    const custody = new NativeCaptureCustody(new SpeakerCaptureIntegrity(), yieldTurn);
+    const audio = new TrackStub();
+    const stream = new StreamStub([audio]);
+    const request = custody.begin();
+
+    const accepted = custody.acceptAfterYield(request, stream as any);
+    custody.release();
+    finishYield();
+
+    await expect(accepted).resolves.toBe(false);
+    expect(audio.stop).toHaveBeenCalledOnce();
+  });
+
+  it('cleans an older rejected request without stopping a newer accepted stream', () => { // risk: old acquisition failure kills new capture
+    const custody = new NativeCaptureCustody(new SpeakerCaptureIntegrity());
+    const olderAudio = new TrackStub();
+    const newerAudio = new TrackStub();
+    const olderRequest = custody.begin();
+    const newerRequest = custody.begin();
+
+    expect(custody.accept(newerRequest, new StreamStub([newerAudio]) as any)).toBe(true);
+    custody.reject(new StreamStub([olderAudio]) as any);
+
+    expect(olderRequest).not.toBe(newerRequest);
+    expect(olderAudio.stop).toHaveBeenCalledOnce();
+    expect(newerAudio.stop).not.toHaveBeenCalled();
+  });
 });

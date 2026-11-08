@@ -139,6 +139,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
     releaseNative();
     const requestGeneration = nativeCustody.begin();
     let displayStream: MediaStream | null = null;
+    let requestStream: MediaStream | null = null;
     try {
       // Electron's main-process display-media handler supplies the display and
       // `audio: 'loopback'`. Chromium still requires video in this request;
@@ -161,6 +162,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
       }
 
       const stream = new MediaStream(usableTracks);
+      requestStream = stream;
       usableTracks.forEach(track => track.addEventListener('ended', () => {
         if (nativeStream.value === stream) releaseNative();
       }, { once: true }));
@@ -168,7 +170,7 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
       // ScreenCaptureKit can resolve getDisplayMedia with an already-ended
       // audio track. Yield once so that lifecycle event is observable before
       // publishing native success and suppressing the BlackHole fallback.
-      await Promise.resolve();
+      if (!await nativeCustody.acceptAfterYield(requestGeneration, stream)) return null;
       if (!stream.active || integrity.usableTracks(stream.getAudioTracks()).length === 0) {
         integrity.stopTracks(stream.getTracks());
         console.warn('[useSpeakerCapture] Native loopback audio track ended before it became usable');
@@ -182,8 +184,8 @@ export function useSpeakerCapture(integrity = new SpeakerCaptureIntegrity()) {
       console.log('[useSpeakerCapture] Native Electron loopback acquired');
       return stream;
     } catch (err: any) {
-      if (nativeStream.value) releaseNative();
-      else if (displayStream) integrity.stopTracks(displayStream.getTracks());
+      if (requestStream && nativeStream.value === requestStream) releaseNative();
+      else nativeCustody.reject(displayStream);
       console.warn('[useSpeakerCapture] Native loopback unavailable; falling back to BlackHole:', err?.message || err);
       return null;
     }

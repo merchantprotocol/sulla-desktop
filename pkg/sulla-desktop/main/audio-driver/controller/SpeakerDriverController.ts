@@ -224,15 +224,21 @@ export class SpeakerDriverController {
 
   private async _shutdown(): Promise<void> {
     log.info(SpeakerDriverController.TAG, 'Shutting down');
-    if (this._running) {
-      await this._lifecycle.deactivate({ removeDriver: false });
+    try {
+      if (this._running) {
+        await this._lifecycle.deactivate({ removeDriver: false });
+      }
+    } catch (error: any) {
+      log.error(SpeakerDriverController.TAG, 'Shutdown deactivation failed', { error: error.message });
+      throw error;
+    } finally {
+      this._running = false;
+      for (const sid of this._destroyListeners.keys()) {
+        this._removeDestroyListener(sid);
+      }
+      this._holders.clear();
+      if (instance === this) instance = null;
     }
-    this._running = false;
-    for (const sid of this._destroyListeners.keys()) {
-      this._removeDestroyListener(sid);
-    }
-    this._holders.clear();
-    if (instance === this) instance = null;
   }
 
   /** Send only to windows that are holding the speaker open. */
