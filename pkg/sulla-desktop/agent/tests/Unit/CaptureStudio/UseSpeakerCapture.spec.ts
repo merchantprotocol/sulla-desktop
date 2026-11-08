@@ -49,6 +49,7 @@ describe('useSpeakerCapture native request lifecycle', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('window', {});
     vi.stubGlobal('MediaStream', class extends StreamStub {});
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
