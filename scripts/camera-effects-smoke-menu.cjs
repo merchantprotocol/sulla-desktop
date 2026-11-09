@@ -48,7 +48,7 @@ class ContextMenuSmoke {
   async framing() {
     await this.open();
     this.element.querySelector('[data-menu-id="effect-framing"]').click();
-    await this.until(() => this.media.camera.effectOptions.autoFrame && this.media.cameraStream.value !== this.media.camera.rawStream);
+    await this.until(() => this.media.camera.effectOptions.autoFrame && this.media.cameraStream.value && this.media.cameraStream.value !== this.media.camera.rawStream && !this.vm.cameraContextItems.find(item => item.id === 'effect-framing').disabled);
   }
   async lock() {
     this.state.recording.value = true;

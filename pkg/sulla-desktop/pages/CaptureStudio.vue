@@ -485,7 +485,7 @@ import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-s
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 
 // ─── Context menu for source switching ───
-import type { CtxMenuItem } from './capture-studio/ContextMenu.vue';
+import type { CtxMenuItem } from './capture-studio/ContextMenuItem';
 
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');

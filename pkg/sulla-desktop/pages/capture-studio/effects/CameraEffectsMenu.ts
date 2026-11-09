@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import type { CtxMenuItem } from '../ContextMenu.vue';
+import type { CtxMenuItem } from '../ContextMenuItem';
 import type { CameraStreamService } from './CameraStreamService';
 import type { EffectOptions } from './FrameCompositor';
 

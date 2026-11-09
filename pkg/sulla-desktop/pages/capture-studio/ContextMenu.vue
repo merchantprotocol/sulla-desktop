@@ -123,17 +123,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
 
-export interface CtxMenuItem {
-  id:         string;
-  label:      string;
-  thumbnail?: string;
-  active?:    boolean;
-  disabled?:  boolean;
-  divider?:   boolean;
-  badge?:     string;
-  children?:  CtxMenuItem[];
-  action:     () => void;
-}
+import type { CtxMenuItem } from './ContextMenuItem';
 
 const props = defineProps<{
   visible: boolean;
