@@ -45,6 +45,9 @@ export class BrowserFrameSurface implements FrameSurface {
     const sourceHeight = this.video.videoHeight;
     context.drawImage(this.video, sourceWidth * 0.1, sourceHeight * 0.1, sourceWidth * 0.8, sourceHeight * 0.8, 0, 0, width, height);
     this.output = this.canvas.captureStream(30);
+    // CaptureStream can snapshot the initial canvas immediately; issue a
+    // post-capture draw as well so the first delivered frame is the safe crop.
+    context.drawImage(this.video, sourceWidth * 0.1, sourceHeight * 0.1, sourceWidth * 0.8, sourceHeight * 0.8, 0, 0, width, height);
     return this.output;
   }
 
