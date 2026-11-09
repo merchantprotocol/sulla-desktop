@@ -47,13 +47,14 @@ class CameraEffectsRendererSmoke {
       assert.ok(pixels[(80 * 256 + 230) * 4] < 12, 'High contrast background moved');
     }
     const reference = output.getContext('2d').getImageData(0, 0, 256, 160);
-    compositor.draw(source, output, mask, { autoFrame: true, soften: 0, backgroundBlur: 1 }, 0);
+    const framed = new FrameCompositor(new PersonFraming(), () => this.layer());
+    framed.draw(source, output, mask, { autoFrame: true, soften: 0, backgroundBlur: 1 }, 0);
     // Off-center mask centers at x=72; crop clamps at x=0. Same 0.8 crop in both axes.
     for (const x of [60, 90, 150, 200]) {
       const expectedX = Math.floor((x + 0.5) * 0.8);
       const actual = output.getContext('2d').getImageData(x, 80, 1, 1).data;
       const expected = reference.data[(80 * 256 + expectedX) * 4];
-      assert.ok(Math.abs(actual[0] - expected) <= 3, 'Framed foreground/background coordinates changed');
+      assert.ok(Math.abs(actual[0] - expected) <= 3, 'Framed foreground/background coordinates changed at ' + x + ': ' + actual[0] + ' vs ' + expected);
     }
     // Use a fresh tracker to test centered no-subject crop without prior tracking state.
     const centered = new FrameCompositor(new PersonFraming(), () => this.layer());
@@ -71,6 +72,7 @@ class CameraEffectsRendererSmoke {
     compositor.draw(source, output, mask, { autoFrame: false, soften: 1, backgroundBlur: 0 }, 300);
     assert.ok(output.getContext('2d').getImageData(80, 80, 1, 1).data[0] < 220, 'Face was not softened');
     assert.equal(output.getContext('2d').getImageData(176, 80, 1, 1).data[0], 255, 'Clothing was softened');
+    framed.close();
     centered.close();
     return { compositor, source, output };
   }
