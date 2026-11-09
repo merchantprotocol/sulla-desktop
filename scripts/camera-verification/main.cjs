@@ -100,7 +100,9 @@ class ActualParentVerification {
       code = 0;
     } catch (error) {
       this.metadata.error = String(error.stack || error);
-      console.error('::error title=CE1 actual parent::' + this.metadata.error.replace(/\n/g, '%0A'));
+      const cssDir = path.join(this.runtime, 'css');
+      const diagnostics = JSON.stringify({ missing: this.audit.missingResources, denied: this.audit.networkDenied, css: fs.existsSync(cssDir) ? fs.readdirSync(cssDir) : 'no css dir', root: fs.existsSync(this.runtime) ? fs.readdirSync(this.runtime) : 'no runtime dir' });
+      console.error('::error title=CE1 actual parent::' + (this.metadata.error + '\n' + diagnostics).replace(/\n/g, '%0A'));
     } finally {
       this.metadata.bundles = fs.existsSync(this.runtime) ? this.inventory(this.runtime) : [];
       fs.writeFileSync(path.join(this.directory, 'runtime-metadata.json'), JSON.stringify(this.metadata, null, 2));
