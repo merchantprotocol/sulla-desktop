@@ -10,6 +10,8 @@ const { Driver } = require('./Driver.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true } }]);
 
 class ActualParentVerification {
+  static FONT_STYLESHEET = 'https://fonts.googleapis.com/css2?';
+
   constructor() {
     this.directory = path.resolve('artifacts/ce1');
     this.runtime = path.join(this.directory, 'runtime');
@@ -72,8 +74,17 @@ class ActualParentVerification {
         const type = { '.css': 'text/css', '.js': 'text/javascript', '.html': 'text/html', '.wasm': 'application/wasm', '.json': 'application/json' }[path.extname(filename)];
         return net.fetch(pathToFileURL(filename).href).then(response => type ? new Response(response.body, { status: response.status, headers: { 'content-type': type } }) : response);
       });
+      session.defaultSession.protocol.handle('https', request => {
+        if (request.url.startsWith(ActualParentVerification.FONT_STYLESHEET)) {
+          this.audit.fontStylesheetStubbed = true;
+          return new Response('/* offline fixture: no remote font */', { headers: { 'content-type': 'text/css' } });
+        }
+        this.audit.networkDenied.push(request.url);
+        return new Response('denied', { status: 403 });
+      });
       session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
-        const allowed = /^(app|blob|data|file):/.test(details.url);
+        // The shipped stylesheet @imports a Google font; answer it with an empty in-process stylesheet (no network).
+        const allowed = /^(app|blob|data|file):/.test(details.url) || details.url.startsWith(ActualParentVerification.FONT_STYLESHEET);
         if (!allowed) this.audit.networkDenied.push(details.url);
         callback({ cancel: !allowed });
       });
