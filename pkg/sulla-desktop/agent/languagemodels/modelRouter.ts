@@ -243,7 +243,7 @@ export class ModelRouter {
   private async liveProviders(): Promise<Map<string, { connected: boolean; models: { id: string; label: string }[] }>> {
     const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
     let available = new Map<string, boolean>();
-    try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), provider.connected === true])) } catch { /* fail closed */ }
+    try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), provider.connected === true || provider.connectionStatus === 'unknown'])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
       const connected = available.get(id) === true;
       let models: { id: string; label: string }[] = [];

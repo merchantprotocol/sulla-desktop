@@ -106,3 +106,14 @@ describe('BL-044 provider health is a temporary routing hint', () => {
     }), { numRuns: Number.parseInt(process.env.FC_NUM_RUNS ?? '50', 10) });
   });
 });
+
+// Connection metadata is a routing hint, never an authentication grant.
+describe('vault discovery outages', () => {
+  it('tries configured unknown-status providers through their normal authenticated execution path', async () => {
+    const subject = new ModelRouter(() => ({
+      getAvailableProviders: async () => [{ id: 'openai', connected: false, connectionStatus: 'unknown' }, { id: 'anthropic', connected: false }],
+      getModelsForProvider: async () => [],
+    }));
+    expect(await subject.resolve('agents')).toEqual([{ provider: 'openai', model: 'top' }]);
+  });
+});

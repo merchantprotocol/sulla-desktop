@@ -171,7 +171,11 @@ export class GrokService extends OpenAICompatibleService {
    * refresh it there before it expires rather than sending a dead token.
    */
   protected override async beforeProviderRequest(): Promise<void> {
-    if (!this.oauthMode || !this.accountId || !usesContainerVaultAuthority()) return;
+    if (!this.oauthMode || !this.accountId) return;
+    if (!usesContainerVaultAuthority()) {
+      this.apiKey = await getIntegrationService().getOAuthAccessToken('grok', this.accountId);
+      return;
+    }
     const { getOAuthService } = await import('../services/OAuthService');
     await getOAuthService().ensureVaultTokenFresh('grok', this.accountId);
   }
@@ -240,6 +244,19 @@ export class GrokService extends OpenAICompatibleService {
       console.warn('[GrokService] Grok endpoint rejected native search tools; retrying without them');
 
       return super.sendRawRequest(messages, options);
+    }
+  }
+
+  protected override async sendStreamRequest(messages: ChatMessage[], options: any): Promise<Response | null> {
+    try {
+      return await super.sendStreamRequest(messages, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!this.nativeSearchEnabled || !this.nativeSearchSupported ||
+          !/HTTP (?:400|403|404|422):/i.test(message) ||
+          !/(?:x_search|web_search|tool|unsupported|unknown)/i.test(message)) throw err;
+      this.nativeSearchSupported = false;
+      return super.sendStreamRequest(messages, options);
     }
   }
 
