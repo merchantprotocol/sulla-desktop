@@ -19,6 +19,14 @@ class PublisherStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   constructor(jobs: AgentJob[]) { jobs.forEach(job => this.durable.set(job.jobId, structuredClone(job))); }
   async allJobs(): Promise<AgentJob[]> { return [...this.durable.values()].map(job => structuredClone(job)); }
+  async job(jobId: string): Promise<AgentJob | undefined> {
+    const job = this.durable.get(jobId); return job ? structuredClone(job) : undefined;
+  }
+  async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
+    const jobs = (await this.allJobs()).filter(job => !job.dismissedAt).sort((a, b) => b.createdAt - a.createdAt);
+    return [...jobs.filter(job => ['running', 'parked'].includes(job.status)),
+      ...(includeFinished ? jobs.filter(job => !['running', 'parked'].includes(job.status)).slice(0, limit) : [])];
+  }
   async insertJob(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceState(job: AgentJob): Promise<void> { this.durable.set(job.jobId, structuredClone(job)); }
   async replaceStateIfActivityUnchanged(job: AgentJob): Promise<boolean> { await this.replaceState(job); return true; }
@@ -42,6 +50,68 @@ const makeJob = (jobId: string, threadId: string, parentThreadId?: string): Agen
 
 describe('AgentStatePublisher', () => {
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+
+  it('shares slow IPC and event snapshots and publishes a trailing update', async() => {
+    vi.useFakeTimers();
+    const states = new AgentStateService(new PublisherStore([]), { jobs: new Map() });
+    const projector = new AgentStateProjector(states, { latest: async() => null });
+    let release!: (snapshot: Awaited<ReturnType<typeof projector.snapshot>>) => void;
+    const read = vi.spyOn(projector, 'snapshot').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const publisher = new AgentStatePublisher(states, projector, 10);
+    publisher.register();
+    const ipcRead = handle.mock.calls.at(-1)![1] as () => ReturnType<typeof projector.snapshot>;
+    const requested = ipcRead();
+    states.touch();
+    await vi.advanceTimersByTimeAsync(10);
+    states.touch();
+    states.touch();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(read).toHaveBeenCalledTimes(1);
+    release({ version: 1, generatedAt: new Date(0).toISOString(), rows: [] });
+    await requested;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][1].version).toBe(states.version);
+    publisher.dispose();
+  });
+
+  it('retries an older IPC snapshot when the change arrived before publish started', async() => {
+    vi.useFakeTimers();
+    const states = new AgentStateService(new PublisherStore([]), { jobs: new Map() }, () => 1);
+    const projector = new AgentStateProjector(states, { latest: async() => null });
+    let release!: (snapshot: Awaited<ReturnType<typeof projector.snapshot>>) => void;
+    const read = vi.spyOn(projector, 'snapshot').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const publisher = new AgentStatePublisher(states, projector, 10);
+    publisher.register();
+    const ipcRead = handle.mock.calls.at(-1)![1] as () => ReturnType<typeof projector.snapshot>;
+    const requested = ipcRead();
+    await vi.advanceTimersByTimeAsync(0);
+    states.touch();
+    await vi.advanceTimersByTimeAsync(10);
+    release({ version: 1, generatedAt: new Date(0).toISOString(), rows: [] });
+    await requested;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls.map(call => call[1].version)).toEqual([1, states.version]);
+    publisher.dispose();
+  });
+
+  it('does not deliver an outstanding snapshot after disposal', async() => {
+    vi.useFakeTimers();
+    const states = new AgentStateService(new PublisherStore([]), { jobs: new Map() });
+    const projector = new AgentStateProjector(states, { latest: async() => null });
+    let release!: (snapshot: Awaited<ReturnType<typeof projector.snapshot>>) => void;
+    vi.spyOn(projector, 'snapshot').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const publisher = new AgentStatePublisher(states, projector, 10);
+    publisher.register();
+    states.touch();
+    await vi.advanceTimersByTimeAsync(10);
+    publisher.dispose();
+    release({ version: 1, generatedAt: new Date(0).toISOString(), rows: [] });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it('publishes one coalesced snapshot after a manager cascade stops every descendant', async() => {
     // risk: a cascade emits partial trees or duplicate renderer updates

@@ -194,6 +194,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       'taskId', task->>'taskId', 'status', task->>'status', 'visibility', task->>'visibility',
       'startedAt', task->'startedAt', 'finishedAt', task->'finishedAt', 'returnedAt', task->'returnedAt',
       'waitReason', task->>'waitReason', 'wakeAt', task->'wakeAt',
+      'completion', CASE WHEN task ? 'completion' THEN jsonb_build_object('status', task->'completion'->>'status') ELSE NULL END,
       'contract', CASE WHEN task ? 'contract' THEN jsonb_build_object('name', task->'contract'->>'name') ELSE NULL END))
       FROM jsonb_array_elements(selected.tasks) AS task), '[]'::jsonb) AS tasks
       FROM selected ORDER BY created_at DESC`, [limit, includeFinished]);

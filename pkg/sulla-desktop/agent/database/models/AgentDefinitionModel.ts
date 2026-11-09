@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '../PostgresClient';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
@@ -159,29 +160,17 @@ export interface AgentDefinitionPatch {
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : [];
 }
-
-function toModelPriority(value: unknown): ModelPriorityEntry[] {
-  if (!Array.isArray(value)) return [];
-  return value.map(entry => ({
-    provider: String(entry?.provider ?? '').trim(),
-    model:    String(entry?.model ?? '').trim(),
-  })).filter(entry => entry.provider && entry.model);
-}
-
 function toCostTier(value: unknown): AgentCostTier | null {
   const tier = String(value ?? '').trim().toLowerCase();
   return (AGENT_COST_TIERS as readonly string[]).includes(tier) ? tier as AgentCostTier : null;
 }
-
 function toAgentModelSlot(value: unknown): AgentModelSlot | null {
   const tier = String(value ?? '').trim().toLowerCase();
   return (AGENT_MODEL_SLOTS as readonly string[]).includes(tier) ? tier as AgentModelSlot : null;
 }
-
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-
 function toObject(value: unknown): Record<string, any> {
   if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
   if (typeof value === 'string') {
@@ -196,6 +185,8 @@ function toObject(value: unknown): Record<string, any> {
 }
 
 function rowToDefinition(row: any): AgentDefinition {
+  const policy = new AgentModelCategoryPolicy();
+  const category = policy.resolve({ choice: row.model_choice, model: row.model, slot: row.model_slot, slug: row.slug });
   return {
     id:                      String(row.id),
     slug:                    String(row.slug),
@@ -206,20 +197,20 @@ function rowToDefinition(row: any): AgentDefinition {
     allowed_tools:           toStringArray(row.allowed_tools),
     skill_refs:              toStringArray(row.skill_refs),
     routine_refs:            toStringArray(row.routine_refs),
-    model_priority:          toModelPriority(row.model_priority),
+    model_priority:          [],
     version:                 row.version == null ? null : String(row.version),
     status:                  row.status as AgentDefinitionStatus,
     enabled:                 row.enabled !== false,
     source_template_slug:    row.source_template_slug == null ? null : String(row.source_template_slug),
     content_hash:            row.content_hash == null ? null : String(row.content_hash),
-    config:                  toObject(row.config),
+    config:                  policy.config(toObject(row.config), category),
     prompt_content:          String(row.prompt_content ?? ''),
     goals_content:           String(row.goals_content ?? ''),
     prompt_files:            toObject(row.prompt_files) as Record<string, string>,
-    provider:                row.provider == null ? null : String(row.provider),
-    model:                   row.model == null ? null : String(row.model),
-    model_slot:              toAgentModelSlot(row.model_slot),
-    model_choice:            row.model_choice ?? null,
+    provider:                null,
+    model:                   null,
+    model_slot:              null,
+    model_choice:            category,
     source_kind:             (row.source_kind ?? 'local') as AgentSourceKind,
     marketplace_template_id: row.marketplace_template_id == null ? null : String(row.marketplace_template_id),
     marketplace_slug:        row.marketplace_slug == null ? null : String(row.marketplace_slug),
@@ -274,6 +265,9 @@ export class AgentDefinitionModel {
   }
 
   static async create(input: AgentDefinitionInput): Promise<AgentDefinition> {
+    const categoryPolicy = new AgentModelCategoryPolicy();
+    const category = categoryPolicy.resolve({ choice: input.modelChoice, model: input.model, slot: input.modelSlot, slug: input.slug });
+    input = { ...input, modelChoice: category, provider: null, model: null, modelSlot: null, modelPriority: [], config: categoryPolicy.config(input.config ?? {}, category) };
     const slug = required(input.slug, 'slug');
     const name = required(input.name, 'name');
     const row = await postgresClient.queryOne(`
@@ -312,6 +306,13 @@ export class AgentDefinitionModel {
    * otherwise null is returned and nothing is written.
    */
   static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
+    if (patch.modelChoice !== undefined || patch.provider !== undefined || patch.model !== undefined || patch.modelSlot !== undefined || patch.modelPriority !== undefined || patch.config !== undefined) {
+      const current = await this.get(id);
+      if (!current) return null;
+      const policy = new AgentModelCategoryPolicy();
+      const choice = policy.resolve({ choice: patch.modelChoice ?? current.model_choice, model: patch.model, slot: patch.modelSlot, slug: current.slug });
+      patch = { ...patch, modelChoice: choice, provider: null, model: null, modelSlot: null, modelPriority: [], config: policy.config(patch.config ?? current.config, choice) };
+    }
     const sets: string[] = [];
     const params: unknown[] = [];
     const add = (column: string, value: unknown, cast = '') => {

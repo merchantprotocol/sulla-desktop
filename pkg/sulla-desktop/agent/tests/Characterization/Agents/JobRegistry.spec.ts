@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { tmpdir } from 'node:os';
+
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
@@ -18,6 +19,7 @@ import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceP
 
 // The static import chain reaches Electron-only modules; mock the package so
 // the suite never resolves the uninstalled binary (headless CI has no Electron).
+// Lifecycle tests run in Node without an installed Electron application binary.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
