@@ -82,6 +82,7 @@
         :pip-source="pipSource"
         @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
+        @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
       />
 

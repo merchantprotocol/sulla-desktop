@@ -14,6 +14,17 @@ class ContextMenuSmoke {
     this.vm = this.app.mount(this.element);
     await this.open();
     assert.ok(this.element.querySelector('[data-menu-id="effect-framing"]'), 'MENU_REACHABILITY_SENTINEL: missing production effects entry');
+    // The visual slot name is not its source type after swapping assignments.
+    this.element.querySelector('.sbs-camera').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    await this.settle();
+    assert.equal(this.vm.ctxMenu.title, 'Screen');
+    assert.ok(!this.vm.cameraContextItems.some(item => item.id === 'effect-framing'), 'MENU_CAMERA_ONLY_SENTINEL');
+    for (const selector of ['.screen-preview', '.cam-bubble']) {
+      this.element.querySelector(selector).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      await this.settle();
+      assert.equal(this.vm.ctxMenu.title, 'Camera', 'MENU_SLOT_REACHABILITY_SENTINEL');
+      assert.ok(this.element.querySelector('[data-menu-id="effect-framing"]'));
+    }
     assert.deepEqual(mediaSources.camera.effectOptions, { autoFrame: false, soften: 0, backgroundBlur: 0 });
     for (const id of ['effect-framing', 'effect-soften', 'effect-backgroundBlur']) {
       assert.equal(this.vm.cameraContextItems.find(item => item.id === id).active, false, 'MENU_DEFAULT_OFF_SENTINEL');

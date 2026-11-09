@@ -40,9 +40,10 @@ class CameraEffectsSmoke {
     if (process.env.CE1_MENU_MUTANT === '1') menuDefinitions = menuDefinitions.replace('...cameraEffectsMenu.items()', '');
     const quality = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildQualityChildren').getText(ast);
     const menuTag = descriptor.template.content.match(/<ContextMenu\b[\s\S]*?\/>/)[0];
-    compile('MenuHarness', '<template><CaptureCanvas :screen-stream="mediaSources.cameraStream.value" :camera-stream="null" current-layout="camonly" :primary-source="cameraSource" :pip-source="null" audio-only-sources="" @show-camera-menu="showCameraContextMenu" />' + menuTag + '</template><script setup lang="ts">' + `
+    compile('MenuHarness', '<template><CaptureCanvas :screen-stream="mediaSources.cameraStream.value" :camera-stream="null" current-layout="camonly" :primary-source="cameraSource" :pip-source="screenSource" audio-only-sources="" @show-screen-menu="showScreenContextMenu" @show-camera-menu="showCameraContextMenu" /><CameraBubble :camera-stream="mediaSources.cameraStream.value" :recording="recording" camera-shape="circle" current-layout="pip" :pip-source="cameraSource" @show-camera-menu="showCameraContextMenu" @show-screen-menu="showScreenContextMenu" />' + menuTag + '</template><script setup lang="ts">' + `
       import { ref, computed, reactive, watch } from 'vue';
       import CaptureCanvas from './CaptureCanvas';
+      import CameraBubble from './CameraBubble';
       import ContextMenu from './ContextMenu';
       import { CameraEffectsMenu } from './CameraEffectsMenu';
       import { QUALITY_PRESETS } from './useMediaSources';
@@ -50,6 +51,8 @@ class CameraEffectsSmoke {
       const { mediaSources, recording, statusMessage } = props.state;
       const captureLifecycle = { isClosing: false };
       const cameraSource = { id: 'cam', type: 'camera', name: 'Synthetic camera', on: true, isVideo: true };
+      const screenSource = { id: 'screen', type: 'screen', name: 'Synthetic screen', on: true, isVideo: true };
+      const showScreenContextMenu = () => { ctxMenu.title = 'Screen'; ctxMenu.items = []; ctxMenu.visible = true; };
       const ctxMenu = reactive({ visible: false, x: 0, y: 0, title: '', items: [] as any[] });
       const updateStreamAssignments = () => {};
       ` + quality + menuDefinitions + '; defineExpose({ ctxMenu, cameraContextItems });</script>');
