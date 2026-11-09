@@ -21,13 +21,24 @@ class CaptureVerificationCompiler {
           fs.writeFileSync(path.join(this.root, name + '-stats.json'), JSON.stringify(stats.toJson({ all: false, hash: true, assets: true, modules: true, nestedModules: true, errors: true, warnings: true }), null, 2));
         }
         compiler.close(closeError => {
-          if (error || closeError || !stats || stats.hasErrors()) reject(error || closeError || new Error(stats?.toString({ all: false, errors: true })));
+          if (error || closeError || !stats || stats.hasErrors()) { if (stats) console.error(this.rootCauses(stats.compilation)); reject(error || closeError || new Error(stats?.toString({ all: false, errors: true }))); }
           else {
             try { this.inventory(name, stats); resolve(); } catch (error) { reject(error); }
           }
         });
       });
     });
+  }
+
+  /** Original exceptions (with stacks) behind webpack's wrapped ModuleNotFound/child-compilation errors. */
+  private rootCauses(compilation: any, depth = 0): string {
+    const lines: string[] = [];
+    for (const e of compilation.errors || []) {
+      lines.push('ROOT-CAUSE ' + String(e.message).split('\n')[0]);
+      if (e.error?.stack) lines.push('ROOT-CAUSE-STACK ' + String(e.error.stack).split('\n').slice(0, 8).join(' | '));
+    }
+    if (depth < 4) for (const child of compilation.children || []) lines.push(this.rootCauses(child, depth + 1));
+    return lines.filter(Boolean).join('\n');
   }
 
   private inventory(name: string, stats: webpack.Stats): void {
