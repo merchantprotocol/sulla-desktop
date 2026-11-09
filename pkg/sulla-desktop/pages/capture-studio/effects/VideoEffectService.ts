@@ -35,14 +35,13 @@ export class BrowserFrameSurface implements FrameSurface {
     const scale = Math.min(1, 1280 / this.video.videoWidth, 720 / this.video.videoHeight);
     this.canvas.width = Math.max(1, Math.floor(this.video.videoWidth * scale));
     this.canvas.height = Math.max(1, Math.floor(this.video.videoHeight * scale));
-    // Effects sessions publish this canvas only after their first processed
-    // frame. Do not seed the captured track with an unprocessed camera frame:
-    // MediaRecorder may encode that frame even if the first animation frame
-    // replaces it immediately afterward.
+    // Seed capture with a safe centered crop. MediaRecorder may encode the
+    // initial frame before the first effect pass; never seed it with the raw
+    // camera edges that auto-framing will remove.
     const context = this.canvas.getContext('2d');
     if (!context) throw new Error('Canvas unavailable');
-    context.fillStyle = 'black';
-    context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    const { width, height } = this.canvas;
+    context.drawImage(this.video, width * 0.1, height * 0.1, width * 0.8, height * 0.8, 0, 0, width, height);
     this.output = this.canvas.captureStream(30);
     return this.output;
   }
