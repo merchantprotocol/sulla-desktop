@@ -18,6 +18,7 @@ export class CameraStreamService {
     private readonly acquireRaw: (constraints: MediaStreamConstraints) => Promise<MediaStream>,
     private readonly publish: (stream: MediaStream | null) => void,
     private readonly report: (error: unknown) => void,
+    private readonly changed: () => void = () => {},
   ) {}
 
   get rawStream(): MediaStream | undefined { return this.raw; }
@@ -60,12 +61,18 @@ export class CameraStreamService {
   }
 
   private async process(raw: MediaStream, generation: number): Promise<MediaStream> {
-    const session = await this.effects.open(raw, this.options);
+    const session = await this.effects.open(raw, this.options, error => {
+      if (generation !== this.generation || this.disposed) return;
+      this.options = { autoFrame: false, soften: 0, backgroundBlur: 0 };
+      this.report(error);
+      this.changed();
+    });
     if (generation !== this.generation || this.disposed) {
       await session.close();
       throw new Error('Camera processing superseded');
     }
     this.session = session;
+    this.changed();
     this.publish(session.stream);
     return session.stream;
   }
@@ -85,6 +92,7 @@ export class CameraStreamService {
     await pending;
     if (this.disposed) throw new Error('Camera service is disposed');
     this.options = { ...options };
+    this.changed();
     // Reacquiring is unnecessary: retain raw ownership and replace only the effect session.
     const generation = ++this.generation;
     const previous = this.session;

@@ -55,10 +55,19 @@ export function useMediaSources() {
   const cameraQuality: Ref<QualityPreset> = ref('720p');
   const effects = inject(cameraEffectsKey);
   if (!effects) throw new Error('Capture Studio camera effects composition is missing');
+  const cameraEffectError = ref('');
+  const cameraEffectsRevision = ref(0);
   const camera = new CameraStreamService(effects, constraints => navigator.mediaDevices.getUserMedia(constraints), stream => {
     cameraStream.value = stream;
     if (!stream) { activeCameraName.value = ''; activeCameraDeviceId.value = ''; }
-  }, error => console.warn('[CameraEffects]', error));
+  }, error => {
+    cameraEffectError.value = 'Camera effects unavailable. Original camera video is being used.';
+    console.warn('[CameraEffects]', error);
+  }, () => {
+    const options = camera.effectOptions;
+    if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
+    cameraEffectsRevision.value++;
+  });
   let rawScreenStream: MediaStream | null = null;
   let cropTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -301,6 +310,7 @@ export function useMediaSources() {
   // Parent owns ordered recorder flush -> screen/camera release on teardown.
 
   return {
+    cameraEffectError, cameraEffectsRevision,
     camera,
     screenStream,
     cameraStream,

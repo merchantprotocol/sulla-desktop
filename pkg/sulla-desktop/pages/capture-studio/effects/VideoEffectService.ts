@@ -220,10 +220,10 @@ export class VideoEffectService {
     private readonly onFailure: (error: unknown) => void,
   ) {}
 
-  async open(raw: MediaStream, options: EffectOptions): Promise<CameraEffectSession> {
+  async open(raw: MediaStream, options: EffectOptions, report?: (error: unknown) => void): Promise<CameraEffectSession> {
     const session = new CameraEffectSession(
       raw, options, this.createInference(),
-      new FrameCompositor(new PersonFraming(), this.createCanvas), this.createSurface(), this.onFailure,
+      new FrameCompositor(new PersonFraming(), this.createCanvas), this.createSurface(), error => { try { this.onFailure(error); } finally { report?.(error); } },
     );
     await session.start();
     return session;

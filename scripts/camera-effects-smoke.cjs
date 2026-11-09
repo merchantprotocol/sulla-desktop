@@ -29,13 +29,33 @@ class CameraEffectsSmoke {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
       }).outputText);
     };
-    for (const name of ['CaptureCanvas', 'CameraBubble']) {
+    for (const name of ['CaptureCanvas', 'CameraBubble', 'ContextMenu']) {
       let source = fs.readFileSync('pkg/sulla-desktop/pages/capture-studio/' + name + '.vue', 'utf8');
       if (name === 'CaptureCanvas' && process.env.CE1_PREVIEW_MUTANT === '1') {
         source = source.replace('if (fullEl) fullEl.srcObject = stream || null;', 'if (fullEl) fullEl.srcObject = props.cameraStream || null;');
       }
       compile(name, source);
     }
+    let menuDefinitions = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const effectsMenuRevision ='), descriptor.scriptSetup.content.indexOf('async function showAudioContextMenu'));
+    if (process.env.CE1_MENU_MUTANT === '1') menuDefinitions = menuDefinitions.replace('...cameraEffectsMenu.items()', '');
+    const quality = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildQualityChildren').getText(ast);
+    const menuTag = descriptor.template.content.match(/<ContextMenu\b[\s\S]*?\/>/)[0];
+    compile('MenuHarness', '<template><CaptureCanvas :screen-stream="mediaSources.cameraStream.value" :camera-stream="null" current-layout="camonly" :primary-source="cameraSource" :pip-source="screenSource" audio-only-sources="" @show-screen-menu="showScreenContextMenu" @show-camera-menu="showCameraContextMenu" /><CameraBubble :camera-stream="mediaSources.cameraStream.value" :recording="recording" camera-shape="circle" current-layout="pip" :pip-source="cameraSource" @show-camera-menu="showCameraContextMenu" @show-screen-menu="showScreenContextMenu" />' + menuTag + '</template><script setup lang="ts">' + `
+      import { ref, computed, reactive, watch } from 'vue';
+      import CaptureCanvas from './CaptureCanvas';
+      import CameraBubble from './CameraBubble';
+      import ContextMenu from './ContextMenu';
+      import { CameraEffectsMenu } from './CameraEffectsMenu';
+      import { QUALITY_PRESETS } from './useMediaSources';
+      const props = defineProps<{ state: any }>();
+      const { mediaSources, recording, statusMessage } = props.state;
+      const captureLifecycle = { isClosing: false };
+      const cameraSource = { id: 'cam', type: 'camera', name: 'Synthetic camera', on: true, isVideo: true };
+      const screenSource = { id: 'screen', type: 'screen', name: 'Synthetic screen', on: true, isVideo: true };
+      const showScreenContextMenu = () => { ctxMenu.title = 'Screen'; ctxMenu.items = []; ctxMenu.visible = true; };
+      const ctxMenu = reactive({ visible: false, x: 0, y: 0, title: '', items: [] as any[] });
+      const updateStreamAssignments = () => {};
+      ` + quality + menuDefinitions + '; defineExpose({ ctxMenu, cameraContextItems });</script>');
     let wiring = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const primarySource ='), descriptor.scriptSetup.content.indexOf('const totalDiskDisplay ='));
     if (process.env.CE1_ASSIGNMENT_MUTANT === '1') {
       wiring = wiring.replace('[primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream]', 'mediaSources.cameraStream');
@@ -101,7 +121,7 @@ class CameraEffectsSmoke {
         const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(this.resources, file))).digest('hex');
         if (actual !== hash) throw new Error('Asset hash mismatch: ' + file);
       }
-      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService', 'CaptureSessionLifecycle']) {
+      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService', 'CaptureSessionLifecycle', 'CameraEffectsMenu']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
           source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
@@ -126,6 +146,7 @@ class CameraEffectsSmoke {
       const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-renderer.cjs'), path.join(this.directory, 'renderer.cjs'));
+      fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-menu.cjs'), path.join(this.directory, 'menu-smoke.js'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-preview.cjs'), path.join(this.directory, 'preview-smoke.js'));
       // Bundle the real production classes with the app's electron-renderer target.
       await new Promise((resolve, reject) => webpack({

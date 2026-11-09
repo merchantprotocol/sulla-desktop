@@ -8,7 +8,7 @@
   <!-- Screen preview -->
   <div
     class="screen-preview"
-    @contextmenu.prevent="$emit('show-screen-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'camera' ? 'show-camera-menu' : 'show-screen-menu', $event)"
   >
     <video
       ref="screenVideoEl"
@@ -52,7 +52,7 @@
   <!-- Side-by-side camera (shown in sidebyside layout) -->
   <div
     class="sbs-camera"
-    @contextmenu.prevent="$emit('show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
   >
     <video
       ref="sbsCameraVideoEl"
@@ -84,7 +84,7 @@
   <!-- Full-screen camera (shown in camonly layout) -->
   <div
     class="fullscreen-camera"
-    @contextmenu.prevent="$emit('show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
   >
     <video
       ref="fullCameraVideoEl"
