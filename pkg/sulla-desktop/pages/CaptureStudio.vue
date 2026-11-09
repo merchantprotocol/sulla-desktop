@@ -848,7 +848,11 @@ async function selectLayout(layout: string) {
 
   if (layout === 'camonly') {
     const cam = vids.find(s => s.type === 'camera') || vids[0];
-    if (cam) assign.primary = cam.id;
+    if (cam) {
+      // Keep the other slot distinct when promoting the secondary camera.
+      if (assign.pip === cam.id) assign.pip = assign.primary;
+      assign.primary = cam.id;
+    }
   }
 
   if (layout === 'sidebyside' && !assign.pip) {

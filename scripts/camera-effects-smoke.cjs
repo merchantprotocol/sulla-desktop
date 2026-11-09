@@ -60,7 +60,7 @@ class CameraEffectsSmoke {
       const showAudioContextMenu = () => {};
       const ipcRenderer = { invoke: async() => {} };
       const syncPrompterFull = () => {};
-      ` + wiring + functions + '; defineExpose({ autoAssign, selectLayout, swapAssignments });</script>');
+      ` + wiring + functions + '; defineExpose({ autoAssign, selectLayout, swapAssignments, updateStreamAssignments });</script>');
   }
 
   async run() {

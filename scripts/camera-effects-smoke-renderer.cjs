@@ -41,14 +41,14 @@ class CameraEffectsRendererSmoke {
     const settled = async() => { await nextTick(); await nextTick(); };
     const identity = (selector, expected, reason) => assert.equal(element.querySelector(selector).srcObject, expected, reason);
     try {
-      vm.autoAssign();
+      vm.autoAssign(); vm.updateStreamAssignments();
       await settled();
       identity('.fullscreen-camera video', shared, 'PREVIEW_PRIMARY_SENTINEL: single camera fullscreen lost recorder stream');
       assert.equal(state.assign.pip, '');
       // Publish screen, then change assignments WITHOUT stream publication.
       state.sources.push(screenSource);
       state.mediaSources.screenStream.value = screen;
-      vm.autoAssign();
+      vm.autoAssign(); vm.updateStreamAssignments();
       await vm.selectLayout('pip');
       await settled();
       identity('.screen-preview video', shared, 'Camera primary in PiP');
@@ -68,6 +68,10 @@ class CameraEffectsRendererSmoke {
       await vm.selectLayout('camonly');
       await settled();
       identity('.fullscreen-camera video', shared, 'Layout-only camonly transition stale');
+      await vm.selectLayout('pip'); await settled();
+      identity('.screen-preview video', shared, 'Camera primary after layout-only return');
+      identity('.cam-bubble video', screen, 'Layout-only return lost distinct screen slot');
+      await vm.selectLayout('camonly'); await settled();
       // Real published processed camera replacement and release, independent of assignments.
       state.mediaSources.cameraStream.value = replacement;
       await settled();
