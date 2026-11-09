@@ -51,7 +51,26 @@ Static evidence, NOT runtime proof:
   composition root must pass Electron's native require, NOT webpack require.
   The default createRequire loader was removed to avoid webpack rewriting a
   dynamic module path before renderer integration. No dynamic module import
-  is bundled in this core. The adapter passes only local file URLs to MediaPipe.
+  is bundled in this core. The adapter passes a local WASM directory URL and injected native model bytes to MediaPipe; no model fetch(file://) is required.
 - No renderer build or packaged execution was permitted; native loader binding,
   file:// fetch/WASM script loading, CSP and model compatibility remain an
   explicit integration gate, not a verified capability.
+
+## CE-1 review smoke (remote CI only)
+
+The existing agent-tests job runs a path-scoped Electron 40 smoke for CE-1
+changes. Native require loads the unchanged vendored CJS runtime; injected
+fs.readFile supplies the pinned TFLite model bytes (Chromium fetch(file://)
+is not relied upon). It executes real CPU WASM inference on two generated
+canvas frames, then renders the actual compositor and checks output pixels.
+The renderer uses Capture Studio's nodeIntegration/contextIsolation/
+webSecurity preferences and file:// resources, plus a stricter offline CSP
+(the current Capture Studio HTML declares none). HTTP(S) requests are refused,
+all device permission requests denied, and no camera/user media is opened.
+
+A separate remote mutation replaces only the background draw with the old
+scaled overscan and must fail the scene-coordinate pixel assertion. Hashes
+are checked against manifest.distributedFiles before runtime execution.
+No local tests/builds were run. CI results, actual packaged bundle loading,
+target-platform performance and camera quality remain separate evidence;
+this smoke does not activate or integrate any UI.
