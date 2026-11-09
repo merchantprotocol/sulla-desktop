@@ -43,7 +43,13 @@ class Driver {
 
   async menu(selector = 'video', locked = false) {
     await this.pointer(selector, null, 'right');
-    await this.ready('document.querySelector("[data-menu-id=effect-framing]")', 'MENU_REACHABILITY_SENTINEL: actual parent video menu unreachable');
+    try {
+      await this.ready('document.querySelector("[data-menu-id=effect-framing]")', 'MENU_REACHABILITY_SENTINEL: actual parent video menu unreachable');
+    } catch (error) {
+      await this.screenshot('menu-failure').catch(() => {});
+      const summary = await this.read(`JSON.stringify({videos:[...document.querySelectorAll('video')].map(v=>({cls:v.parentElement&&v.parentElement.className,w:v.videoWidth,r:v.getBoundingClientRect().toJSON()})),menus:[...document.querySelectorAll('[class*=ctx-menu]')].map(e=>e.className),ids:[...document.querySelectorAll('[data-menu-id]')].map(e=>e.dataset.menuId),toast:document.querySelector('.status-toast')?.textContent,focused:document.hasFocus()})`).catch(e => String(e));
+      throw new Error(error.message + ' ' + selector + ' ' + summary);
+    }
     if (!locked) await this.ready('!document.querySelector("[data-menu-id=effect-framing]").disabled', 'Camera effects never settled');
   }
 
