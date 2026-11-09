@@ -135,6 +135,7 @@ class CameraEffectsRendererSmoke {
             speaker.releaseNative(); await driver.stopMic(); await driver.stopSpeaker(); released = true;
           });
           mounted.unmount();
+          await new Promise(resolve => setTimeout(resolve, 0));
           assert.equal(released, false, 'Shutdown skipped pending actual source startup');
           const track = destination.stream.getAudioTracks()[0].clone();
           settle(scenario === 'mic' ? { micRunning: true } : new MediaStream([track]));
