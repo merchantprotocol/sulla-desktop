@@ -133,15 +133,6 @@
               </button>
             </nav>
           </div>
-          <div v-for="facet in searchFacets" :key="'rail-' + facet.key" class="rail-section">
-            <div class="rail-label">{{ facet.label }}</div>
-            <nav class="rail-nav">
-              <label v-for="option in facet.options" :key="option.value" class="rail-item plain">
-                <input type="checkbox" :checked="selectedFacets[facet.key]?.includes(option.value)" @change="toggleFacet(facet.key, option.value)">
-                <span class="label">{{ option.label }}</span><span class="rail-count">{{ option.count }}</span>
-              </label>
-            </nav>
-          </div>
         </template>
 
         <div class="rail-footer">
@@ -161,59 +152,43 @@
         class="content"
       >
         <div class="content-head">
-          <h3>{{ searchMode ? `Results${ searchDraft.trim() ? ` for “${ searchDraft.trim() }”` : '' }` : headingLabel }}</h3>
-
-          <div class="search-box">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-            >
-              <circle
-                cx="11"
-                cy="11"
-                r="8"
-              />
-              <line
-                x1="21"
-                y1="21"
-                x2="16.65"
-                y2="16.65"
-              />
-            </svg>
-            <input
-              v-model="searchDraft"
-              type="text"
-              placeholder="Search the marketplace…"
-              @keydown.enter="submitSearch"
-            >
-            <button type="button" class="filter-trigger" :aria-expanded="filtersOpen" @click="filtersOpen = !filtersOpen">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
-              Filters
-            </button>
-            <div v-if="filtersOpen" class="filter-popover">
-              <section v-for="facet in searchFacets" :key="facet.key">
-                <strong>{{ facet.label }}</strong>
-                <label v-for="option in facet.options" :key="option.value">
-                  <input type="checkbox" :checked="selectedFacets[facet.key]?.includes(option.value)" @change="toggleFacet(facet.key, option.value)">
-                  {{ option.label }} <span>{{ option.count }}</span>
-                </label>
-              </section>
-              <button type="button" class="btn primary" @click="applySearchFilters">Show {{ filteredListings.length }} use cases</button>
-            </div>
-            <button v-if="searchMode" type="button" class="btn ghost" @click="selectedFacets = { topics: [], kinds: [], media: [] }; searchDraft = ''; searchMode = false; mp.setSearch('')">Clear all</button>
-            <span
-              v-if="mp.total.value > 0"
-              class="count"
-            >
-              {{ mp.total.value }} result{{ mp.total.value === 1 ? '' : 's' }}
-            </span>
+          <h3>{{ searchMode ? `Results${searchDraft.trim() ? ` for “${searchDraft.trim()}”` : ''}` : headingLabel }}</h3>
+          <div class="search-wrap">
+            <MarketplaceSearchBar
+              :query="searchDraft"
+              :filters-open="filtersOpen"
+              @update:query="searchDraft = $event"
+              @toggle-filters="filtersOpen = !filtersOpen"
+              @submit="submitSearch"
+            />
+            <MarketplaceFiltersPopover
+              :open="filtersOpen"
+              :facets="searchFacets"
+              :state="searchState"
+              :result-count="filteredListings.length"
+              @update:state="setSearchState"
+              @apply="applySearchFilters"
+              @close="filtersOpen = false"
+            />
           </div>
         </div>
 
+        <MarketplaceResultsView
+          v-if="searchMode"
+          :rows="filteredListings"
+          :facets="searchFacets"
+          :state="searchState"
+          :loading="mp.isLoading.value"
+          :install-state="mp.installStateFor"
+          :installing-id="mp.installing.value"
+          @update:state="applyState"
+          @open-detail="onOpen($event.id)"
+          @install="onInstall($event.id)"
+          @close="clearSearch"
+        />
+
         <div
-          v-if="mp.error.value"
+          v-else-if="mp.error.value"
           class="banner err"
         >
           <strong>Marketplace unavailable</strong>
@@ -426,20 +401,26 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
+import MarketplaceFiltersPopover from '@pkg/components/routines/MarketplaceFiltersPopover.vue';
+import MarketplaceResultsView from '@pkg/components/routines/MarketplaceResultsView.vue';
+import MarketplaceSearchBar from '@pkg/components/routines/MarketplaceSearchBar.vue';
+import { MarketplaceSearchController } from '@pkg/components/routines/MarketplaceSearchController';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
+import { MarketplaceListingRepository } from '@pkg/composables/MarketplaceListingRepository';
+import { MarketplaceSearchService, type MarketplaceSearchState, type MarketplaceFacet } from '@pkg/composables/MarketplaceSearchService';
+import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
-import { MarketplaceSearchService, type MarketplaceSearchState } from '@pkg/composables/MarketplaceSearchService';
-import { MarketplaceListingRepository } from '@pkg/composables/MarketplaceListingRepository';
-import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type SortValue = MarketplaceSort;
 
 const KIND_OPTIONS = MARKETPLACE_KIND_OPTIONS;
+const router = useRouter();
 const kindLabel = (kind: string) => marketplaceKindLabel(kind);
 
 const SORT_OPTIONS: { value: SortValue; label: string }[] = [
@@ -513,18 +494,18 @@ const filtersOpen = ref(false);
 const selectedFacets = ref<Record<string, string[]>>({ topics: [], kinds: [], media: [] });
 const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, topics: selectedFacets.value.topics, kinds: selectedFacets.value.kinds, media: selectedFacets.value.media, sort: 'relevance' }));
 const searchService = computed(() => new MarketplaceSearchService(catalogRows.value, catalogKinds.value));
-const searchFacets = computed(() => searchService.value.facets(searchState.value));
+
 const filteredListings = computed(() => searchService.value.search(searchState.value));
 const searchMode = ref(false);
+const searchController = new MarketplaceSearchController(router, () => searchService.value);
+const searchFacets = computed<MarketplaceFacet[]>(() => searchService.value.facets(searchState.value));
+async function applyState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media }; await searchController.apply(state); searchMode.value = true }
+function setSearchState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media } }
+async function clearSearch() { await searchController.clear(); searchDraft.value = ''; selectedFacets.value = { topics: [], kinds: [], media: [] }; searchMode.value = false }
 
-function toggleFacet(key: string, value: string): void {
-  const current = selectedFacets.value[key] ?? [];
-  selectedFacets.value = { ...selectedFacets.value, [key]: current.includes(value) ? current.filter(item => item !== value) : [...current, value] };
-}
 function applySearchFilters(): void {
-  searchMode.value = true;
   filtersOpen.value = false;
-  mp.setSearch(searchDraft.value).catch(() => undefined);
+  applyState(searchState.value).catch(() => undefined);
 }
 
 // ── My Submissions state ──
@@ -585,6 +566,7 @@ function onOpenDetailEvent(ev: Event) {
 }
 
 onMounted(async() => {
+  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media }; searchMode.value = searchController.isResultsMode }).catch(() => undefined);
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
   if (authed) {
@@ -606,10 +588,7 @@ function onKind(k: KindFilter) {
 function onSort(s: SortValue) {
   mp.setSort(s).catch(() => undefined);
 }
-function submitSearch() {
-  searchMode.value = true;
-  mp.setSearch(searchDraft.value).catch(() => undefined);
-}
+function submitSearch() { applyState(searchState.value).catch(() => undefined) }
 function onOpen(id: string) {
   mp.clearInstallResult();
   mp.loadDetail(id).catch(() => undefined);
@@ -1262,15 +1241,7 @@ function formatRelative(iso: string): string {
   gap: 14px;
 }
 
-.filter-trigger { display:flex; align-items:center; gap:7px; border:1px solid var(--border, #d8dde3); border-radius:18px; background:var(--surface, #fff); color:var(--text, #20252b); padding:7px 12px; cursor:pointer; }
-.filter-trigger svg { width:18px; height:18px; }
-.search-box { position:relative; }
-.filter-popover { position:absolute; z-index:5; top:calc(100% + 8px); right:0; width:min(320px,90vw); max-height:70vh; overflow:auto; padding:16px; background:var(--surface, #fff); color:var(--text, #20252b); border:1px solid var(--border, #d8dde3); border-radius:14px; box-shadow:0 12px 36px #0002; }
-.filter-popover section { display:grid; gap:8px; padding:6px 0 14px; }
-.filter-popover label { display:flex; gap:8px; align-items:center; }
-.filter-popover label span { margin-left:auto; color:var(--text-muted, #737b84); }
-.filter-popover .btn { width:100%; }
-@media (prefers-reduced-motion: reduce) { .filter-popover, .filter-trigger { transition:none !important; } }
+.search-wrap { position:relative; width:min(760px,100%); }
 
 .submission-row,
 .status,
