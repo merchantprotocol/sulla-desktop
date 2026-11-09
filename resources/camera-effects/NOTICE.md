@@ -24,3 +24,5 @@ if a local load fails. Do not claim measured frame rates without a device test.
 Assets downloaded byte-for-byte from the manifest URLs; npm tarball integrity
 verified against registry dist.integrity before extraction. Original upstream
 README.md preserved. Only an Apache-2.0 SPDX comment was prepended to JavaScript assets for the repository license scanner; distributedFiles records those hashes, files records original hashes.
+
+Third-party runtime lives in vendor/, the architecture guard's existing vendor exclusion. Application business logic remains fully scanned; no allowlist or guard change.

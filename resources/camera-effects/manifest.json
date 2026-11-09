@@ -17,8 +17,11 @@
     "sha256": "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"
   },
   "distributedFiles": {
-    "vision_bundle.cjs": "ad1e40443633d05db12965ee230104d589ce97a388161d71b1e323ebda0dddb0",
-    "wasm/vision_wasm_internal.js": "3bc64a419dfb98be3b93cd5ea7953fcc1f09311d557c0bba0ba313e62dd12cd2",
-    "wasm/vision_wasm_nosimd_internal.js": "d44b34141e829803ba0d58a0dd9e0a0e159536c8a7d28daf99c974a0f37f8321"
+    "selfie_multiclass_256x256.tflite": "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0",
+    "vendor/vision_bundle.cjs": "ad1e40443633d05db12965ee230104d589ce97a388161d71b1e323ebda0dddb0",
+    "vendor/wasm/vision_wasm_internal.wasm": "f00ec4731faa23b3e714d00e88d4d10e2df5c0a427d3a2b4ae6e3526fdd14ef7",
+    "vendor/wasm/vision_wasm_internal.js": "3bc64a419dfb98be3b93cd5ea7953fcc1f09311d557c0bba0ba313e62dd12cd2",
+    "vendor/wasm/vision_wasm_nosimd_internal.wasm": "3821ea9b1f7fb8c549ef2a064ef5c85750bf375c545a49fd6eea0df44a95f1f4",
+    "vendor/wasm/vision_wasm_nosimd_internal.js": "d44b34141e829803ba0d58a0dd9e0a0e159536c8a7d28daf99c974a0f37f8321"
   }
 }

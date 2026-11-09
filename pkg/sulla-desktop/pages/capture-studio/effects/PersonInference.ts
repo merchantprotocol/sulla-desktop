@@ -40,9 +40,9 @@ export class OfflinePersonInference implements PersonInference {
   ) {}
 
   async initialize(): Promise<void> {
-    const runtime = this.loadRuntime(path.join(this.resourceDirectory, 'vision_bundle.cjs'));
+    const runtime = this.loadRuntime(path.join(this.resourceDirectory, 'vendor', 'vision_bundle.cjs'));
     const files = await runtime.FilesetResolver.forVisionTasks(
-      pathToFileURL(path.join(this.resourceDirectory, 'wasm')).href,
+      pathToFileURL(path.join(this.resourceDirectory, 'vendor', 'wasm')).href,
     );
     this.segmenter = await runtime.ImageSegmenter.createFromOptions(files, {
       baseOptions: {
