@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 
-import { MarketplaceSearchService, type MarketplaceSearchState } from './MarketplaceSearchService';
+import { MarketplaceFacetVocabulary, MarketplaceSearchService, type MarketplaceSearchState } from './MarketplaceSearchService';
 
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
@@ -60,21 +60,42 @@ describe('MarketplaceSearchService', () => {
     expect(topicOptions({ ...state, topics: ['Money'] })).toEqual([
       { value: 'Money', label: 'Money', count: 2 }, { value: 'Operations', label: 'Operations', count: 2 },
     ]);
-    // Only Payroll Sync is a function, so Operations drops out entirely (zero count, not selected).
+    // Only Payroll Sync is a function, so Operations has zero matches. It stays in the list, dimmed.
     expect(topicOptions({ ...state, topics: ['Money'], kinds: ['function'] })).toEqual([
-      { value: 'Money', label: 'Money', count: 1 },
+      { value: 'Money', label: 'Money', count: 1 }, { value: 'Operations', label: 'Operations', count: 0 },
     ]);
   });
 
-  it('keeps zero-count options that are selected so they can be unticked', () => {
+  it('keeps zero-count options in the list, dimmed, instead of dropping them', () => {
+    const service = new MarketplaceSearchService(catalog);
+    // risk: data accuracy — dropping a zero-count option would hide a facet value the user can still see in the catalog
+    const topicOptions = (s: MarketplaceSearchState) => service.facets(s).find(f => f.key === 'topics')!.options;
+    expect(topicOptions({ ...state, q: 'bot' })).toEqual([
+      { value: 'Money', label: 'Money', count: 0 }, { value: 'Operations', label: 'Operations', count: 1 },
+    ]);
+    const kindOptions = service.facets({ ...state, q: 'sieve' }).find(f => f.key === 'kinds');
+    expect(kindOptions).toBeUndefined(); // only one kind has listings, so Type is hidden
+    const mediaOptions = service.facets({ ...state, q: 'bot' }).find(f => f.key === 'media');
+    expect(mediaOptions).toBeUndefined();
+    const ghost = service.facets({ ...state, topics: ['Ghost'] }).find(f => f.key === 'topics')!;
+    expect(ghost.options).toContainEqual({ value: 'Ghost', label: 'Ghost', count: 0 });
+  });
+
+  it('keeps a selected zero-count option so it can be unticked', () => {
     const service = new MarketplaceSearchService(catalog);
     // risk: data accuracy — a selected filter must stay visible even when the current search gives it no results
     const topic = service.facets({ ...state, q: 'bot', topics: ['Money'] }).find(f => f.key === 'topics')!;
     expect(topic.options).toEqual([
       { value: 'Money', label: 'Money', count: 0 }, { value: 'Operations', label: 'Operations', count: 1 },
     ]);
-    const ghost = service.facets({ ...state, topics: ['Ghost'] }).find(f => f.key === 'topics')!;
-    expect(ghost.options).toContainEqual({ value: 'Ghost', label: 'Ghost', count: 0 });
+  });
+
+  it('orders known kinds and media by vocabulary and unknown values last by label', () => {
+    const extra = row({ id: 'e1', slug: 'e1', name: 'Odd', kind: 'zebra' as MarketplaceBrowseRow['kind'], hero_media: { type: 'gif', url: 'u' } });
+    const service = new MarketplaceSearchService([...catalog, extra]);
+    const facets = service.facets(state);
+    expect(facets.find(f => f.key === 'kinds')!.options.map(o => o.value)).toEqual(['skill', 'routine', 'function', 'agent', 'zebra']);
+    expect(facets.find(f => f.key === 'media')!.options.map(o => o.value)).toEqual(['video', 'photos', 'gif']);
   });
 
   it('applies the Type filter through kindsById and counts Type from the same lookup', () => {
@@ -140,6 +161,14 @@ describe('MarketplaceSearchService', () => {
       { value: 'photos', label: 'Photos', count: 2 },
     ]);
     expect(facets.find(f => f.key === 'kinds')!.options.map(o => o.label)).toEqual(['Skill', 'Workflow', 'Function', 'Agent']);
+  });
+
+  it('takes its labels from an injected vocabulary', () => {
+    const vocabulary = new MarketplaceFacetVocabulary({ skill: 'Playbook' });
+    const service = new MarketplaceSearchService(catalog, new Map(), vocabulary);
+    const kinds = service.facets(state).find(f => f.key === 'kinds')!.options;
+    expect(kinds.find(o => o.value === 'skill')!.label).toBe('Playbook');
+    expect(kinds.find(o => o.value === 'agent')!.label).toBe('Agent');
   });
 
   it('summarises the filtered results as total and listings with video', () => {
