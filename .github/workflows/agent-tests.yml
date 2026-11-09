@@ -8,6 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      ce1_full_verification:
+        description: 'Opt-in isolated actual Capture Studio parent verification (no personal services/devices)'
+        type: boolean
+        default: false
+      expected_sha:
+        description: 'Required exact 40-character source SHA for CE-1 verification'
+        type: string
+        default: ''
       write_baseline:
         description: >-
           Regenerate .github/typecheck-baseline/{agent,main,renderer}.txt
@@ -308,7 +316,7 @@ jobs:
   # always installed, independent of the changed-file classification.
   agent-tests-full:
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !inputs.ce1_full_verification
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -347,3 +355,61 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Full agent runtime specs on main
         run: yarn test:agent
+
+  ce1-full-verification:
+    if: github.event_name == 'workflow_dispatch' && inputs.ce1_full_verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CE1_EXPECTED_SHA: ${{ inputs.expected_sha }}
+      NODE_OPTIONS: --max-old-space-size=12288
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact requested source
+        run: |
+          test "${#CE1_EXPECTED_SHA}" = 40
+          test "$(git rev-parse HEAD)" = "$CE1_EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - uses: actions/cache@v4
+        id: dependency-cache
+        with:
+          path: node_modules
+          key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
+      - name: Install dependencies only on the isolated remote runner
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+      - name: Install pinned Electron before network isolation
+        run: node node_modules/electron/install.js
+      - name: Compile pristine production renderer main preload then scripts-only runtime
+        run: node scripts/ts-wrapper.js scripts/camera-verification/compile.ts
+      - name: Actual parent trusted-pointer runtime (kernel-isolated network)
+        timeout-minutes: 4
+        run: |
+          mkdir -p "$RUNNER_TEMP/ce1-home"
+          sudo --preserve-env=PATH,CE1_EXPECTED_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT \
+            unshare --net --mount-proc env HOME="$RUNNER_TEMP/ce1-home" XDG_CONFIG_HOME="$RUNNER_TEMP/ce1-home/config" XDG_CACHE_HOME="$RUNNER_TEMP/ce1-home/cache" \
+            xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-verification/main.cjs
+      - name: Retain separate real-model and regression-mutant gate
+        timeout-minutes: 3
+        run: |
+          sudo --preserve-env=PATH unshare --net --mount-proc xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs
+      - name: License and architecture checks (remote only)
+        run: |
+          node scripts/check-license-headers.mjs
+          node scripts/architecture-guard/guard.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ce1-full-parent-${{ inputs.expected_sha }}-${{ github.run_attempt }}
+          path: artifacts/ce1
+          if-no-files-found: error
+          retention-days: 14
