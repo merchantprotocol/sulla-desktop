@@ -12,7 +12,7 @@ export class MarketplaceSearchService {
     const facets: MarketplaceFacet[] = [];
     const topics = this.counts(row => row.category || 'Uncategorized', state, 'topics');
     facets.push({ key: 'topics', label: 'Topic', options: topics });
-    const kinds = this.counts(row => this.kindsById.get(row.id)?.join('|') ?? row.kind, state, 'kinds');
+    const kinds = this.countMany(row => this.kindsById.get(row.id) ?? [row.kind], state, 'kinds');
     if (kinds.filter(option => option.count > 0).length >= 2) facets.push({ key: 'kinds', label: 'Type', options: kinds });
     const media = this.counts(row => row.hero_media?.type, state, 'media', true);
     if (media.filter(option => option.count > 0).length >= 2) facets.push({ key: 'media', label: 'Preview', options: media });
@@ -59,6 +59,22 @@ export class MarketplaceSearchService {
     for (const row of rows) {
       const value = valueFor(row);
       if (value && (!omitEmpty || value)) counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+    return [...counts].map(([value, count]) => ({ value, label: value, count })).sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  private countMany(valueFor: (row: MarketplaceBrowseRow) => string[], state: MarketplaceSearchState, ignoredKey: keyof MarketplaceSearchState) {
+    const counts = new Map<string, number>();
+    for (const row of this.rows) {
+      const query = state.q.trim().toLocaleLowerCase();
+      const matchesQuery = !query || [row.name, row.slug, row.description, row.tagline, row.category, ...(row.tags ?? [])].some(value => value?.toLocaleLowerCase().includes(query));
+      const topic = row.category || 'Uncategorized';
+      const rowKinds = this.kindsById.get(row.id) ?? [row.kind];
+      const filtered = matchesQuery && (ignoredKey === 'topics' || !state.topics.length || state.topics.includes(topic)) &&
+        (ignoredKey === 'kinds' || !state.kinds.length || rowKinds.some(kind => state.kinds.includes(kind))) &&
+        (ignoredKey === 'media' || !state.media.length || state.media.includes(row.hero_media?.type ?? ''));
+      if (!filtered) continue;
+      for (const value of new Set(valueFor(row))) counts.set(value, (counts.get(value) ?? 0) + 1);
     }
     return [...counts].map(([value, count]) => ({ value, label: value, count })).sort((a, b) => a.label.localeCompare(b.label));
   }
