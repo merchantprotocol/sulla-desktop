@@ -71,6 +71,8 @@ export class CameraEffectSession {
   private handle?: number;
   private active?: Promise<void>;
   private initializing?: Promise<void>;
+  private closing?: Promise<void>;
+  private released = false;
   private lastFrame = -1;
   private lastInference = -Infinity;
   private currentOutput?: MediaStream;
@@ -99,16 +101,19 @@ export class CameraEffectSession {
 
   private async initialize(): Promise<void> {
     try {
-      this.currentOutput = await this.surface.open(this.raw);
+      const output = await this.surface.open(this.raw);
       if (this.closed) return;
       await this.inference.initialize();
-      if (!this.closed) this.schedule();
+      if (!this.closed) {
+        this.currentOutput = output;
+        this.schedule();
+      }
     } catch (error) {
       this.failed = true;
       this.currentOutput = undefined;
-      this.surface.close();
-      this.inference.close();
       this.notify(error);
+    } finally {
+      if (this.closed || this.failed) this.release();
     }
   }
 
@@ -120,16 +125,36 @@ export class CameraEffectSession {
     this.options = next;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
-    if (this.handle !== undefined) this.surface.cancel(this.handle);
-    // Never close a model while an outstanding inference still owns its buffers.
-    await this.initializing;
-    await this.active;
-    this.inference.close();
-    this.surface.close();
     this.currentOutput = undefined;
+    if (this.handle !== undefined) {
+      try { this.surface.cancel(this.handle); } catch (error) { this.notify(error); }
+      this.handle = undefined;
+    }
+    this.closing = this.finishClose();
+    return this.closing;
+  }
+
+  private async finishClose(): Promise<void> {
+    try {
+      // Startup owns allocation until it settles; never race close against model creation.
+      await this.initializing;
+      await this.active;
+    } finally {
+      this.release();
+    }
+  }
+
+  private release(): void {
+    if (this.released) return;
+    this.released = true;
+    this.currentOutput = undefined;
+    try { this.inference.close(); } catch (error) { this.notify(error); }
+    finally {
+      try { this.surface.close(); } catch (error) { this.notify(error); }
+    }
   }
 
   private schedule(): void {
@@ -162,8 +187,7 @@ export class CameraEffectSession {
 
   private stopOutput(): void {
     this.closed = true;
-    this.inference.close();
-    this.surface.close();
+    this.release();
   }
 
   private enabled(): boolean { return this.options.autoFrame || this.options.soften > 0 || this.options.backgroundBlur > 0; }

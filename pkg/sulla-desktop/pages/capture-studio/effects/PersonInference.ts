@@ -70,7 +70,8 @@ export class OfflinePersonInference implements PersonInference {
   }
 
   close(): void {
-    this.segmenter?.close();
+    const segmenter = this.segmenter;
     this.segmenter = undefined;
+    segmenter?.close();
   }
 }

@@ -21,7 +21,8 @@ class SurfaceFixture implements FrameSurface {
   readonly output = new StreamFixture();
   private callback?: (timestamp: number) => void;
   rawFrames = 0;
-  open(): Promise<MediaStream> { return Promise.resolve(this.output.asStream()); }
+  delayOpen?: Promise<void>;
+  async open(): Promise<MediaStream> { await this.delayOpen; return this.output.asStream(); }
   schedule(callback: (timestamp: number) => void): number { this.callback = callback; return 1; }
   cancel(): void { this.callback = undefined; }
   drawRaw(): void { this.rawFrames++; }
@@ -36,13 +37,20 @@ class InferenceFixture implements PersonInference {
   calls = 0;
   closed = false;
   failInit = false;
+  delayInit?: Promise<void>;
+  throwClose = false;
   rejectFrame?: (error: Error) => void;
-  async initialize(): Promise<void> { if (this.failInit) throw new Error('Local assets unavailable'); }
+  async initialize(): Promise<void> { await this.delayInit; if (this.failInit) throw new Error('Local assets unavailable'); }
   infer(): Promise<PersonMask> {
     this.calls++;
     return new Promise((_resolve, reject) => { this.rejectFrame = reject; });
   }
-  close(): void { this.closed = true; }
+  close(): void { this.closed = true; if (this.throwClose) throw new Error('Model close failed'); }
+}
+class DeferredStartup {
+  readonly promise: Promise<void>;
+  resolve!: () => void;
+  constructor() { this.promise = new Promise(resolve => { this.resolve = resolve; }); }
 }
 class SessionFixture {
   readonly raw = new StreamFixture();
@@ -60,6 +68,52 @@ class SessionFixture {
 }
 
 describe('camera processing ownership and person-follow', () => {
+  // risk: data-integrity — late canvas creation must not republish an output after disposal.
+  it('waits for deferred surface startup and never publishes its late stream', async() => {
+    const fixture = new SessionFixture();
+    const deferred = new DeferredStartup();
+    fixture.surface.delayOpen = deferred.promise;
+    const starting = fixture.session.start();
+    const closing = fixture.session.close();
+    expect(fixture.session.stream).toBe(fixture.raw);
+    expect(fixture.surface.output.track.readyState).toBe('live');
+    deferred.resolve();
+    await starting;
+    await closing;
+    expect(fixture.session.stream).toBe(fixture.raw);
+    expect(fixture.surface.output.track.readyState).toBe('ended');
+    expect(fixture.raw.track.readyState).toBe('live');
+    fixture.surface.tick(100);
+    expect(fixture.inference.calls).toBe(0);
+  });
+
+  // risk: data-integrity — a model finishing initialization late must still be released.
+  it('waits for deferred model startup and closes surface even when model close throws', async() => {
+    const fixture = new SessionFixture();
+    const deferred = new DeferredStartup();
+    const entered = new DeferredStartup();
+    fixture.inference.delayInit = deferred.promise;
+    // Surface resolution microtasks finish before this explicit model-entry checkpoint.
+    const originalInitialize = fixture.inference.initialize.bind(fixture.inference);
+    fixture.inference.initialize = () => { entered.resolve(); return originalInitialize(); };
+    fixture.inference.throwClose = true;
+    const starting = fixture.session.start();
+    await entered.promise;
+    const closing = fixture.session.close();
+    expect(fixture.inference.closed).toBe(false);
+    expect(fixture.session.stream).toBe(fixture.raw);
+    deferred.resolve();
+    await starting;
+    await closing;
+    await fixture.session.close();
+    expect(fixture.inference.closed).toBe(true);
+    expect(fixture.surface.output.track.readyState).toBe('ended');
+    expect(fixture.raw.track.readyState).toBe('live');
+    expect(fixture.errors).toHaveLength(1);
+    fixture.surface.tick(100);
+    expect(fixture.inference.calls).toBe(0);
+  });
+
   // risk: data-integrity — appearance processing must not soften hair, clothes or the background.
   it('isolates face skin for softening while keeping all person categories sharp over background blur', () => {
     const mask = { width: 6, height: 1, categories: new Uint8Array([0, 1, 2, 3, 4, 5]) };
