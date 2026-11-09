@@ -55,7 +55,7 @@ class CameraEffectsRendererSmoke {
       for (const offset of [0, 255, 159 * 256, 160 * 256 - 1]) assert.equal(pixels[offset * 4 + 3], 255, 'Transparent blur edge');
       // Sample well inside the black region, away from its intentionally
       // softened left boundary, so blur radius does not change the oracle.
-      assert.ok(pixels[(80 * 256 + 250) * 4] < 12, 'High contrast background moved');
+      assert.ok(pixels[(80 * 256 + 255) * 4] < 12, 'High contrast background moved');
     }
     // Coordinate identity is a sharp-image oracle. Blur intentionally changes
     // background pixels, so do not compare them with the unfiltered x-gradient.

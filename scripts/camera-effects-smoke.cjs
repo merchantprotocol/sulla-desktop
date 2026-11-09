@@ -126,7 +126,7 @@ class CameraEffectsSmoke {
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
           source = source.replace(
             'context.drawImage(this.scene, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);',
-            'context.drawImage(this.scene, crop.x + 24, crop.y + 24, crop.width - 48, crop.height - 48, 0, 0, width, height);',
+            'context.drawImage(this.scene, crop.x + 20, crop.y + 20, crop.width - 40, crop.height - 40, 0, 0, width, height);',
           );
         }
         fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(source, {
