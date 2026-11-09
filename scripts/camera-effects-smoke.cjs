@@ -124,7 +124,10 @@ class CameraEffectsSmoke {
       for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService', 'CaptureSessionLifecycle', 'CameraEffectsMenu']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
-          source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
+          source = source.replace(
+            'context.drawImage(this.scene, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);',
+            'context.drawImage(this.scene, crop.x - 24, crop.y - 24, crop.width + 48, crop.height + 48, 0, 0, width, height);',
+          );
         }
         fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(source, {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
