@@ -13,6 +13,7 @@ class ContextMenuSmoke {
     this.app = createApp(MenuHarness, { state: this.state });
     this.vm = this.app.mount(this.element);
     await this.open();
+    assert.ok(this.element.querySelector('[data-menu-id="effect-framing"]'), 'MENU_REACHABILITY_SENTINEL: missing production effects entry');
     assert.deepEqual(mediaSources.camera.effectOptions, { autoFrame: false, soften: 0, backgroundBlur: 0 });
     for (const id of ['effect-framing', 'effect-soften', 'effect-backgroundBlur']) {
       assert.equal(this.vm.cameraContextItems.find(item => item.id === id).active, false, 'MENU_DEFAULT_OFF_SENTINEL');
@@ -64,6 +65,21 @@ class ContextMenuSmoke {
       button.click();
       await this.until(() => this.media.camera.effectOptions[key] === value && this.vm.cameraContextItems.find(item => item.id === 'effect-framing').disabled === false);
     }
+  }
+  async failure(trigger, initialization = false) {
+    const before = this.media.cameraStream.value;
+    trigger();
+    if (initialization) {
+      await this.open();
+      this.element.querySelector('[data-menu-id="effect-framing"]').click();
+    }
+    await this.until(() => !this.media.camera.effectOptions.autoFrame && this.vm.cameraContextItems.find(item => item.id === 'effect-framing').disabled === false);
+    assert.match(this.media.cameraEffectError.value, /Original camera video/);
+    for (const id of ['effect-framing', 'effect-soften', 'effect-backgroundBlur']) {
+      assert.equal(this.vm.cameraContextItems.find(item => item.id === id).active, false, 'MENU_FAILURE_STATUS_SENTINEL');
+    }
+    if (!initialization) assert.equal(this.media.cameraStream.value, before, 'Inference failure replaced shared track');
+    else assert.equal(this.media.cameraStream.value, this.media.camera.rawStream, 'Initialization failure did not use original camera');
   }
   close() { this.app?.unmount(); this.element?.remove(); }
 }

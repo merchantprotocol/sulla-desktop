@@ -263,6 +263,17 @@ jobs:
               grep -q 'ASSIGNMENT_SENTINEL:' /tmp/ce1-preview-mutant.log
             fi
           done
+      - name: Prove CE-1 production menu regression rejects unreachable controls
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_MENU_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-menu-mutant.log 2>&1; then
+            cat /tmp/ce1-menu-mutant.log
+            echo "Menu regression was not rejected"
+            exit 1
+          fi
+          cat /tmp/ce1-menu-mutant.log
+          grep -q 'MENU_REACHABILITY_SENTINEL:' /tmp/ce1-menu-mutant.log
       - name: Prove CE-1 saved-video check rejects raw recording
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2

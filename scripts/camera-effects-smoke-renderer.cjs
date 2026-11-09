@@ -179,6 +179,7 @@ class CameraEffectsRendererSmoke {
     navigator.mediaDevices.getUserMedia = async() => raw;
     navigator.mediaDevices.enumerateDevices = async() => [];
     const menu = new ContextMenuSmoke();
+    let failInference = false; let failInitialization = false;
     let media; let recorder; let loads = 0; let mounted; let recording = false;
     const preview = document.createElement('video');
     preview.muted = true;
@@ -187,13 +188,16 @@ class CameraEffectsRendererSmoke {
       // Deterministic synthetic inference boundary; real offline model is exercised separately below.
       const runtime = {
         FilesetResolver: { forVisionTasks: async() => ({}) },
-        ImageSegmenter: { createFromOptions: async() => ({
+        ImageSegmenter: { createFromOptions: async() => {
+          if (failInitialization) throw new Error('Synthetic initialization failure');
+          return ({
           segmentForVideo(frame) {
+            if (failInference) throw new Error('Synthetic inference failure');
             assert.equal(frame.width, 512, 'Raw inference input was not bounded');
             assert.equal(frame.height, 288);
             return { categoryMask: { width: 256, height: 144, getAsUint8Array: () => new Uint8Array(256 * 144) }, close() {} };
           }, close() {},
-        }) },
+        }); } },
       };
       const composition = new CameraEffectsComposition(require('path').dirname(resources), () => { loads++; return runtime; }, async() => new Uint8Array(), document, window, error => { throw error; });
       mounted = createApp({ setup() { media = useMediaSources(); recorder = useRecorder({ manageUnmount: false }); useAgentBridge(cameraBridge(media)); return () => h('div'); } });
@@ -268,8 +272,12 @@ class CameraEffectsRendererSmoke {
       // Keep assignment churn isolated from the existing encoded-frame timing oracle.
       await new PreviewBindingsSmoke((width, height) => this.canvas(width, height)).run(shared);
       await menu.strengths();
+      await menu.failure(() => { failInference = true; });
       await media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 });
       assert.equal(media.cameraStream.value, raw);
+      await menu.failure(() => { failInference = false; failInitialization = true; }, true);
+      failInitialization = false;
+      menu.close();
       await media.setCameraQuality('auto');
       assert.equal((await this.bridgeRelease()).ok, true);
       assert.equal(raw.getVideoTracks()[0].readyState, 'ended');

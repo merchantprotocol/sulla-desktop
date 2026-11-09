@@ -36,7 +36,8 @@ class CameraEffectsSmoke {
       }
       compile(name, source);
     }
-    const menuDefinitions = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const effectsMenuRevision ='), descriptor.scriptSetup.content.indexOf('async function showAudioContextMenu'));
+    let menuDefinitions = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const effectsMenuRevision ='), descriptor.scriptSetup.content.indexOf('async function showAudioContextMenu'));
+    if (process.env.CE1_MENU_MUTANT === '1') menuDefinitions = menuDefinitions.replace('...cameraEffectsMenu.items()', '');
     const quality = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildQualityChildren').getText(ast);
     const menuTag = descriptor.template.content.match(/<ContextMenu\b[\s\S]*?\/>/)[0];
     compile('MenuHarness', '<template><CaptureCanvas :screen-stream="mediaSources.cameraStream.value" :camera-stream="null" current-layout="camonly" :primary-source="cameraSource" :pip-source="null" audio-only-sources="" @show-camera-menu="showCameraContextMenu" />' + menuTag + '</template><script setup lang="ts">' + `
