@@ -7,7 +7,10 @@ class StrictFixtureRepository {
     this.settings = new Map();
     this.audit = [];
     this.micRunning = false;
+    this.modelReads = 0;
+    this.failNextModel = false;
     this.handlers = new Map([
+      ['ce1:model-read', () => { this.modelReads++; const fail = this.failNextModel; this.failNextModel = false; return { fail }; }],
       ['ce1:fixture-ready', () => ({ identity: 'ce1-strict-memory-v1' })],
       ['sulla-settings:get', key => {
         this.validateSetting(key); return this.settings.get(key) ?? null;
@@ -26,7 +29,7 @@ class StrictFixtureRepository {
       ['capture-studio:stop-tracking', () => true],
       ['teleprompter:close', () => true],
     ]);
-    this.sends = new Set(['capture-studio:rpc-register', 'capture-studio:rpc-unregister', 'capture-studio:rpc-reply', 'capture-studio:recording-state', 'audio-driver:mic-gain', 'audio-driver:mic-mute', 'ce1:mounted', 'ce1:closed', 'ce1:failure']);
+    this.sends = new Set(['capture-studio:rpc-register', 'capture-studio:rpc-unregister', 'capture-studio:rpc-reply', 'capture-studio:recording-state', 'audio-driver:mic-gain', 'audio-driver:mic-mute', 'ce1:mounted', 'ce1:stale-invoked', 'ce1:closed', 'ce1:failure']);
   }
 
   state() { return { micRunning: this.micRunning, speakerRunning: false }; }

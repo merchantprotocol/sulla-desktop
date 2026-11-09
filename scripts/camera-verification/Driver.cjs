@@ -4,7 +4,7 @@ const path = require('node:path');
 
 /** Trusted native pointer input; executeJavaScript is restricted to observations/oracles. */
 class Driver {
-  constructor(window, directory) { this.window = window; this.directory = directory; this.screenshots = []; }
+  constructor(window, directory, repository) { this.window = window; this.directory = directory; this.repository = repository; this.screenshots = []; }
   async read(code) { return this.window.webContents.executeJavaScript(code); }
   assert(value, message) { if (!value) throw new Error(message); }
 
@@ -41,9 +41,10 @@ class Driver {
     await this.ready('!document.querySelector(".ctx-menu-backdrop")', 'Menu did not close');
   }
 
-  async menu(selector = 'video') {
+  async menu(selector = 'video', locked = false) {
     await this.pointer(selector, null, 'right');
     await this.ready('document.querySelector("[data-menu-id=effect-framing]")', 'MENU_REACHABILITY_SENTINEL: actual parent video menu unreachable');
+    if (!locked) await this.ready('!document.querySelector("[data-menu-id=effect-framing]").disabled', 'Camera effects never settled');
   }
 
   async strength(label, key, value) {
@@ -62,11 +63,13 @@ class Driver {
     await this.ready('[...document.querySelectorAll("video")].some(v=>v.videoWidth>0&&v.readyState>=2)', 'No presented synthetic camera frame');
     await this.menu();
     this.assert(await this.read('!document.querySelector("[data-menu-id=effect-framing]").classList.contains("active")'), 'Effects not OFF by default');
+    this.assert(this.repository.modelReads === 0, 'OFF defaults loaded a model');
     await this.screenshot('02-default-off');
     await this.pointer('[data-menu-id=effect-framing]');
     await this.ready('!document.querySelector(".ctx-menu-backdrop")', 'Menu did not close');
-    await this.strength('Appearance softening', 'soften', 0.35);
-    await this.strength('Light background blur', 'backgroundBlur', 1);
+    for (const value of [0.15, 0.2, 0.35, 0.5, 0.75, 1, 0, 0.35]) await this.strength('Appearance softening', 'soften', value);
+    for (const value of [0.15, 0.2, 0.35, 0.5, 0.75, 1]) await this.strength('Light background blur', 'backgroundBlur', value);
+    await this.ready(`(()=>{const v=[...document.querySelectorAll('video')].find(v=>v.videoWidth&&v.getBoundingClientRect().width);if(!v)return false;const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;const x=c.getContext('2d');x.drawImage(v,0,0);return Math.abs(x.getImageData(52,180,1,1).data[0]-x.getImageData(60,180,1,1).data[0])<100;})()`, 'Preview transformation sentinel did not appear');
     await this.screenshot('03-effects-enabled');
     await this.menu();
     this.assert(await this.read('document.querySelector("[data-menu-id=effect-framing]").classList.contains("active")'), 'Framing not enabled');
@@ -74,9 +77,11 @@ class Driver {
     await this.outside();
     await this.pointer('.record-pill');
     await this.ready('document.querySelector(".record-pill.active")', 'Parent recording failed');
-    await this.menu();
+    await this.menu('video', true);
     this.assert(await this.read('document.querySelector("[data-menu-id=effect-framing]").disabled'), 'Recording did not lock effects');
     await this.screenshot('04-record-lock');
+    this.window.webContents.send('ce1:stale-action');
+    await this.ready('document.querySelector(".status-toast")?.textContent.includes("Stop recording")', 'Stale menu action escaped recording lock');
     await this.read('new Promise(resolve=>{let n=0;const tick=()=>++n>=90?resolve():requestAnimationFrame(tick);tick();})');
     await this.outside();
     await this.pointer('.record-pill');
@@ -87,6 +92,30 @@ class Driver {
     await this.menu();
     await this.pointer('[data-menu-id=effect-framing]');
     await this.screenshot('06-off');
+    await this.pointer('.src-toggle[title="Screen"]');
+    await this.pointer('.layout-btn', 'PiP');
+    await this.ready('document.querySelector(".cam-bubble video")?.videoWidth > 0', 'PiP camera missing');
+    await this.menu('.cam-bubble video'); await this.screenshot('06b-pip'); await this.outside();
+    await this.pointer('.screen-preview video', null, 'right');
+    await this.ready('document.querySelector(".ctx-menu-backdrop")', 'Screen context menu missing');
+    this.assert(await this.read('!document.querySelector("[data-menu-id=effect-framing]")'), 'Camera effects leaked into screen menu');
+    await this.outside();
+    await this.pointer('.layout-btn', 'Side by Side');
+    await this.menu('.sbs-camera video'); await this.screenshot('06c-side-by-side'); await this.outside();
+    await this.pointer('.src-toggle[title="Screen"]');
+    await this.pointer('.layout-btn', 'Camera Only');
+    this.repository.failNextModel = true;
+    await this.menu();
+    await this.pointer('[data-menu-id=effect-framing]');
+    await this.ready('document.querySelector(".status-toast")?.textContent.includes("Original camera video")', 'Initialization fallback status missing');
+    await this.screenshot('07-fallback');
+    await this.menu();
+    this.assert(await this.read('!document.querySelector("[data-menu-id=effect-framing]").classList.contains("active")'), 'Failure left active state');
+    await this.pointer('[data-menu-id=effect-framing]');
+    await this.menu();
+    await this.ready('document.querySelector("[data-menu-id=effect-framing]")?.classList.contains("active")', 'Failure retry did not recover');
+    await this.screenshot('08-retry');
+    await this.outside();
     return { screenshots: this.screenshots };
   }
 }

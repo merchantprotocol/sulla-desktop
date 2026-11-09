@@ -390,7 +390,18 @@ jobs:
       - name: Install pinned Electron before network isolation
         run: node node_modules/electron/install.js
       - name: Compile pristine production renderer main preload then scripts-only runtime
-        run: node scripts/ts-wrapper.js scripts/camera-verification/compile.ts
+        run: |
+          mkdir -p artifacts/ce1
+          if ! node scripts/ts-wrapper.js scripts/camera-verification/compile.ts > artifacts/ce1/compile.log 2>&1; then
+            cat artifacts/ce1/compile.log
+            python3 - <<'PYANNOTATION'
+          import pathlib
+          message = pathlib.Path('artifacts/ce1/compile.log').read_text()[-18000:]
+          print('::error title=CE1 compile diagnostics::' + message.replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D'))
+          PYANNOTATION
+            exit 1
+          fi
+          cat artifacts/ce1/compile.log
       - name: Actual parent trusted-pointer runtime (kernel-isolated network)
         timeout-minutes: 4
         run: |

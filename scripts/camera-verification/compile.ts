@@ -54,4 +54,4 @@ class CaptureVerificationCompiler {
     if (!runtimeStats.includes('pages/CaptureStudio.vue')) throw new Error('Actual parent missing from runtime graph');
   }
 }
-new CaptureVerificationCompiler().run().catch(error => { console.error(error); process.exitCode = 1; });
+new CaptureVerificationCompiler().run().catch(error => { console.error(error); console.error('::error title=CE1 compile::' + String(error.stack || error).replace(/%/g, '%25').replace(/\n/g, '%0A').replace(/\r/g, '%0D')); process.exitCode = 1; });

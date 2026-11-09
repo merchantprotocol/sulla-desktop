@@ -5,6 +5,7 @@ import path from 'path';
 
 import { SyntheticMedia } from './SyntheticMedia';
 import paths from './paths';
+import { FixtureHost } from './FixtureHost';
 import { StrictRendererHost } from './StrictRendererHost';
 
 class FixtureContext {
@@ -17,17 +18,15 @@ class FixtureContext {
     if (fixture.identity !== 'ce1-strict-memory-v1') throw new Error('Incorrect fixture composition');
   }
 }
-class FixtureHost {
-  async install(): Promise<void> {
-    // The complete parent uses no shared store/plugins. Personal-service host installation is excluded.
-    // Its settings/audio/RPC composables still use real Electron IPC into StrictFixtureRepository.
-  }
-}
 class FixtureResources {
   readonly directory = paths.resources;
   private readonly nativeRequire = createRequire(path.join(process.resourcesPath, 'ce1-native.cjs'));
   loadRuntime(filename: string): any { return this.nativeRequire(filename); }
-  readModel(filename: string): Promise<Uint8Array> { return readFile(filename); }
+  async readModel(filename: string): Promise<Uint8Array> {
+    const policy = await require('electron').ipcRenderer.invoke('ce1:model-read');
+    if (policy.fail) throw new Error('Intentional synthetic initialization failure');
+    return readFile(filename);
+  }
 }
 class VerificationEntry {
   async run(): Promise<void> {

@@ -2,7 +2,7 @@
 /** Enforces the fixture protocol even if production callers catch an unknown invoke. */
 export class StrictRendererHost {
   private readonly invokes = new Set([
-    'ce1:fixture-ready', 'sulla-settings:get', 'sulla-settings:set',
+    'ce1:fixture-ready', 'ce1:model-read', 'sulla-settings:get', 'sulla-settings:set',
     'audio-driver:get-state', 'audio-driver:start-mic', 'audio-driver:stop-mic',
     'audio-driver:set-system-input', 'audio-driver:set-mic-pcm-mode',
     'audio-driver:speaker-volume-get', 'capture-studio:get-sources',

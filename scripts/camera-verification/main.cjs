@@ -89,7 +89,7 @@ class ActualParentVerification {
       });
       await this.window.loadURL('app://./capture-studio.html');
       await mounted;
-      const driver = new Driver(this.window, this.directory);
+      const driver = new Driver(this.window, this.directory, this.repository);
       this.metadata.interactions = await driver.run();
       this.metadata.decode = await this.decode(driver);
       const closed = new Promise(resolve => ipcMain.once('ce1:closed', resolve));
