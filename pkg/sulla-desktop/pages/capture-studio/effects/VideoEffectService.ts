@@ -116,11 +116,6 @@ export class CameraEffectSession {
       if (this.closed) return;
       await this.inference.initialize();
       if (!this.closed) {
-        // Render before exposing the stream to preview/recording consumers.
-        // The stream otherwise starts with the raw seed frame from open().
-        await this.renderFrame(performance.now());
-      }
-      if (!this.closed) {
         this.currentOutput = output;
         this.schedule();
       }
@@ -185,7 +180,15 @@ export class CameraEffectSession {
 
   private async frame(timestamp: number): Promise<void> {
     try {
-      await this.renderFrame(timestamp);
+      if (this.closed) return;
+      if (!this.enabled() || this.failed) {
+        this.surface.drawRaw();
+      } else if (this.surface.video.currentTime !== this.lastFrame && timestamp - this.lastInference >= 66) {
+        this.lastFrame = this.surface.video.currentTime;
+        this.lastInference = timestamp;
+        const mask = await this.inference.infer(this.surface.video, timestamp);
+        if (!this.closed) this.compositor.draw(this.surface.video, this.surface.canvas, mask, this.options, timestamp);
+      }
     } catch (error) {
       this.failed = true;
       this.notify(error);
@@ -193,18 +196,6 @@ export class CameraEffectSession {
       try { if (!this.closed) this.surface.drawRaw(); } catch { this.stopOutput(); }
     } finally {
       if (!this.closed) this.schedule();
-    }
-  }
-
-  private async renderFrame(timestamp: number): Promise<void> {
-    if (this.closed) return;
-    if (!this.enabled() || this.failed) {
-      this.surface.drawRaw();
-    } else if (this.surface.video.currentTime !== this.lastFrame && timestamp - this.lastInference >= 66) {
-      this.lastFrame = this.surface.video.currentTime;
-      this.lastInference = timestamp;
-      const mask = await this.inference.infer(this.surface.video, timestamp);
-      if (!this.closed) this.compositor.draw(this.surface.video, this.surface.canvas, mask, this.options, timestamp);
     }
   }
 

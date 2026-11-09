@@ -52,11 +52,15 @@ class CameraEffectsRendererSmoke {
     for (const strength of [0.25, 1]) {
       compositor.draw(source, output, mask, { autoFrame: false, soften: 0, backgroundBlur: strength }, 0);
       const pixels = output.getContext('2d').getImageData(0, 0, 256, 160).data;
-      for (const x of [64, 80, 128, 160, 176]) {
-        assert.ok(Math.abs(pixels[(80 * 256 + x) * 4] - x) <= 3, 'Scene coordinates changed at ' + x);
-      }
       for (const offset of [0, 255, 159 * 256, 160 * 256 - 1]) assert.equal(pixels[offset * 4 + 3], 255, 'Transparent blur edge');
       assert.ok(pixels[(80 * 256 + 230) * 4] < 12, 'High contrast background moved');
+    }
+    // Coordinate identity is a sharp-image oracle. Blur intentionally changes
+    // background pixels, so do not compare them with the unfiltered x-gradient.
+    compositor.draw(source, output, mask, { autoFrame: false, soften: 0, backgroundBlur: 0 }, 10);
+    const sharpPixels = output.getContext('2d').getImageData(0, 0, 256, 160).data;
+    for (const x of [64, 80, 128, 160, 176]) {
+      assert.ok(Math.abs(sharpPixels[(80 * 256 + x) * 4] - x) <= 3, 'Scene coordinates changed at ' + x);
     }
     const reference = output.getContext('2d').getImageData(0, 0, 256, 160);
     const framed = new FrameCompositor(new PersonFraming(), () => this.layer());
