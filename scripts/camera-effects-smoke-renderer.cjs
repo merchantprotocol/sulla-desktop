@@ -4,9 +4,17 @@ const { readFile } = require('node:fs/promises');
 const { ipcRenderer } = require('electron');
 const { FrameCompositor, PersonFraming } = require('./FrameCompositor');
 const { OfflinePersonInference, VisionInitializationGate } = require('./PersonInference');
+const { BrowserFrameSurface } = require('./VideoEffectService');
 const nativeRequire = require('node:module').createRequire(process.resourcesPath + '/ce1-native.cjs');
 
 class CameraEffectsRendererSmoke {
+  surfaces = [];
+
+  layer() {
+    const canvas = this.canvas(1, 1);
+    this.surfaces.push(canvas);
+    return canvas;
+  }
   canvas(width, height) {
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
@@ -25,7 +33,7 @@ class CameraEffectsRendererSmoke {
     context.putImageData(image, 0, 0);
     context.fillStyle = 'black'; context.fillRect(210, 0, 46, 160);
     const output = this.canvas(256, 160);
-    const compositor = new FrameCompositor(new PersonFraming(), () => this.canvas(1, 1));
+    const compositor = new FrameCompositor(new PersonFraming(), () => this.layer());
     const categories = new Uint8Array(256 * 160);
     for (let y = 0; y < 160; y++) categories.fill(4, y * 256 + 60, y * 256 + 84);
     const mask = { width: 256, height: 160, categories };
@@ -48,7 +56,7 @@ class CameraEffectsRendererSmoke {
       assert.ok(Math.abs(actual[0] - expected) <= 3, 'Framed foreground/background coordinates changed');
     }
     // Use a fresh tracker to test centered no-subject crop without prior tracking state.
-    const centered = new FrameCompositor(new PersonFraming(), () => this.canvas(1, 1));
+    const centered = new FrameCompositor(new PersonFraming(), () => this.layer());
     // Reusing layers must clear mask alpha, not retain a previous person.
     categories.fill(0);
     centered.draw(source, output, mask, { autoFrame: true, soften: 0, backgroundBlur: 0 }, 100);
@@ -68,7 +76,7 @@ class CameraEffectsRendererSmoke {
   }
 
   async run() {
-    let inference; let second;
+    let inference; let second; let surface; let raw;
     try {
       const { compositor, source, output } = this.pixels();
       if (process.argv.includes('--ce1-pixels-only')) {
@@ -76,6 +84,17 @@ class CameraEffectsRendererSmoke {
         return;
       }
       const resources = process.argv.find(arg => arg.startsWith('--ce1-resources=')).slice('--ce1-resources='.length);
+      // risk: media-ownership — cap allocations without stopping caller audio/video.
+      const generated = this.canvas(1920, 1080);
+      generated.getContext('2d').fillRect(0, 0, 1920, 1080);
+      raw = generated.captureStream(1);
+      surface = new BrowserFrameSurface(document, window);
+      const processed = await surface.open(raw);
+      assert.equal(surface.canvas.width, 1280);
+      assert.equal(surface.canvas.height, 720);
+      assert.equal(processed.getAudioTracks().length, 0);
+      surface.close();
+      assert.equal(raw.getVideoTracks()[0].readyState, 'live', 'Raw track ownership changed');
       const gate = new VisionInitializationGate();
       inference = new OfflinePersonInference(resources, nativeRequire, filename => readFile(filename), gate);
       second = new OfflinePersonInference(resources, nativeRequire, filename => readFile(filename), gate);
@@ -90,12 +109,15 @@ class CameraEffectsRendererSmoke {
         assert.equal(output.getContext('2d').getImageData(128, 80, 1, 1).data[3], 255);
       }
       compositor.close();
+      assert.ok(this.surfaces.every(canvas => canvas.width === 0 && canvas.height === 0), 'Compositor surfaces retained on close');
       ipcRenderer.send('ce1-result', { ok: true, evidence: 'pixel coordinates/edges/crop/selective skin; two real offline WASM/model inferences and composites' });
     } catch (error) {
       ipcRenderer.send('ce1-result', { ok: false, error: error.stack || String(error) });
     } finally {
       inference?.close();
       second?.close();
+      surface?.close();
+      raw?.getTracks().forEach(track => track.stop());
     }
   }
 }

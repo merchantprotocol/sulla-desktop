@@ -26,7 +26,7 @@ class CameraEffectsSmoke {
         const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(this.resources, file))).digest('hex');
         if (actual !== hash) throw new Error('Asset hash mismatch: ' + file);
       }
-      for (const name of ['FrameCompositor', 'PersonInference']) {
+      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
           source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
