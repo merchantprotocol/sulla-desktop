@@ -5,6 +5,7 @@ const { ipcRenderer } = require('electron');
 const { FrameCompositor, PersonFraming } = require('./FrameCompositor');
 const { OfflinePersonInference, VisionInitializationGate } = require('./PersonInference');
 const { createApp, h } = require('vue');
+const { PreviewBindingsSmoke } = require('./preview-smoke');
 const { CameraEffectsComposition, cameraEffectsKey } = require('./CameraEffectsComposition');
 const { useMediaSources } = require('./useMediaSources');
 const { useRecorder } = require('./useRecorder');
@@ -237,7 +238,7 @@ class CameraEffectsRendererSmoke {
           const timeout = setTimeout(() => reject(new Error('Decoded frame presentation timed out')), 10000);
           playback.requestVideoFrameCallback((_now, metadata) => {
             try {
-              assert.ok(playback.readyState >= 2 && metadata.presentedFrames > 0, 'Decoded frame not ready');
+              assert.ok(playback.readyState >= 2 && metadata.presentedFrames > 0, 'Decoded frame not ready: ' + JSON.stringify({ readyState: playback.readyState, metadata }));
               assert.ok(Number.isFinite(metadata.width) && metadata.width > 0 && Number.isFinite(metadata.height) && metadata.height > 0, 'Presented dimensions unavailable');
               decoded.getContext('2d').drawImage(playback, 0, 0, 1280, 720);
               resolve();
@@ -260,6 +261,8 @@ class CameraEffectsRendererSmoke {
         const live = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
         assert.ok(live[1] > 180 && live[0] < 70, 'Preview and saved video differ');
       } finally { playback.pause(); playback.src = ''; playback.remove(); URL.revokeObjectURL(url); }
+      // Keep assignment churn isolated from the existing encoded-frame timing oracle.
+      await new PreviewBindingsSmoke((width, height) => this.canvas(width, height)).run(shared);
       await media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 });
       assert.equal(media.cameraStream.value, raw);
       await media.setCameraQuality('auto');

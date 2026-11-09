@@ -18,6 +18,51 @@ class CameraEffectsSmoke {
     fs.cpSync(path.resolve('resources/camera-effects'), this.resources, { recursive: true });
   }
 
+  compilePreview(ast, descriptor) {
+    // Mount actual production preview SFCs, with the parent's exact assignment code
+    // and prop bindings. Only unrelated window/audio/device startup is omitted.
+    const compile = (name, source) => {
+      const { descriptor, errors } = parse(source, { filename: name + '.vue' });
+      if (errors.length) throw new Error(errors.join('\n'));
+      const script = compileScript(descriptor, { id: name, inlineTemplate: true });
+      fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(script.content, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText);
+    };
+    for (const name of ['CaptureCanvas', 'CameraBubble']) {
+      let source = fs.readFileSync('pkg/sulla-desktop/pages/capture-studio/' + name + '.vue', 'utf8');
+      if (name === 'CaptureCanvas' && process.env.CE1_PREVIEW_MUTANT === '1') {
+        source = source.replace('if (fullEl) fullEl.srcObject = stream || null;', 'if (fullEl) fullEl.srcObject = props.cameraStream || null;');
+      }
+      compile(name, source);
+    }
+    let wiring = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const primarySource ='), descriptor.scriptSetup.content.indexOf('const totalDiskDisplay ='));
+    if (process.env.CE1_ASSIGNMENT_MUTANT === '1') {
+      wiring = wiring.replace('[primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream]', 'mediaSources.cameraStream');
+    }
+    const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['autoAssign', 'selectLayout', 'swapAssignments'].includes(node.name?.text)).map(node => node.getText(ast)).join('\n');
+    const bindings = ['CaptureCanvas', 'CameraBubble'].map(name => descriptor.template.content.match(new RegExp('<' + name + '\\b[\\s\\S]*?/>'))[0]).join('\n');
+    compile('PreviewHarness', '<template>' + bindings + '</template><script setup lang="ts">' + `
+      import { ref, computed, watch } from 'vue';
+      import CaptureCanvas from './CaptureCanvas';
+      import CameraBubble from './CameraBubble';
+      const props = defineProps<{ state: any }>();
+      const { sources, assign, mediaSources, currentLayout } = props.state;
+      const videoSources = computed(() => sources.filter((s: any) => s.isVideo && s.on));
+      const captureCanvasRef = ref(null);
+      const teleprompterRef = ref(null);
+      const prompterEnabled = ref(false);
+      const recording = ref(false);
+      const cameraShape = ref('circle');
+      const audioOnlySources = '';
+      const showScreenContextMenu = () => {};
+      const showCameraContextMenu = () => {};
+      const showAudioContextMenu = () => {};
+      const ipcRenderer = { invoke: async() => {} };
+      const syncPrompterFull = () => {};
+      ` + wiring + functions + '; defineExpose({ autoAssign, selectLayout, swapAssignments, updateStreamAssignments });</script>');
+  }
+
   async run() {
     let code = 1;
     try {
@@ -36,6 +81,7 @@ class CameraEffectsSmoke {
         ts.forEachChild(node, visit);
       };
       visit(ast);
+      this.compilePreview(ast, descriptor);
       if (!releaseHandler) throw new Error('Actual SFC camera.release handler not found');
       fs.writeFileSync(path.join(this.directory, 'camera-bridge.js'), ts.transpileModule('export const cameraBridge = (mediaSources: any) => ({' + releaseHandler + '});', {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -80,6 +126,7 @@ class CameraEffectsSmoke {
       const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-renderer.cjs'), path.join(this.directory, 'renderer.cjs'));
+      fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-preview.cjs'), path.join(this.directory, 'preview-smoke.js'));
       // Bundle the real production classes with the app's electron-renderer target.
       await new Promise((resolve, reject) => webpack({
         mode: 'production', target: 'electron-renderer',
