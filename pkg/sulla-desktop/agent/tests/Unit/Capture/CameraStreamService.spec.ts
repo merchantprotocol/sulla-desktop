@@ -5,6 +5,15 @@ import { CameraStreamService } from '../../../../pages/capture-studio/effects/Ca
 import { VideoEffectService, type FrameSurface } from '../../../../pages/capture-studio/effects/VideoEffectService';
 import type { PersonInference } from '../../../../pages/capture-studio/effects/PersonInference';
 
+/** Synchronize on the injected acquisition boundary, never an assumed microtask count. */
+class DeferredAcquisition {
+  private signalStarted!: () => void;
+  private resolveStream!: (stream: MediaStream) => void;
+  readonly started = new Promise<void>(resolve => { this.signalStarted = resolve; });
+  private readonly stream = new Promise<MediaStream>(resolve => { this.resolveStream = resolve; });
+  acquire(): Promise<MediaStream> { this.signalStarted(); return this.stream; }
+  resolve(stream: MediaStream): void { this.resolveStream(stream); }
+}
 class CameraFixture {
   stopped = false;
   getVideoTracks(): any[] { return [{ stop: () => { this.stopped = true; }, addEventListener: () => undefined }]; }
@@ -62,14 +71,14 @@ describe('CameraStreamService actual core lifecycle', () => {
 
   it('risk: device-privacy — stale acquisition after switch or unmount is stopped, never published', async() => {
     const fixture = new CompositionFixture(); const stale = new CameraFixture(); const fresh = new CameraFixture();
-    let resolve!: (value: MediaStream) => void;
+    const deferred = new DeferredAcquisition();
     let calls = 0;
-    const camera = fixture.service(() => ++calls === 1 ? new Promise(value => { resolve = value; }) : Promise.resolve(fresh.asStream()));
+    const camera = fixture.service(() => ++calls === 1 ? deferred.acquire() : Promise.resolve(fresh.asStream()));
     const first = camera.acquire({ video: true });
     const rejected = expect(first).rejects.toThrow('superseded');
-    await Promise.resolve();
+    await deferred.started;
     await camera.acquire({ video: true });
-    resolve(stale.asStream());
+    deferred.resolve(stale.asStream());
     await rejected;
     expect(stale.stopped).toBe(true);
     expect(camera.stream).toBe(fresh);
@@ -81,13 +90,13 @@ describe('CameraStreamService actual core lifecycle', () => {
 
   it('risk: device-privacy — dispose drains a deferred acquisition; invalid options leave current stream intact', async() => {
     const fixture = new CompositionFixture(); const raw = new CameraFixture();
-    let resolve!: (value: MediaStream) => void;
-    const camera = fixture.service(() => new Promise(value => { resolve = value; }));
+    const deferred = new DeferredAcquisition();
+    const camera = fixture.service(() => deferred.acquire());
     const acquisition = camera.acquire({ video: true });
     const rejected = expect(acquisition).rejects.toThrow('superseded');
-    await Promise.resolve();
+    await deferred.started;
     const closed = camera.dispose();
-    resolve(raw.asStream());
+    deferred.resolve(raw.asStream());
     await rejected; await closed;
     expect(raw.stopped).toBe(true);
     expect(fixture.published).toBeNull();
@@ -102,13 +111,13 @@ describe('CameraStreamService actual core lifecycle', () => {
 
 it('risk: recording-integrity — deferred requested camera + options must settle before recorder stream selection', async() => {
   const fixture = new CompositionFixture(); const raw = new CameraFixture();
-  let resolve!: (value: MediaStream) => void;
-  const camera = fixture.service(() => new Promise(value => { resolve = value; }));
+  const deferred = new DeferredAcquisition();
+  const camera = fixture.service(() => deferred.acquire());
   const acquisition = camera.acquire({ video: true });
-  await Promise.resolve();
+  await deferred.started;
   const options = camera.setOptions({ autoFrame: true, soften: 0, backgroundBlur: 0 });
   const selection = camera.beginRecording();
-  resolve(raw.asStream());
+  deferred.resolve(raw.asStream());
   await acquisition; await options;
   const selected = await selection;
   expect(selected).toBe(fixture.published);
