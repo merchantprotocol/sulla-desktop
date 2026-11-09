@@ -505,6 +505,16 @@ const loadingMessage = ref('Initializing Capture Studio...');
 // ─── State ───
 const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
+// All entry points (UI, setup and RPC) share the parent teardown barrier.
+mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
+mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
+mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
+mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
+mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
+mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
+audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
+audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
+speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
 const cameraShape = ref('circle');
@@ -757,8 +767,8 @@ function hasNativeSystemAudio(): boolean {
 async function enableSystemAudio(): Promise<void> {
   if (hasNativeSystemAudio()) return;
 
-  const native = await speakerCapture.acquireNative();
-  if (native) return;
+  const native = await speakerCapture.acquireNative(() => captureLifecycle.isClosing);
+  if (captureLifecycle.isClosing || native) return;
 
   // BlackHole/CoreAudio is intentionally fallback-only. It remains useful on
   // older Electron/macOS combinations where native loopback is unavailable.
@@ -776,6 +786,7 @@ async function disableSystemAudio(): Promise<void> {
 
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
+  return captureLifecycle.track(async() => {
   if (captureLifecycle.isClosing) return;
   if (src.type === 'camera') {
     try { mediaSources.camera.assertMutable(); }
@@ -789,13 +800,13 @@ async function toggleSrc(src: Source) {
       if (src.type === 'screen') {
         await mediaSources.acquireScreen();
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
-        updateStreamAssignments();
+        if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'camera') {
         await mediaSources.acquireCamera();
         console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
-        updateStreamAssignments();
+        if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'mic') {
-        await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
+        await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
       } else if (src.type === 'system') {
         await enableSystemAudio();
       }
@@ -815,6 +826,7 @@ async function toggleSrc(src: Source) {
     }
   }
 
+  if (captureLifecycle.isClosing) { src.on = false; return; }
   autoAssign();
   updateStreamAssignments();
   console.log('[CaptureStudio] After autoAssign:', {
@@ -825,6 +837,7 @@ async function toggleSrc(src: Source) {
     screenStream:  mediaSources.screenStream.value ? 'active' : 'null',
     cameraStream:  mediaSources.cameraStream.value ? 'active' : 'null',
     primaryStream: primaryStream.value ? 'active' : 'null',
+  });
   });
 }
 
@@ -1220,7 +1233,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
       if (deviceLabel && deviceLabel !== 'default') {
         await audioDriver.setMicDevice(deviceLabel);
       }
-      await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
+      await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -1390,7 +1403,7 @@ async function showScreenContextMenu(e: MouseEvent) {
             src.name = s.name;
             src.status = 'Capturing';
             autoAssign();
-            updateStreamAssignments();
+            if (!captureLifecycle.isClosing) updateStreamAssignments();
           }
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
@@ -1444,7 +1457,7 @@ async function showCameraContextMenu(e: MouseEvent) {
       action: async() => {
         try {
           await mediaSources.switchCamera(cam.deviceId);
-          updateStreamAssignments();
+          if (!captureLifecycle.isClosing) updateStreamAssignments();
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch camera:', err);
         }

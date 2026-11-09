@@ -9,6 +9,9 @@ const { CameraEffectsComposition, cameraEffectsKey } = require('./CameraEffectsC
 const { useMediaSources } = require('./useMediaSources');
 const { useRecorder } = require('./useRecorder');
 const { useAgentBridge } = require('./useAgentBridge');
+const { sourceEnable } = require('./source-enable');
+const { useAudioDriver } = require('./useAudioDriver');
+const { useSpeakerCapture } = require('./useSpeakerCapture');
 const { cameraBridge } = require('./camera-bridge');
 const { CaptureSessionLifecycle } = require('./CaptureSessionLifecycle');
 const { BrowserFrameSurface } = require('./VideoEffectService');
@@ -97,6 +100,65 @@ class CameraEffectsRendererSmoke {
     } finally { ipcRenderer.send = send; }
   }
 
+  async sourceStartup() {
+    // risk: media-privacy — execute production SFC toggles and real composables after teardown begins.
+    const originalInvoke = ipcRenderer.invoke;
+    const originalDisplay = navigator.mediaDevices.getDisplayMedia;
+    const audio = new AudioContext();
+    const destination = audio.createMediaStreamDestination();
+    const oscillator = audio.createOscillator(); oscillator.connect(destination); oscillator.start();
+    try {
+      for (const scenario of ['native-success', 'native-rejection', 'mic']) {
+        const lifecycle = new CaptureSessionLifecycle();
+        let settle; let entered;
+        const started = new Promise(resolve => { entered = resolve; });
+        const deferred = new Promise((resolve, reject) => { settle = scenario === 'native-rejection' ? () => reject(new Error('synthetic native rejection')) : resolve; });
+        let fallback = 0; let micStops = 0; let driver; let speaker; let publications = 0;
+        ipcRenderer.invoke = async(channel) => {
+          if (channel === 'audio-driver:start-mic') { entered(); return deferred; }
+          if (channel === 'audio-driver:stop-mic') { micStops++; return { micRunning: false }; }
+          if (channel === 'audio-driver:start-speaker') { fallback++; return { speakerRunning: true }; }
+          if (channel === 'audio-driver:stop-speaker') return { speakerRunning: false };
+          throw new Error('Unexpected synthetic IPC: ' + channel);
+        };
+        navigator.mediaDevices.getDisplayMedia = async() => { entered(); return deferred; };
+        const element = document.createElement('div'); document.body.appendChild(element);
+        const mounted = createApp({ setup() { driver = useAudioDriver(); speaker = useSpeakerCapture({ manageUnmount: false }); return () => h('div'); } });
+        mounted.mount(element);
+        try {
+          const toggle = sourceEnable(lifecycle, {}, driver, speaker, { value: '' }, () => { publications++; }, () => { publications++; }, { value: 'audioonly' }, {}, { value: [] }, { value: null });
+          const source = { id: scenario, type: scenario === 'mic' ? 'mic' : 'system', on: false };
+          const startup = toggle(source);
+          await started;
+          let released = false;
+          const shutdown = lifecycle.close(async() => {
+            speaker.releaseNative(); await driver.stopMic(); await driver.stopSpeaker(); released = true;
+          });
+          mounted.unmount();
+          assert.equal(released, false, 'Shutdown skipped pending actual source startup');
+          const track = destination.stream.getAudioTracks()[0].clone();
+          settle(scenario === 'mic' ? { micRunning: true } : new MediaStream([track]));
+          await startup; await shutdown;
+          assert.equal(released, true);
+          assert.equal(speaker.nativeStream.value, null, 'Late native stream resurrected');
+          assert.equal(speaker.active.value, false);
+          assert.equal(speaker.level.value, 0, 'Late native meter resurrected');
+          assert.equal(driver.micRunning.value, false, 'Late mic start resurrected');
+          assert.ok(micStops >= 1);
+          assert.equal(fallback, 0, 'Native failure resumed BlackHole after shutdown');
+          assert.equal(publications, 0, 'Closing source startup published assignments');
+          assert.equal(source.on, false);
+          if (scenario === 'native-success') assert.equal(track.readyState, 'ended', 'Cancelled native track leaked');
+          track.stop();
+        } finally { mounted.unmount(); element.remove(); }
+      }
+      console.log('CE1 production source-enable late native/mic/fallback regressions passed');
+    } finally {
+      oscillator.stop(); destination.stream.getTracks().forEach(track => track.stop()); await audio.close();
+      ipcRenderer.invoke = originalInvoke; navigator.mediaDevices.getDisplayMedia = originalDisplay;
+    }
+  }
+
   async composition(resources) {
     // risk: saved-video-integrity — actual composition + composables + disk writer, no devices.
     const source = this.canvas(1920, 1080);
@@ -167,20 +229,36 @@ class CameraEffectsRendererSmoke {
       const url = URL.createObjectURL(new Blob([saved], { type: 'video/webm' }));
       try {
         await new Promise((resolve, reject) => { playback.onloadeddata = resolve; playback.onerror = () => reject(new Error('Saved WebM did not decode')); playback.src = url; playback.load(); });
-        // loadeddata does not guarantee Chromium has presented a decoded frame.
-        const presented = new Promise(resolve => playback.requestVideoFrameCallback(resolve));
-        await playback.play(); await presented; playback.pause();
+        assert.ok(Number.isFinite(playback.videoWidth) && playback.videoWidth > 0 && Number.isFinite(playback.videoHeight) && playback.videoHeight > 0, 'Decoded dimensions unavailable');
         const decoded = this.canvas(1280, 720);
-        decoded.getContext('2d').drawImage(playback, 0, 0, 1280, 720);
+        // Rasterize while the decoded frame is presented, before pause can release its texture.
+        const presented = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Decoded frame presentation timed out')), 10000);
+          playback.requestVideoFrameCallback((_now, metadata) => {
+            try {
+              assert.ok(playback.readyState >= 2 && metadata.presentedFrames > 0, 'Decoded frame not ready');
+              assert.ok(Number.isFinite(metadata.width) && metadata.width > 0 && Number.isFinite(metadata.height) && metadata.height > 0, 'Presented dimensions unavailable');
+              decoded.getContext('2d').drawImage(playback, 0, 0, 1280, 720);
+              resolve();
+            } catch (error) { reject(error); } finally { clearTimeout(timeout); }
+          });
+        });
+        document.body.appendChild(playback);
+        await playback.play(); await presented;
         const edge = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
-        assert.equal(edge[3], 255, 'Saved WebM frame was not presented');
-        assert.ok(edge[1] > 180 && edge[0] < 70, 'Saved video contains raw red edge, not processed framing: ' + [...edge]);
+        const center = decoded.getContext('2d').getImageData(640, 360, 1, 1).data;
+        console.log('CE1 decoded frame ' + JSON.stringify({ width: playback.videoWidth, height: playback.videoHeight, readyState: playback.readyState, edge: [...edge], center: [...center] }));
+        assert.equal(edge[3], 255, 'DECODE_NOT_OPAQUE: saved edge');
+        assert.equal(center[3], 255, 'DECODE_NOT_OPAQUE: saved center');
+        assert.ok(center[1] > 180 && center[0] < 70, 'DECODE_SIGNAL_MISSING: saved center');
+        assert.ok(edge[1] > 180 && edge[0] < 70, 'RAW_LEAK_SENTINEL: saved video contains raw red edge: ' + [...edge]);
+        playback.pause();
         assert.equal(playback.videoWidth, 1280);
         assert.equal(playback.videoHeight, 720);
         decoded.getContext('2d').drawImage(preview, 0, 0, 1280, 720);
         const live = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
         assert.ok(live[1] > 180 && live[0] < 70, 'Preview and saved video differ');
-      } finally { playback.src = ''; URL.revokeObjectURL(url); }
+      } finally { playback.pause(); playback.src = ''; playback.remove(); URL.revokeObjectURL(url); }
       await media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 });
       assert.equal(media.cameraStream.value, raw);
       await media.setCameraQuality('auto');
@@ -245,6 +323,7 @@ class CameraEffectsRendererSmoke {
         return;
       }
       const resources = process.argv.find(arg => arg.startsWith('--ce1-resources=')).slice('--ce1-resources='.length);
+      await this.sourceStartup();
       await this.composition(resources);
       // risk: media-ownership — cap allocations without stopping caller audio/video.
       const generated = this.canvas(1920, 1080);

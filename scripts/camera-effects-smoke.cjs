@@ -40,6 +40,10 @@ class CameraEffectsSmoke {
       fs.writeFileSync(path.join(this.directory, 'camera-bridge.js'), ts.transpileModule('export const cameraBridge = (mediaSources: any) => ({' + releaseHandler + '});', {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
       }).outputText);
+      const sourceFunctions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['hasNativeSystemAudio', 'enableSystemAudio', 'disableSystemAudio', 'toggleSrc'].includes(node.name?.text)).map(node => node.getText(ast)).join('\n');
+      fs.writeFileSync(path.join(this.directory, 'source-enable.js'), ts.transpileModule('export const sourceEnable = (captureLifecycle:any, mediaSources:any, audioDriver:any, speakerCapture:any, statusMessage:any, autoAssign:any, updateStreamAssignments:any, currentLayout:any, assign:any, videoSources:any, primaryStream:any) => { ' + sourceFunctions + '; return toggleSrc; };', {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText);
       // Verify shipped assets before executing any native/runtime code.
       const manifest = JSON.parse(fs.readFileSync(path.join(this.resources, 'manifest.json')));
       for (const [file, hash] of Object.entries(manifest.distributedFiles)) {
@@ -55,7 +59,7 @@ class CameraEffectsSmoke {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
         }).outputText);
       }
-      for (const name of ['useMediaSources', 'useRecorder', 'useAgentBridge']) {
+      for (const name of ['useMediaSources', 'useRecorder', 'useAgentBridge', 'useAudioDriver', 'useSpeakerCapture']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/composables', name + '.ts'), 'utf8');
         source = source.replaceAll("'../effects/", "'./");
         if (name === 'useRecorder' && process.env.CE1_RECORDING_MUTANT === '1') {

@@ -131,7 +131,7 @@ export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
   }
 
   /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
-  async function acquireNative(): Promise<MediaStream | null> {
+  async function acquireNative(isCancelled: () => boolean = () => false): Promise<MediaStream | null> {
     releaseNative();
     try {
       // Electron's main-process display-media handler supplies the display and
@@ -141,6 +141,10 @@ export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
         audio: true,
         video: true,
       });
+      if (isCancelled()) {
+        displayStream.getTracks().forEach(track => track.stop());
+        return null;
+      }
       const audioTracks = displayStream.getAudioTracks();
       displayStream.getVideoTracks().forEach(track => track.stop());
       if (audioTracks.length === 0) {

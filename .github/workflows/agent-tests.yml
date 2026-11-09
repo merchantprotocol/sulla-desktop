@@ -252,7 +252,7 @@ jobs:
             exit 1
           fi
           cat /tmp/ce1-recording-mutant.log
-          grep -q 'Saved video contains raw red edge' /tmp/ce1-recording-mutant.log
+          grep -q 'RAW_LEAK_SENTINEL:' /tmp/ce1-recording-mutant.log
       - name: Real offline CE-1 renderer inference and pixel regression
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2
