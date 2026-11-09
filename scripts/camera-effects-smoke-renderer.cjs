@@ -186,19 +186,7 @@ class CameraEffectsRendererSmoke {
     navigator.mediaDevices.getUserMedia = async() => raw;
     navigator.mediaDevices.enumerateDevices = async() => [];
     // TEMP CE1 DIAG
-    const diag = { raf: 0, rafFired: 0, frames: 0, draws: 0, raws: 0, notes: [], snaps: [] };
-    const surfaces = [];
-    const restore = [];
-    const wrap = (target, key, make) => { const original = target[key]; target[key] = make(original); restore.push(() => { target[key] = original; }); };
-    wrap(FrameCompositor.prototype, 'draw', original => function(...args) { diag.draws++; try { return original.apply(this, args); } catch (error) { diag.notes.push('draw:' + error.message); throw error; } });
-    wrap(BrowserFrameSurface.prototype, 'drawRaw', original => function(...args) { diag.raws++; return original.apply(this, args); });
-    wrap(BrowserFrameSurface.prototype, 'open', original => async function(...args) { surfaces.push(this); const out = await original.apply(this, args); diag.notes.push('open@' + Math.round(performance.now())); return out; });
-    wrap(CameraEffectSession.prototype, 'frame', original => function(...args) { diag.frames++; return original.apply(this, args); });
-    wrap(CameraEffectSession.prototype, 'notify', original => function(error) { diag.notes.push('notify:' + (error && error.message)); return original.call(this, error); });
-    wrap(window, 'requestAnimationFrame', original => function(callback) { diag.raf++; return original.call(window, t => { diag.rafFired++; callback(t); }); });
-    const snap = label => diag.snaps.push({ label, t: Math.round(performance.now()), vis: document.visibilityState, frames: diag.frames, draws: diag.draws, raws: diag.raws, raf: diag.raf, rafFired: diag.rafFired,
-      surfaces: surfaces.map(s => ({ ct: s.video.currentTime, rs: s.video.readyState, paused: s.video.paused, w: s.canvas.width, track: s.canvas.captureStream ? undefined : 0 })) });
-    const emit = () => console.log('::warning title=CE1 diag::' + JSON.stringify(diag));
+    const diag = { raf: 0, rafFired: 0, frames: 0, draws: 0, raws: 0, notes: [], snaps: [] }; const surfaces = []; const restore = []; const wrap = (target, key, make) => { const original = target[key]; target[key] = make(original); restore.push(() => { target[key] = original; }); }; wrap(FrameCompositor.prototype, 'draw', original => function(...args) { diag.draws++; try { return original.apply(this, args); } catch (error) { diag.notes.push('draw:' + error.message); throw error; } }); wrap(BrowserFrameSurface.prototype, 'drawRaw', original => function(...args) { diag.raws++; return original.apply(this, args); }); wrap(BrowserFrameSurface.prototype, 'open', original => async function(...args) { surfaces.push(this); const out = await original.apply(this, args); diag.notes.push('open@' + Math.round(performance.now())); return out; }); wrap(CameraEffectSession.prototype, 'frame', original => function(...args) { diag.frames++; return original.apply(this, args); }); wrap(CameraEffectSession.prototype, 'notify', original => function(error) { diag.notes.push('notify:' + (error && error.message)); return original.call(this, error); }); wrap(window, 'requestAnimationFrame', original => function(callback) { diag.raf++; return original.call(window, t => { diag.rafFired++; callback(t); }); }); const snap = label => diag.snaps.push({ label, t: Math.round(performance.now()), vis: document.visibilityState, frames: diag.frames, draws: diag.draws, raws: diag.raws, raf: diag.raf, rafFired: diag.rafFired, surfaces: surfaces.map(s => ({ ct: s.video.currentTime, rs: s.video.readyState, paused: s.video.paused, w: s.canvas.width, track: s.canvas.captureStream ? undefined : 0 })) }); const emit = () => console.log('::warning title=CE1 diag::' + JSON.stringify(diag));
     const menu = new ContextMenuSmoke();
     let failInference = false; let failInitialization = false;
     let media; let recorder; let loads = 0; let mounted; let recording = false;
