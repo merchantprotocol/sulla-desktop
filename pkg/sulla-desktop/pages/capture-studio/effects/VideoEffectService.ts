@@ -70,6 +70,7 @@ export class CameraEffectSession {
   private failed = false;
   private handle?: number;
   private active?: Promise<void>;
+  private initializing?: Promise<void>;
   private lastFrame = -1;
   private lastInference = -Infinity;
   private currentOutput?: MediaStream;
@@ -92,8 +93,14 @@ export class CameraEffectSession {
     if (this.started || this.closed) throw new Error('Session already started or closed');
     this.started = true;
     if (!this.enabled()) return;
+    this.initializing = this.initialize();
+    await this.initializing;
+  }
+
+  private async initialize(): Promise<void> {
     try {
       this.currentOutput = await this.surface.open(this.raw);
+      if (this.closed) return;
       await this.inference.initialize();
       if (!this.closed) this.schedule();
     } catch (error) {
@@ -118,6 +125,7 @@ export class CameraEffectSession {
     this.closed = true;
     if (this.handle !== undefined) this.surface.cancel(this.handle);
     // Never close a model while an outstanding inference still owns its buffers.
+    await this.initializing;
     await this.active;
     this.inference.close();
     this.surface.close();

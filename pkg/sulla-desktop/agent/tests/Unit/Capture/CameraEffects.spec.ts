@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 
-import { FrameCompositor, PersonFraming } from '../../../../pages/capture-studio/effects/FrameCompositor';
+import { FrameCompositor, PersonFraming, PersonMaskRasterizer } from '../../../../pages/capture-studio/effects/FrameCompositor';
 import type { PersonInference, PersonMask } from '../../../../pages/capture-studio/effects/PersonInference';
 import { CameraEffectSession, type FrameSurface } from '../../../../pages/capture-studio/effects/VideoEffectService';
 
@@ -60,6 +60,17 @@ class SessionFixture {
 }
 
 describe('camera processing ownership and person-follow', () => {
+  // risk: data-integrity — appearance processing must not soften hair, clothes or the background.
+  it('isolates face skin for softening while keeping all person categories sharp over background blur', () => {
+    const mask = { width: 6, height: 1, categories: new Uint8Array([0, 1, 2, 3, 4, 5]) };
+    const rasterizer = new PersonMaskRasterizer();
+    const skin = rasterizer.alpha(mask, true);
+    const person = rasterizer.alpha(mask, false);
+    expect([0, 1, 2, 3, 4, 5].map(index => skin[index * 4 + 3])).toEqual([0, 0, 0, 255, 0, 0]);
+    expect([0, 1, 2, 3, 4, 5].map(index => person[index * 4 + 3])).toEqual([0, 255, 255, 255, 255, 255]);
+    expect(() => rasterizer.alpha({ ...mask, width: 7 }, true)).toThrow('Invalid person mask');
+  });
+
   // risk: core-business-rules — a smaller second person must not steal framing.
   it('follows the largest silhouette, clamps crop and returns smoothly toward center on loss', () => {
     const tracker = new PersonFraming();

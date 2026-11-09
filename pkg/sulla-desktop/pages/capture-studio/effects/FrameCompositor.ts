@@ -61,13 +61,30 @@ export class PersonFraming {
   }
 }
 
+
+/** Converts real multiclass labels to alpha without ever softening hair, clothing or background. */
+export class PersonMaskRasterizer {
+  alpha(mask: PersonMask, faceOnly: boolean): Uint8ClampedArray {
+    if (mask.width * mask.height !== mask.categories.length) throw new Error('Invalid person mask');
+    const pixels = new Uint8ClampedArray(mask.categories.length * 4);
+    for (let i = 0; i < mask.categories.length; i++) {
+      pixels[i * 4 + 3] = (faceOnly ? mask.categories[i] === 3 : mask.categories[i] !== 0) ? 255 : 0;
+    }
+    return pixels;
+  }
+}
+
 /** Reusable canvas layers: raw -> person-over-blurred-background -> face-skin-only softening -> crop. */
 export class FrameCompositor {
   private readonly scene: HTMLCanvasElement;
   private readonly layer: HTMLCanvasElement;
   private readonly maskCanvas: HTMLCanvasElement;
 
-  constructor(private readonly framing: PersonFraming, makeCanvas: () => HTMLCanvasElement) {
+  constructor(
+    private readonly framing: PersonFraming,
+    makeCanvas: () => HTMLCanvasElement,
+    private readonly rasterizer: PersonMaskRasterizer = new PersonMaskRasterizer(),
+  ) {
     this.scene = makeCanvas(); this.layer = makeCanvas(); this.maskCanvas = makeCanvas();
   }
 
@@ -123,13 +140,10 @@ export class FrameCompositor {
   }
 
   private paintMask(mask: PersonMask, faceOnly: boolean): void {
-    if (mask.width * mask.height !== mask.categories.length) throw new Error('Invalid person mask');
     this.maskCanvas.width = mask.width; this.maskCanvas.height = mask.height;
     const context = this.context(this.maskCanvas);
     const pixels = context.createImageData(mask.width, mask.height);
-    for (let i = 0; i < mask.categories.length; i++) {
-      pixels.data[i * 4 + 3] = (faceOnly ? mask.categories[i] === 3 : mask.categories[i] !== 0) ? 255 : 0;
-    }
+    pixels.data.set(this.rasterizer.alpha(mask, faceOnly));
     context.putImageData(pixels, 0, 0);
   }
 }
