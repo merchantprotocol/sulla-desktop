@@ -631,12 +631,13 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
-// Stream refs for primary and pip slots — updated explicitly after autoAssign
+// Slot refs follow source assignments as well as published stream replacements.
 const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
 
 // Both preview slots and recorder read the same published camera output.
-watch(mediaSources.cameraStream, () => updateStreamAssignments(), { flush: 'sync' });
+watch([primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream],
+  () => updateStreamAssignments(), { flush: 'sync' });
 
 function updateStreamAssignments() {
   const primary = primarySource.value;
