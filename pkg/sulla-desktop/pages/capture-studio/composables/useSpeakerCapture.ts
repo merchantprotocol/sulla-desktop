@@ -21,10 +21,6 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
 
-const speakerIpcRenderer = ipcRenderer as unknown as {
-  invoke(channel: string): Promise<any>;
-};
-
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -212,7 +208,7 @@ export function useSpeakerCapture(
   async function start(outputPath: string): Promise<boolean> {
     if (writeStream) await stop();
 
-    const socketPath = await speakerIpcRenderer.invoke('audio-driver:get-speaker-socket-path');
+    const socketPath = await ipcRenderer.invoke('audio-driver:get-speaker-socket-path');
     if (!socketPath) {
       console.warn('[useSpeakerCapture] No speaker socket available — is audio driver running?');
       return false;

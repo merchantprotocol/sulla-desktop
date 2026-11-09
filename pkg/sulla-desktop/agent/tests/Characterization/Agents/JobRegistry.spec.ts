@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 
@@ -14,6 +15,10 @@ import { AgentTeamRollupProjector } from '../../../app/Services/AgentTeamRollupP
 import { SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
 import { CloudAgentStateProjection } from '../../../tools/agents/cloudProjection';
 import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceProvider';
+
+// The static import chain reaches Electron-only modules; mock the package so
+// the suite never resolves the uninstalled binary (headless CI has no Electron).
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
 const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
