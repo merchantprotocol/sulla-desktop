@@ -26,7 +26,7 @@ class CameraEffectsSmoke {
         const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(this.resources, file))).digest('hex');
         if (actual !== hash) throw new Error('Asset hash mismatch: ' + file);
       }
-      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService']) {
+      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
           source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
@@ -35,6 +35,18 @@ class CameraEffectsSmoke {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
         }).outputText);
       }
+      for (const name of ['useMediaSources', 'useRecorder']) {
+        let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/composables', name + '.ts'), 'utf8');
+        source = source.replaceAll("'../effects/", "'./");
+        if (name === 'useRecorder' && process.env.CE1_RECORDING_MUTANT === '1') {
+          source = source.replace('new MediaRecorder(src.stream, recorderOpts)', 'new MediaRecorder(window.__ce1Raw, recorderOpts)');
+        }
+        fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(source, {
+          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+        }).outputText);
+      }
+      // Only filesystem location is substituted: real recorder, native writer, real encoded WebM.
+      fs.writeFileSync(path.join(this.directory, 'paths.js'), 'exports.default = { sullaHome: ' + JSON.stringify(this.directory) + ' };');
       // Same app:// scheme + public HTML (no CSP) as the real Capture Studio.
       const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
@@ -45,6 +57,7 @@ class CameraEffectsSmoke {
         entry: path.join(this.directory, 'renderer.cjs'),
         output: { path: this.directory, filename: 'renderer.js' },
         optimization: { minimize: false },
+        resolve: { modules: [path.resolve('node_modules'), 'node_modules'], alias: { '@pkg/utils/paths': path.join(this.directory, 'paths.js') } },
       }, (error, stats) => error || stats.hasErrors() ? reject(error || new Error(stats.toString())) : resolve()));
       await app.whenReady();
       protocol.handle('app', request => net.fetch(pathToFileURL(path.join(this.directory, new URL(request.url).pathname)).href));
@@ -59,7 +72,7 @@ class CameraEffectsSmoke {
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       this.window = new BrowserWindow({ show: false, webPreferences: {
         nodeIntegration: true, contextIsolation: false, webSecurity: false, backgroundThrottling: false,
-        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_REGRESSION_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
+        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_RECORDING_MUTANT === '1' ? ['--ce1-recording-mutant'] : []), ...(process.env.CE1_REGRESSION_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
       } });
       this.window.webContents.on('console-message', (_event, _level, message) => console.log(message));
       this.window.webContents.on('render-process-gone', (_event, details) => { console.error(details); app.exit(1); });

@@ -7,7 +7,8 @@ export class CameraStreamService {
   private raw?: MediaStream;
   private session?: CameraEffectSession;
   private generation = 0;
-  private pending?: Promise<MediaStream>;
+  private pending?: Promise<MediaStream | undefined>;
+  private readonly operations = new Set<Promise<unknown>>();
   private recording = false;
   private disposed = false;
   private options: EffectOptions = { autoFrame: false, soften: 0, backgroundBlur: 0 };
@@ -31,8 +32,7 @@ export class CameraStreamService {
   acquire(constraints: MediaStreamConstraints): Promise<MediaStream> {
     this.assertMutable();
     const operation = this.replace(constraints);
-    this.pending = operation;
-    void operation.finally(() => { if (this.pending === operation) this.pending = undefined; }).catch(() => undefined);
+    this.track(operation);
     return operation;
   }
 
@@ -73,9 +73,7 @@ export class CameraStreamService {
   setOptions(options: EffectOptions): Promise<void> {
     this.assertMutable();
     const operation = this.updateOptions(options);
-    this.pending = operation.then(() => this.stream as MediaStream);
-    const pending = this.pending;
-    void pending.finally(() => { if (this.pending === pending) this.pending = undefined; }).catch(() => undefined);
+    this.track(operation.then(() => this.stream));
     return operation;
   }
 
@@ -117,7 +115,16 @@ export class CameraStreamService {
     this.recording = false;
     ++this.generation;
     await this.clear();
-    await this.pending?.catch(() => undefined);
+    await Promise.allSettled([...this.operations]);
+  }
+
+  private track(operation: Promise<MediaStream | undefined>): void {
+    this.pending = operation;
+    this.operations.add(operation);
+    void operation.finally(() => {
+      this.operations.delete(operation);
+      if (this.pending === operation) this.pending = undefined;
+    }).catch(() => undefined);
   }
 
   private async clear(): Promise<void> {

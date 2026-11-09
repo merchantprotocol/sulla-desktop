@@ -800,7 +800,7 @@ async function toggleSrc(src: Source) {
     if (src.type === 'screen') {
       mediaSources.releaseScreen();
     } else if (src.type === 'camera') {
-      await mediaSources.camera.dispose();
+      await mediaSources.releaseCamera();
     } else if (src.type === 'mic') {
       await audioDriver.stopMic();
     } else if (src.type === 'system') {
@@ -1795,8 +1795,8 @@ useAgentBridge({
       : await mediaSources.acquireCamera();
     return { ok: !!stream, deviceId: deviceId || null };
   },
-  'camera.release': () => {
-    await mediaSources.camera.dispose();
+  'camera.release': async() => {
+    await mediaSources.releaseCamera();
     return { ok: true };
   },
 

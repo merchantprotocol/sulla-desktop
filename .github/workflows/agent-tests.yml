@@ -242,6 +242,17 @@ jobs:
           fi
           cat /tmp/ce1-mutant.log
           grep -q 'Scene coordinates changed' /tmp/ce1-mutant.log
+      - name: Prove CE-1 saved-video check rejects raw recording
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_RECORDING_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-recording-mutant.log 2>&1; then
+            cat /tmp/ce1-recording-mutant.log
+            echo 'Regression did not reject raw recording'
+            exit 1
+          fi
+          cat /tmp/ce1-recording-mutant.log
+          grep -q 'Saved video contains raw red edge' /tmp/ce1-recording-mutant.log
       - name: Real offline CE-1 renderer inference and pixel regression
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2
