@@ -66,7 +66,8 @@ class CameraEffectsRendererSmoke {
     }
     const reference = output.getContext('2d').getImageData(0, 0, 256, 160);
     const framed = new FrameCompositor(new PersonFraming(), () => this.layer());
-    framed.draw(source, output, mask, { autoFrame: true, soften: 0, backgroundBlur: 1 }, 0);
+    // Isolate crop coordinates from blur blending around the mask boundary.
+    framed.draw(source, output, mask, { autoFrame: true, soften: 0, backgroundBlur: 0 }, 0);
     // Off-center mask centers at x=72; crop clamps at x=0. Same 0.8 crop in both axes.
     for (const x of [60, 90, 150, 200]) {
       const expectedX = Math.floor((x + 0.5) * 0.8);
