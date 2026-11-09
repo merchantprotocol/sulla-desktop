@@ -17,6 +17,8 @@ import { SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
 import { CloudAgentStateProjection } from '../../../tools/agents/cloudProjection';
 import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceProvider';
 
+// The static import chain reaches Electron-only modules; mock the package so
+// the suite never resolves the uninstalled binary (headless CI has no Electron).
 // Lifecycle tests run in Node without an installed Electron application binary.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 

@@ -508,6 +508,7 @@ export interface IpcMainInvokeEvents {
   'audio-driver:stop-mic':                 (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
   'audio-driver:start-speaker':            (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
   'audio-driver:stop-speaker':             (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:get-speaker-socket-path':  () => string | null;
   'audio-driver:transcribe-start':         (opts: { mode: 'conversation' | 'secretary'; language?: string; model?: string; profileId?: string; sessionId?: string; manualTurn?: boolean }) => { ok: boolean; provider: 'whisper' | 'grok' };
   'audio-driver:transcribe-stop':          () => { ok: boolean };
   'secretary-mode:save-notes':             (payload: { fileName: string; markdown: string; path?: string | null }) => { ok: boolean; path?: string; error?: string };
