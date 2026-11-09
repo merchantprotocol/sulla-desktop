@@ -126,6 +126,7 @@ class CameraEffectsSmoke {
       const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-renderer.cjs'), path.join(this.directory, 'renderer.cjs'));
+      fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-preview.cjs'), path.join(this.directory, 'preview-smoke.js'));
       // Bundle the real production classes with the app's electron-renderer target.
       await new Promise((resolve, reject) => webpack({
         mode: 'production', target: 'electron-renderer',
