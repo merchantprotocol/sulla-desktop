@@ -1,0 +1,24 @@
+{
+  "runtime": {
+    "version": "0.10.21",
+    "url": "https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-0.10.21.tgz",
+    "sha512": "4ee84a1fe72b79dab8ccb92c19b62b9ef27568b21631ce6bd141f0cf1cea978047102270200a0147ad59aeac06396e99992048cd4d6de15b4a8fc85bc4568a78"
+  },
+  "files": {
+    "vision_bundle.cjs": "bf58c9b3f592304422947b51e1f7de360c67d4dfeaa900064352da0c5a7c9115",
+    "wasm/vision_wasm_internal.js": "4a97e2520ba506c680ecd6ba6acfb146888afa0e2746d57f205352bc6ebb82eb",
+    "wasm/vision_wasm_nosimd_internal.js": "927def7b465c51b86e4b3060f93646aca4e27121f4b8fc0483786e407ea9cf1f",
+    "README.md": "7ba4e6e531c8a158020d545025024ab636e0e54bbcdd01dbc37b618506ef3d2e",
+    "wasm/vision_wasm_internal.wasm": "f00ec4731faa23b3e714d00e88d4d10e2df5c0a427d3a2b4ae6e3526fdd14ef7",
+    "wasm/vision_wasm_nosimd_internal.wasm": "3821ea9b1f7fb8c549ef2a064ef5c85750bf375c545a49fd6eea0df44a95f1f4"
+  },
+  "model": {
+    "url": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite",
+    "sha256": "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"
+  },
+  "distributedFiles": {
+    "vision_bundle.cjs": "ad1e40443633d05db12965ee230104d589ce97a388161d71b1e323ebda0dddb0",
+    "wasm/vision_wasm_internal.js": "3bc64a419dfb98be3b93cd5ea7953fcc1f09311d557c0bba0ba313e62dd12cd2",
+    "wasm/vision_wasm_nosimd_internal.js": "d44b34141e829803ba0d58a0dd9e0a0e159536c8a7d28daf99c974a0f37f8321"
+  }
+}
