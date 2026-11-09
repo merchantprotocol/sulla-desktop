@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-const { app, BrowserWindow, session } = require('electron');
+const { app, BrowserWindow, session, protocol, net } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const ts = require('typescript');
+const webpack = require('webpack');
+const { pathToFileURL } = require('node:url');
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
 class CameraEffectsSmoke {
   constructor() {
     this.directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ce1-smoke-'));
-    this.resources = path.resolve('resources/camera-effects');
+    this.resources = path.join(this.directory, 'extraResources', 'resources', 'camera-effects');
+    fs.mkdirSync(path.dirname(this.resources), { recursive: true });
+    fs.cpSync(path.resolve('resources/camera-effects'), this.resources, { recursive: true });
   }
 
   async run() {
@@ -30,13 +35,21 @@ class CameraEffectsSmoke {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
         }).outputText);
       }
-      // Capture Studio's public HTML has no CSP. This stricter offline policy still allows
-      // its native require + WASM path, but forbids network, inline scripts and uploads.
-      fs.writeFileSync(path.join(this.directory, 'index.html'), `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; connect-src file:; img-src 'self' blob: data:; media-src blob:"><script src="renderer.cjs"></script>`);
+      // Same app:// scheme + public HTML (no CSP) as the real Capture Studio.
+      const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
+      fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-renderer.cjs'), path.join(this.directory, 'renderer.cjs'));
+      // Bundle the real production classes with the app's electron-renderer target.
+      await new Promise((resolve, reject) => webpack({
+        mode: 'production', target: 'electron-renderer',
+        entry: path.join(this.directory, 'renderer.cjs'),
+        output: { path: this.directory, filename: 'renderer.js' },
+        optimization: { minimize: false },
+      }, (error, stats) => error || stats.hasErrors() ? reject(error || new Error(stats.toString())) : resolve()));
       await app.whenReady();
+      protocol.handle('app', request => net.fetch(pathToFileURL(path.join(this.directory, new URL(request.url).pathname)).href));
       session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
-        if (!/^(file|blob|data):/.test(details.url)) {
+        if (!/^(app|file|blob|data):/.test(details.url)) {
           console.error('Unexpected network request: ' + new URL(details.url).protocol);
           callback({ cancel: true });
           app.exit(1);
@@ -54,7 +67,7 @@ class CameraEffectsSmoke {
         const { ipcMain } = require('electron');
         ipcMain.once('ce1-result', (_event, result) => result.ok ? resolve(result) : reject(new Error(result.error)));
       });
-      await this.window.loadFile(path.join(this.directory, 'index.html'));
+      await this.window.loadURL('app://./index.html');
       console.log(JSON.stringify(await result));
       code = 0;
     } catch (error) {

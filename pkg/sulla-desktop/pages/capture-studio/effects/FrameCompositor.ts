@@ -4,12 +4,17 @@ import type { PersonMask } from './PersonInference';
 export interface EffectOptions { autoFrame: boolean; soften: number; backgroundBlur: number }
 export interface Crop { x: number; y: number; width: number; height: number }
 
-/** Tracks the largest connected person silhouette, not a hard-coded center mask. */
+/** Tracks the largest connected silhouette. Touching people are one subject, not instance-separated. */
 export class PersonFraming {
   private center = { x: 0.5, y: 0.5 };
   private lastTime?: number;
   private visited = new Uint8Array(0);
   private queue = new Int32Array(0);
+
+  close(): void {
+    this.visited = new Uint8Array(0); this.queue = new Int32Array(0);
+    this.lastTime = undefined; this.center = { x: 0.5, y: 0.5 };
+  }
 
   crop(mask: PersonMask | undefined, width: number, height: number, timestamp: number, enabled: boolean): Crop {
     let target = { x: 0.5, y: 0.5 };
@@ -33,11 +38,11 @@ export class PersonFraming {
           const index = queue[head++];
           const x = index % mask.width; const y = Math.floor(index / mask.width);
           sumX += x + 0.5; sumY += y + 0.5;
-          const neighbors = [
-            x > 0 ? index - 1 : -1, x + 1 < mask.width ? index + 1 : -1,
-            y > 0 ? index - mask.width : -1, y + 1 < mask.height ? index + mask.width : -1,
-          ];
-          for (const next of neighbors) {
+          for (let direction = 0; direction < 4; direction++) {
+            const next = direction === 0 ? (x > 0 ? index - 1 : -1) :
+              direction === 1 ? (x + 1 < mask.width ? index + 1 : -1) :
+                direction === 2 ? (y > 0 ? index - mask.width : -1) :
+                  (y + 1 < mask.height ? index + mask.width : -1);
             if (next >= 0 && !visited[next] && mask.categories[next]) {
               visited[next] = 1; queue[tail++] = next;
             }
@@ -72,7 +77,7 @@ export class PersonFraming {
 export class PersonMaskRasterizer {
   validate(mask: PersonMask): void {
     if (!Number.isSafeInteger(mask.width) || !Number.isSafeInteger(mask.height) ||
-        mask.width <= 0 || mask.height <= 0 || mask.width * mask.height !== mask.categories.length ||
+        mask.width <= 0 || mask.height <= 0 || mask.width * mask.height > 1280 * 720 || mask.width * mask.height !== mask.categories.length ||
         mask.categories.some(category => category > 5)) throw new Error('Invalid person mask');
   }
   alpha(mask: PersonMask, faceOnly: boolean, pixels = new Uint8ClampedArray(mask.categories.length * 4)): Uint8ClampedArray {
@@ -99,6 +104,12 @@ export class FrameCompositor {
     private readonly rasterizer: PersonMaskRasterizer = new PersonMaskRasterizer(),
   ) {
     this.scene = makeCanvas(); this.layer = makeCanvas(); this.maskCanvas = makeCanvas(); this.padded = makeCanvas();
+  }
+
+  close(): void {
+    for (const canvas of [this.scene, this.layer, this.maskCanvas, this.padded]) { canvas.width = 0; canvas.height = 0; }
+    this.maskPixels = undefined;
+    this.framing.close();
   }
 
   draw(video: HTMLVideoElement, output: HTMLCanvasElement, mask: PersonMask | undefined, options: EffectOptions, timestamp: number): void {

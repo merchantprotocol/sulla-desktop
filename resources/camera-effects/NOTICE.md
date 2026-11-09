@@ -62,10 +62,12 @@ The existing agent-tests job runs a path-scoped Electron 40 smoke for CE-1
 changes. Native require loads the unchanged vendored CJS runtime; injected
 fs.readFile supplies the pinned TFLite model bytes (Chromium fetch(file://)
 is not relied upon). It executes real CPU WASM inference on two generated
-canvas frames, then renders the actual compositor and checks output pixels.
+canvas frames across two simultaneously requested instances (shared injected
+initialization gate serializes MediaPipe ModuleFactory setup), then renders the actual compositor and checks output pixels.
 The renderer uses Capture Studio's nodeIntegration/contextIsolation/
-webSecurity preferences and file:// resources, plus a stricter offline CSP
-(the current Capture Studio HTML declares none). HTTP(S) requests are refused,
+webSecurity preferences and staged extraResources and the actual app:// scheme/public HTML security policy
+(the current Capture Studio HTML declares no CSP). The focused renderer is
+webpack-bundled with the application electron-renderer target. HTTP(S) requests are refused,
 all device permission requests denied, and no camera/user media is opened.
 
 A separate remote mutation replaces only the background draw with the old

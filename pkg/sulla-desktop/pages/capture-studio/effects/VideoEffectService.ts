@@ -12,7 +12,7 @@ export interface FrameSurface {
   close(): void;
 }
 
-/** Owns only the detached video and canvas output; the caller always owns input tracks. */
+/** Video-only output. Caller owns raw video AND audio; later recorder integration must preserve audio separately. */
 export class BrowserFrameSurface implements FrameSurface {
   readonly video: HTMLVideoElement;
   readonly canvas: HTMLCanvasElement;
@@ -29,8 +29,10 @@ export class BrowserFrameSurface implements FrameSurface {
     this.video.srcObject = raw;
     await this.video.play();
     if (!this.video.videoWidth || !this.video.videoHeight) throw new Error('Camera frame is not ready');
-    this.canvas.width = this.video.videoWidth;
-    this.canvas.height = this.video.videoHeight;
+    // Bound all processing/compositor surfaces to 720p, preserving source aspect ratio.
+    const scale = Math.min(1, 1280 / this.video.videoWidth, 720 / this.video.videoHeight);
+    this.canvas.width = Math.max(1, Math.floor(this.video.videoWidth * scale));
+    this.canvas.height = Math.max(1, Math.floor(this.video.videoHeight * scale));
     this.drawRaw();
     this.output = this.canvas.captureStream(30);
     return this.output;
@@ -154,6 +156,9 @@ export class CameraEffectSession {
     try { this.inference.close(); } catch (error) { this.notify(error); }
     finally {
       try { this.surface.close(); } catch (error) { this.notify(error); }
+      finally {
+        try { this.compositor.close(); } catch (error) { this.notify(error); }
+      }
     }
   }
 

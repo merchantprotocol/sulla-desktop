@@ -28,6 +28,20 @@ export interface VisionRuntime {
   ImageSegmenter: { createFromOptions(files: unknown, options: unknown): Promise<Segmenter> };
 }
 
+/**
+ * One injected gate per renderer composition root, shared by every inference factory.
+ * MediaPipe script initialization may use global ModuleFactory; serialize that phase.
+ */
+export class VisionInitializationGate {
+  private pending: Promise<unknown> = Promise.resolve();
+
+  run<T>(initialize: () => Promise<T>): Promise<T> {
+    const result = this.pending.then(initialize);
+    this.pending = result.catch(() => undefined);
+    return result;
+  }
+}
+
 /** Uses only versioned extraResources; never resolves a CDN or downloads on first use. */
 export class OfflinePersonInference implements PersonInference {
   private segmenter?: Segmenter;
@@ -37,22 +51,25 @@ export class OfflinePersonInference implements PersonInference {
     // Inject Electron's native require at composition, never webpack's dynamic require.
     private readonly loadRuntime: (filename: string) => VisionRuntime,
     private readonly readModel: (filename: string) => Promise<Uint8Array>,
+    private readonly initializationGate: VisionInitializationGate,
   ) {}
 
   async initialize(): Promise<void> {
-    const runtime = this.loadRuntime(path.join(this.resourceDirectory, 'vendor', 'vision_bundle.cjs'));
-    const files = await runtime.FilesetResolver.forVisionTasks(
-      pathToFileURL(path.join(this.resourceDirectory, 'vendor', 'wasm')).href,
-    );
-    this.segmenter = await runtime.ImageSegmenter.createFromOptions(files, {
-      baseOptions: {
-        // Chromium fetch(file://) is not a portable model loader. Use injected native bytes.
-        modelAssetBuffer: await this.readModel(path.join(this.resourceDirectory, 'selfie_multiclass_256x256.tflite')),
-        delegate: 'CPU',
-      },
-      runningMode: 'VIDEO',
-      outputCategoryMask: true,
-      outputConfidenceMasks: false,
+    await this.initializationGate.run(async() => {
+      const runtime = this.loadRuntime(path.join(this.resourceDirectory, 'vendor', 'vision_bundle.cjs'));
+      const files = await runtime.FilesetResolver.forVisionTasks(
+        pathToFileURL(path.join(this.resourceDirectory, 'vendor', 'wasm')).href,
+      );
+      this.segmenter = await runtime.ImageSegmenter.createFromOptions(files, {
+        baseOptions: {
+          // Chromium fetch(file://) is not a portable model loader. Use injected native bytes.
+          modelAssetBuffer: await this.readModel(path.join(this.resourceDirectory, 'selfie_multiclass_256x256.tflite')),
+          delegate: 'CPU',
+        },
+        runningMode: 'VIDEO',
+        outputCategoryMask: true,
+        outputConfidenceMasks: false,
+      });
     });
   }
 
