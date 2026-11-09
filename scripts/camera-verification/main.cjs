@@ -68,7 +68,9 @@ class ActualParentVerification {
       protocol.handle('app', request => {
         const filename = path.resolve(this.runtime, '.' + new URL(request.url).pathname);
         if (!filename.startsWith(this.runtime + path.sep)) throw new Error('Resource escape');
-        return net.fetch(pathToFileURL(filename).href);
+        if (!fs.existsSync(filename)) { this.audit.missingResources = [...(this.audit.missingResources || []), new URL(request.url).pathname]; return new Response('missing', { status: 404 }); }
+        const type = { '.css': 'text/css', '.js': 'text/javascript', '.html': 'text/html', '.wasm': 'application/wasm', '.json': 'application/json' }[path.extname(filename)];
+        return net.fetch(pathToFileURL(filename).href).then(response => type ? new Response(response.body, { status: response.status, headers: { 'content-type': type } }) : response);
       });
       session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
         const allowed = /^(app|blob|data|file):/.test(details.url);

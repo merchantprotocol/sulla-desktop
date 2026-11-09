@@ -411,7 +411,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ce1-home"
           sudo --preserve-env=PATH,CE1_EXPECTED_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT \
             unshare --net --mount-proc env HOME="$RUNNER_TEMP/ce1-home" XDG_CONFIG_HOME="$RUNNER_TEMP/ce1-home/config" XDG_CACHE_HOME="$RUNNER_TEMP/ce1-home/cache" \
-            xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-verification/main.cjs
+            xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-verification/main.cjs && status=0 || status=$?
+          # The isolated run executes as root; return ownership so artifact collection can read it.
+          sudo chown -R "$(id -u):$(id -g)" artifacts/ce1 "$RUNNER_TEMP/ce1-home"
+          exit $status
       - name: Retain separate real-model and regression-mutant gate
         timeout-minutes: 3
         run: |
