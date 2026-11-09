@@ -495,7 +495,7 @@ const recorder = useRecorder({ manageUnmount: false });
 const inputTracker = useInputEventTracker(recorder.logEvent);
 const settings = useSettings();
 const diskSpace = useDiskSpace();
-const speakerCapture = useSpeakerCapture();
+const speakerCapture = useSpeakerCapture({ manageUnmount: false });
 const micRecording = useMicRecording();
 
 // Loading state
@@ -1931,16 +1931,14 @@ async function cleanupCaptureStudio() {
   return captureLifecycle.close(async() => {
   console.log('[CaptureStudio] Cleaning up...');
 
-  // Stop recording if active
-  if (recording.value || recorder.isRecording.value) {
-    await micRecording.stop();
-    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-    inputTracker.stopTracking();
-    await recorder.stopSession();
-    mediaSources.camera.endRecording();
-    recording.value = false;
-    diskSpace.stopMonitoring();
-  }
+  // Stop even when async startup never reached the component recording flag.
+  await micRecording.stop();
+  if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
+  inputTracker.stopTracking();
+  await recorder.stopSession();
+  mediaSources.camera.endRecording();
+  recording.value = false;
+  diskSpace.stopMonitoring();
 
   // Stop teleprompter tracking
   teleprompterRef.value?.stopTracking?.();

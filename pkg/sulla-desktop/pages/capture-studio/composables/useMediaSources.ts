@@ -13,7 +13,7 @@
  * Supports source switching via right-click context menus.
  */
 
-import { ref, inject, onUnmounted, type Ref } from 'vue';
+import { ref, inject, type Ref } from 'vue';
 
 import { cameraEffectsKey } from '../effects/CameraEffectsComposition';
 import { CameraStreamService } from '../effects/CameraStreamService';
@@ -298,10 +298,7 @@ export function useMediaSources() {
       .map(d => ({ deviceId: d.deviceId, label: d.label || `Camera (${ d.deviceId.slice(0, 8) })` }));
   }
 
-  onUnmounted(() => {
-    releaseScreen();
-    // Parent stops/flushed recorders before disposing the camera service.
-  });
+  // Parent owns ordered recorder flush -> screen/camera release on teardown.
 
   return {
     camera,

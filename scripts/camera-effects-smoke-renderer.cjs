@@ -185,17 +185,24 @@ class CameraEffectsRendererSmoke {
       // Actual SFC callback must release, not permanently dispose; reacquisition remains usable.
       navigator.mediaDevices.getUserMedia = async() => source.captureStream(30);
       await media.acquireCamera();
+      const screenCanvas = this.canvas(64, 64);
+      screenCanvas.getContext('2d').fillRect(0, 0, 64, 64);
+      const screen = screenCanvas.captureStream(5);
+      media.screenStream.value = screen;
       const lifecycle = new CaptureSessionLifecycle();
       let resolveAudio; let audioSettled = false; let released = false;
       const deferredAudio = new Promise(resolve => { resolveAudio = resolve; });
       const transition = lifecycle.run(async() => {
         await media.camera.beginRecording();
-        assert.ok(recorder.startSession([{ id: 'cam', type: 'camera', stream: media.cameraStream.value }]));
+        assert.ok(recorder.startSession([{ id: 'cam', type: 'camera', stream: media.cameraStream.value }, { id: 'screen', type: 'screen', stream: screen }]));
         await deferredAudio; audioSettled = true;
         assert.equal(lifecycle.isClosing, true, 'Shutdown did not invalidate startup');
       });
       await new Promise(resolve => setTimeout(resolve, 50));
       const rawDuringStart = media.camera.rawStream;
+      mounted.unmount(); mounted = undefined;
+      assert.equal(screen.getVideoTracks()[0].readyState, 'live', 'Composable unmount released screen before final flush');
+      assert.equal(rawDuringStart.getVideoTracks()[0].readyState, 'live');
       const shutdown = lifecycle.close(async() => {
         assert.equal(audioSettled, true, 'Released before deferred audio settled');
         const flush = recorder.stopSession();
@@ -203,6 +210,7 @@ class CameraEffectsRendererSmoke {
         assert.equal(rawDuringStart.getVideoTracks()[0].readyState, 'live');
         await flush;
         media.camera.endRecording();
+        media.releaseScreen();
         await media.camera.dispose(); released = true;
       });
       assert.equal(lifecycle.close(async() => { throw new Error('Duplicate cleanup'); }), shutdown);

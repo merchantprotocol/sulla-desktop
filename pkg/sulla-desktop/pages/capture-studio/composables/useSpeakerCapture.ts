@@ -85,7 +85,7 @@ function computePcmRms(pcm: Buffer): number {
   return Math.min(1, Math.sqrt(sum / samples) * 3);
 }
 
-export function useSpeakerCapture() {
+export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -310,7 +310,8 @@ export function useSpeakerCapture() {
   }
 
   onUnmounted(() => {
-    if (active.value) stop().catch(() => {});
+    // Capture Studio opts out to flush its MediaRecorders before releasing native tracks.
+    if (options.manageUnmount !== false && active.value) stop().catch(() => {});
   });
 
   return {
