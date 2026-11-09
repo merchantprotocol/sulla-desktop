@@ -222,6 +222,30 @@ jobs:
       - name: Install BusyBox for guest disk characterization
         if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Check whether CE-1 renderer smoke is affected
+        id: ce1
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -Eq '^(pkg/sulla-desktop/pages/capture-studio/effects/|resources/camera-effects/|scripts/camera-effects-smoke)'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install pinned Electron binary for focused offline CE-1 smoke
+        if: steps.ce1.outputs.run == 'true'
+        run: node node_modules/electron/install.js
+      - name: Real offline CE-1 renderer inference and pixel regression
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: xvfb-run -a node_modules/.bin/electron --no-sandbox scripts/camera-effects-smoke.cjs
+      - name: Prove CE-1 pixel regression rejects prior scaled overscan
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 1
+        run: |
+          if CE1_REGRESSION_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox scripts/camera-effects-smoke.cjs > /tmp/ce1-mutant.log 2>&1; then
+            cat /tmp/ce1-mutant.log
+            echo 'Regression did not reject scaled overscan'
+            exit 1
+          fi
+          cat /tmp/ce1-mutant.log
+          grep -q 'Scene coordinates changed' /tmp/ce1-mutant.log
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}

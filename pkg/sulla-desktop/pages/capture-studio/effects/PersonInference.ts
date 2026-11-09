@@ -36,6 +36,7 @@ export class OfflinePersonInference implements PersonInference {
     private readonly resourceDirectory: string,
     // Inject Electron's native require at composition, never webpack's dynamic require.
     private readonly loadRuntime: (filename: string) => VisionRuntime,
+    private readonly readModel: (filename: string) => Promise<Uint8Array>,
   ) {}
 
   async initialize(): Promise<void> {
@@ -45,7 +46,8 @@ export class OfflinePersonInference implements PersonInference {
     );
     this.segmenter = await runtime.ImageSegmenter.createFromOptions(files, {
       baseOptions: {
-        modelAssetPath: pathToFileURL(path.join(this.resourceDirectory, 'selfie_multiclass_256x256.tflite')).href,
+        // Chromium fetch(file://) is not a portable model loader. Use injected native bytes.
+        modelAssetBuffer: await this.readModel(path.join(this.resourceDirectory, 'selfie_multiclass_256x256.tflite')),
         delegate: 'CPU',
       },
       runningMode: 'VIDEO',

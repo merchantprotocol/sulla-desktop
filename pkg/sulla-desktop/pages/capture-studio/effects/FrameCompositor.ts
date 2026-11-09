@@ -8,14 +8,20 @@ export interface Crop { x: number; y: number; width: number; height: number }
 export class PersonFraming {
   private center = { x: 0.5, y: 0.5 };
   private lastTime?: number;
+  private visited = new Uint8Array(0);
+  private queue = new Int32Array(0);
 
   crop(mask: PersonMask | undefined, width: number, height: number, timestamp: number, enabled: boolean): Crop {
     let target = { x: 0.5, y: 0.5 };
     let found = false;
 
     if (enabled && mask) {
-      const visited = new Uint8Array(mask.categories.length);
-      const queue = new Int32Array(mask.categories.length);
+      if (this.visited.length !== mask.categories.length) {
+        this.visited = new Uint8Array(mask.categories.length);
+        this.queue = new Int32Array(mask.categories.length);
+      }
+      const visited = this.visited; const queue = this.queue;
+      visited.fill(0);
       let largest = 0;
 
       for (let i = 0; i < visited.length; i++) {
@@ -64,9 +70,17 @@ export class PersonFraming {
 
 /** Converts real multiclass labels to alpha without ever softening hair, clothing or background. */
 export class PersonMaskRasterizer {
+  private pixels = new Uint8ClampedArray(0);
+
+  validate(mask: PersonMask): void {
+    if (!Number.isSafeInteger(mask.width) || !Number.isSafeInteger(mask.height) ||
+        mask.width <= 0 || mask.height <= 0 || mask.width * mask.height !== mask.categories.length ||
+        mask.categories.some(category => category > 5)) throw new Error('Invalid person mask');
+  }
   alpha(mask: PersonMask, faceOnly: boolean): Uint8ClampedArray {
-    if (mask.width * mask.height !== mask.categories.length) throw new Error('Invalid person mask');
-    const pixels = new Uint8ClampedArray(mask.categories.length * 4);
+    this.validate(mask);
+    if (this.pixels.length !== mask.categories.length * 4) this.pixels = new Uint8ClampedArray(mask.categories.length * 4);
+    const pixels = this.pixels;
     for (let i = 0; i < mask.categories.length; i++) {
       pixels[i * 4 + 3] = (faceOnly ? mask.categories[i] === 3 : mask.categories[i] !== 0) ? 255 : 0;
     }
@@ -79,16 +93,19 @@ export class FrameCompositor {
   private readonly scene: HTMLCanvasElement;
   private readonly layer: HTMLCanvasElement;
   private readonly maskCanvas: HTMLCanvasElement;
+  private readonly padded: HTMLCanvasElement;
+  private maskPixels?: ImageData;
 
   constructor(
     private readonly framing: PersonFraming,
     makeCanvas: () => HTMLCanvasElement,
     private readonly rasterizer: PersonMaskRasterizer = new PersonMaskRasterizer(),
   ) {
-    this.scene = makeCanvas(); this.layer = makeCanvas(); this.maskCanvas = makeCanvas();
+    this.scene = makeCanvas(); this.layer = makeCanvas(); this.maskCanvas = makeCanvas(); this.padded = makeCanvas();
   }
 
   draw(video: HTMLVideoElement, output: HTMLCanvasElement, mask: PersonMask | undefined, options: EffectOptions, timestamp: number): void {
+    if (mask) this.rasterizer.validate(mask);
     const width = output.width; const height = output.height;
     for (const canvas of [this.scene, this.layer]) {
       if (canvas.width !== width) canvas.width = width;
@@ -107,8 +124,9 @@ export class FrameCompositor {
         layer.drawImage(this.maskCanvas, 0, 0, width, height);
         layer.globalCompositeOperation = 'source-over';
         scene.filter = `blur(${ Math.min(12, options.backgroundBlur * 12) }px)`;
-        // Overscan prevents transparent blur edges.
-        scene.drawImage(video, -24, -24, width + 48, height + 48);
+        // Extend boundary pixels, never scale the scene under its unscaled person mask.
+        this.extendEdges(width, height, 48);
+        scene.drawImage(this.padded, -48, -48);
         scene.filter = 'none';
         scene.drawImage(this.layer, 0, 0);
       }
@@ -139,10 +157,26 @@ export class FrameCompositor {
     return context;
   }
 
+  private extendEdges(width: number, height: number, padding: number): void {
+    if (this.padded.width !== width + padding * 2) this.padded.width = width + padding * 2;
+    if (this.padded.height !== height + padding * 2) this.padded.height = height + padding * 2;
+    const context = this.context(this.padded);
+    context.clearRect(0, 0, this.padded.width, this.padded.height);
+    const xs = [[0, 1, 0, padding], [0, width, padding, width], [width - 1, 1, padding + width, padding]];
+    const ys = [[0, 1, 0, padding], [0, height, padding, height], [height - 1, 1, padding + height, padding]];
+    for (const [sx, sw, dx, dw] of xs) {
+      for (const [sy, sh, dy, dh] of ys) context.drawImage(this.scene, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+  }
+
   private paintMask(mask: PersonMask, faceOnly: boolean): void {
-    this.maskCanvas.width = mask.width; this.maskCanvas.height = mask.height;
+    if (this.maskCanvas.width !== mask.width) this.maskCanvas.width = mask.width;
+    if (this.maskCanvas.height !== mask.height) this.maskCanvas.height = mask.height;
     const context = this.context(this.maskCanvas);
-    const pixels = context.createImageData(mask.width, mask.height);
+    if (!this.maskPixels || this.maskPixels.width !== mask.width || this.maskPixels.height !== mask.height) {
+      this.maskPixels = context.createImageData(mask.width, mask.height);
+    }
+    const pixels = this.maskPixels;
     pixels.data.set(this.rasterizer.alpha(mask, faceOnly));
     context.putImageData(pixels, 0, 0);
   }
