@@ -133,6 +133,15 @@
               </button>
             </nav>
           </div>
+          <div v-for="facet in searchFacets" :key="'rail-' + facet.key" class="rail-section">
+            <div class="rail-label">{{ facet.label }}</div>
+            <nav class="rail-nav">
+              <label v-for="option in facet.options" :key="option.value" class="rail-item plain">
+                <input type="checkbox" :checked="selectedFacets[facet.key]?.includes(option.value)" @change="toggleFacet(facet.key, option.value)">
+                <span class="label">{{ option.label }}</span><span class="rail-count">{{ option.count }}</span>
+              </label>
+            </nav>
+          </div>
         </template>
 
         <div class="rail-footer">
@@ -152,7 +161,7 @@
         class="content"
       >
         <div class="content-head">
-          <h3>{{ headingLabel }}</h3>
+          <h3>{{ searchMode ? `Results${ searchDraft.trim() ? ` for “${ searchDraft.trim() }”` : '' }` : headingLabel }}</h3>
 
           <div class="search-box">
             <svg
@@ -191,8 +200,9 @@
                   {{ option.label }} <span>{{ option.count }}</span>
                 </label>
               </section>
-              <button type="button" class="btn primary" @click="filtersOpen = false">Show {{ filteredListings.length }} use cases</button>
+              <button type="button" class="btn primary" @click="applySearchFilters">Show {{ filteredListings.length }} use cases</button>
             </div>
+            <button v-if="searchMode" type="button" class="btn ghost" @click="selectedFacets = { topics: [], kinds: [], media: [] }; searchDraft = ''; searchMode = false; mp.setSearch('')">Clear all</button>
             <span
               v-if="mp.total.value > 0"
               class="count"
@@ -423,6 +433,7 @@ import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
 import { MarketplaceSearchService, type MarketplaceSearchState } from '@pkg/composables/MarketplaceSearchService';
+import { MarketplaceListingRepository } from '@pkg/composables/MarketplaceListingRepository';
 import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -463,6 +474,12 @@ interface SubmissionRow {
 }
 
 const mp = useMarketplace();
+const listingRepository = new MarketplaceListingRepository({
+  browse: options => ipcRenderer.invoke('marketplace-browse', { ...options, sort: 'popular' }),
+  detail: id => ipcRenderer.invoke('marketplace-detail', id),
+});
+const catalogRows = ref(mp.templates.value);
+const catalogKinds = ref<Map<string, string[]>>(new Map());
 
 // Auth gate — the marketplace is Cloud-backed, so without a Sulla Cloud
 // session the browse + submissions endpoints return "Sign in" errors.
@@ -495,13 +512,19 @@ const searchDraft = ref('');
 const filtersOpen = ref(false);
 const selectedFacets = ref<Record<string, string[]>>({ topics: [], kinds: [], media: [] });
 const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, topics: selectedFacets.value.topics, kinds: selectedFacets.value.kinds, media: selectedFacets.value.media, sort: 'relevance' }));
-const searchService = computed(() => new MarketplaceSearchService(mp.templates.value));
+const searchService = computed(() => new MarketplaceSearchService(catalogRows.value, catalogKinds.value));
 const searchFacets = computed(() => searchService.value.facets(searchState.value));
 const filteredListings = computed(() => searchService.value.search(searchState.value));
+const searchMode = ref(false);
 
 function toggleFacet(key: string, value: string): void {
   const current = selectedFacets.value[key] ?? [];
   selectedFacets.value = { ...selectedFacets.value, [key]: current.includes(value) ? current.filter(item => item !== value) : [...current, value] };
+}
+function applySearchFilters(): void {
+  searchMode.value = true;
+  filtersOpen.value = false;
+  mp.setSearch(searchDraft.value).catch(() => undefined);
 }
 
 // ── My Submissions state ──
@@ -564,7 +587,13 @@ function onOpenDetailEvent(ev: Event) {
 onMounted(async() => {
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
-  if (authed) mp.load().catch(() => undefined);
+  if (authed) {
+    mp.load().catch(() => undefined);
+    listingRepository.loadCatalog().then(async rows => {
+      catalogRows.value = rows;
+      catalogKinds.value = await listingRepository.loadKinds(rows);
+    }).catch(() => undefined);
+  }
 });
 
 onUnmounted(() => {
@@ -578,6 +607,7 @@ function onSort(s: SortValue) {
   mp.setSort(s).catch(() => undefined);
 }
 function submitSearch() {
+  searchMode.value = true;
   mp.setSearch(searchDraft.value).catch(() => undefined);
 }
 function onOpen(id: string) {

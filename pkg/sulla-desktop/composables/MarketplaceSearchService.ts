@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
-export type MarketplaceSearchState = { q: string; topics: string[]; kinds: string[]; media: string[]; sort: 'relevance' | 'popular' | 'newest' };
+export type MarketplaceSearchState = { q: string; topics: string[]; kinds: string[]; media: string[]; sort: 'relevance' | 'popular' | 'newest' | 'name' };
 export type MarketplaceFacet = { key: string; label: string; options: Array<{ value: string; label: string; count: number }> };
 
 /** Search and facets over the real browse rows already fetched by useMarketplace. */
 export class MarketplaceSearchService {
-  constructor(private readonly rows: readonly MarketplaceBrowseRow[]) {}
+  constructor(private readonly rows: readonly MarketplaceBrowseRow[], private readonly kindsById: ReadonlyMap<string, string[]> = new Map()) {}
 
   facets(state: MarketplaceSearchState): MarketplaceFacet[] {
     const facets: MarketplaceFacet[] = [];
     const topics = this.counts(row => row.category || 'Uncategorized', state, 'topics');
-    if (topics.length) facets.push({ key: 'topics', label: 'Topic', options: topics });
-    const kinds = this.counts(row => row.kind, state, 'kinds');
-    if (kinds.length) facets.push({ key: 'kinds', label: 'Type', options: kinds });
+    facets.push({ key: 'topics', label: 'Topic', options: topics });
+    const kinds = this.counts(row => this.kindsById.get(row.id)?.join('|') ?? row.kind, state, 'kinds');
+    if (kinds.filter(option => option.count > 0).length >= 2) facets.push({ key: 'kinds', label: 'Type', options: kinds });
     const media = this.counts(row => row.hero_media?.type, state, 'media', true);
-    if (media.length) facets.push({ key: 'media', label: 'Preview', options: media });
+    if (media.filter(option => option.count > 0).length >= 2) facets.push({ key: 'media', label: 'Preview', options: media });
     return facets;
   }
 
@@ -26,9 +26,10 @@ export class MarketplaceSearchService {
         .some(value => value?.toLocaleLowerCase().includes(query));
       const topic = row.category || 'Uncategorized';
       const matches = (values: string[], value: string) => !values.length || values.includes(value);
-      return matchesQuery && matches(state.topics, topic) && matches(state.kinds, row.kind) && matches(state.media, row.hero_media?.type ?? '');
+      const rowKinds = this.kindsById.get(row.id) ?? [row.kind];
+      return matchesQuery && matches(state.topics, topic) && (!state.kinds.length || rowKinds.some(kind => state.kinds.includes(kind))) && matches(state.media, row.hero_media?.type ?? '');
     });
-    return [...result].sort((a, b) => state.sort === 'newest' ? b.created_at.localeCompare(a.created_at) : state.sort === 'popular' ? b.download_count - a.download_count : 0);
+    return [...result].sort((a, b) => state.sort === 'newest' ? b.created_at.localeCompare(a.created_at) : state.sort === 'popular' ? b.download_count - a.download_count : state.sort === 'name' ? a.name.localeCompare(b.name) : 0);
   }
 
   serialize(state: MarketplaceSearchState): URLSearchParams {
@@ -44,7 +45,7 @@ export class MarketplaceSearchService {
   deserialize(params: URLSearchParams): MarketplaceSearchState {
     const list = (key: string) => (params.get(key) ?? '').split(',').filter(Boolean);
     const sort = params.get('sort');
-    return { q: params.get('q') ?? '', topics: list('topic'), kinds: list('type'), media: list('media'), sort: sort === 'newest' || sort === 'popular' ? sort : 'relevance' };
+    return { q: params.get('q') ?? '', topics: list('topic'), kinds: list('type'), media: list('media'), sort: sort === 'newest' || sort === 'popular' || sort === 'name' ? sort : 'relevance' };
   }
 
   private counts(valueFor: (row: MarketplaceBrowseRow) => string | null | undefined, state: MarketplaceSearchState, ignoredKey: keyof MarketplaceSearchState, omitEmpty = false) {

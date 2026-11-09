@@ -18,11 +18,17 @@ describe('MarketplaceSearchService', () => {
 
   it('shows data-backed facet counts and suppresses unsupported facet groups', () => {
     const facets = new MarketplaceSearchService(rows).facets(state);
-    expect(facets.map(facet => facet.key)).toEqual(['topics', 'kinds', 'media']);
+    expect(facets.map(facet => facet.key)).toEqual(['topics', 'kinds']);
     expect(facets.find(facet => facet.key === 'topics')?.options).toEqual([
       { value: 'Money', label: 'Money', count: 1 }, { value: 'Operations', label: 'Operations', count: 1 },
     ]);
-    expect(new MarketplaceSearchService([{ ...rows[0], hero_media: undefined }]).facets(state).map(facet => facet.key)).toEqual(['topics', 'kinds']);
+    expect(new MarketplaceSearchService([{ ...rows[0], hero_media: undefined }]).facets(state).map(facet => facet.key)).toEqual(['topics']);
+  });
+
+  it('keeps Topic visible for empty data and sorts names deterministically', () => {
+    const service = new MarketplaceSearchService(rows);
+    expect(new MarketplaceSearchService([]).facets(state).map(facet => facet.key)).toEqual(['topics']);
+    expect(service.search({ ...state, sort: 'name' }).map(row => row.name)).toEqual(['Ledgerline', 'Sieve']);
   });
 
   it('sorts by popularity and round-trips supported query state', () => {
