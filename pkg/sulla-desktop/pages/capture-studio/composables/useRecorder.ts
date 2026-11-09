@@ -93,7 +93,7 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-export function useRecorder() {
+export function useRecorder(options: { manageUnmount?: boolean } = {}) {
   const isRecording = ref(false);
   const sessionId = ref('');
   const elapsedSeconds = ref(0);
@@ -411,7 +411,8 @@ export function useRecorder() {
   }
 
   onUnmounted(() => {
-    if (isRecording.value) stopSession();
+    // Capture Studio owns ordered recorder flush -> effect/raw disposal.
+    if (options.manageUnmount !== false && isRecording.value) stopSession();
   });
 
   return {

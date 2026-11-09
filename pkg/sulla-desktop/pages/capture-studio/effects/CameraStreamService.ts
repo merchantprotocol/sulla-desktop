@@ -97,7 +97,11 @@ export class CameraStreamService {
   async beginRecording(): Promise<MediaStream | undefined> {
     this.assertMutable();
     this.recording = true;
-    try { await this.pending; return this.stream; }
+    try {
+      await this.pending;
+      if (this.disposed) throw new Error('Camera service is disposed');
+      return this.stream;
+    }
     catch (error) { this.recording = false; throw error; }
   }
 

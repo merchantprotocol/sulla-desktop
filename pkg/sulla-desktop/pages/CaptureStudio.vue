@@ -490,7 +490,7 @@ const { shell } = require('electron');
 // ─── Composables ───
 const audioDriver = useAudioDriver();
 const mediaSources = useMediaSources();
-const recorder = useRecorder();
+const recorder = useRecorder({ manageUnmount: false });
 const inputTracker = useInputEventTracker(recorder.logEvent);
 const settings = useSettings();
 const diskSpace = useDiskSpace();
@@ -503,6 +503,7 @@ const loadingMessage = ref('Initializing Capture Studio...');
 
 // ─── State ───
 const recording = ref(false);
+let studioClosing = false;
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
 const cameraShape = ref('circle');
@@ -619,12 +620,12 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
-// Both preview slots and recorder read the same published camera output.
-watch(mediaSources.cameraStream, () => updateStreamAssignments(), { flush: 'sync' });
-
 // Stream refs for primary and pip slots — updated explicitly after autoAssign
 const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
+
+// Both preview slots and recorder read the same published camera output.
+watch(mediaSources.cameraStream, () => updateStreamAssignments(), { flush: 'sync' });
 
 function updateStreamAssignments() {
   const primary = primarySource.value;
@@ -937,6 +938,7 @@ async function startSetupRecording() {
 }
 
 async function toggleRecord() {
+  if (studioClosing) return;
   if (!recording.value) {
     // Check disk space before starting
     const spaceCheck = diskSpace.checkBeforeRecording();
@@ -947,7 +949,10 @@ async function toggleRecord() {
     }
 
     // Lock camera lifecycle before asynchronous recorder/audio startup.
-    try { await mediaSources.camera.beginRecording(); }
+    try {
+      await mediaSources.camera.beginRecording();
+      if (studioClosing) { mediaSources.camera.endRecording(); return; }
+    }
     catch (error: any) { statusMessage.value = error.message; return; }
 
     // Gather active streams for recording — check stream.active not just existence
@@ -1041,6 +1046,11 @@ async function toggleRecord() {
       return;
     }
 
+    if (studioClosing) {
+      await recorder.stopSession();
+      mediaSources.camera.endRecording();
+      return;
+    }
     recording.value = true;
 
     // Start event tracking (mouse clicks, keystrokes, window focus)
@@ -1780,6 +1790,7 @@ useAgentBridge({
     return await mediaSources.listVideoDevices();
   },
   'camera.set': async(params) => {
+    mediaSources.camera.assertMutable();
     const deviceId = typeof params.deviceId === 'string' && params.deviceId ? params.deviceId : undefined;
     if (typeof params.quality === 'string') {
       const preset = params.quality as QualityPreset;
@@ -1909,10 +1920,11 @@ onMounted(async() => {
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
 async function cleanupCaptureStudio() {
+  studioClosing = true;
   console.log('[CaptureStudio] Cleaning up...');
 
   // Stop recording if active
-  if (recording.value) {
+  if (recording.value || recorder.isRecording.value) {
     await micRecording.stop();
     if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     inputTracker.stopTracking();
