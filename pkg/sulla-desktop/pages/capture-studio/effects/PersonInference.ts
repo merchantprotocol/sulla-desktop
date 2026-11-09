@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { createRequire } from 'module';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
@@ -24,7 +23,7 @@ interface Segmenter {
   segmentForVideo(frame: HTMLVideoElement, timestamp: number): VisionResult;
   close(): void;
 }
-interface VisionRuntime {
+export interface VisionRuntime {
   FilesetResolver: { forVisionTasks(root: string): Promise<unknown> };
   ImageSegmenter: { createFromOptions(files: unknown, options: unknown): Promise<Segmenter> };
 }
@@ -35,8 +34,8 @@ export class OfflinePersonInference implements PersonInference {
 
   constructor(
     private readonly resourceDirectory: string,
-    private readonly loadRuntime: (filename: string) => VisionRuntime =
-      filename => createRequire(filename)(filename) as VisionRuntime,
+    // Inject Electron's native require at composition, never webpack's dynamic require.
+    private readonly loadRuntime: (filename: string) => VisionRuntime,
   ) {}
 
   async initialize(): Promise<void> {
