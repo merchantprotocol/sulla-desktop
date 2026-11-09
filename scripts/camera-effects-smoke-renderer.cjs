@@ -166,12 +166,12 @@ class CameraEffectsRendererSmoke {
       const url = URL.createObjectURL(new Blob([saved], { type: 'video/webm' }));
       try {
         await new Promise((resolve, reject) => { playback.onloadeddata = resolve; playback.onerror = () => reject(new Error('Saved WebM did not decode')); playback.src = url; playback.load(); });
-        assert.equal(playback.videoWidth, 1280);
-        assert.equal(playback.videoHeight, 720);
         const decoded = this.canvas(1280, 720);
         decoded.getContext('2d').drawImage(playback, 0, 0);
         const edge = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
         assert.ok(edge[1] > 180 && edge[0] < 70, 'Saved video contains raw red edge, not processed framing: ' + [...edge]);
+        assert.equal(playback.videoWidth, 1280);
+        assert.equal(playback.videoHeight, 720);
         decoded.getContext('2d').drawImage(preview, 0, 0);
         const live = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
         assert.ok(live[1] > 180 && live[0] < 70, 'Preview and saved video differ');
