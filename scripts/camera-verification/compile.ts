@@ -56,6 +56,8 @@ class CaptureVerificationCompiler {
     process.env.VUE_CLI_SERVICE_CONFIG_PATH = path.resolve('pkg/sulla-desktop/vue.config.mjs');
     const Service = require('@vue/cli-service/lib/Service');
     const service = new Service(process.cwd());
+    // Same plugin selection as the production renderer build (scripts/build.ts: --skip-plugins eslint).
+    service.setPluginsToSkip({ 'skip-plugins': 'eslint' });
     await service.init('production');
     // Narrow pages, NOT dependencies or loaders. The original entry and its entire graph compile.
     service.projectOptions.pages = { 'capture-studio': service.projectOptions.pages['capture-studio'] };

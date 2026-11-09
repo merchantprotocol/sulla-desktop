@@ -396,7 +396,9 @@ jobs:
             cat artifacts/ce1/compile.log
             python3 - <<'PYANNOTATION'
           import pathlib
-          message = pathlib.Path('artifacts/ce1/compile.log').read_text()[-18000:]
+          import re
+          raw = pathlib.Path('artifacts/ce1/compile.log').read_text()
+          message = '\n'.join(l for l in raw.splitlines() if not re.match(r'\s+at ', l))[:12000]
           print('::error title=CE1 compile diagnostics::' + message.replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D'))
           PYANNOTATION
             exit 1
