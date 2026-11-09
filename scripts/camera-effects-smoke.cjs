@@ -40,8 +40,12 @@ class CameraEffectsSmoke {
       fs.writeFileSync(path.join(this.directory, 'camera-bridge.js'), ts.transpileModule('export const cameraBridge = (mediaSources: any) => ({' + releaseHandler + '});', {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
       }).outputText);
-      const startupGuards = ast.statements.filter(node => ts.isExpressionStatement(node) && node.getText(ast).includes('= captureLifecycle.protect(')).map(node => node.getText(ast)).join('\n');
-      const sourceFunctions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['hasNativeSystemAudio', 'enableSystemAudio', 'disableSystemAudio', 'toggleSrc'].includes(node.name?.text)).map(node => node.getText(ast)).join('\n');
+      let startupGuards = ast.statements.filter(node => ts.isExpressionStatement(node) && node.getText(ast).includes('= captureLifecycle.protect(')).map(node => node.getText(ast)).join('\n');
+      let sourceFunctions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['hasNativeSystemAudio', 'enableSystemAudio', 'disableSystemAudio', 'toggleSrc'].includes(node.name?.text)).map(node => node.getText(ast)).join('\n');
+      if (process.env.CE1_STARTUP_MUTANT === '1') {
+        startupGuards = '';
+        sourceFunctions = sourceFunctions.replace('return captureLifecycle.track(async() => {', 'return (async() => {').replace('\n  });\n}', '\n  })();\n}');
+      }
       fs.writeFileSync(path.join(this.directory, 'source-enable.js'), ts.transpileModule('export const sourceEnable = (captureLifecycle:any, mediaSources:any, audioDriver:any, speakerCapture:any, statusMessage:any, autoAssign:any, updateStreamAssignments:any, currentLayout:any, assign:any, videoSources:any, primaryStream:any) => { ' + startupGuards + sourceFunctions + '; return toggleSrc; };', {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
       }).outputText);
