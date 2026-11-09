@@ -63,7 +63,11 @@ export function useMediaSources() {
   }, error => {
     cameraEffectError.value = 'Camera effects unavailable. Original camera video is being used.';
     console.warn('[CameraEffects]', error);
-  }, () => { cameraEffectsRevision.value++; });
+  }, () => {
+    const options = camera.effectOptions;
+    if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
+    cameraEffectsRevision.value++;
+  });
   let rawScreenStream: MediaStream | null = null;
   let cropTimer: ReturnType<typeof setInterval> | null = null;
 

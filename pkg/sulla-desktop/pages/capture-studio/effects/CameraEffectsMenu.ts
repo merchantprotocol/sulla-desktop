@@ -43,6 +43,7 @@ export class CameraEffectsMenu {
     try {
       this.camera.assertMutable();
       if (this.locked()) throw new Error('Stop recording before changing camera effects');
+      this.notify('');
       this.busy = true;
       this.changed();
       await this.camera.setOptions(options);

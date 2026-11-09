@@ -34,7 +34,7 @@
         @mouseenter="openSub(item.id, $event)"
         @mouseleave="startCloseSub"
       >
-        <button class="ctx-menu-item ctx-menu-has-sub" :disabled="item.disabled">
+        <button class="ctx-menu-item ctx-menu-has-sub" :class="{ active: item.active }" :disabled="item.disabled">
           {{ item.label }}
           <svg
             class="ctx-menu-arrow"
