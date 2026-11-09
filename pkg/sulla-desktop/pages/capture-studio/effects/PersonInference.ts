@@ -10,7 +10,7 @@ export interface PersonMask {
 }
 export interface PersonInference {
   initialize(): Promise<void>;
-  infer(frame: HTMLVideoElement, timestamp: number): Promise<PersonMask>;
+  infer(frame: HTMLVideoElement | HTMLCanvasElement, timestamp: number): Promise<PersonMask>;
   close(): void;
 }
 interface VisionMask {
@@ -20,7 +20,7 @@ interface VisionMask {
 }
 interface VisionResult { categoryMask?: VisionMask; close(): void }
 interface Segmenter {
-  segmentForVideo(frame: HTMLVideoElement, timestamp: number): VisionResult;
+  segmentForVideo(frame: HTMLVideoElement | HTMLCanvasElement, timestamp: number): VisionResult;
   close(): void;
 }
 export interface VisionRuntime {
@@ -73,7 +73,7 @@ export class OfflinePersonInference implements PersonInference {
     });
   }
 
-  async infer(frame: HTMLVideoElement, timestamp: number): Promise<PersonMask> {
+  async infer(frame: HTMLVideoElement | HTMLCanvasElement, timestamp: number): Promise<PersonMask> {
     if (!this.segmenter) throw new Error('Person inference is not initialized');
     const result = this.segmenter.segmentForVideo(frame, timestamp);
 
@@ -91,5 +91,29 @@ export class OfflinePersonInference implements PersonInference {
     const segmenter = this.segmenter;
     this.segmenter = undefined;
     segmenter?.close();
+  }
+}
+
+/** Bound model upload/preprocessing input independently of the 720p compositor cap. */
+export class BoundedPersonInference implements PersonInference {
+  constructor(private readonly inner: PersonInference, private readonly canvas: HTMLCanvasElement) {}
+  initialize(): Promise<void> { return this.inner.initialize(); }
+  infer(frame: HTMLVideoElement | HTMLCanvasElement, timestamp: number): Promise<PersonMask> {
+    const width = 'videoWidth' in frame ? frame.videoWidth : frame.width;
+    const height = 'videoHeight' in frame ? frame.videoHeight : frame.height;
+    if (!width || !height) throw new Error('Inference input is empty');
+    const scale = Math.min(1, 512 / width, 512 / height);
+    const targetWidth = Math.max(1, Math.floor(width * scale));
+    const targetHeight = Math.max(1, Math.floor(height * scale));
+    if (this.canvas.width !== targetWidth) this.canvas.width = targetWidth;
+    if (this.canvas.height !== targetHeight) this.canvas.height = targetHeight;
+    const context = this.canvas.getContext('2d');
+    if (!context) throw new Error('Inference preprocessing canvas unavailable');
+    context.drawImage(frame, 0, 0, targetWidth, targetHeight);
+    return this.inner.infer(this.canvas, timestamp);
+  }
+  close(): void {
+    try { this.inner.close(); }
+    finally { this.canvas.width = 0; this.canvas.height = 0; }
   }
 }

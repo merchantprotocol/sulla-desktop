@@ -85,7 +85,7 @@ function computePcmRms(pcm: Buffer): number {
   return Math.min(1, Math.sqrt(sum / samples) * 3);
 }
 
-export function useSpeakerCapture() {
+export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -131,7 +131,7 @@ export function useSpeakerCapture() {
   }
 
   /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
-  async function acquireNative(): Promise<MediaStream | null> {
+  async function acquireNative(isCancelled: () => boolean = () => false): Promise<MediaStream | null> {
     releaseNative();
     try {
       // Electron's main-process display-media handler supplies the display and
@@ -141,6 +141,10 @@ export function useSpeakerCapture() {
         audio: true,
         video: true,
       });
+      if (isCancelled()) {
+        displayStream.getTracks().forEach(track => track.stop());
+        return null;
+      }
       const audioTracks = displayStream.getAudioTracks();
       displayStream.getVideoTracks().forEach(track => track.stop());
       if (audioTracks.length === 0) {
@@ -310,7 +314,8 @@ export function useSpeakerCapture() {
   }
 
   onUnmounted(() => {
-    if (active.value) stop().catch(() => {});
+    // Capture Studio opts out to flush its MediaRecorders before releasing native tracks.
+    if (options.manageUnmount !== false && active.value) stop().catch(() => {});
   });
 
   return {

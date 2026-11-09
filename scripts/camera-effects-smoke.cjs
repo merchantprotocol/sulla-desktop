@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const ts = require('typescript');
 const webpack = require('webpack');
+const { parse, compileScript, compileTemplate } = require('@vue/compiler-sfc');
 const { pathToFileURL } = require('node:url');
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
@@ -20,13 +21,41 @@ class CameraEffectsSmoke {
   async run() {
     let code = 1;
     try {
+      // Compile the ACTUAL SFC in remote CI, including script setup and template.
+      const filename = 'pkg/sulla-desktop/pages/CaptureStudio.vue';
+      const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename });
+      if (errors.length) throw new Error(errors.join('\n'));
+      compileScript(descriptor, { id: 'ce1-capture-studio' });
+      const template = compileTemplate({ source: descriptor.template.content, filename, id: 'ce1-capture-studio' });
+      if (template.errors.length) throw new Error(template.errors.join('\n'));
+      // Execute the actual SFC camera.release callback through the real RPC composable.
+      const ast = ts.createSourceFile(filename + '.ts', descriptor.scriptSetup.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      let releaseHandler;
+      const visit = node => {
+        if (ts.isPropertyAssignment(node) && node.name.getText(ast) === "'camera.release'") releaseHandler = node.getText(ast);
+        ts.forEachChild(node, visit);
+      };
+      visit(ast);
+      if (!releaseHandler) throw new Error('Actual SFC camera.release handler not found');
+      fs.writeFileSync(path.join(this.directory, 'camera-bridge.js'), ts.transpileModule('export const cameraBridge = (mediaSources: any) => ({' + releaseHandler + '});', {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText);
+      let startupGuards = ast.statements.filter(node => ts.isExpressionStatement(node) && node.getText(ast).includes('= captureLifecycle.protect(')).map(node => node.getText(ast)).join('\n');
+      let sourceFunctions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && ['hasNativeSystemAudio', 'enableSystemAudio', 'disableSystemAudio', 'toggleSrc'].includes(node.name?.text)).map(node => node.getText(ast)).join('\n');
+      if (process.env.CE1_STARTUP_MUTANT === '1') {
+        startupGuards = '';
+        sourceFunctions = sourceFunctions.replace('return captureLifecycle.track(async() => {', 'return (async() => {').replace('\n  });\n}', '\n  })();\n}');
+      }
+      fs.writeFileSync(path.join(this.directory, 'source-enable.js'), ts.transpileModule('export const sourceEnable = (captureLifecycle:any, mediaSources:any, audioDriver:any, speakerCapture:any, statusMessage:any, autoAssign:any, updateStreamAssignments:any, currentLayout:any, assign:any, videoSources:any, primaryStream:any) => { ' + startupGuards + sourceFunctions + '; return toggleSrc; };', {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText);
       // Verify shipped assets before executing any native/runtime code.
       const manifest = JSON.parse(fs.readFileSync(path.join(this.resources, 'manifest.json')));
       for (const [file, hash] of Object.entries(manifest.distributedFiles)) {
         const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(this.resources, file))).digest('hex');
         if (actual !== hash) throw new Error('Asset hash mismatch: ' + file);
       }
-      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService']) {
+      for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService', 'CaptureSessionLifecycle']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
           source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
@@ -35,6 +64,18 @@ class CameraEffectsSmoke {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
         }).outputText);
       }
+      for (const name of ['useMediaSources', 'useRecorder', 'useAgentBridge', 'useAudioDriver', 'useSpeakerCapture']) {
+        let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/composables', name + '.ts'), 'utf8');
+        source = source.replaceAll("'../effects/", "'./");
+        if (name === 'useRecorder' && process.env.CE1_RECORDING_MUTANT === '1') {
+          source = source.replace('new MediaRecorder(src.stream, recorderOpts)', 'new MediaRecorder(window.__ce1Raw, recorderOpts)');
+        }
+        fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(source, {
+          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+        }).outputText);
+      }
+      // Only filesystem location is substituted: real recorder, native writer, real encoded WebM.
+      fs.writeFileSync(path.join(this.directory, 'paths.js'), 'exports.default = { sullaHome: ' + JSON.stringify(this.directory) + ' };');
       // Same app:// scheme + public HTML (no CSP) as the real Capture Studio.
       const html = fs.readFileSync(path.resolve('pkg/sulla-desktop/public/capture-studio.html'), 'utf8');
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
@@ -45,6 +86,7 @@ class CameraEffectsSmoke {
         entry: path.join(this.directory, 'renderer.cjs'),
         output: { path: this.directory, filename: 'renderer.js' },
         optimization: { minimize: false },
+        resolve: { modules: [path.resolve('node_modules'), 'node_modules'], alias: { '@pkg/utils/paths': path.join(this.directory, 'paths.js') } },
       }, (error, stats) => error || stats.hasErrors() ? reject(error || new Error(stats.toString())) : resolve()));
       await app.whenReady();
       protocol.handle('app', request => net.fetch(pathToFileURL(path.join(this.directory, new URL(request.url).pathname)).href));
@@ -59,7 +101,7 @@ class CameraEffectsSmoke {
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       this.window = new BrowserWindow({ show: false, webPreferences: {
         nodeIntegration: true, contextIsolation: false, webSecurity: false, backgroundThrottling: false,
-        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_REGRESSION_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
+        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_RECORDING_MUTANT === '1' ? ['--ce1-recording-mutant'] : []), ...(process.env.CE1_REGRESSION_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
       } });
       this.window.webContents.on('console-message', (_event, _level, message) => console.log(message));
       this.window.webContents.on('render-process-gone', (_event, details) => { console.error(details); app.exit(1); });

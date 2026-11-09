@@ -21,6 +21,8 @@ export class BrowserFrameSurface implements FrameSurface {
   constructor(private readonly document: Document, private readonly window: Window) {
     this.video = document.createElement('video');
     this.canvas = document.createElement('canvas');
+    // Camera video is opaque. Avoid a lossy VP9 alpha plane on captureStream recordings.
+    if (!this.canvas.getContext('2d', { alpha: false })) throw new Error('Canvas unavailable');
   }
 
   async open(raw: MediaStream): Promise<MediaStream> {

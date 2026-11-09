@@ -246,6 +246,28 @@ jobs:
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2
         run: xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs
+      - name: Prove CE-1 saved-video check rejects raw recording
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_RECORDING_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-recording-mutant.log 2>&1; then
+            cat /tmp/ce1-recording-mutant.log
+            echo 'Regression did not reject raw recording'
+            exit 1
+          fi
+          cat /tmp/ce1-recording-mutant.log
+          grep -q 'RAW_LEAK_SENTINEL:' /tmp/ce1-recording-mutant.log
+      - name: Prove CE-1 source startup regression rejects untracked acquisition
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_STARTUP_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-startup-mutant.log 2>&1; then
+            cat /tmp/ce1-startup-mutant.log
+            echo 'Regression did not reject untracked startup'
+            exit 1
+          fi
+          cat /tmp/ce1-startup-mutant.log
+          grep -q 'Shutdown skipped pending actual source startup' /tmp/ce1-startup-mutant.log
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
