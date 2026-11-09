@@ -99,3 +99,21 @@ describe('CameraStreamService actual core lifecycle', () => {
     await second.dispose();
   });
 });
+
+it('risk: recording-integrity — deferred requested camera + options must settle before recorder stream selection', async() => {
+  const fixture = new CompositionFixture(); const raw = new CameraFixture();
+  let resolve!: (value: MediaStream) => void;
+  const camera = fixture.service(() => new Promise(value => { resolve = value; }));
+  const acquisition = camera.acquire({ video: true });
+  await Promise.resolve();
+  const options = camera.setOptions({ autoFrame: true, soften: 0, backgroundBlur: 0 });
+  const selection = camera.beginRecording();
+  resolve(raw.asStream());
+  await acquisition; await options;
+  const selected = await selection;
+  expect(selected).toBe(fixture.published);
+  expect(selected).toBeDefined();
+  expect(selected).not.toBe(raw);
+  expect(raw.stopped).toBe(false);
+  camera.endRecording(); await camera.dispose();
+});

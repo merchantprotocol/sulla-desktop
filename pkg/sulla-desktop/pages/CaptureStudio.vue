@@ -474,6 +474,7 @@ import { useInputEventTracker } from './capture-studio/composables/useInputEvent
 import { useMediaSources, QUALITY_PRESETS, type CropRegion, type QualityPreset, type ScreenSource } from './capture-studio/composables/useMediaSources';
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
+import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
@@ -503,7 +504,7 @@ const loadingMessage = ref('Initializing Capture Studio...');
 
 // ─── State ───
 const recording = ref(false);
-let studioClosing = false;
+const captureLifecycle = new CaptureSessionLifecycle();
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
 const cameraShape = ref('circle');
@@ -775,6 +776,7 @@ async function disableSystemAudio(): Promise<void> {
 
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
+  if (captureLifecycle.isClosing) return;
   if (src.type === 'camera') {
     try { mediaSources.camera.assertMutable(); }
     catch (error: any) { statusMessage.value = error.message; return; }
@@ -942,7 +944,8 @@ async function startSetupRecording() {
 }
 
 async function toggleRecord() {
-  if (studioClosing) return;
+  return captureLifecycle.run(async() => {
+  if (captureLifecycle.isClosing) return;
   if (!recording.value) {
     // Check disk space before starting
     const spaceCheck = diskSpace.checkBeforeRecording();
@@ -955,7 +958,7 @@ async function toggleRecord() {
     // Lock camera lifecycle before asynchronous recorder/audio startup.
     try {
       await mediaSources.camera.beginRecording();
-      if (studioClosing) { mediaSources.camera.endRecording(); return; }
+      if (captureLifecycle.isClosing) { mediaSources.camera.endRecording(); return; }
     }
     catch (error: any) { statusMessage.value = error.message; return; }
 
@@ -1050,7 +1053,7 @@ async function toggleRecord() {
       return;
     }
 
-    if (studioClosing) {
+    if (captureLifecycle.isClosing) {
       await recorder.stopSession();
       mediaSources.camera.endRecording();
       return;
@@ -1083,6 +1086,7 @@ async function toggleRecord() {
     statusMessage.value = 'Recording saved';
     setTimeout(() => { statusMessage.value = '' }, 5000);
   }
+  });
 }
 
 // ─── Screenshot ───
@@ -1924,8 +1928,7 @@ onMounted(async() => {
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
 async function cleanupCaptureStudio() {
-  if (studioClosing) return;
-  studioClosing = true;
+  return captureLifecycle.close(async() => {
   console.log('[CaptureStudio] Cleaning up...');
 
   // Stop recording if active
@@ -1948,6 +1951,8 @@ async function cleanupCaptureStudio() {
     prompterEnabled.value = false;
   }
 
+  await recorder.stopSession();
+
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
   await mediaSources.camera.dispose();
@@ -1956,6 +1961,7 @@ async function cleanupCaptureStudio() {
   // Disconnect from controllers
   try { await audioDriver.stopMic() } catch { /* already stopped */ }
   try { await audioDriver.stopSpeaker() } catch { /* already stopped */ }
+  });
 }
 
 ipcRenderer.on('app:before-quit', () => {

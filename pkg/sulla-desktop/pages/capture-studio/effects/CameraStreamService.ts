@@ -72,15 +72,18 @@ export class CameraStreamService {
 
   setOptions(options: EffectOptions): Promise<void> {
     this.assertMutable();
-    const operation = this.updateOptions(options);
+    const previous = this.pending;
+    const operation = this.updateOptions({ ...options }, previous);
     this.track(operation.then(() => this.stream));
     return operation;
   }
 
-  private async updateOptions(options: EffectOptions): Promise<void> {
+  private async updateOptions(options: EffectOptions, pending?: Promise<MediaStream | undefined>): Promise<void> {
     if (![options.soften, options.backgroundBlur].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) {
       throw new Error('Effect strengths must be between zero and one');
     }
+    await pending;
+    if (this.disposed) throw new Error('Camera service is disposed');
     this.options = { ...options };
     // Reacquiring is unnecessary: retain raw ownership and replace only the effect session.
     const generation = ++this.generation;

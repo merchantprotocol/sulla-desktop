@@ -103,6 +103,7 @@ export function useRecorder(options: { manageUnmount?: boolean } = {}) {
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
+  let stopping: Promise<string> | undefined;
   let externalEntries: ExternalStreamEntry[] = [];
   let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -118,7 +119,7 @@ export function useRecorder(options: { manageUnmount?: boolean } = {}) {
     stream:   MediaStream;
     quality?: QualityPreset;
   }[]): string {
-    if (isRecording.value) {
+    if (isRecording.value || stopping) {
       error.value = 'A recording session is already active';
       return '';
     }
@@ -282,8 +283,16 @@ export function useRecorder(options: { manageUnmount?: boolean } = {}) {
   /**
    * Stop all recorders, wait for final chunks, then write manifest.
    */
-  async function stopSession(): Promise<string> {
-    if (!isRecording.value) return '';
+  function stopSession(): Promise<string> {
+    if (stopping) return stopping;
+    if (!isRecording.value) return Promise.resolve('');
+    const operation = flushSession();
+    stopping = operation;
+    void operation.finally(() => { if (stopping === operation) stopping = undefined; }).catch(() => undefined);
+    return operation;
+  }
+
+  async function flushSession(): Promise<string> {
 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null }
     isRecording.value = false;

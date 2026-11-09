@@ -8,6 +8,9 @@ const { createApp, h } = require('vue');
 const { CameraEffectsComposition, cameraEffectsKey } = require('./CameraEffectsComposition');
 const { useMediaSources } = require('./useMediaSources');
 const { useRecorder } = require('./useRecorder');
+const { useAgentBridge } = require('./useAgentBridge');
+const { cameraBridge } = require('./camera-bridge');
+const { CaptureSessionLifecycle } = require('./CaptureSessionLifecycle');
 const { BrowserFrameSurface } = require('./VideoEffectService');
 const nativeRequire = require('node:module').createRequire(process.resourcesPath + '/ce1-native.cjs');
 
@@ -81,6 +84,19 @@ class CameraEffectsRendererSmoke {
     return { compositor, source, output };
   }
 
+  async bridgeRelease() {
+    const send = ipcRenderer.send;
+    try {
+      return await new Promise(resolve => {
+        ipcRenderer.send = (channel, ...args) => {
+          if (channel === 'capture-studio:rpc-reply') resolve(args[0]);
+          else send.call(ipcRenderer, channel, ...args);
+        };
+        ipcRenderer.emit('capture-studio:rpc', {}, { rpcId: 'ce1-release', command: 'camera.release', params: {} });
+      });
+    } finally { ipcRenderer.send = send; }
+  }
+
   async composition(resources) {
     // risk: saved-video-integrity — actual composition + composables + disk writer, no devices.
     const source = this.canvas(1920, 1080);
@@ -114,7 +130,7 @@ class CameraEffectsRendererSmoke {
         }) },
       };
       const composition = new CameraEffectsComposition(require('path').dirname(resources), () => { loads++; return runtime; }, async() => new Uint8Array(), document, window, error => { throw error; });
-      mounted = createApp({ setup() { media = useMediaSources(); recorder = useRecorder(); return () => h('div'); } });
+      mounted = createApp({ setup() { media = useMediaSources(); recorder = useRecorder({ manageUnmount: false }); useAgentBridge(cameraBridge(media)); return () => h('div'); } });
       mounted.provide(cameraEffectsKey, composition.effects);
       mounted.mount(element);
       await media.acquireCamera();
@@ -131,13 +147,18 @@ class CameraEffectsRendererSmoke {
       await assert.rejects(media.switchCamera('synthetic-other-device'), /Stop recording/);
       await assert.rejects(media.setCameraQuality('480p'), /Stop recording/);
       await assert.rejects(media.releaseCamera(), /Stop recording/);
+      const blockedBridge = await this.bridgeRelease();
+      assert.equal(blockedBridge.ok, false);
+      assert.match(blockedBridge.error, /Stop recording/);
       const session = recorder.startSession([{ id: 'cam', type: 'camera', stream: shared, quality: '720p' }]);
       assert.ok(session, recorder.error.value);
       recording = true;
       const filename = require('path').join(recorder.getSessionDir(), 'camera.webm');
       await new Promise(resolve => setTimeout(resolve, 650));
       assert.equal(media.cameraStream.value, shared, 'Recording output replaced');
-      await recorder.stopSession(); recording = false;
+      const firstStop = recorder.stopSession();
+      assert.equal(recorder.stopSession(), firstStop, 'Concurrent stop did not join final flush');
+      await firstStop; recording = false;
       media.camera.endRecording();
       const saved = await readFile(filename);
       assert.ok(saved.length > 100, 'No encoded file saved');
@@ -158,9 +179,37 @@ class CameraEffectsRendererSmoke {
       await media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 });
       assert.equal(media.cameraStream.value, raw);
       await media.setCameraQuality('auto');
-      await media.releaseCamera();
+      assert.equal((await this.bridgeRelease()).ok, true);
       assert.equal(raw.getVideoTracks()[0].readyState, 'ended');
       assert.equal(media.cameraStream.value, null);
+      // Actual SFC callback must release, not permanently dispose; reacquisition remains usable.
+      navigator.mediaDevices.getUserMedia = async() => source.captureStream(30);
+      await media.acquireCamera();
+      const lifecycle = new CaptureSessionLifecycle();
+      let resolveAudio; let audioSettled = false; let released = false;
+      const deferredAudio = new Promise(resolve => { resolveAudio = resolve; });
+      const transition = lifecycle.run(async() => {
+        await media.camera.beginRecording();
+        assert.ok(recorder.startSession([{ id: 'cam', type: 'camera', stream: media.cameraStream.value }]));
+        await deferredAudio; audioSettled = true;
+        assert.equal(lifecycle.isClosing, true, 'Shutdown did not invalidate startup');
+      });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const rawDuringStart = media.camera.rawStream;
+      const shutdown = lifecycle.close(async() => {
+        assert.equal(audioSettled, true, 'Released before deferred audio settled');
+        const flush = recorder.stopSession();
+        assert.equal(recorder.stopSession(), flush);
+        assert.equal(rawDuringStart.getVideoTracks()[0].readyState, 'live');
+        await flush;
+        media.camera.endRecording();
+        await media.camera.dispose(); released = true;
+      });
+      assert.equal(lifecycle.close(async() => { throw new Error('Duplicate cleanup'); }), shutdown);
+      assert.equal(released, false);
+      resolveAudio(); await transition; await shutdown;
+      assert.equal(released, true);
+      assert.equal(rawDuringStart.getVideoTracks()[0].readyState, 'ended');
     } finally {
       if (recording) await recorder.stopSession();
       media?.camera.endRecording();
