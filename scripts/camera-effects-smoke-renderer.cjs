@@ -5,6 +5,7 @@ const { ipcRenderer } = require('electron');
 const { FrameCompositor, PersonFraming } = require('./FrameCompositor');
 const { OfflinePersonInference, VisionInitializationGate } = require('./PersonInference');
 const { createApp, h } = require('vue');
+const { ContextMenuSmoke } = require('./menu-smoke');
 const { PreviewBindingsSmoke } = require('./preview-smoke');
 const { CameraEffectsComposition, cameraEffectsKey } = require('./CameraEffectsComposition');
 const { useMediaSources } = require('./useMediaSources');
@@ -177,6 +178,7 @@ class CameraEffectsRendererSmoke {
     const originalEnumerate = navigator.mediaDevices.enumerateDevices;
     navigator.mediaDevices.getUserMedia = async() => raw;
     navigator.mediaDevices.enumerateDevices = async() => [];
+    const menu = new ContextMenuSmoke();
     let media; let recorder; let loads = 0; let mounted; let recording = false;
     const preview = document.createElement('video');
     preview.muted = true;
@@ -200,11 +202,13 @@ class CameraEffectsRendererSmoke {
       await media.acquireCamera();
       assert.equal(loads, 0, 'Default-off loaded a model');
       assert.equal(media.cameraStream.value, raw, 'Off must preserve raw');
-      await media.camera.setOptions({ autoFrame: true, soften: 0, backgroundBlur: 0 });
+      await menu.mount(media);
+      await menu.framing();
       assert.equal(loads, 1, 'Actual composition did not initialize model');
       const shared = media.cameraStream.value;
       assert.notEqual(shared, raw);
       assert.equal(await media.camera.beginRecording(), shared);
+      await menu.lock();
       preview.srcObject = shared; await preview.play();
       await new Promise(resolve => setTimeout(resolve, 250));
       assert.throws(() => media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 }), /Stop recording/);
@@ -263,6 +267,7 @@ class CameraEffectsRendererSmoke {
       } finally { playback.pause(); playback.src = ''; playback.remove(); URL.revokeObjectURL(url); }
       // Keep assignment churn isolated from the existing encoded-frame timing oracle.
       await new PreviewBindingsSmoke((width, height) => this.canvas(width, height)).run(shared);
+      await menu.strengths();
       await media.camera.setOptions({ autoFrame: false, soften: 0, backgroundBlur: 0 });
       assert.equal(media.cameraStream.value, raw);
       await media.setCameraQuality('auto');
@@ -310,6 +315,7 @@ class CameraEffectsRendererSmoke {
       media?.camera.endRecording();
       await media?.camera.dispose();
       preview.pause(); preview.srcObject = null;
+      menu.close();
       mounted?.unmount(); element.remove();
       clearInterval(timer); raw.getTracks().forEach(track => track.stop());
       navigator.mediaDevices.getUserMedia = originalAcquire;

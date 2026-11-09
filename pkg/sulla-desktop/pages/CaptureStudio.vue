@@ -202,7 +202,7 @@
       :x="ctxMenu.x"
       :y="ctxMenu.y"
       :title="ctxMenu.title"
-      :items="ctxMenu.items"
+      :items="cameraContextItems"
       @close="ctxMenu.visible = false"
     />
 
@@ -463,6 +463,7 @@ import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
 import CameraBubble from './capture-studio/CameraBubble.vue';
 import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
 import ContextMenu from './capture-studio/ContextMenu.vue';
+import { CameraEffectsMenu } from './capture-studio/effects/CameraEffectsMenu';
 import FloatingControls from './capture-studio/FloatingControls.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
 import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
@@ -1450,6 +1451,20 @@ async function showScreenContextMenu(e: MouseEvent) {
     console.error('[CaptureStudio] Failed to list screen sources:', err);
   }
 }
+
+const effectsMenuRevision = ref(0);
+const cameraEffectsMenu = new CameraEffectsMenu(
+  mediaSources.camera, () => recording.value || captureLifecycle.isClosing,
+  message => { statusMessage.value = message; },
+  () => { effectsMenuRevision.value++; },
+);
+const cameraContextItems = computed(() => {
+  // Service notifications invalidate active indicators on initialization/inference failure.
+  void effectsMenuRevision.value;
+  void mediaSources.cameraEffectsRevision.value;
+  return ctxMenu.title === 'Camera' ? [...ctxMenu.items, ...cameraEffectsMenu.items()] : ctxMenu.items;
+});
+watch(mediaSources.cameraEffectError, message => { if (message) statusMessage.value = message; });
 
 async function showCameraContextMenu(e: MouseEvent) {
   try {
@@ -2624,6 +2639,7 @@ html, body {
   border-radius: 6px; cursor: pointer; transition: all 0.1s;
 }
 .ctx-menu-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.ctx-menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .ctx-menu-item.active { color: var(--accent); }
 
 .ctx-menu-has-sub {

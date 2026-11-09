@@ -34,7 +34,7 @@
         @mouseenter="openSub(item.id, $event)"
         @mouseleave="startCloseSub"
       >
-        <button class="ctx-menu-item ctx-menu-has-sub">
+        <button class="ctx-menu-item ctx-menu-has-sub" :disabled="item.disabled">
           {{ item.label }}
           <svg
             class="ctx-menu-arrow"
@@ -66,6 +66,8 @@
               v-else
               class="ctx-menu-item"
               :class="{ active: child.active }"
+              :disabled="child.disabled"
+              :data-menu-id="child.id"
               @click="child.action(); $emit('close')"
             >
               <img
@@ -88,6 +90,8 @@
         v-else-if="!item.divider"
         class="ctx-menu-item"
         :class="{ active: item.active }"
+        :disabled="item.disabled"
+        :data-menu-id="item.id"
         @click="item.action(); $emit('close')"
       >
         <img
@@ -124,6 +128,7 @@ export interface CtxMenuItem {
   label:      string;
   thumbnail?: string;
   active?:    boolean;
+  disabled?:  boolean;
   divider?:   boolean;
   badge?:     string;
   children?:  CtxMenuItem[];
@@ -186,18 +191,19 @@ let closeTimer: ReturnType<typeof setTimeout> | null = null;
 const subStyle = ref<Record<string, string>>({});
 
 function openSub(id: string, event: MouseEvent) {
+  if (props.items.find(item => item.id === id)?.disabled) return;
+  const parent = event.currentTarget as HTMLElement;
   if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
   openSubId.value = id;
 
   nextTick(() => {
     nextTick(() => {
-      positionSub(event);
+      positionSub(parent);
     });
   });
 }
 
-function positionSub(event: MouseEvent) {
-  const parent = event.currentTarget as HTMLElement;
+function positionSub(parent: HTMLElement) {
   const parentRect = parent.getBoundingClientRect();
   const rootRect = menuEl.value?.getBoundingClientRect();
   if (!rootRect) return;
