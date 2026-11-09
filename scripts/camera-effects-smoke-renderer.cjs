@@ -163,12 +163,17 @@ class CameraEffectsRendererSmoke {
       const saved = await readFile(filename);
       assert.ok(saved.length > 100, 'No encoded file saved');
       const playback = document.createElement('video');
+      playback.muted = true; playback.playsInline = true;
       const url = URL.createObjectURL(new Blob([saved], { type: 'video/webm' }));
       try {
         await new Promise((resolve, reject) => { playback.onloadeddata = resolve; playback.onerror = () => reject(new Error('Saved WebM did not decode')); playback.src = url; playback.load(); });
+        // loadeddata does not guarantee Chromium has presented a decoded frame.
+        const presented = new Promise(resolve => playback.requestVideoFrameCallback(resolve));
+        await playback.play(); await presented; playback.pause();
         const decoded = this.canvas(1280, 720);
         decoded.getContext('2d').drawImage(playback, 0, 0);
         const edge = decoded.getContext('2d').getImageData(4, 360, 1, 1).data;
+        assert.equal(edge[3], 255, 'Saved WebM frame was not presented');
         assert.ok(edge[1] > 180 && edge[0] < 70, 'Saved video contains raw red edge, not processed framing: ' + [...edge]);
         assert.equal(playback.videoWidth, 1280);
         assert.equal(playback.videoHeight, 720);
