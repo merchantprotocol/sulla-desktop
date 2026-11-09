@@ -82,6 +82,13 @@ class CameraEffectsRendererSmoke {
       state.mediaSources.cameraStream.value = shared;
       state.assign.primary = 'screen'; state.assign.pip = 'cam';
       await vm.selectLayout('pip'); await settled();
+      state.mediaSources.cameraStream.value = replacement;
+      await settled();
+      identity('.cam-bubble video', replacement, 'PiP camera replacement stale');
+      identity('.sbs-camera video', replacement, 'Secondary camera replacement stale');
+      state.mediaSources.screenStream.value = replacement;
+      await settled();
+      identity('.screen-preview video', replacement, 'Screen replacement stale');
       state.mediaSources.cameraStream.value = null;
       await settled();
       identity('.cam-bubble video', null, 'Released camera retained by bubble');
