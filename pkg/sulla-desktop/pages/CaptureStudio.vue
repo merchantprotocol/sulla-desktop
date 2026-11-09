@@ -775,6 +775,10 @@ async function disableSystemAudio(): Promise<void> {
 
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
+  if (src.type === 'camera') {
+    try { mediaSources.camera.assertMutable(); }
+    catch (error: any) { statusMessage.value = error.message; return; }
+  }
   console.log('[CaptureStudio] toggleSrc:', src.id, src.type, 'currently on:', src.on, '→', !src.on);
   src.on = !src.on;
 
@@ -1920,6 +1924,7 @@ onMounted(async() => {
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
 async function cleanupCaptureStudio() {
+  if (studioClosing) return;
   studioClosing = true;
   console.log('[CaptureStudio] Cleaning up...');
 
