@@ -93,8 +93,6 @@ export class CameraEffectSession {
     this.options = this.validate(options);
   }
 
-  get isFailed(): boolean { return this.failed; }
-
   get stream(): MediaStream { return this.currentOutput ?? this.raw; }
 
   async start(): Promise<void> {

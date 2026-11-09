@@ -81,6 +81,6 @@ class ContextMenuSmoke {
     if (!initialization) assert.equal(this.media.cameraStream.value, before, 'Inference failure replaced shared track');
     else assert.equal(this.media.cameraStream.value, this.media.camera.rawStream, 'Initialization failure did not use original camera');
   }
-  close() { this.app?.unmount(); this.element?.remove(); }
+  close() { this.app?.unmount(); this.app = undefined; this.element?.remove(); }
 }
 module.exports = { ContextMenuSmoke };
