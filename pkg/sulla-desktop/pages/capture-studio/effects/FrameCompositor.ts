@@ -70,17 +70,14 @@ export class PersonFraming {
 
 /** Converts real multiclass labels to alpha without ever softening hair, clothing or background. */
 export class PersonMaskRasterizer {
-  private pixels = new Uint8ClampedArray(0);
-
   validate(mask: PersonMask): void {
     if (!Number.isSafeInteger(mask.width) || !Number.isSafeInteger(mask.height) ||
         mask.width <= 0 || mask.height <= 0 || mask.width * mask.height !== mask.categories.length ||
         mask.categories.some(category => category > 5)) throw new Error('Invalid person mask');
   }
-  alpha(mask: PersonMask, faceOnly: boolean): Uint8ClampedArray {
+  alpha(mask: PersonMask, faceOnly: boolean, pixels = new Uint8ClampedArray(mask.categories.length * 4)): Uint8ClampedArray {
     this.validate(mask);
-    if (this.pixels.length !== mask.categories.length * 4) this.pixels = new Uint8ClampedArray(mask.categories.length * 4);
-    const pixels = this.pixels;
+    if (pixels.length !== mask.categories.length * 4) throw new Error('Invalid alpha buffer');
     for (let i = 0; i < mask.categories.length; i++) {
       pixels[i * 4 + 3] = (faceOnly ? mask.categories[i] === 3 : mask.categories[i] !== 0) ? 255 : 0;
     }
@@ -177,7 +174,7 @@ export class FrameCompositor {
       this.maskPixels = context.createImageData(mask.width, mask.height);
     }
     const pixels = this.maskPixels;
-    pixels.data.set(this.rasterizer.alpha(mask, faceOnly));
+    this.rasterizer.alpha(mask, faceOnly, pixels.data);
     context.putImageData(pixels, 0, 0);
   }
 }
