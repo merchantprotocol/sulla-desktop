@@ -115,5 +115,6 @@ describe('vault discovery outages', () => {
       getModelsForProvider: async () => [],
     }));
     expect(await subject.resolve('agents')).toEqual([{ provider: 'openai', model: 'top' }]);
+    expect((await subject.providerInfo()).find(provider => provider.id === 'openai')).toMatchObject({ connected: false, status: 'error' });
   });
 });
