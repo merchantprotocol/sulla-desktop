@@ -38,21 +38,23 @@
         <div class="content">
           <div class="player">
             <video
-              v-if="row.hero_media?.type === 'video'"
-              :src="row.hero_media.url"
-              :poster="row.hero_media.poster"
+              v-if="presentation.video && (row.video_url || row.hero_media?.url)"
+              :src="row.video_url || row.hero_media?.url"
+              :poster="presentation.image"
               controls
               playsinline
             />
             <img
-              v-else-if="row.hero_media?.url"
-              :src="row.hero_media.poster || row.hero_media.url"
+              v-else-if="presentation.image"
+              :src="presentation.image"
               :alt="row.name"
             >
-            <UseCaseIcon
+            <div
               v-else
-              :name="iconName"
-            />
+              class="text-tile"
+            >
+              <b>{{ row.name }}</b><span>{{ presentation.topic }}</span>
+            </div>
           </div>
           <p class="tagline">
             {{ row.tagline || row.name }}
@@ -62,7 +64,10 @@
             {{ row.description || 'Explore the full details to learn more about this use case.' }}
           </p>
           <div class="facts">
-            <span>{{ row.kind_label || row.kind }}</span><span>{{ row.category || 'Uncategorized' }}</span><span v-if="row.hero_media?.type === 'video'">Video walkthrough</span>
+            <span>{{ row.kind_label || row.kind }}</span><span>{{ presentation.topic }}</span><span v-if="presentation.video">Video walkthrough <template v-if="presentation.duration">· {{ presentation.duration }}</template></span><span
+              v-for="app in presentation.apps"
+              :key="app"
+            >Works with {{ app }}</span><span v-if="presentation.draftsOnly">Drafts only</span><span v-if="presentation.price">{{ presentation.price }}</span>
           </div>
         </div>
         <footer>
@@ -87,15 +92,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, watch, ref } from 'vue';
 
-import UseCaseIcon from './UseCaseIcon.vue';
+import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListingPresenter';
 
 import type { MarketplaceBrowseRow } from '../../typings/electron-ipc';
 const props = defineProps<{ row: MarketplaceBrowseRow | null; installStatus?: string }>();
+const presentation = computed(() => props.row ? new MarketplaceListingPresenter().present(props.row) : { image: '', video: false, duration: '', price: '', topic: '', apps: [], draftsOnly: false });
 defineEmits<{ close: []; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow] }>();
 const sheet = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
 let returnFocus: HTMLElement | null = null;
-const iconName = computed(() => ['agent', 'workflow', 'skill', 'function', 'integration', 'recipe'].includes(props.row?.kind ?? '') ? props.row!.kind : 'box');
 watch(() => props.row, async row => {
   if (row) { returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; await nextTick(); closeButton.value?.focus() } else { await nextTick(); returnFocus?.focus(); returnFocus = null }
 }, { immediate: true });
@@ -109,5 +114,5 @@ function trapFocus(event: KeyboardEvent) {
 onBeforeUnmount(() => returnFocus?.focus());
 </script>
 <style scoped>
-.quick-view{position:fixed;inset:0;z-index:1000}.scrim{position:absolute;inset:0;border:0;background:rgb(20 24 26 / 22%);opacity:1;animation:fade .2s ease both}.sheet{position:absolute;top:12px;right:12px;bottom:12px;width:min(560px,calc(100vw - 24px));display:flex;flex-direction:column;overflow:hidden;border-radius:28px;background:var(--surface-1,#fff);color:var(--text,#222);box-shadow:0 20px 60px #0002;animation:slide .3s ease both}.sheet header{display:flex;justify-content:space-between;align-items:center;padding:15px 20px;color:var(--text-muted,#777);font-size:13px}.sheet header button{width:34px;height:34px;border:0;border-radius:50%;background:var(--surface-2,#f5f5f5);font-size:23px;cursor:pointer}.content{padding:4px 24px 22px;overflow:auto;flex:1}.player{aspect-ratio:16/9;overflow:hidden;border-radius:18px;background:var(--surface-2,#f3f4f4);display:grid;place-items:center;color:var(--text-dim,#888)}.player img,.player video{width:100%;height:100%;object-fit:cover}.player :deep(svg){width:38px;height:38px}.tagline{margin:22px 0 5px;color:var(--text-muted,#666)}h2{font-size:25px;margin:0 0 23px}h3{font-size:14px;margin:0 0 8px}.description{line-height:1.6;color:var(--text-muted,#555);white-space:pre-wrap}.facts{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}.facts span{padding:6px 10px;border-radius:20px;background:var(--surface-2,#f4f5f5);font-size:12px;color:var(--text-muted,#555)}footer{display:flex;gap:10px;padding:16px 24px;border-top:1px solid var(--border-muted,#eee)}footer button{height:42px;padding:0 18px;border-radius:24px;font-weight:600;cursor:pointer}.primary{border:0;background:var(--accent,#397f99);color:#fff}.primary:disabled{opacity:.65}footer button:last-child{border:1px solid var(--border,#ddd);background:var(--surface-1,#fff);color:var(--text,#222)}@keyframes fade{from{opacity:0}to{opacity:1}}@keyframes slide{from{transform:translateX(100%)}to{transform:none}}@media(prefers-reduced-motion:reduce){.sheet,.scrim{animation:none}}
+.text-tile{padding:24px;text-align:center}
 </style>

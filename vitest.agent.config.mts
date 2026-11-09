@@ -4,6 +4,7 @@
 // (.github/workflows/agent-tests.yml) against a real Postgres service.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { compileScript, parse } from '@vue/compiler-sfc';
 import { transformWithEsbuild, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
@@ -20,7 +21,7 @@ class VueSfcTestPlugin implements Plugin {
 
     if (errors.length) throw errors[0];
     const compiled = compileScript(descriptor, {
-      id:       `data-v-${ Buffer.from(id).toString('hex').slice(-8) }`,
+      id:             `data-v-${ Buffer.from(id).toString('hex').slice(-8) }`,
       inlineTemplate: true,
     });
 
@@ -37,16 +38,16 @@ export default defineConfig({
     ],
   },
   test: {
-    include:     ['pkg/sulla-desktop/agent/tests/**/*.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchService.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingRepository.spec.ts', 'pkg/sulla-desktop/main/marketplace/MarketplaceBrowseRowMapper.spec.ts'],
-    environment: 'node',
-    testTimeout: 20_000,
-    hookTimeout: 60_000,
-    globalSetup: ['pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts'],
-    setupFiles: ['pkg/sulla-desktop/agent/tests/Support/UnexpectedNetworkGuard.ts'],
+    include:         ['pkg/sulla-desktop/agent/tests/**/*.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchService.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingRepository.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingPresenter.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchController.spec.ts', 'pkg/sulla-desktop/components/routines/MarketplaceFiltersPopover.spec.ts', 'pkg/sulla-desktop/main/marketplace/MarketplaceBrowseRowMapper.spec.ts'],
+    environment:     'node',
+    testTimeout:     20_000,
+    hookTimeout:     60_000,
+    globalSetup:     ['pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts'],
+    setupFiles:      ['pkg/sulla-desktop/agent/tests/Support/UnexpectedNetworkGuard.ts'],
     // Specs that share the real database run in one worker, one file at a time.
     fileParallelism: false,
-    pool: 'threads',
-    maxWorkers: 2,
+    pool:            'threads',
+    maxWorkers:      2,
     passWithNoTests: true,
   },
 });

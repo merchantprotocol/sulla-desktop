@@ -5,7 +5,7 @@ import { MarketplaceFacetVocabulary, MarketplaceSearchService, type MarketplaceS
 
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
-const state: MarketplaceSearchState = { q: '', topics: [], kinds: [], media: [], sort: 'relevance' };
+const state: MarketplaceSearchState = { q: '', topics: [], kinds: [], media: [], price: [], length: [], apps: [], approval: [], sort: 'relevance' };
 
 /** Real-shaped browse row. Only the fields a test cares about need overriding. */
 function row(overrides: Partial<MarketplaceBrowseRow> & Pick<MarketplaceBrowseRow, 'id' | 'slug' | 'name'>): MarketplaceBrowseRow {
@@ -101,7 +101,8 @@ describe('MarketplaceSearchService', () => {
   it('applies the Type filter through kindsById and counts Type from the same lookup', () => {
     // Pay-run is a function on its row, but its package contents also include a skill and a workflow.
     const kindsById = new Map([['c', ['skill', 'routine']]]);
-    const service = new MarketplaceSearchService(catalog, kindsById);
+    const packageRows = catalog.map(r => r.id === 'c' ? { ...r, kind: 'package' as const } : r);
+    const service = new MarketplaceSearchService(packageRows, kindsById);
     // risk: data accuracy — the Type filter must use contents kinds, not only row.kind
     expect(service.search({ ...state, kinds: ['routine'] }).map(r => r.slug)).toEqual(['inbox', 'pay-run']);
     expect(service.search({ ...state, kinds: ['function'] })).toEqual([]);
@@ -181,24 +182,50 @@ describe('MarketplaceSearchService', () => {
 
   it('round-trips state through URLSearchParams', () => {
     const service = new MarketplaceSearchService(catalog);
-    const original: MarketplaceSearchState = { q: 'mail', topics: ['Operations'], kinds: ['routine'], media: ['video'], sort: 'newest' };
+    const original: MarketplaceSearchState = { ...state, q: 'mail', topics: ['Operations'], kinds: ['routine'], media: ['video'], price: ['free'], length: ['short'], apps: ['Sheets'], approval: ['acts'], sort: 'newest' };
     const serialized = service.serialize(original);
     expect(serialized.get('topic')).toBe('Operations');
     expect(service.deserialize(serialized)).toEqual(original);
     expect(service.serialize(state).toString()).toBe('');
   });
 
+  it('filters and counts listing price, video length, apps, approval and listing-provided preview/topic', () => {
+    const rows = [
+      row({ id: 'f', slug: 'free', name: 'Free', kind: 'skill', topic: 'Writing', category: 'Other', price_cents: 0, video_duration_seconds: 299, video_url: 'https://example.test/v.mp4', photos: ['https://example.test/p.png'], requires_apps: ['Sheets'], approval_mode: 'drafts_only' }),
+      row({ id: 'p', slug: 'paid', name: 'Paid', kind: 'routine', topic: 'Writing', price_cents: 1250, video_duration_seconds: 300, requires_apps: ['Docs', 'Sheets'], approval_mode: 'acts', hero_media: { type: 'image', url: 'https://example.test/p.png' } }),
+      row({ id: 'l', slug: 'long', name: 'Long', kind: 'agent', price_cents: null, video_duration_seconds: 1201, requires_apps: ['Calendar'] }),
+    ];
+    const service = new MarketplaceSearchService(rows);
+    const groups = service.facets(state);
+    expect(groups.find(f => f.key === 'topics')?.options).toContainEqual({ value: 'Writing', label: 'Writing', count: 2 });
+    expect(groups.find(f => f.key === 'media')?.options.map(o => o.value)).toEqual(['video', 'photos']);
+    expect(groups.find(f => f.key === 'price')?.options).toEqual([{ value: 'free', label: 'Free', count: 1 }, { value: 'paid', label: 'Paid', count: 1 }]);
+    expect(groups.find(f => f.key === 'length')?.options.map(o => o.value)).toEqual(['short', 'medium', 'long']);
+    expect(service.search({ ...state, apps: ['Sheets'] }).map(item => item.slug)).toEqual(['free', 'paid']);
+    expect(service.search({ ...state, approval: ['drafts_only'] }).map(item => item.slug)).toEqual(['free']);
+    expect(service.search({ ...state, price: ['free'] }).map(item => item.slug)).toEqual(['free']);
+    expect(service.search({ ...state, length: ['medium'] }).map(item => item.slug)).toEqual(['paid']);
+  });
+
+  it('hides new facet groups with fewer than two populated choices but retains zero-count options and selection', () => {
+    const service = new MarketplaceSearchService([row({ id: 'f', slug: 'f', name: 'Free', price_cents: 0, requires_apps: ['Sheets'] })]);
+    expect(service.facets(state).map(f => f.key)).toEqual(['topics']);
+    expect(service.facets({ ...state, price: ['free'] }).map(f => f.key)).toContain('price');
+    const richer = new MarketplaceSearchService([row({ id: 'f', slug: 'f', name: 'Free', price_cents: 0 }), row({ id: 'p', slug: 'p', name: 'Paid', price_cents: 100 })]);
+    expect(richer.facets({ ...state, q: 'Free', price: ['free'] }).find(f => f.key === 'price')?.options).toEqual([{ value: 'free', label: 'Free', count: 1 }, { value: 'paid', label: 'Paid', count: 0 }]);
+  });
+
   it('round-trips state through a plain object query (vue-router LocationQuery shape)', () => {
     const service = new MarketplaceSearchService(catalog);
     const fromRouter = service.fromQuery({ q: 'mail', topic: ['Money', 'Operations'], type: 'skill,routine', media: null, sort: 'name' });
-    expect(fromRouter).toEqual({ q: 'mail', topics: ['Money', 'Operations'], kinds: ['skill', 'routine'], media: [], sort: 'name' });
+    expect(fromRouter).toEqual({ ...state, q: 'mail', topics: ['Money', 'Operations'], kinds: ['skill', 'routine'], media: [], sort: 'name' });
     expect(service.fromQuery(service.toQuery(fromRouter))).toEqual(fromRouter);
   });
 
   it('reads repeated URL params and falls back to relevance for unknown sorts', () => {
     const service = new MarketplaceSearchService(catalog);
     const params = new URLSearchParams('topic=Money&topic=Operations&sort=sideways');
-    expect(service.deserialize(params)).toEqual({ q: '', topics: ['Money', 'Operations'], kinds: [], media: [], sort: 'relevance' });
+    expect(service.deserialize(params)).toEqual({ ...state, topics: ['Money', 'Operations'] });
   });
 
   it('returns at least one facet group for real-shaped rows with missing optional fields', () => {

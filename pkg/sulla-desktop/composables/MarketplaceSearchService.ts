@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
-export interface MarketplaceSearchState { q: string; topics: string[]; kinds: string[]; media: string[]; sort: 'relevance' | 'popular' | 'newest' | 'name' }
+export interface MarketplaceSearchState { q: string; topics: string[]; kinds: string[]; media: string[]; price: string[]; length: string[]; apps: string[]; approval: string[]; sort: 'relevance' | 'popular' | 'newest' | 'name' }
 export interface MarketplaceFacet { key: string; label: string; options: { value: string; label: string; count: number }[] }
 export interface MarketplaceSearchSummary { total: number; withVideo: number }
 export type MarketplaceQuery = Record<string, string | string[] | null | undefined>;
 
-type FilterKey = 'topics' | 'kinds' | 'media';
+type FilterKey = 'topics' | 'kinds' | 'media' | 'price' | 'length' | 'apps' | 'approval';
 type FacetOption = MarketplaceFacet['options'][number];
 
 /** A browse row with everything the filters need precomputed once. */
@@ -32,6 +32,8 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
 };
 const KIND_ORDER: readonly string[] = ['skill', 'routine', 'function', 'agent', 'recipe', 'integration', 'package'];
 const MEDIA_ORDER: readonly string[] = ['video', 'photos'];
+const PRICE_ORDER: readonly string[] = ['free', 'paid'];
+const LENGTH_ORDER: readonly string[] = ['short', 'medium', 'long'];
 const PHOTO_TYPES: ReadonlySet<string> = new Set(['image', 'photo', 'photos', 'screenshot', 'screenshots']);
 const UNCATEGORIZED = 'Uncategorized';
 
@@ -71,8 +73,8 @@ export class MarketplaceFacetVocabulary {
   }
 
   /** Known values follow the vocabulary order; unknown values sort last by label. */
-  sortOptions(options: FacetOption[], kind: 'kinds' | 'media' | 'topics'): FacetOption[] {
-    const order = kind === 'kinds' ? this.kindOrder : kind === 'media' ? this.mediaOrder : undefined;
+  sortOptions(options: FacetOption[], kind: 'kinds' | 'media' | 'topics' | 'price' | 'length'): FacetOption[] {
+    const order = kind === 'kinds' ? this.kindOrder : kind === 'media' ? this.mediaOrder : kind === 'price' ? PRICE_ORDER : kind === 'length' ? LENGTH_ORDER : undefined;
     const rank = (value: string) => {
       const index = order ? order.indexOf(value) : -1;
       return index === -1 ? Number.MAX_SAFE_INTEGER : index;
@@ -104,9 +106,9 @@ export class MarketplaceSearchService {
       const bodyText = [row.description, row.category, ...(row.tags ?? [])].filter(Boolean).join('\n').toLocaleLowerCase();
       return {
         row,
-        topic:    row.category || this.vocabulary.uncategorizedLabel,
-        kinds:    kindsById.get(row.id) ?? [row.kind],
-        media:    this.vocabulary.mediaKey(row.hero_media?.type),
+        topic:    row.topic || row.category || this.vocabulary.uncategorizedLabel,
+        kinds:    row.kind && row.kind !== 'package' ? [row.kind] : kindsById.get(row.id) ?? [row.kind],
+        media:    row.video_url ? 'video' : (row.photos?.length ? 'photos' : this.vocabulary.mediaKey(row.hero_media?.type)),
         nameText,
         taglineText,
         bodyText,
@@ -125,6 +127,14 @@ export class MarketplaceSearchService {
 
     const media = this.facetOptions('media', state, entry => (entry.media ? [entry.media] : []), value => this.vocabulary.mediaLabel(value));
     if (this.showsFacet('media', state, media)) facets.push({ key: 'media', label: 'Preview', options: media });
+    const price = this.facetOptions('price', state, entry => entry.row.price_cents === 0 ? ['free'] : typeof entry.row.price_cents === 'number' && entry.row.price_cents > 0 ? ['paid'] : [], value => value === 'free' ? 'Free' : 'Paid');
+    if (this.showsFacet('price', state, price)) facets.push({ key: 'price', label: 'Price', options: price });
+    const length = this.facetOptions('length', state, entry => typeof entry.row.video_duration_seconds !== 'number' ? [] : [entry.row.video_duration_seconds < 300 ? 'short' : entry.row.video_duration_seconds <= 1200 ? 'medium' : 'long'], value => ({ short: 'Under 5 min', medium: '5–20 min', long: 'Over 20 min' }[value] ?? value));
+    if (this.showsFacet('length', state, length)) facets.push({ key: 'length', label: 'Video length', options: length });
+    const apps = this.facetOptions('apps', state, entry => entry.row.requires_apps ?? [], value => value);
+    if (this.showsFacet('apps', state, apps)) facets.push({ key: 'apps', label: 'Works with', options: apps });
+    const approval = this.facetOptions('approval', state, entry => entry.row.approval_mode ? [entry.row.approval_mode] : [], value => value === 'drafts_only' ? 'Drafts only (asks before acting)' : 'Acts on its own');
+    if (this.showsFacet('approval', state, approval)) facets.push({ key: 'approval', label: 'Approval', options: approval });
     return facets;
   }
 
@@ -138,7 +148,7 @@ export class MarketplaceSearchService {
 
   summary(state: MarketplaceSearchState): MarketplaceSearchSummary {
     const matched = this.search(state);
-    return { total: matched.length, withVideo: matched.filter(row => this.vocabulary.mediaKey(row.hero_media?.type) === 'video').length };
+    return { total: matched.length, withVideo: matched.filter(row => Boolean(row.video_url) || this.vocabulary.mediaKey(row.hero_media?.type) === 'video').length };
   }
 
   serialize(state: MarketplaceSearchState): URLSearchParams {
@@ -162,11 +172,15 @@ export class MarketplaceSearchService {
   fromQuery(query: MarketplaceQuery): MarketplaceSearchState {
     const sort = this.firstValue(query.sort);
     return {
-      q:      this.firstValue(query.q),
-      topics: this.listValue(query.topic),
-      kinds:  this.listValue(query.type),
-      media:  this.listValue(query.media),
-      sort:   sort === 'newest' || sort === 'popular' || sort === 'name' ? sort : 'relevance',
+      q:        this.firstValue(query.q),
+      topics:   this.listValue(query.topic),
+      kinds:    this.listValue(query.type),
+      media:    this.listValue(query.media),
+      price:    this.listValue(query.price),
+      length:   this.listValue(query.length),
+      apps:     this.listValue(query.app),
+      approval: this.listValue(query.approval),
+      sort:     sort === 'newest' || sort === 'popular' || sort === 'name' ? sort : 'relevance',
     };
   }
 
@@ -176,9 +190,15 @@ export class MarketplaceSearchService {
     if (state.topics.length) query.topic = state.topics.join(',');
     if (state.kinds.length) query.type = state.kinds.join(',');
     if (state.media.length) query.media = state.media.join(',');
+    if (state.price.length) query.price = state.price.join(',');
+    if (state.length.length) query.length = state.length.join(',');
+    if (state.apps.length) query.app = state.apps.join(',');
+    if (state.approval.length) query.approval = state.approval.join(',');
     if (state.sort !== 'relevance') query.sort = state.sort;
     return query;
   }
+
+  queryKeys(): readonly string[] { return ['q', 'topic', 'type', 'media', 'price', 'length', 'app', 'approval', 'sort'] }
 
   /** The one row predicate. Pass `ignoredKey` to count a facet without its own filter applied. */
   private matches(entry: IndexedRow, state: MarketplaceSearchState, ignoredKey?: FilterKey): boolean {
@@ -187,6 +207,12 @@ export class MarketplaceSearchService {
     if (ignoredKey !== 'topics' && state.topics.length && !state.topics.includes(entry.topic)) return false;
     if (ignoredKey !== 'kinds' && state.kinds.length && !entry.kinds.some(kind => state.kinds.includes(kind))) return false;
     if (ignoredKey !== 'media' && state.media.length && !state.media.includes(entry.media)) return false;
+    if (ignoredKey !== 'price' && state.price.length && !state.price.includes(entry.row.price_cents === 0 ? 'free' : typeof entry.row.price_cents === 'number' && entry.row.price_cents > 0 ? 'paid' : '')) return false;
+    const duration = entry.row.video_duration_seconds;
+    const length = typeof duration !== 'number' ? '' : duration < 300 ? 'short' : duration <= 1200 ? 'medium' : 'long';
+    if (ignoredKey !== 'length' && state.length.length && !state.length.includes(length)) return false;
+    if (ignoredKey !== 'apps' && state.apps.length && !state.apps.some(app => (entry.row.requires_apps ?? []).includes(app))) return false;
+    if (ignoredKey !== 'approval' && state.approval.length && !state.approval.includes(entry.row.approval_mode ?? '')) return false;
     return true;
   }
 
@@ -210,7 +236,7 @@ export class MarketplaceSearchService {
     }
 
     const options = [...universe].map(value => ({ value, label: labelOf(value), count: counts.get(value) ?? 0 }));
-    return this.vocabulary.sortOptions(options, key);
+    return this.vocabulary.sortOptions(options, key === 'apps' || key === 'approval' ? 'topics' : key);
   }
 
   /** Type and Preview appear only when at least two values have listings. A selection keeps its group visible so it can be cleared. */

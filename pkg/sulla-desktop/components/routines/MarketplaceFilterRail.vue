@@ -92,15 +92,15 @@ const query = ref(props.state.q);
 const collapsed = ref<Record<string, boolean>>({});
 const expanded = ref<Record<string, boolean>>({});
 let timer: ReturnType<typeof setTimeout> | undefined;
-const hasFilters = computed(() => Boolean(props.state.q || props.state.topics.length || props.state.kinds.length || props.state.media.length));
+const hasFilters = computed(() => Boolean(props.state.q || Object.values(props.state).some(value => Array.isArray(value) && value.length)));
 watch(() => props.state.q, value => { query.value = value });
 onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
 function submit() { if (timer) clearTimeout(timer); emit('update:state', { ...props.state, q: query.value }) }
 function scheduleSearch() { if (timer) clearTimeout(timer); timer = setTimeout(submit, 250) }
-function clear() { query.value = ''; emit('update:state', { ...props.state, q: '', topics: [], kinds: [], media: [] }) }
-function selected(key: string, value: string) { return (props.state[key as 'topics' | 'kinds' | 'media'] ?? []).includes(value) }
+function clear() { query.value = ''; emit('update:state', { ...props.state, q: '', topics: [], kinds: [], media: [], price: [], length: [], apps: [], approval: [] }) }
+function selected(key: string, value: string) { return (props.state[key as 'topics' | 'kinds' | 'media' | 'price' | 'length' | 'apps' | 'approval'] ?? []).includes(value) }
 function toggle(key: string, value: string) {
-  const field = key as 'topics' | 'kinds' | 'media';
+  const field = key as 'topics' | 'kinds' | 'media' | 'price' | 'length' | 'apps' | 'approval';
   const values = props.state[field] ?? [];
   emit('update:state', { ...props.state, [field]: values.includes(value) ? values.filter(item => item !== value) : [...values, value] });
 }

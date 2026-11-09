@@ -491,17 +491,18 @@ function onSignedOut() {
 }
 const searchDraft = ref('');
 const filtersOpen = ref(false);
-const selectedFacets = ref<Record<string, string[]>>({ topics: [], kinds: [], media: [] });
-const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, topics: selectedFacets.value.topics, kinds: selectedFacets.value.kinds, media: selectedFacets.value.media, sort: 'relevance' }));
+const emptyFacets = () => ({ topics: [] as string[], kinds: [] as string[], media: [] as string[], price: [] as string[], length: [] as string[], apps: [] as string[], approval: [] as string[] });
+const selectedFacets = ref<Record<string, string[]>>(emptyFacets());
+const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, ...selectedFacets.value, sort: 'relevance' }));
 const searchService = computed(() => new MarketplaceSearchService(catalogRows.value, catalogKinds.value));
 
 const filteredListings = computed(() => searchService.value.search(searchState.value));
 const searchMode = ref(false);
 const searchController = new MarketplaceSearchController(router, () => searchService.value);
 const searchFacets = computed<MarketplaceFacet[]>(() => searchService.value.facets(searchState.value));
-async function applyState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media }; await searchController.apply(state); searchMode.value = true }
-function setSearchState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media } }
-async function clearSearch() { await searchController.clear(); searchDraft.value = ''; selectedFacets.value = { topics: [], kinds: [], media: [] }; searchMode.value = false }
+async function applyState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; await searchController.apply(state); searchMode.value = true }
+function setSearchState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval } }
+async function clearSearch() { await searchController.clear(); searchDraft.value = ''; selectedFacets.value = emptyFacets(); searchMode.value = false }
 
 function applySearchFilters(): void {
   filtersOpen.value = false;
@@ -566,7 +567,7 @@ function onOpenDetailEvent(ev: Event) {
 }
 
 onMounted(async() => {
-  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media }; searchMode.value = searchController.isResultsMode }).catch(() => undefined);
+  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; searchMode.value = searchController.isResultsMode }).catch(() => undefined);
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
   if (authed) {

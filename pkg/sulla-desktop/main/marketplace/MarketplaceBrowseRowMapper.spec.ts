@@ -94,6 +94,15 @@ describe('MarketplaceBrowseRowMapper', () => {
     expect('approval_mode' in out).toBe(false);
   });
 
+  it('normalizes facets on a detail response using the same mapper as browse rows', () => {
+    const detail = { ...baseRow, manifest: {}, price_cents: 'free', video_url: 'javascript:bad()', photos: ['https://cdn.example.test/a.jpg'], approval_mode: 'drafts_only' };
+    const mapped = mapper.map(detail);
+    expect(mapped.price_cents).toBeNull();
+    expect(mapped.video_url).toBeNull();
+    expect(mapped.photos).toEqual(['https://cdn.example.test/a.jpg']);
+    expect(mapped.approval_mode).toBe('drafts_only');
+  });
+
   it('does not mutate the raw row', () => {
     const raw = { ...baseRow, price_cents: 'bad' };
 

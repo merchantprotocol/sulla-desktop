@@ -70,6 +70,15 @@ export interface MarketplaceTemplateDetail {
   created_at:           string;
   updated_at:           string;
   manifest:             Record<string, unknown>;
+  price_cents?:            number | null;
+  currency?:               string | null;
+  video_url?:              string | null;
+  video_duration_seconds?: number | null;
+  poster_url?:             string | null;
+  photos?:                 string[];
+  requires_apps?:          string[];
+  approval_mode?:          'drafts_only' | 'acts' | null;
+  topic?:                  string | null;
 }
 
 export interface SubmitManifestResult {
@@ -276,7 +285,7 @@ export async function fetchPublicTemplate(templateId: string): Promise<Marketpla
   const res = await publicFetch(`/marketplace/templates/${ encodeURIComponent(templateId) }`);
   const body = await readJsonOrThrow<{ template: MarketplaceTemplateDetail }>(res, 'fetchPublicTemplate');
 
-  return body.template;
+  return new MarketplaceBrowseRowMapper().map(body.template) as MarketplaceTemplateDetail;
 }
 
 /**
@@ -309,7 +318,7 @@ export async function fetchTemplateDetail(
     'fetchTemplateDetail',
   );
 
-  return body.template;
+  return new MarketplaceBrowseRowMapper().map(body.template) as MarketplaceTemplateDetail;
 }
 
 /**
