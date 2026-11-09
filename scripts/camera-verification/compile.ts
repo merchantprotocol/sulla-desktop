@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
 
 import webpack from 'webpack';
 
@@ -22,14 +22,36 @@ class CaptureVerificationCompiler {
         }
         compiler.close(closeError => {
           if (error || closeError || !stats || stats.hasErrors()) reject(error || closeError || new Error(stats?.toString({ all: false, errors: true })));
-          else resolve();
+          else {
+            try { this.inventory(name, stats); resolve(); } catch (error) { reject(error); }
+          }
         });
       });
     });
   }
 
+  private inventory(name: string, stats: webpack.Stats): void {
+    const externals: { name: string; resolved: string }[] = [];
+    const visit = (modules: any[]) => {
+      for (const module of modules || []) {
+        if (module.name?.startsWith('external ')) {
+          const match = module.name.match(/"([^"\n]+)"$/);
+          if (match) {
+            const request = match[1];
+            const builtin = request === 'electron' || builtinModules.includes(request.replace(/^node:/, ''));
+            externals.push({ name: request, resolved: builtin ? '<runtime builtin>' : require.resolve(request) });
+          }
+        }
+        visit(module.modules);
+      }
+    };
+    visit(stats.toJson({ all: false, modules: true, nestedModules: true }).modules as any[]);
+    fs.writeFileSync(path.join(this.root, name + '-externals.json'), JSON.stringify(externals, null, 2));
+  }
+
   async run(): Promise<void> {
     fs.mkdirSync(this.root, { recursive: true });
+    fs.writeFileSync(path.join(this.root, 'compile-identity.json'), JSON.stringify({ sourceSha: process.env.CE1_EXPECTED_SHA, runId: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT, productionEntry: 'pkg/sulla-desktop/entry/capture-studio.ts', runtimeEntry: 'scripts/camera-verification/entry.ts', mainConfig: 'scripts/lib/build-utils.ts webpackConfig', preloadConfig: 'scripts/lib/build-utils.ts webpackPreloadConfig', fixturesAppliedToProduction: false }, null, 2));
     process.env.NODE_ENV = 'production';
     process.env.VUE_CLI_SERVICE_CONFIG_PATH = path.resolve('pkg/sulla-desktop/vue.config.mjs');
     const Service = require('@vue/cli-service/lib/Service');

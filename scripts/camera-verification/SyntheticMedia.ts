@@ -46,6 +46,18 @@ export class SyntheticMedia {
     ctx.fillStyle = this.frame % 2 ? '#0010ff' : '#ffff00'; ctx.fillRect(0, 0, 24, 24);
   }
 
+  async assertReleased(): Promise<void> {
+    const deadline = performance.now() + 20000;
+    await new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (this.streams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))) return resolve();
+        if (performance.now() > deadline) return reject(new Error('Actual parent cleanup leaked raw video tracks'));
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+  }
+
   close(): void {
     clearInterval(this.timer);
     this.streams.forEach(stream => stream.getTracks().forEach(track => track.stop()));

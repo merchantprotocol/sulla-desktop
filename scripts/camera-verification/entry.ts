@@ -9,13 +9,16 @@ import { FixtureHost } from './FixtureHost';
 import { StrictRendererHost } from './StrictRendererHost';
 
 class FixtureContext {
+  private initialized = false;
   constructor(private readonly media: SyntheticMedia) {}
   async initialize(): Promise<void> {
+    if (this.initialized) return;
     new StrictRendererHost(require('electron').ipcRenderer).install();
     this.media.install();
     const { ipcRenderer } = require('electron');
     const fixture = await ipcRenderer.invoke('ce1:fixture-ready');
     if (fixture.identity !== 'ce1-strict-memory-v1') throw new Error('Incorrect fixture composition');
+    this.initialized = true;
   }
 }
 class FixtureResources {
@@ -36,12 +39,14 @@ class VerificationEntry {
     await context.initialize();
     const { CaptureStudioWindow } = await import('../../pkg/sulla-desktop/entry/capture-studio/CaptureStudioWindow');
     const app = await new CaptureStudioWindow(
-      { initialize: async() => { /* already initialized before imports */ } },
+      context,
       new FixtureHost(), new FixtureResources(), document, window, error => console.warn('[CameraEffects]', error),
     ).mount();
     const { ipcRenderer } = require('electron');
     ipcRenderer.once('ce1:close', async() => {
-      app.unmount(); media.close(); ipcRenderer.send('ce1:closed');
+      app.unmount();
+      await media.assertReleased();
+      media.close(); ipcRenderer.send('ce1:closed');
     });
     ipcRenderer.send('ce1:mounted');
   }
