@@ -619,6 +619,9 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
+// Both preview slots and recorder read the same published camera output.
+watch(mediaSources.cameraStream, () => updateStreamAssignments(), { flush: 'sync' });
+
 // Stream refs for primary and pip slots — updated explicitly after autoAssign
 const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
@@ -797,7 +800,7 @@ async function toggleSrc(src: Source) {
     if (src.type === 'screen') {
       mediaSources.releaseScreen();
     } else if (src.type === 'camera') {
-      mediaSources.releaseCamera();
+      await mediaSources.camera.dispose();
     } else if (src.type === 'mic') {
       await audioDriver.stopMic();
     } else if (src.type === 'system') {
@@ -943,6 +946,10 @@ async function toggleRecord() {
       return;
     }
 
+    // Lock camera lifecycle before asynchronous recorder/audio startup.
+    try { await mediaSources.camera.beginRecording(); }
+    catch (error: any) { statusMessage.value = error.message; return; }
+
     // Gather active streams for recording — check stream.active not just existence
     const streams: { id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream; quality?: QualityPreset }[] = [];
 
@@ -967,6 +974,7 @@ async function toggleRecord() {
     }
 
     if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
+      mediaSources.camera.endRecording();
       statusMessage.value = 'Enable at least one source to record';
       setTimeout(() => { statusMessage.value = '' }, 3000);
       return;
@@ -976,6 +984,7 @@ async function toggleRecord() {
     try {
       sessionId = recorder.startSession(streams);
     } catch (e: any) {
+      mediaSources.camera.endRecording();
       console.error('[CaptureStudio] Failed to start recording session:', e.message || e);
       statusMessage.value = 'Failed to start recording: ' + (e.message || 'unknown error');
       setTimeout(() => { statusMessage.value = '' }, 5000);
@@ -983,6 +992,7 @@ async function toggleRecord() {
     }
 
     if (!sessionId) {
+      mediaSources.camera.endRecording();
       statusMessage.value = recorder.error.value || 'Failed to start recording';
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
@@ -1025,6 +1035,7 @@ async function toggleRecord() {
       console.error('[CaptureStudio] Failed to attach audio stream:', e.message || e);
       await Promise.all([micRecording.stop(), speakerCapture.mode.value === 'blackhole' ? speakerCapture.stop() : Promise.resolve('')]);
       await recorder.stopSession();
+      mediaSources.camera.endRecording();
       statusMessage.value = `Failed to start recording audio: ${ e.message || 'unknown error' }`;
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
@@ -1052,6 +1063,7 @@ async function toggleRecord() {
     if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
+    mediaSources.camera.endRecording();
     recording.value = false;
     diskSpace.stopMonitoring();
     statusMessage.value = 'Recording saved';
@@ -1784,7 +1796,7 @@ useAgentBridge({
     return { ok: !!stream, deviceId: deviceId || null };
   },
   'camera.release': () => {
-    mediaSources.releaseCamera();
+    await mediaSources.camera.dispose();
     return { ok: true };
   },
 
@@ -1905,6 +1917,7 @@ async function cleanupCaptureStudio() {
     if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     inputTracker.stopTracking();
     await recorder.stopSession();
+    mediaSources.camera.endRecording();
     recording.value = false;
     diskSpace.stopMonitoring();
   }
@@ -1920,7 +1933,7 @@ async function cleanupCaptureStudio() {
 
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
-  mediaSources.releaseCamera();
+  await mediaSources.camera.dispose();
   speakerCapture.releaseNative();
 
   // Disconnect from controllers
