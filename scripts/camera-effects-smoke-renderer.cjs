@@ -16,7 +16,7 @@ const { useAudioDriver } = require('./useAudioDriver');
 const { useSpeakerCapture } = require('./useSpeakerCapture');
 const { cameraBridge } = require('./camera-bridge');
 const { CaptureSessionLifecycle } = require('./CaptureSessionLifecycle');
-const { BrowserFrameSurface } = require('./VideoEffectService');
+const { BrowserFrameSurface, CameraEffectSession } = require('./VideoEffectService');
 const nativeRequire = require('node:module').createRequire(process.resourcesPath + '/ce1-native.cjs');
 
 class CameraEffectsRendererSmoke {
@@ -185,6 +185,20 @@ class CameraEffectsRendererSmoke {
     const originalEnumerate = navigator.mediaDevices.enumerateDevices;
     navigator.mediaDevices.getUserMedia = async() => raw;
     navigator.mediaDevices.enumerateDevices = async() => [];
+    // TEMP CE1 DIAG
+    const diag = { raf: 0, rafFired: 0, frames: 0, draws: 0, raws: 0, notes: [], snaps: [] };
+    const surfaces = [];
+    const restore = [];
+    const wrap = (target, key, make) => { const original = target[key]; target[key] = make(original); restore.push(() => { target[key] = original; }); };
+    wrap(FrameCompositor.prototype, 'draw', original => function(...args) { diag.draws++; try { return original.apply(this, args); } catch (error) { diag.notes.push('draw:' + error.message); throw error; } });
+    wrap(BrowserFrameSurface.prototype, 'drawRaw', original => function(...args) { diag.raws++; return original.apply(this, args); });
+    wrap(BrowserFrameSurface.prototype, 'open', original => async function(...args) { surfaces.push(this); const out = await original.apply(this, args); diag.notes.push('open@' + Math.round(performance.now())); return out; });
+    wrap(CameraEffectSession.prototype, 'frame', original => function(...args) { diag.frames++; return original.apply(this, args); });
+    wrap(CameraEffectSession.prototype, 'notify', original => function(error) { diag.notes.push('notify:' + (error && error.message)); return original.call(this, error); });
+    wrap(window, 'requestAnimationFrame', original => function(callback) { diag.raf++; return original.call(window, t => { diag.rafFired++; callback(t); }); });
+    const snap = label => diag.snaps.push({ label, t: Math.round(performance.now()), vis: document.visibilityState, frames: diag.frames, draws: diag.draws, raws: diag.raws, raf: diag.raf, rafFired: diag.rafFired,
+      surfaces: surfaces.map(s => ({ ct: s.video.currentTime, rs: s.video.readyState, paused: s.video.paused, w: s.canvas.width, track: s.canvas.captureStream ? undefined : 0 })) });
+    const emit = () => console.log('::warning title=CE1 diag::' + JSON.stringify(diag));
     const menu = new ContextMenuSmoke();
     let failInference = false; let failInitialization = false;
     let media; let recorder; let loads = 0; let mounted; let recording = false;
@@ -215,6 +229,7 @@ class CameraEffectsRendererSmoke {
       assert.equal(media.cameraStream.value, raw, 'Off must preserve raw');
       await menu.mount(media);
       await menu.framing();
+      snap('framed');
       assert.equal(loads, 1, 'Actual composition did not initialize model');
       const shared = media.cameraStream.value;
       assert.notEqual(shared, raw);
@@ -229,6 +244,7 @@ class CameraEffectsRendererSmoke {
       const blockedBridge = await this.bridgeRelease();
       assert.equal(blockedBridge.ok, false);
       assert.match(blockedBridge.error, /Stop recording/);
+      snap('recStart');
       const session = recorder.startSession([{ id: 'cam', type: 'camera', stream: shared, quality: '720p' }]);
       assert.ok(session, recorder.error.value);
       recording = true;
@@ -240,6 +256,7 @@ class CameraEffectsRendererSmoke {
       await firstStop; recording = false;
       media.camera.endRecording();
       const saved = await readFile(filename);
+      snap('stopped'); diag.notes.push('bytes:' + saved.length);
       assert.ok(saved.length > 100, 'No encoded file saved');
       const playback = document.createElement('video');
       playback.muted = true; playback.playsInline = true;
@@ -326,6 +343,7 @@ class CameraEffectsRendererSmoke {
       assert.equal(released, true);
       assert.equal(rawDuringStart.getVideoTracks()[0].readyState, 'ended');
     } finally {
+      emit(); restore.reverse().forEach(undo => undo());
       if (recording) await recorder.stopSession();
       media?.camera.endRecording();
       await media?.camera.dispose();
