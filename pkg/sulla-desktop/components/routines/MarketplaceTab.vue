@@ -179,6 +179,20 @@
               placeholder="Search the marketplace…"
               @keydown.enter="submitSearch"
             >
+            <button type="button" class="filter-trigger" :aria-expanded="filtersOpen" @click="filtersOpen = !filtersOpen">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+              Filters
+            </button>
+            <div v-if="filtersOpen" class="filter-popover">
+              <section v-for="facet in searchFacets" :key="facet.key">
+                <strong>{{ facet.label }}</strong>
+                <label v-for="option in facet.options" :key="option.value">
+                  <input type="checkbox" :checked="selectedFacets[facet.key]?.includes(option.value)" @change="toggleFacet(facet.key, option.value)">
+                  {{ option.label }} <span>{{ option.count }}</span>
+                </label>
+              </section>
+              <button type="button" class="btn primary" @click="filtersOpen = false">Show {{ filteredListings.length }} use cases</button>
+            </div>
             <span
               v-if="mp.total.value > 0"
               class="count"
@@ -220,7 +234,7 @@
         <template v-else>
           <div class="marketplace-grid">
             <MarketplaceStrip
-              v-for="t in mp.templates.value"
+              v-for="t in filteredListings"
               :key="t.id"
               :row="t"
               :installing="mp.installing.value === t.id"
@@ -408,6 +422,7 @@ import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
+import { MarketplaceSearchService, type MarketplaceSearchState } from '@pkg/composables/MarketplaceSearchService';
 import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -477,6 +492,17 @@ function onSignedOut() {
   signedIn.value = false;
 }
 const searchDraft = ref('');
+const filtersOpen = ref(false);
+const selectedFacets = ref<Record<string, string[]>>({ topics: [], kinds: [], media: [] });
+const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, topics: selectedFacets.value.topics, kinds: selectedFacets.value.kinds, media: selectedFacets.value.media, sort: 'relevance' }));
+const searchService = computed(() => new MarketplaceSearchService(mp.templates.value));
+const searchFacets = computed(() => searchService.value.facets(searchState.value));
+const filteredListings = computed(() => searchService.value.search(searchState.value));
+
+function toggleFacet(key: string, value: string): void {
+  const current = selectedFacets.value[key] ?? [];
+  selectedFacets.value = { ...selectedFacets.value, [key]: current.includes(value) ? current.filter(item => item !== value) : [...current, value] };
+}
 
 // ── My Submissions state ──
 const view = ref<'browse' | 'submissions'>('browse');
@@ -1205,6 +1231,16 @@ function formatRelative(iso: string): string {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+
+.filter-trigger { display:flex; align-items:center; gap:7px; border:1px solid var(--border, #d8dde3); border-radius:18px; background:var(--surface, #fff); color:var(--text, #20252b); padding:7px 12px; cursor:pointer; }
+.filter-trigger svg { width:18px; height:18px; }
+.search-box { position:relative; }
+.filter-popover { position:absolute; z-index:5; top:calc(100% + 8px); right:0; width:min(320px,90vw); max-height:70vh; overflow:auto; padding:16px; background:var(--surface, #fff); color:var(--text, #20252b); border:1px solid var(--border, #d8dde3); border-radius:14px; box-shadow:0 12px 36px #0002; }
+.filter-popover section { display:grid; gap:8px; padding:6px 0 14px; }
+.filter-popover label { display:flex; gap:8px; align-items:center; }
+.filter-popover label span { margin-left:auto; color:var(--text-muted, #737b84); }
+.filter-popover .btn { width:100%; }
+@media (prefers-reduced-motion: reduce) { .filter-popover, .filter-trigger { transition:none !important; } }
 
 .submission-row,
 .status,
