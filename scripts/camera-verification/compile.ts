@@ -12,10 +12,13 @@ const require = createRequire(import.meta.url);
 class CaptureVerificationCompiler {
   private readonly root = path.resolve('artifacts/ce1');
 
-  async compile(name: string, config: webpack.Configuration): Promise<void> {
+  /** Vue CLI ships its own nested webpack; its plugins must run on that same copy (as vue-cli-service does). */
+  private readonly vueWebpack: typeof webpack = createRequire(require.resolve('@vue/cli-service/package.json'))('webpack');
+
+  async compile(name: string, config: webpack.Configuration, engine: typeof webpack = webpack): Promise<void> {
     config.output = { ...config.output, path: path.join(this.root, name) };
     await new Promise<void>((resolve, reject) => {
-      const compiler = webpack(config);
+      const compiler = engine(config);
       compiler.run((error, stats) => {
         if (stats) {
           fs.writeFileSync(path.join(this.root, name + '-stats.json'), JSON.stringify(stats.toJson({ all: false, hash: true, assets: true, modules: true, nestedModules: true, errors: true, warnings: true }), null, 2));
@@ -74,7 +77,7 @@ class CaptureVerificationCompiler {
     service.projectOptions.pages = { 'capture-studio': service.projectOptions.pages['capture-studio'] };
     const production = service.resolveWebpackConfig(service.resolveChainableWebpackConfig());
     production.entry = { 'capture-studio': production.entry['capture-studio'] };
-    await this.compile('production-renderer', production);
+    await this.compile('production-renderer', production, this.vueWebpack);
     buildUtils.isDevelopment = false;
     await this.compile('production-main', buildUtils.webpackConfig);
     await this.compile('production-preload', buildUtils.webpackPreloadConfig);
@@ -82,8 +85,8 @@ class CaptureVerificationCompiler {
     const runtime = service.resolveWebpackConfig(service.resolveChainableWebpackConfig());
     runtime.entry = { 'capture-studio': path.resolve('scripts/camera-verification/entry.ts') };
     runtime.resolve.alias['@pkg/utils/paths$'] = path.resolve('scripts/camera-verification/paths.ts');
-    runtime.plugins.push(new webpack.DefinePlugin({ __CE1_DIRECTORY__: JSON.stringify(path.resolve('artifacts/ce1/runtime-home')), __CE1_RESOURCES__: JSON.stringify(path.resolve('resources')) }));
-    await this.compile('runtime', runtime);
+    runtime.plugins.push(new this.vueWebpack.DefinePlugin({ __CE1_DIRECTORY__: JSON.stringify(path.resolve('artifacts/ce1/runtime-home')), __CE1_RESOURCES__: JSON.stringify(path.resolve('resources')) }));
+    await this.compile('runtime', runtime, this.vueWebpack);
     const runtimeStats = fs.readFileSync(path.join(this.root, 'runtime-stats.json'), 'utf8');
     if (/ProductionCaptureWindow|sulla-desktop[\\/]sulla\.ts|bootstrapEntry/.test(runtimeStats)) throw new Error('Personal startup leaked into runtime graph');
     if (!runtimeStats.includes('pages/CaptureStudio.vue')) throw new Error('Actual parent missing from runtime graph');
