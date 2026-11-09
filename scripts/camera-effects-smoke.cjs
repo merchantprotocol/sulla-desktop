@@ -72,6 +72,7 @@ class CameraEffectsSmoke {
       code = 0;
     } catch (error) {
       console.error(error);
+      console.error('::error title=CE-1 renderer smoke::' + String(error.stack || error).replace(/%/g, '%25').replace(/\n/g, '%0A').replace(/\r/g, '%0D'));
     } finally {
       this.window?.destroy();
       fs.rmSync(this.directory, { recursive: true, force: true });
