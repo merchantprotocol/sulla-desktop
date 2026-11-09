@@ -41,7 +41,9 @@ export class BrowserFrameSurface implements FrameSurface {
     const context = this.canvas.getContext('2d');
     if (!context) throw new Error('Canvas unavailable');
     const { width, height } = this.canvas;
-    context.drawImage(this.video, width * 0.1, height * 0.1, width * 0.8, height * 0.8, 0, 0, width, height);
+    const sourceWidth = this.video.videoWidth;
+    const sourceHeight = this.video.videoHeight;
+    context.drawImage(this.video, sourceWidth * 0.1, sourceHeight * 0.1, sourceWidth * 0.8, sourceHeight * 0.8, 0, 0, width, height);
     this.output = this.canvas.captureStream(30);
     return this.output;
   }
