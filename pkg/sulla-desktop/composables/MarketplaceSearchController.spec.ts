@@ -23,4 +23,18 @@ describe('MarketplaceSearchController', () => {
     expect(router.currentRoute.value.query).toEqual({ keep: 'yes' });
     expect(controller.isResultsMode).toBe(false);
   });
+
+  it('opens and closes a listing without losing search keys, and syncs deep links', async() => {
+    const router = new FakeRouter();
+    const controller = new MarketplaceSearchController(router as any, () => new MarketplaceSearchService([]));
+    await controller.apply(state);
+    await controller.openListing('listing-42');
+    expect(router.currentRoute.value.query).toMatchObject({ q: 'mail', topic: 'Ops', type: 'routine', listing: 'listing-42' });
+    const deepLink = new MarketplaceSearchController(router as any, () => new MarketplaceSearchService([]));
+    deepLink.syncFromRoute();
+    expect(deepLink.listingId).toBe('listing-42');
+    await controller.closeListing();
+    expect(router.currentRoute.value.query).not.toHaveProperty('listing');
+    expect(router.currentRoute.value.query).toMatchObject({ q: 'mail', topic: 'Ops', type: 'routine' });
+  });
 });

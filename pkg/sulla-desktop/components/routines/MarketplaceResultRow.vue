@@ -48,7 +48,7 @@
         {{ row.description || '' }}
       </p>
       <div class="facts">
-        <span>{{ row.kind_label || row.kind }}</span><span v-if="isVideo">Video walkthrough</span><span
+        <button type="button" @click.stop="emit('filter', 'type', row.kind)">{{ row.kind_label || row.kind }}</button><button v-if="row.topic || row.category" type="button" @click.stop="emit('filter', 'topic', row.topic || row.category)">{{ row.topic || row.category }}</button><span v-if="isVideo">Video walkthrough</span><span
           v-for="app in presentation.apps"
           :key="app"
         >Works with {{ app }}</span><span v-if="presentation.draftsOnly">Drafts only</span>
@@ -90,7 +90,7 @@ import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListing
 import type { MarketplaceBrowseRow } from '../../typings/electron-ipc';
 const props = defineProps<{ row: MarketplaceBrowseRow; installStatus?: string }>();
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
-defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow] }>();
+const emit = defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string] }>();
 const image = computed(() => presentation.value.image);
 const imageFailed = ref(false);
 watch(image, () => { imageFailed.value = false });

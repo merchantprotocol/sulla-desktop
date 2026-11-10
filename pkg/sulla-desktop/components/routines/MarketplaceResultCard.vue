@@ -36,7 +36,7 @@
     </div>
     <div class="copy">
       <span class="avatar"><UseCaseIcon :name="iconName" /></span><div class="text">
-        <h3>{{ row.tagline || row.name }}</h3><p>{{ row.name }} · {{ presentation.topic }}</p><small>{{ row.kind_label || row.kind }}<template v-if="presentation.video"> · Video walkthrough</template><template
+        <h3>{{ row.tagline || row.name }}</h3><p>{{ row.name }}</p><small><button type="button" @click.stop="emit('filter', 'type', row.kind)">{{ row.kind_label || row.kind }}</button><button type="button" @click.stop="emit('filter', 'topic', row.topic || row.category || presentation.topic)">{{ presentation.topic }}</button><template v-if="presentation.video"> · Video walkthrough</template><template
           v-for="app in presentation.apps"
           :key="app"
         > · Works with {{ app }}</template><template v-if="presentation.draftsOnly"> · Drafts only</template><template v-if="presentation.price"> · {{ presentation.price }}</template></small>
@@ -72,7 +72,7 @@ import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListing
 import type { MarketplaceBrowseRow } from '../../typings/electron-ipc';
 const props = defineProps<{ row: MarketplaceBrowseRow; installStatus?: string }>();
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
-defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow] }>();
+const emit = defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string] }>();
 const image = computed(() => presentation.value.image);
 const imageFailed = ref(false);
 watch(image, () => { imageFailed.value = false });

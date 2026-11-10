@@ -44,6 +44,7 @@
       @install="onInstall(mp.detail.value.row.id)"
       @install-all="onInstall(mp.detail.value.row.id, true)"
       @open-dependency="onOpenDependency"
+      @filter="onListingFilter"
     />
     <div
       v-else-if="mp.detailLoading.value"
@@ -183,6 +184,7 @@
           :installing-id="mp.installing.value"
           @update:state="applyState"
           @open-detail="onOpen($event.id)"
+          @filter="onListingFilter"
           @install="onInstall($event.id)"
           @close="clearSearch"
         />
@@ -400,7 +402,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
@@ -567,7 +569,7 @@ function onOpenDetailEvent(ev: Event) {
 }
 
 onMounted(async() => {
-  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; searchMode.value = searchController.isResultsMode }).catch(() => undefined);
+  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; searchMode.value = searchController.isResultsMode; if (searchController.listingId) mp.loadDetail(searchController.listingId).catch(() => undefined); }).catch(() => undefined);
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
   if (authed) {
@@ -577,6 +579,16 @@ onMounted(async() => {
       catalogKinds.value = await listingRepository.loadKinds(rows);
     }).catch(() => undefined);
   }
+});
+
+watch(() => router.currentRoute.value.query.listing, listing => {
+  searchController.syncFromRoute().then(state => {
+    searchDraft.value = state.q;
+    selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval };
+    searchMode.value = searchController.isResultsMode;
+    if (typeof listing === 'string' && listing) mp.loadDetail(listing).catch(() => undefined);
+    else mp.clearDetail();
+  }).catch(() => undefined);
 });
 
 onUnmounted(() => {
@@ -592,11 +604,19 @@ function onSort(s: SortValue) {
 function submitSearch() { applyState(searchState.value).catch(() => undefined) }
 function onOpen(id: string) {
   mp.clearInstallResult();
+  searchController.openListing(id).catch(() => undefined);
   mp.loadDetail(id).catch(() => undefined);
 }
 function onCloseDetail() {
   mp.clearDetail();
   mp.clearInstallResult();
+  searchController.closeListing().catch(() => undefined);
+}
+
+function onListingFilter(key: 'topic' | 'type', value: string) {
+  const state: MarketplaceSearchState = { q: '', topics: key === 'topic' ? [value] : [], kinds: key === 'type' ? [value] : [], media: [], price: [], length: [], apps: [], approval: [], sort: 'relevance' };
+  onCloseDetail();
+  applyState(state).catch(() => undefined);
 }
 
 async function onInstall(id: string, includeDependencies = false) {

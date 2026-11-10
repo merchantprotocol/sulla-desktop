@@ -11,7 +11,7 @@
       class="back"
       @click="$emit('close')"
     >
-      ← Back
+      ← Back to results
     </button>
 
     <div class="hero">
@@ -34,6 +34,7 @@
         >
           {{ row.tagline }}
         </p>
+        <span v-if="priceLabel" class="price-badge">{{ priceLabel }}</span>
         <p
           v-if="row.description"
           class="desc"
@@ -89,9 +90,10 @@
         class="right"
         :class="`kind-${row.kind}`"
       >
+        <video v-if="row.video_url" :src="row.video_url" :poster="mediaPoster" controls preload="none" />
         <img
-          v-if="heroUrl"
-          :src="heroUrl"
+          v-else-if="mediaPoster"
+          :src="mediaPoster"
           :alt="row.name"
         >
         <div
@@ -102,6 +104,8 @@
         </div>
       </div>
     </div>
+
+    <MarketplaceListingFacts :row="row" @filter="(key, value) => emit('filter', key, value)" />
 
     <div class="stats">
       <div class="stat">
@@ -159,7 +163,7 @@
       class="block"
     >
       <div class="block-head">
-        <h3>What it needs</h3>
+        <h3>What you get</h3>
         <button
           v-if="row.kind === 'routine' && source === 'marketplace'"
           type="button"
@@ -481,6 +485,7 @@ import LoopFrameNode from '@pkg/pages/routines/LoopFrameNode.vue';
 import RoutineEdge from '@pkg/pages/routines/RoutineEdge.vue';
 import RoutineNode from '@pkg/pages/routines/RoutineNode.vue';
 import StickyNoteNode from '@pkg/pages/routines/StickyNoteNode.vue';
+import MarketplaceListingFacts from './MarketplaceListingFacts.vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
 const props = withDefaults(defineProps<{
@@ -509,6 +514,7 @@ const emit = defineEmits<{
   (e: 'install-all'): void;
   (e: 'open-dependency', dependency: { kind: MarketplaceKind; slug: string }): void;
   (e: 'fork'): void;
+  (e: 'filter', key: 'topic' | 'type', value: string): void;
 }>();
 
 const showConsent=ref(false);
@@ -529,6 +535,8 @@ async function allowInstall(){
 provide('routines-mode', ref<'edit' | 'run'>('run'));
 const kindInfo = computed(() => marketplaceKindInfo(props.row.kind));
 const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
+const priceLabel = computed(() => props.row.price_cents === 0 ? 'Free' : typeof props.row.price_cents === 'number' && props.row.price_cents > 0 ? new Intl.NumberFormat(undefined, { style: 'currency', currency: props.row.currency || 'USD' }).format(props.row.price_cents / 100) : '');
+const mediaPoster = computed(() => props.row.poster_url || props.row.photos?.[0] || props.row.hero_media?.poster || props.row.hero_media?.url || '');
 const detailTab = ref<'graph' | 'docs'>('graph');
 
 const initials = computed(() => {
@@ -1444,7 +1452,6 @@ h1 {
   .node-inspector { border-left: 0; border-top: 1px solid var(--accent); }
 }
 </style>
-
 <style scoped>
 .permission-scrim{position:fixed;inset:0;z-index:10000;background:var(--bg-overlay);display:grid;place-items:center}.permission-modal{width:min(560px,calc(100vw - 40px));max-height:calc(100vh - 60px);overflow:auto;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:14px;box-shadow:var(--elev-float)}.permission-modal header,.permission-modal footer{padding:18px 22px;border-bottom:1px solid var(--border-default)}.permission-modal footer{border:0;border-top:1px solid var(--border-default);display:flex;justify-content:flex-end;gap:9px}.permission-body{padding:8px 22px 18px}.permission-body h3{margin:18px 0 7px;color:var(--text-primary);font-size:11px;text-transform:uppercase;letter-spacing:.12em}.permission-body p{margin:0;padding:8px 0;display:flex;flex-direction:column;gap:3px}.permission-body small{color:var(--text-primary);font-family:var(--font-mono)}
 </style>
