@@ -606,7 +606,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly filesAudit: FilesAuditEmitter;
   private codecProvider = new DomainVaultSyncCodecProvider();
 
-  useDomainSyncCodecProvider(provider: DomainVaultSyncCodecProvider): void { this.codecProvider = provider; }
   private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
 
   constructor(
