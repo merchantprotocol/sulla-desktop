@@ -5,6 +5,7 @@
 import { SystemClock } from '@sulla/foundation';
 import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection';
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
+import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
@@ -28,10 +29,13 @@ import { BlockerEscalationService } from '../../services/BlockerEscalationServic
 import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
+import { ReviewObligationGate } from '../Services/ReviewObligationGate';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
   readonly messaging: AgentJobMessagingRepository;
+  readonly reviewItems: AgentJobReviewItemRepository;
+  readonly reviewGate: ReviewObligationGate;
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
   readonly states: AgentStateService;
@@ -47,6 +51,8 @@ export class AgentJobServiceProvider {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
+    this.reviewItems = new AgentJobReviewItemRepository(connection);
+    this.reviewGate = new ReviewObligationGate(this.reviewItems);
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
