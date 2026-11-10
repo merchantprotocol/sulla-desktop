@@ -39,7 +39,7 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
   if (!state?.metadata?.isSubAgent) return basePrompt;
   const workerGuidance = new WorkerPromptBuilder().build(state.metadata);
   const threadId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : '';
-    if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ REVIEW_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
+  if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ REVIEW_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
 
   let pending: Awaited<ReturnType<typeof AgentJobMessagingModel.pendingMessagesForThread>>;
   try {

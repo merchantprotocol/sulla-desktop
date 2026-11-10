@@ -40,6 +40,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   const reviewIds: string[] = [];
   const reviewIdsByTask: Record<number, string[]> = {};
   const closedReviewIds = new Set<string>();
+  const reviewMessageByTask = new Map<number, string>();
   for (const target of targets) {
     for (const close of input.closeReviewItems ?? []) {
       if (!close.id || !close.reason?.trim()) return { successBoolean: false, responseString: 'Manager wont_fix closure requires an item id and non-empty reason.' };
@@ -55,7 +56,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       reviewIds.push(...ids);
       reviewIdsByTask[target.taskIndex] = ids;
       const reviewText = ids.map((id, index) => `${id}: ${texts[index]}`).join('\n');
-      (target as any).reviewMessage = `${message}\n\nTracked review items (close each one):\n${reviewText}\nAcknowledge each in your next report_progress; close with fixed + commit sha or wont_fix + reason.`;
+      reviewMessageByTask.set(target.taskIndex, `${message}\n\nTracked review items (close each one):\n${reviewText}\nAcknowledge each in your next report_progress; close with fixed + commit sha or wont_fix + reason.`);
     }
   }
   const unknownClose = (input.closeReviewItems ?? []).find(item => !closedReviewIds.has(item.id));
@@ -64,7 +65,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   const job = await getJob(jobId);
   const queued = await Promise.all(targets.map(async(target) => ({
     target,
-    record: await AgentJobMessagingModel.queueMessage(target, (target as any).reviewMessage ?? message),
+    record: await AgentJobMessagingModel.queueMessage(target, reviewMessageByTask.get(target.taskIndex) ?? message),
   })));
   let deliveredLive = 0;
   const notWoken: Array<{ taskIndex: number; reason: string }> = [];

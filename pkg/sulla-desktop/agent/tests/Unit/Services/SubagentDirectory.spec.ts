@@ -53,3 +53,16 @@ describe('SubagentDirectoryBuilder', () => {
     expect(output.split('\n').every(line => line === '' || line.startsWith('#') || line.startsWith('-') || line.startsWith('Direct') || line.startsWith('These') || line.startsWith('⚠'))).toBe(true);
   });
 });
+
+describe('SubagentDirectoryBuilder open review items', () => {
+  it('appends short review ids to the owning child row only', async() => {
+    // risk: manager returns or stops a worker without seeing it still owes fixes
+    const owing: FleetJobView = { jobId: 'reviewed', status: 'running', createdAt: new Date(now - 60_000).toISOString(), finishedAt: null, parentThreadId: 'root', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', tasks: [
+      { ...task(0, 'fixer'), openReviewItems: [{ id: 'R2', text: 'a', status: 'open' }, { id: 'R3', text: 'b', status: 'acknowledged' }] },
+      { ...task(1, 'clean'), openReviewItems: [] },
+    ] };
+    const output = await new SubagentDirectoryBuilder(new FleetReader([owing]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
+    expect(output).toContain('review open: R2, R3');
+    expect(output.split('\n').filter(line => line.includes('clean')).join('\n')).not.toContain('review open');
+  });
+});

@@ -11,6 +11,13 @@ export interface FleetCheckinView {
   time: string;
 }
 
+/** An open (not closed) tracked review obligation on a delegated task. */
+export interface FleetReviewItemView {
+  id: string;
+  text: string;
+  status: string;
+}
+
 export interface FleetTaskView {
   [key: string]: unknown;
   taskIndex: number;
@@ -36,6 +43,8 @@ export interface FleetTaskView {
   promotedToTab?: boolean;
   /** Live tasks beneath this task's thread at any depth (grandchildren included). */
   descendantsRunning?: number;
+  /** Open or acknowledged review items for this task; closed items are never listed. */
+  openReviewItems?: FleetReviewItemView[];
   result?: unknown;
   completion?: unknown;
 }
