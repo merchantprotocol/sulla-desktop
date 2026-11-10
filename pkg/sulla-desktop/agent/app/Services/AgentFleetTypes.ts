@@ -41,6 +41,8 @@ export interface FleetTaskView {
   wakeAt?: string | null;
   stranded?: { stateKey: string; detectedAt: number; reason: string; alertedAt: number } | null;
   promotedToTab?: boolean;
+  requestedVisibility?: 'tab';
+  downgradeReason?: string;
   /** Live tasks beneath this task's thread at any depth (grandchildren included). */
   descendantsRunning?: number;
   /** Open or acknowledged review items for this task; closed items are never listed. */

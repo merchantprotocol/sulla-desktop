@@ -30,7 +30,7 @@ export const agentToolManifests: ToolManifest[] = [
               description: 'Container agents only: explicit existing worktree under /mnt/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
             },
             label:     { type: 'string', description: 'Optional human-readable label for this task .', optional: true },
-            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: 'Always "hidden". "tab" is accepted for compatibility but runs hidden: agents never open visible tabs.' },
+            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: '"hidden" (default) or "tab". A requested "tab" opens a visible tab when possible; otherwise the task runs hidden and the response and task record carry requestedVisibility and downgradeReason. Never silent.' },
             contract:  {
               type:        'object',
               optional:    true,
@@ -141,6 +141,17 @@ export const agentToolManifests: ToolManifest[] = [
     },
     operationTypes: ['execute'],
     loader:         () => import('./stop_agent_job'),
+  },
+  {
+    name:        'promote_to_tab',
+    description: 'Open a running hidden task in a visible chat tab. The tab binds to the task\'s existing thread, so nothing restarts and its history shows. Only the job\'s ancestors or the human may promote it. Returns the tab handle (tabId) and sets promotedToTab on the task.',
+    category:    'agents',
+    schemaDef:   {
+      jobId:     { type: 'string', description: 'The job that owns the running task (its jobId from spawn_agent).' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task to open; defaults to 0.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./promote_to_tab'),
   },
   {
     name:        'start_agent_conversation',
