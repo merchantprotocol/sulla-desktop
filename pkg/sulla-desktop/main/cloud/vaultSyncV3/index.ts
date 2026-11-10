@@ -32,6 +32,7 @@ import { ContainerSyncError, VaultSyncContainer, type PreparedSync, type SyncOp 
 
 import Logging from '@pkg/utils/logging';
 import { SyncDriverHealth } from '../syncDriverHealth';
+import { OfflineErrorClassifier } from '../offlineErrorClassifier';
 
 const console = Logging.background;
 
@@ -53,6 +54,7 @@ export interface VaultSyncStatus {
 
 class VaultSyncV3Impl {
   private readonly health = new SyncDriverHealth();
+  private readonly offline = new OfflineErrorClassifier();
   private lastSuccessLogAt = 0;
   private lastCounts = { pushed: 0, pulled: 0 };
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -94,6 +96,12 @@ class VaultSyncV3Impl {
     this.syncIfEnabled().catch(() => undefined);
   }
 
+  /** Network is back: push the local edits that waited while offline. No-op when the driver is stopped. */
+  resumeAfterOffline(): void {
+    if (!this.reconcileTimer) return;
+    this.syncIfEnabled().catch(() => undefined);
+  }
+
   private async syncIfEnabled(): Promise<void> {
     const prefs = await getCloudPreferences().catch(() => null);
     if (prefs?.enabled && prefs.vault) await this.syncNow();
@@ -101,7 +109,8 @@ class VaultSyncV3Impl {
 
   private async pushIfDirty(): Promise<void> {
     const prefs = await getCloudPreferences().catch(() => null);
-    if (!prefs?.enabled || !prefs.vault || this.inFlight || this.debounce) return;
+    // Offline: don't spend a poll on a doomed push; the network-back resume pushes the edits.
+    if (!prefs?.enabled || !prefs.vault || this.inFlight || this.debounce || this.health.snapshot().offlineSince !== null) return;
     const local = await VaultSyncContainer.status().catch(() => null);
     this.health.setPendingLocalEdits(local?.pendingChanges ?? 0);
     if (!local?.configured || !local.pendingChanges) return;
@@ -118,9 +127,10 @@ class VaultSyncV3Impl {
       this.health.attempted();
       const before = this.health.snapshot();
       const result = await this.run();
-      if (!result.lastError && result.lastSyncAt) {
+      if (!result.lastError && result.lastSyncAt && result.skipped !== 'offline') {
         const local = await VaultSyncContainer.status().catch(() => null);
-        this.health.succeeded(local?.pendingChanges ?? 0);
+        const endedOffline = this.health.succeeded(local?.pendingChanges ?? 0);
+        if (endedOffline) console.log('[VaultSyncV3] back online; sync resumed');
         const now = Date.now();
         if (before.consecutiveFailures > 0 || now - this.lastSuccessLogAt >= RECONCILE_MS) {
           console.log(`[VaultSyncV3] sync ok pushed=${ this.lastCounts.pushed } pulled=${ this.lastCounts.pulled }`);
@@ -244,7 +254,13 @@ class VaultSyncV3Impl {
   }
 
   private fail(err: unknown): VaultSyncStatus {
-    this.health.failed(err instanceof ContainerSyncError ? err.code : 'sync_failed');
+    if (this.offline.isOffline(err)) {
+      // No network is a normal state: one log line when it starts, no error streak, no per-retry noise.
+      if (this.health.unreachable()) console.log('[VaultSyncV3] offline; local edits wait and sync resumes when the network is back');
+      return this.set({ lastSyncAt: this.status.lastSyncAt, skipped: 'offline' });
+    }
+    const endedOffline = this.health.failed(err instanceof ContainerSyncError ? err.code : 'sync_failed');
+    if (endedOffline) console.log('[VaultSyncV3] back online; sync resumed');
     if (err instanceof ContainerSyncError) {
       if (err.status === 423 || err.code === 'vault_locked') return this.set({ skipped: 'vault_locked' });
       if (err.code === 'password_kdf_missing') return this.set({ lastError: 'Sign in to Sulla Cloud again to finish updating encrypted sync.' });

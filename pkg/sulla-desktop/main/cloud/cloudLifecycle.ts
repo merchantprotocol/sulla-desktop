@@ -17,7 +17,7 @@
  * Signed out ⇒ everything stops.
  */
 
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, net, powerMonitor } from 'electron';
 
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
@@ -31,6 +31,8 @@ import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { MemorySyncV1 } from './memorySyncV1';
 import { SyncDriverSupervisor } from './syncDriverSupervisor';
+import { NetworkResumeMonitor } from './networkResumeMonitor';
+import { CloudConnectivityResponder } from './cloudConnectivityResponder';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -46,6 +48,10 @@ let channel: SecureDesktopChannel | null = null;
 let signedIn = false;
 let prefsListenerInstalled = false;
 const syncDriverSupervisor=new SyncDriverSupervisor();
+// 'online' = the network came back or the laptop resumed; Files retries now and Vault pushes queued edits.
+const networkResumeMonitor=new NetworkResumeMonitor({ network: net, power: powerMonitor });
+const connectivityResponder=new CloudConnectivityResponder({ files: FilesSyncV1, vault: VaultSyncV3 });
+networkResumeMonitor.onOnline(() => connectivityResponder.handleOnline());
 
 function reconcileSyncDrivers():void {
   if(!signedIn)return;
@@ -205,6 +211,7 @@ function installPrefsListener() {
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
   startSyncDriverSupervisor();
+  networkResumeMonitor.start();
   installPrefsListener();
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
@@ -220,6 +227,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   stopSyncDriverSupervisor();
+  networkResumeMonitor.stop();
   channel?.stop();
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
