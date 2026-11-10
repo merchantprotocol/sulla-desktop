@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "description": "Pinned default local-voice model artifacts for Sulla Desktop (Tier 1: 8 GB, CPU-only). Weights are downloaded at runtime by a ModelRepository, never committed. See docs/local-voice-bill-of-materials.md.",
+  "status": "phase-0: sha256 verified by download on 2026-11-10; runtime compatibility not yet tested",
+  "defaults": [
+    {
+      "id": "eot-smart-turn-v3.2-cpu",
+      "component": "end-of-turn",
+      "url": "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
+      "revision": "f766f81d3cfdf7737ac64aad813d91bbfd56bf93",
+      "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+      "sizeBytes": 8679182,
+      "license": "BSD-2-Clause",
+      "sampleRate": 16000,
+      "sampleRateNote": "input; upstream-claimed, not re-verified"
+    },
+    {
+      "id": "vad-silero-onnx",
+      "component": "voice-activity-detection",
+      "url": "https://huggingface.co/onnx-community/silero-vad/resolve/e71cae966052b992a7eca6b17738916ce0eca4ec/onnx/model.onnx",
+      "revision": "e71cae966052b992a7eca6b17738916ce0eca4ec",
+      "sha256": "a4a068cd6cf1ea8355b84327595838ca748ec29a25bc91fc82e6c299ccdc5808",
+      "sizeBytes": 2243022,
+      "license": "MIT (upstream snakers4/silero-vad)",
+      "sampleRate": 16000,
+      "sampleRateNote": "input; upstream-claimed"
+    },
+    {
+      "id": "stt-whisper-tiny-encoder-q8",
+      "component": "speech-to-text",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/encoder_model_quantized.onnx",
+      "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+      "sha256": "fd9d995b9dcb0520f0dbf6cf68651af639fc385f594d9d876e69ca2802dc438e",
+      "sizeBytes": 10124910,
+      "license": "Apache-2.0 (repo tag); OpenAI Whisper weights are MIT upstream",
+      "sampleRate": 16000,
+      "sampleRateNote": "input (log-mel frontend); upstream-claimed"
+    },
+    {
+      "id": "stt-whisper-tiny-decoder-merged-q8",
+      "component": "speech-to-text",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/onnx/decoder_model_merged_quantized.onnx",
+      "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+      "sha256": "6c0c125986b007d2e3734bec84c18bda0152071b90b87fadac6d7764499927a0",
+      "sizeBytes": 30727765,
+      "license": "Apache-2.0 (repo tag); OpenAI Whisper weights are MIT upstream",
+      "sampleRate": 16000,
+      "sampleRateNote": "audio input is consumed via encoder; upstream-claimed"
+    },
+    {
+      "id": "stt-whisper-tiny-tokenizer",
+      "component": "speech-to-text",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/tokenizer.json",
+      "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+      "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+      "sizeBytes": 2480466,
+      "license": "Apache-2.0 (repo tag)",
+      "sampleRate": 16000,
+      "sampleRateNote": "n/a (text tokenizer)"
+    },
+    {
+      "id": "stt-whisper-tiny-preprocessor",
+      "component": "speech-to-text",
+      "url": "https://huggingface.co/Xenova/whisper-tiny/resolve/5332fcc35e32a33b86612b9a57a89be7906102b1/preprocessor_config.json",
+      "revision": "5332fcc35e32a33b86612b9a57a89be7906102b1",
+      "sha256": "a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d",
+      "sizeBytes": 339,
+      "license": "Apache-2.0 (repo tag)",
+      "sampleRate": 16000,
+      "sampleRateNote": "feature extractor config; upstream-claimed"
+    },
+    {
+      "id": "tts-kokoro-82m-v1.0-q8",
+      "component": "text-to-speech",
+      "url": "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/onnx/model_quantized.onnx",
+      "revision": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      "sha256": "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",
+      "sizeBytes": 92361116,
+      "license": "Apache-2.0 (repo tag)",
+      "sampleRate": 24000,
+      "sampleRateNote": "output; 24 kHz per repo README example"
+    },
+    {
+      "id": "tts-kokoro-voice-af_heart",
+      "component": "text-to-speech",
+      "url": "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/voices/af_heart.bin",
+      "revision": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      "sha256": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+      "sizeBytes": 522240,
+      "license": "Apache-2.0 (repo tag); per-voice provenance not separately reviewed",
+      "sampleRate": 24000,
+      "sampleRateNote": "output voice style vector, not audio"
+    },
+    {
+      "id": "tts-kokoro-config",
+      "component": "text-to-speech",
+      "url": "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/config.json",
+      "revision": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      "sha256": "df34b4f930b23447cd4dc410fabfb42eb3f24e803e6c3f97d618fb359380a36f",
+      "sizeBytes": 44,
+      "license": "Apache-2.0 (repo tag)",
+      "sampleRate": 24000,
+      "sampleRateNote": "model config"
+    }
+  ]
+}
