@@ -6,7 +6,10 @@ const { createRelay } = vi.hoisted(() => ({
   createRelay: vi.fn(async() => ({ relayId: 'relay-test', expiresAt: Date.now() + 60_000 })),
 }));
 
-vi.mock('../../../../vault-broker', () => ({
+// SlackClient's transport resolves this module from pkg/sulla-desktop/vault-broker.
+// The test lives one directory deeper than the source import, so it needs five
+// parent traversals rather than four.
+vi.mock('../../../../../vault-broker', () => ({
   usesContainerVaultAuthority: () => true,
   requireConfiguredCredentialBroker: () => ({ createRelay }),
   issueLocalBrokerContext: vi.fn(async() => ({})),

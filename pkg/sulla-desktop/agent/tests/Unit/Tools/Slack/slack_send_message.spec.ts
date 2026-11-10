@@ -1,6 +1,16 @@
 // Sulla Desktop · https://sulladesktop.com
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const { registryGet } = vi.hoisted(() => ({ registryGet: vi.fn() }));
+
+vi.mock('../../../../integrations', () => ({
+  registry: { get: registryGet },
+}));
+vi.mock('../../../../integrations/slack/SlackClient', () => ({
+  slackClient: { isConnected: () => true },
+}));
+
 import { registry } from '../../../../integrations';
 import { SlackSendMessageWorker } from '../../../../tools/slack/slack_send_message';
 
