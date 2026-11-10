@@ -6,6 +6,7 @@
 // registry.ts (or wherever you centralize registrations)
 import { IntegrationRegistry } from './IntegrationRegistry';
 import { isConnectionStatusSuppressed } from './integrationFlags';
+import { getIntegrationService } from '../services/IntegrationService';
 import { SlackClient, slackClient } from './slack/SlackClient';
 
 export const registry = new IntegrationRegistry();
