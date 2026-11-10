@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
+import { NobleCryptoPrimitives } from '@sulla/domain';
 
 import { DomainVaultSyncCodec } from '../../../../../../services/sulla-vault/src/browserEnvelope/DomainVaultSyncCodec';
 import { SodiumCryptoPrimitives } from '../../../../../../services/sulla-vault/src/browserEnvelope/SodiumCryptoPrimitives';
@@ -35,7 +36,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     const kat = await fixture();
     const sodium = await loadSodium();
     const old = createSyncEnvelope(sodium);
-    const crypto = new SodiumCryptoPrimitives(sodium);
+    const crypto = new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives());
 
     for (const side of [kat.desktop, kat.browser]) {
       const userKey = old.unlockBundle(side.bundle, 'correct horse battery staple · sync v3');
@@ -71,7 +72,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     const kat = await fixture();
     const sodium = await loadSodium();
     const old = createSyncEnvelope(sodium);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
     const password = 'correct horse battery staple · sync v3';
 
     for (const side of [kat.desktop, kat.browser]) {
@@ -91,7 +92,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     const kat = await fixture();
     const sodium = await loadSodium();
     const old = createSyncEnvelope(sodium);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
 
     for (const side of [kat.desktop, kat.browser]) {
       let oldCode: string | undefined;
@@ -107,7 +108,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     // risk: crypto/data integrity — malformed sync input must fail closed with a stable caller-visible code.
     const sodium = await loadSodium();
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
     const malformed = { ...((await fixture()).desktop.records[0]), generation: 0 };
     const errorCode = (run: () => void): string => {
       try { run(); } catch (error) { return (error as { code: string }).code; }
@@ -121,7 +122,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     // risk: crypto/authentication — mismatched AAD prevents legitimate item and folder decryption.
     const sodium = await loadSodium();
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
     const old = createSyncEnvelope(sodium);
     const originalRandom = sodium.randombytes_buf;
     sodium.randombytes_buf = (length: number) => new Uint8Array(length).fill(7);

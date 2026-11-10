@@ -953,7 +953,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
           workflowExecutionId: claims.workflow_execution_id,
           requestedItemId:     itemId,
           integrationId,
-    }), undefined, domainSyncCodec),
+        }),
         !allowed, allowed ? null : reason],
     );
     if (!allowed || !item) {
