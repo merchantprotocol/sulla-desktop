@@ -7,7 +7,7 @@ import { GitPushWorker } from '../../../../tools/github/git_push';
 import { runCommand } from '../../../../tools/util/CommandRunner';
 
 vi.mock('../../../../tools/util/CommandRunner', () => ({ runCommand: vi.fn() }));
-vi.mock('../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => true }));
+vi.mock('../../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => true }));
 
 describe('GitPushWorker missing context', () => {
   it('fails closed before executing git when broker context is absent', async() => {

@@ -9,14 +9,14 @@ import { withGitHubBrokerRemote } from '../../../../tools/github/gitBrokerTransp
 
 vi.mock('../../../../tools/util/CommandRunner', () => ({ runCommand: vi.fn() }));
 vi.mock('../../../../tools/github/gitBrokerTransport', () => ({ withGitHubBrokerRemote: vi.fn() }));
-vi.mock('../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => true }));
+vi.mock('../../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => true }));
 
 describe('GitCloneWorker', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('clones through the broker and resets origin to token-free GitHub HTTPS', async() => {
     // risk: credential disclosure — broker-only URL must not persist in .git/config.
-    vi.mocked(withGitHubBrokerRemote).mockImplementation(async(_context, _remote, run) => run('http://127.0.0.1/one-use-secret/acme/repo.git'));
+    vi.mocked(withGitHubBrokerRemote).mockImplementation(async(_context, _remote, run) => await run('http://127.0.0.1/one-use-secret/acme/repo.git') as any);
     vi.mocked(runCommand)
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any);
