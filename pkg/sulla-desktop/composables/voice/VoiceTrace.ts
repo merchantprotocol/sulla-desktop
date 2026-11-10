@@ -14,6 +14,6 @@ export function voiceTrace(turnId: string, stage: string, data: Record<string, u
   if (!turnId) return;
   const entry = { turnId, stage, ts: new Date().toISOString(), ...data };
 
-  console.log('[VoiceTrace]', entry);
+  console.log('[VoiceTrace]', JSON.stringify(entry));
   ipcRenderer.send('voice-trace', entry);
 }
