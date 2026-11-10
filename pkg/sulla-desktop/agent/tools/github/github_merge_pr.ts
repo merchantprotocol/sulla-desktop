@@ -5,6 +5,7 @@
 
 import { createGitHubOctokit } from './octokit';
 import { BaseTool, ToolResponse } from '../base';
+import { MergeRefusalExplainer } from './MergeRefusalExplainer';
 
 /**
  * GitHub Merge Pull Request. Destructive — PR is merged into the base
@@ -13,6 +14,8 @@ import { BaseTool, ToolResponse } from '../base';
 export class GitHubMergePRWorker extends BaseTool {
   name = '';
   description = '';
+
+  private readonly refusals = new MergeRefusalExplainer();
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const owner = typeof input.owner === 'string' ? input.owner.trim() : '';
@@ -56,7 +59,8 @@ export class GitHubMergePRWorker extends BaseTool {
       });
 
       if (!response.data.merged) {
-        return { successBoolean: false, responseString: `Merge refused: ${ response.data.message }` };
+        const reason = this.refusals.explain(response.data.message ?? '', owner, repo, pullNumber);
+        return { successBoolean: false, responseString: `Merge refused: ${ reason }` };
       }
       return {
         successBoolean: true,
@@ -67,7 +71,8 @@ export class GitHubMergePRWorker extends BaseTool {
       };
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || String(err);
-      return { successBoolean: false, responseString: `Merge failed: ${ msg }` };
+      const reason = this.refusals.explain(msg, owner, repo, pullNumber);
+      return { successBoolean: false, responseString: `Merge failed: ${ reason }` };
     }
   }
 }
