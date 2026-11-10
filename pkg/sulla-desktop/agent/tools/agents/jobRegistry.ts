@@ -89,6 +89,8 @@ export interface AgentJobTask {
   stopReason?: string;
   /** Durable leaf-worker wait details while status is parked. */
   waitReason?: string;
+  /** Consecutive delegated wake turns that produced no assistant output. */
+  emptyWakeCount?: number;
   wakeAt?: number;
   /** Monotonic execution generation; legacy tasks are generation 1. */
   generation?: number;
