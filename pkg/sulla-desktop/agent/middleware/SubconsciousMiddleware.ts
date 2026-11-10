@@ -34,7 +34,6 @@ import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegis
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
-import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 import { latestUserText } from '../utils/latestUserText';
 import { extractRecallTerms } from '../utils/recallTerms';
@@ -454,16 +453,6 @@ export async function runSubconsciousMiddleware(
     launched.push('skills-observation-recall');
     const skillsRecallPromise = runIdentityObservationRecall(state, 'skills');
     awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
-  }
-
-  // R9. Conversation Reader — awaited: relevant prior-thread content selected
-  // by the read-only Conversation Reader, injected as <conversation_context>.
-  // It joins the same Promise.allSettled fan-out as the other recalls so the
-  // primary agent never starts against a half-populated context snapshot.
-  if (options.includeObservations && analyzable) {
-    launched.push('conversation-reader');
-    const conversationRecallPromise = runConversationReader(state);
-    awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
   }
 
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
@@ -1319,65 +1308,6 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
 }
 
 // ============================================================================
-// CONVERSATION READER
-// ============================================================================
-
-/**
- * Read-only recall agent for relevant PRIOR conversation content (as opposed
- * to the current thread's own observations/identity rows). Searches the
- * conversation_keywords DB index and, selectively, the log folder via
- * search_conversation_keywords / search_conversation_logs, then returns
- * compact content for <conversation_context> injection.
- *
- * Exported (rather than module-private like its sibling run* helpers) so the
- * live pre-turn fan-out and focused tests share the exact same execution path.
- */
-export async function runConversationReader(state: BaseThreadState): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    if (await recallMode() !== 'agent') {
-      const parentThread = String((state.metadata as any).threadId || '');
-      const hits = await ConversationKeywordsModel.recallThreads(turnRecallTerms(state), {
-        excludeThreadIds: parentThread ? [parentThread] : [],
-      });
-      const response = sanitizeConversationContext(formatConversationRecallLines(hits));
-      const elapsed = Date.now() - startTime;
-
-      perf.log(`[ConversationReader] threadId=${ parentThread } matched=${ hits.length } chars=${ response?.length ?? 0 } ms=${ elapsed } path=sql-fast-path`);
-      return response;
-    }
-
-    const { graph, state: subState, threadId } = await GraphRegistry.createConversationReader(state);
-    console.log(`[SubconsciousMiddleware:ConversationReader] Started | threadId: ${ threadId }`);
-
-    // No maxIterations cap (default: Graph.execute's 1,000,000 safety
-    // ceiling) — per the standing rule this agent must never hard-stop at N
-    // iterations. Latency is governed instead by CONVERSATION_READER_PROMPT's
-    // "time is of the essence" guidance: default to the cheap DB index,
-    // batch searches, and stop as soon as it has enough.
-    await graph.execute(subState, 'subconscious');
-
-    const elapsed = Date.now() - startTime;
-    const agentMeta = (subState.metadata as any).agent || {};
-    const response = sanitizeConversationContext(dropMetaRecallOutput(agentMeta.response));
-
-    if (!response) {
-      perf.log(`[ConversationReader] threadId=${ threadId } chars=0 ms=${ elapsed }`);
-      console.log(`[SubconsciousMiddleware:ConversationReader] No relevant prior content in ${ elapsed }ms`);
-      return null;
-    }
-
-    perf.log(`[ConversationReader] threadId=${ threadId } chars=${ response.length } ms=${ elapsed }`);
-    console.log(`[SubconsciousMiddleware:ConversationReader] Returning ${ response.length } chars in ${ elapsed }ms`);
-    return response;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:ConversationReader] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-// ============================================================================
 // HELPERS
 // ============================================================================
 
@@ -1403,16 +1333,6 @@ export function formatIdentityRecallLines(hits: { id: string; level: number; cat
   }
 
   return lines.join('\n');
-}
-
-/** One line per prior thread; the primary agent drills in with recall_conversations. */
-export function formatConversationRecallLines(hits: { thread_id: string; title: string | null; summary: string | null; last_seen: string | Date; matched_terms: string[] }[]): string {
-  return hits.map((h) => {
-    const title = (h.title || 'Untitled conversation').replace(/\s+/g, ' ').trim().slice(0, 120);
-    const summary = h.summary ? ` — ${ h.summary.replace(/\s+/g, ' ').trim().slice(0, 240) }` : '';
-
-    return `- ${ formatDateOnly(h.last_seen) } "${ title }" (thread ${ h.thread_id }; matched: ${ h.matched_terms.slice(0, 6).join(', ') })${ summary }`;
-  }).join('\n');
 }
 
 /**

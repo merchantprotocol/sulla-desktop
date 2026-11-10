@@ -7,6 +7,21 @@ import type { ToolManifest } from '../registry';
 
 export const agentToolManifests: ToolManifest[] = [
   {
+    name: 'replace_lead',
+    description: 'Replace a lead task with a fresh agent while preserving and re-parenting its existing worker team. The replacement receives a generated handoff packet; the old lead is asked to wrap up.',
+    category: 'agents',
+    schemaDef: {
+      jobId: { type: 'string', description: 'Job containing the lead task.' },
+      taskIndex: { type: 'number', description: 'Zero-based lead task index.' },
+      agentId: { type: 'string', description: 'Enabled agent definition slug for the replacement.' },
+      model: { type: 'string', optional: true, description: 'Optional model override.' },
+      provider: { type: 'string', optional: true, description: 'Optional provider override.' },
+      note: { type: 'string', optional: true, description: 'Context appended to the handoff and custody audit.' },
+    },
+    operationTypes: ['execute'],
+    loader: () => import('./replace_lead'),
+  },
+  {
     name:        'spawn_agent',
     description: 'The one way to delegate. Launch one or more child agents, each with a return contract. Every child runs hidden in the background (visible tabs are disabled; the human can open any child from the sub-agent rail). Every child shows in your sub-agent rail and your <subagent_directory> block, finishes with agents/return_result, and its result wakes you. Supports parallel execution and async (fire-and-forget) mode for hidden children.',
     category:    'meta',
@@ -30,7 +45,7 @@ export const agentToolManifests: ToolManifest[] = [
               description: 'Container agents only: explicit existing worktree under /mnt/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
             },
             label:     { type: 'string', description: 'Optional human-readable label for this task .', optional: true },
-            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: 'Always "hidden". "tab" is accepted for compatibility but runs hidden: agents never open visible tabs.' },
+            visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: '"hidden" (default) or "tab". A requested "tab" opens a visible tab when possible; otherwise the task runs hidden and the response and task record carry requestedVisibility and downgradeReason. Never silent.' },
             contract:  {
               type:        'object',
               optional:    true,
@@ -69,6 +84,7 @@ export const agentToolManifests: ToolManifest[] = [
       output:  { type: 'any', optional: true, description: 'Default contract: the deliverable in any JSON shape (text, links, findings, or structured data). May also be sent inside result.' },
       result:  { type: 'object', optional: true, description: 'Custom-schema contracts: the structured value matching the schema exactly.' },
       jobId:   { type: 'string', optional: true, description: 'Job/contract id from your brief. Optional; your thread identifies the job.' },
+      reviewUpdates: { type: 'array', optional: true, description: 'Tracked review-item updates. fixed requires commit (7–40 hex); wont_fix requires reason.', items: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'enum', enum: ['acknowledged', 'fixed', 'wont_fix'] }, commit: { type: 'string', optional: true }, reason: { type: 'string', optional: true } } } },
     },
     operationTypes: ['update', 'execute'],
     loader:         () => import('./return_result'),
@@ -86,12 +102,14 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'check_agent_jobs',
-    description: 'Inspect delegated jobs. A jobId returns full detail; the bounded list returns every active job plus recent compact summaries.',
+    description: 'Inspect delegated jobs with lineage. A jobId returns global full detail; scope mine (default) lists only descendants of this chat, while all returns the fleet.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
       limit: { type: 'number', optional: true, description: 'Maximum finished jobs in the list (default 25, maximum 100). Active jobs are always included.' },
       includeFinished: { type: 'boolean', optional: true, description: 'Include recent finished jobs in the list. Defaults to true.' },
+      scope: { type: 'enum', enum: ['mine', 'all'], optional: true, default: 'mine', description: 'mine returns only this calling chat’s children and descendants; all returns the fleet. Ignored for explicit jobId history lookups.' },
+      view: { type: 'enum', enum: ['list', 'tree'], optional: true, default: 'list', description: 'list returns full job projections (default); tree returns a compact depth-first task tree.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),
@@ -104,6 +122,8 @@ export const agentToolManifests: ToolManifest[] = [
       jobId:     { type: 'string', description: 'The job ID returned by spawn_agent.' },
       taskIndex: { type: 'number', optional: true, description: 'Zero-based task index. Omit to target every queued/running task in the job.' },
       message:   { type: 'string', description: 'Direction for the worker, delivered with a clear "Message from orchestrator" label.' },
+      reviewItems: { type: 'array', optional: true, description: 'Review findings to track; each becomes an open item for every targeted task.', items: { type: 'string' } },
+      closeReviewItems: { type: 'array', optional: true, description: 'Manager escape hatch: close specific tracked items as wont_fix with a reason.', items: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', enum: ['wont_fix'] }, reason: { type: 'string' } } } },
     },
     operationTypes: ['execute'],
     loader:         () => import('./send_job_message'),
@@ -118,9 +138,35 @@ export const agentToolManifests: ToolManifest[] = [
       filesTouched: { type: 'array', items: { type: 'string' }, optional: true, description: 'Files created or changed so far.' },
       blockers:     { type: 'array', items: { type: 'string' }, optional: true, description: 'Concrete blockers requiring orchestrator or human action.' },
       percent:      { type: 'number', optional: true, description: 'Optional completion estimate from 0 to 100.' },
+      reviewUpdates: { type: 'array', optional: true, description: 'Acknowledge or close tracked review items. fixed requires commit (7–40 hex); wont_fix requires reason.', items: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'enum', enum: ['acknowledged', 'fixed', 'wont_fix'] }, commit: { type: 'string', optional: true }, reason: { type: 'string', optional: true } } } },
     },
     operationTypes: ['create'],
     loader:         () => import('./report_progress'),
+  },
+  {
+    name:        'reassign_job',
+    description: 'Transfer custody of a running agent job or one task to yourself, a live agent channel, or a live delegated thread. Results, blockers, authority, and undelivered inbox items follow the new owner.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to transfer.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      to: { type: 'string', description: '"me", a live agent channel, or a delegated thread id.' },
+      reason: { type: 'string', description: 'Audit reason for the custody change.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./reassign_job'),
+  },
+  {
+    name:        'adopt_job',
+    description: 'Adopt custody of a job or task into the calling agent/thread. Allowed for the current owner, its ancestors, the human, or when the old owner is dead or stranded.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'Job to adopt.' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task scope; omit for the whole job.' },
+      reason: { type: 'string', description: 'Audit reason for the adoption.' },
+    },
+    operationTypes: ['update'],
+    loader: () => import('./adopt_job'),
   },
   {
     name:        'stop_agent_job',
@@ -135,6 +181,17 @@ export const agentToolManifests: ToolManifest[] = [
     },
     operationTypes: ['execute'],
     loader:         () => import('./stop_agent_job'),
+  },
+  {
+    name:        'promote_to_tab',
+    description: 'Open a running hidden task in a visible chat tab. The tab binds to the task\'s existing thread, so nothing restarts and its history shows. Only the job\'s ancestors or the human may promote it. Returns the tab handle (tabId) and sets promotedToTab on the task.',
+    category:    'agents',
+    schemaDef:   {
+      jobId:     { type: 'string', description: 'The job that owns the running task (its jobId from spawn_agent).' },
+      taskIndex: { type: 'number', optional: true, description: 'Zero-based task to open; defaults to 0.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./promote_to_tab'),
   },
   {
     name:        'start_agent_conversation',

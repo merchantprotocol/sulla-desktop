@@ -12,7 +12,7 @@ import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
-import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
+import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
 import { buildContainerProviderKillScript } from './containerProviderKill';
 import {
@@ -74,6 +74,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { TaskExecutionIdentityStore, TaskExecutionLaunchReservation } from '../app/Repositories/TaskExecutionIdentityRepository';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 const log = Logging.background;
@@ -212,6 +213,8 @@ export interface AgentContainerRun {
   workspacePath?: string;
   state:          BaseThreadState;
   signal?:        AbortSignal;
+  /** Injected durable launch identity sink for restart-safe teardown. */
+  executionIdentities?: TaskExecutionIdentityStore;
 }
 
 export interface AgentContainerResult {
@@ -240,6 +243,8 @@ export interface AgentContainerLifecycle {
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
   /** Stable key for long-lived chat state. Workspace and provider homes survive container reaping. */
   persistenceKey?: string;
+  /** External runtime boundary; production defaults to the guest Docker adapter. */
+  containerRuntime?: ContainerRuntimeDriver;
 };
 
 /**
@@ -274,7 +279,7 @@ export function isContainerGoneError(error: unknown): boolean {
   return /no such container|is not running/i.test(text);
 }
 
-function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
+export function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
       env:   { ...process.env },
@@ -304,7 +309,7 @@ function guestExec(args: string[], input?: string): Promise<{ stdout: string; st
 }
 
 /** Docker runtime adapter for Electron, whose Docker daemon lives in the Sulla VM. */
-class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
+export class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   async create(spec: ContainerSpec): Promise<string> {
     const args = ['docker', 'create'];
     if (spec.autoRemove) args.push('--rm');
@@ -339,6 +344,41 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (label) args.push('--filter', `label=${ label }`);
     const output = (await guestExec(args)).stdout.trim();
     return output ? output.split('\n').map(line => JSON.parse(line)) : [];
+  }
+}
+
+export interface LegacyAgentContainerIdentityResolver {
+  resolve(jobId: string, taskIndex: number): Promise<{ subject: string; deviceId: string; orgId?: string; agentId?: string; threadId?: string } | undefined>;
+}
+
+/** Reconstructs live bindings from current and upgrade-era Docker labels. */
+export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
+  constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver(),
+    private readonly legacyIdentity?: LegacyAgentContainerIdentityResolver, private readonly timeoutMs = 10_000) {}
+  private withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Agent container inventory ${ action } timed out after ${ this.timeoutMs }ms; retry is required.`)), this.timeoutMs);
+      operation.then(value => { clearTimeout(timer); resolve(value) }, error => { clearTimeout(timer); reject(error) });
+    });
+  }
+  async liveBindings(): Promise<AgentContainerRuntimeBinding[]> {
+    const containers = await this.withTimeout(this.runtime.list('com.sulla.workload=agent'), 'list');
+    const bindings: AgentContainerRuntimeBinding[] = [];
+    for (const container of containers) {
+      const details = await this.withTimeout(this.runtime.inspect(container.ID ?? container.Id ?? container.Names), 'inspect');
+      if (details?.State?.Running !== true && details?.State?.Status !== 'running') continue;
+      const labels = details?.Config?.Labels ?? {}; const jobId = labels['com.sulla.job-id'];
+      if (!jobId) continue;
+      const taskIndex = Number(labels['com.sulla.task-index']);
+      const legacy = (!labels['com.sulla.subject'] || !labels['com.sulla.device-id']) && Number.isInteger(taskIndex)
+        ? await this.legacyIdentity?.resolve(jobId, taskIndex) : undefined;
+      const subject = labels['com.sulla.subject'] || legacy?.subject; const deviceId = labels['com.sulla.device-id'] || legacy?.deviceId;
+      if (!subject || !deviceId) continue;
+      bindings.push({ podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
+        orgId: labels['com.sulla.org-id'] || legacy?.orgId, agentId: labels['com.sulla.agent-id'] || legacy?.agentId,
+        jobId, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
+    }
+    return bindings;
   }
 }
 
@@ -948,7 +988,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     };
   }
 
-  spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): childProcess.ChildProcessWithoutNullStreams {
+  async spawn(request: Parameters<ProviderExecutionTransport['spawn']>[0]): Promise<childProcess.ChildProcessWithoutNullStreams> {
     if (request.context.runtime !== 'container' || request.context.workspaceRoot !== this.options.workspacePath ||
         request.context.auth.kind !== 'broker' || !this.options.ownsBridge(request.context.auth.opaqueConfigRef)) {
       throw new Error('Provider process is outside this container lifecycle');
@@ -986,6 +1026,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       env:   { ...process.env, TERM: 'dumb' },
       stdio: request.stdio ?? ['pipe', 'pipe', 'pipe'],
     }) as childProcess.ChildProcessWithoutNullStreams;
+    await new Promise<void>((resolve,reject)=>{proc.once('spawn',resolve);proc.once('error',reject);});
     proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
     proc.stdin.write(`${ Buffer.from(JSON.stringify(environment)).toString('base64') }\n`);
     this.processPids.set(proc, pidFile);
@@ -1084,7 +1125,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     throw new AgentLaunchError('Sulla is still starting its tools', true, (error as Error)?.message ?? String(error));
   });
   log.info('[AgentContainer] Host relay ready');
-  const runtime = new GuestDockerRuntimeDriver();
+  const runtime = run.containerRuntime ?? new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
   const lifecycleAbort = new AbortController();
@@ -1104,6 +1145,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let closePromise: Promise<AgentContainerCleanupReceipt> | undefined;
   let closeRemoval = { reason: 'lifecycle-abort', caller: 'createAgentContainerLifecycle.abort' };
   let providerFiles: ContainerProviderFileTransport | undefined;
+  let launchReservation: TaskExecutionLaunchReservation | undefined;
 
   try {
     const launchStartedAt = Date.now();
@@ -1239,17 +1281,23 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
+    // Main's identity labels let restart recovery rebuild live bindings; the
+    // execution-identity record pins every one of them plus the generation.
+    const baseLabels:Record<string,string>={
+      'com.sulla.workload':'agent','com.sulla.agent-id':agentId,'com.sulla.job-id':run.jobId,
+      'com.sulla.task-index':String(run.taskIndex),'com.sulla.subject':subject,
+      'com.sulla.org-id':metadata.orgId ?? '','com.sulla.thread-id':metadata.threadId ?? '','com.sulla.device-id':deviceId,
+      'com.sulla.capability-jti':capabilityJti,'com.sulla.capability-exp':String(capabilityExpiresAt),
+    };
+    let executionLabels:Record<string,string>=baseLabels;
+    if(run.executionIdentities){
+      launchReservation=await phase('reserveLaunch',()=>run.executionIdentities!.reserveLaunch(run.jobId,run.taskIndex,generation=>{
+        executionLabels={...baseLabels,'com.sulla.generation':generation};
+        return {kind:'container',containerName,labels:executionLabels};
+      }));
+    }
     containerId = await phase('create', () => runtime.create({
-      name:   containerName,
-      image,
-      labels: {
-        'com.sulla.workload':       'agent',
-        'com.sulla.agent-id':       agentId,
-        'com.sulla.job-id':         run.jobId,
-        'com.sulla.task-index':     String(run.taskIndex),
-        'com.sulla.capability-jti': capabilityJti,
-        'com.sulla.capability-exp': String(capabilityExpiresAt),
-      },
+      name: containerName, image, labels: executionLabels,
       autoRemove: true,
       stdinOpen:  true,
       env:        {
@@ -1277,6 +1325,13 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
       phase('network', () => connectServiceNetwork(containerName)),
     ]);
+    if(run.executionIdentities&&launchReservation){
+      const inspected=await phase('recordIdentityInspect',()=>runtime.inspect(containerId!));
+      const actualId=String(inspected?.Id??'');
+      if(!actualId)throw new Error('Container runtime did not return a durable container identity');
+      const actualLabels=Object.fromEntries(Object.entries(inspected?.Config?.Labels??{}).map(([key,value])=>[key,String(value)]));
+      await phase('recordIdentity',()=>run.executionIdentities!.activate(launchReservation!,{kind:'container',containerId:actualId,containerName,labels:actualLabels}));
+    }
     await phase('start', () => retryIdempotent(
       () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
     ));
@@ -1522,6 +1577,10 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       })).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
+    // Retire a launching reservation only after cleanup has positively removed
+    // every possibly-created container. If cleanup throws, the reservation stays
+    // discoverable for boot reconciliation instead of hiding a live execution.
+    if(launchReservation&&run.executionIdentities)await run.executionIdentities.failLaunch(launchReservation,(error as Error).message).catch(()=>undefined);
     if (receipt.recoveryWorkspacePath && error instanceof Error) {
       error.message += ` Guest recovery workspace retained at ${ receipt.recoveryWorkspacePath }.`;
     }
@@ -1594,6 +1653,10 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
+        'com.sulla.subject':        subject,
+        'com.sulla.org-id':         metadata.orgId ?? '',
+        'com.sulla.thread-id':      metadata.threadId ?? '',
+        'com.sulla.device-id':      deviceId,
         'com.sulla.capability-jti': capabilityJti,
         'com.sulla.capability-exp': String(capabilityExpiresAt),
       },

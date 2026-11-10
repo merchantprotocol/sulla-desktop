@@ -327,7 +327,7 @@ export class PersonaAdapter {
     return options?.supportSessionId ? {
       supportSessionId: options.supportSessionId,
       allowedToolNames: options.supportToolNames || [],
-      conversationContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
+      supportContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
     } : {};
   }
 
@@ -365,8 +365,9 @@ export class PersonaAdapter {
       ...(inputSource ? { inputSource } : {}),
       ...(voiceTurnId ? { voiceTurnId } : {}),
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
+      modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
-      ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
       ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };

@@ -47,6 +47,20 @@ const RECONNECTABLE_CODES = new Set([
 
 const TLS_CODE = /^(ERR_TLS_|ERR_SSL_|CERT_|DEPTH_ZERO_|SELF_SIGNED_|UNABLE_TO_|HOSTNAME_MISMATCH|ERR_OSSL_)/;
 
+/**
+ * True for a socket/DNS failure from an outbound fetch (also unwraps undici's
+ * `TypeError: fetch failed` whose real code sits on `cause`). Callers must
+ * check isTransientDbError first: a Postgres socket error has the same codes.
+ */
+export function isUpstreamNetworkError(error: unknown): boolean {
+  const e = error as { code?: unknown; cause?: unknown; errors?: unknown[] } | null;
+  if (!e || typeof e !== 'object') return false;
+  const code = typeof e.code === 'string' ? e.code : '';
+  if (RECONNECTABLE_CODES.has(code) || code === 'ENOTFOUND' || code === 'EAI_FAIL' || code === 'EAI_NODATA') return true;
+  if (Array.isArray(e.errors) && e.errors.length && e.errors.every(isUpstreamNetworkError)) return true;
+  return e.cause !== undefined && e.cause !== error && isUpstreamNetworkError(e.cause);
+}
+
 export type UpstreamFailurePhase = 'dns' | 'connect' | 'tls' | 'socket';
 
 export interface UpstreamErrorDetail {
@@ -70,7 +84,9 @@ function familyOf(address: unknown): 'v4' | 'v6' | undefined {
 
 /** Read only errno/syscall/family facts from a socket error (including Node's AggregateError). */
 export function describeUpstreamError(error: unknown): UpstreamErrorDetail {
-  const value = error as { code?: unknown; syscall?: unknown; errors?: unknown; address?: unknown } | undefined;
+  const value = error as { code?: unknown; syscall?: unknown; errors?: unknown; address?: unknown; cause?: unknown } | undefined;
+  // undici wraps the socket error: `TypeError: fetch failed` with the real errno on `cause`.
+  if (value && typeof value.code !== 'string' && value.cause && value.cause !== error) return describeUpstreamError(value.cause);
   const nested = Array.isArray(value?.errors) ? value!.errors as Array<{ code?: unknown; address?: unknown }> : [];
   const attempts = nested
     .map(entry => `${ familyOf(entry?.address) ?? 'v?' }:${ safeToken(entry?.code) ?? 'unknown' }`)

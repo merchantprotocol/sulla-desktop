@@ -16,6 +16,7 @@ export interface CatalogTool {
   description:     string;
   schemaDef:       Record<string, unknown>;
   executionTarget: ToolExecutionTarget;
+  operationTypes:  string[];
 }
 
 let registry: typeof import('../../../pkg/sulla-desktop/agent/tools/registry.js').toolRegistry;
@@ -32,6 +33,7 @@ export async function initializeCatalog(): Promise<void> {
         description:     registry.getToolDescription(name),
         schemaDef:       registry.getSchemaDef(name) ?? {},
         executionTarget: registry.getExecutionTarget(name) ?? 'desktop-local',
+        operationTypes:  registry.getOperationTypes(name),
       });
     }
   }

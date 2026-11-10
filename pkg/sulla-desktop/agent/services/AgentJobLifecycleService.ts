@@ -17,8 +17,8 @@ export class AgentJobLifecycleService {
 
   constructor(
     private readonly children: ChildDependencyCounter,
-    private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<void>,
-    private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<void>,
+    private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<unknown>,
+    private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<unknown>,
   ) {}
 
   openChildren(threadId: string): Promise<number> {

@@ -44,6 +44,7 @@
       @install="onInstall(mp.detail.value.row.id)"
       @install-all="onInstall(mp.detail.value.row.id, true)"
       @open-dependency="onOpenDependency"
+      @filter="onListingFilter"
     />
     <div
       v-else-if="mp.detailLoading.value"
@@ -152,44 +153,44 @@
         class="content"
       >
         <div class="content-head">
-          <h3>{{ headingLabel }}</h3>
-
-          <div class="search-box">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-            >
-              <circle
-                cx="11"
-                cy="11"
-                r="8"
-              />
-              <line
-                x1="21"
-                y1="21"
-                x2="16.65"
-                y2="16.65"
-              />
-            </svg>
-            <input
-              v-model="searchDraft"
-              type="text"
-              placeholder="Search the marketplace…"
-              @keydown.enter="submitSearch"
-            >
-            <span
-              v-if="mp.total.value > 0"
-              class="count"
-            >
-              {{ mp.total.value }} result{{ mp.total.value === 1 ? '' : 's' }}
-            </span>
+          <h3>{{ searchMode ? `Results${searchDraft.trim() ? ` for “${searchDraft.trim()}”` : ''}` : headingLabel }}</h3>
+          <div class="search-wrap">
+            <MarketplaceSearchBar
+              :query="searchDraft"
+              :filters-open="filtersOpen"
+              @update:query="searchDraft = $event"
+              @toggle-filters="filtersOpen = !filtersOpen"
+              @submit="submitSearch"
+            />
+            <MarketplaceFiltersPopover
+              :open="filtersOpen"
+              :facets="searchFacets"
+              :state="searchState"
+              :result-count="filteredListings.length"
+              @update:state="setSearchState"
+              @apply="applySearchFilters"
+              @close="filtersOpen = false"
+            />
           </div>
         </div>
 
+        <MarketplaceResultsView
+          v-if="searchMode"
+          :rows="filteredListings"
+          :facets="searchFacets"
+          :state="searchState"
+          :loading="mp.isLoading.value"
+          :install-state="mp.installStateFor"
+          :installing-id="mp.installing.value"
+          @update:state="applyState"
+          @open-detail="onOpen($event.id)"
+          @filter="onListingFilter"
+          @install="onInstall($event.id)"
+          @close="clearSearch"
+        />
+
         <div
-          v-if="mp.error.value"
+          v-else-if="mp.error.value"
           class="banner err"
         >
           <strong>Marketplace unavailable</strong>
@@ -220,7 +221,7 @@
         <template v-else>
           <div class="marketplace-grid">
             <MarketplaceStrip
-              v-for="t in mp.templates.value"
+              v-for="t in filteredListings"
               :key="t.id"
               :row="t"
               :installing="mp.installing.value === t.id"
@@ -401,19 +402,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
 import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
+import MarketplaceFiltersPopover from '@pkg/components/routines/MarketplaceFiltersPopover.vue';
+import MarketplaceResultsView from '@pkg/components/routines/MarketplaceResultsView.vue';
+import MarketplaceSearchBar from '@pkg/components/routines/MarketplaceSearchBar.vue';
+import { MarketplaceSearchController } from '@pkg/components/routines/MarketplaceSearchController';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
+import { MarketplaceListingRepository } from '@pkg/composables/MarketplaceListingRepository';
+import { MarketplaceSearchService, type MarketplaceSearchState, type MarketplaceFacet } from '@pkg/composables/MarketplaceSearchService';
+import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
-import { MARKETPLACE_KIND_OPTIONS, marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type SortValue = MarketplaceSort;
 
 const KIND_OPTIONS = MARKETPLACE_KIND_OPTIONS;
+const router = useRouter();
 const kindLabel = (kind: string) => marketplaceKindLabel(kind);
 
 const SORT_OPTIONS: { value: SortValue; label: string }[] = [
@@ -448,6 +457,12 @@ interface SubmissionRow {
 }
 
 const mp = useMarketplace();
+const listingRepository = new MarketplaceListingRepository({
+  browse: options => ipcRenderer.invoke('marketplace-browse', { ...options, sort: 'popular' }),
+  detail: id => ipcRenderer.invoke('marketplace-detail', id),
+});
+const catalogRows = ref(mp.templates.value);
+const catalogKinds = ref<Map<string, string[]>>(new Map());
 
 // Auth gate — the marketplace is Cloud-backed, so without a Sulla Cloud
 // session the browse + submissions endpoints return "Sign in" errors.
@@ -477,6 +492,24 @@ function onSignedOut() {
   signedIn.value = false;
 }
 const searchDraft = ref('');
+const filtersOpen = ref(false);
+const emptyFacets = () => ({ topics: [] as string[], kinds: [] as string[], media: [] as string[], price: [] as string[], length: [] as string[], apps: [] as string[], approval: [] as string[] });
+const selectedFacets = ref<Record<string, string[]>>(emptyFacets());
+const searchState = computed<MarketplaceSearchState>(() => ({ q: searchDraft.value, ...selectedFacets.value, sort: 'relevance' }));
+const searchService = computed(() => new MarketplaceSearchService(catalogRows.value, catalogKinds.value));
+
+const filteredListings = computed(() => searchService.value.search(searchState.value));
+const searchMode = ref(false);
+const searchController = new MarketplaceSearchController(router, () => searchService.value);
+const searchFacets = computed<MarketplaceFacet[]>(() => searchService.value.facets(searchState.value));
+async function applyState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; await searchController.apply(state); searchMode.value = true }
+function setSearchState(state: MarketplaceSearchState) { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval } }
+async function clearSearch() { await searchController.clear(); searchDraft.value = ''; selectedFacets.value = emptyFacets(); searchMode.value = false }
+
+function applySearchFilters(): void {
+  filtersOpen.value = false;
+  applyState(searchState.value).catch(() => undefined);
+}
 
 // ── My Submissions state ──
 const view = ref<'browse' | 'submissions'>('browse');
@@ -536,9 +569,26 @@ function onOpenDetailEvent(ev: Event) {
 }
 
 onMounted(async() => {
+  searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; searchMode.value = searchController.isResultsMode; if (searchController.listingId) mp.loadDetail(searchController.listingId).catch(() => undefined); }).catch(() => undefined);
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
-  if (authed) mp.load().catch(() => undefined);
+  if (authed) {
+    mp.load().catch(() => undefined);
+    listingRepository.loadCatalog().then(async rows => {
+      catalogRows.value = rows;
+      catalogKinds.value = await listingRepository.loadKinds(rows);
+    }).catch(() => undefined);
+  }
+});
+
+watch(() => router.currentRoute.value.query.listing, listing => {
+  searchController.syncFromRoute().then(state => {
+    searchDraft.value = state.q;
+    selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval };
+    searchMode.value = searchController.isResultsMode;
+    if (typeof listing === 'string' && listing) mp.loadDetail(listing).catch(() => undefined);
+    else mp.clearDetail();
+  }).catch(() => undefined);
 });
 
 onUnmounted(() => {
@@ -551,16 +601,22 @@ function onKind(k: KindFilter) {
 function onSort(s: SortValue) {
   mp.setSort(s).catch(() => undefined);
 }
-function submitSearch() {
-  mp.setSearch(searchDraft.value).catch(() => undefined);
-}
+function submitSearch() { applyState(searchState.value).catch(() => undefined) }
+// The route `listing` watcher is the only detail loader; opening just sets the route.
 function onOpen(id: string) {
   mp.clearInstallResult();
-  mp.loadDetail(id).catch(() => undefined);
+  searchController.openListing(id).catch(() => undefined);
 }
 function onCloseDetail() {
   mp.clearDetail();
   mp.clearInstallResult();
+  searchController.closeListing().catch(() => undefined);
+}
+
+function onListingFilter(key: 'topic' | 'type', value: string) {
+  const state: MarketplaceSearchState = { q: '', topics: key === 'topic' ? [value] : [], kinds: key === 'type' ? [value] : [], media: [], price: [], length: [], apps: [], approval: [], sort: 'relevance' };
+  onCloseDetail();
+  applyState(state).catch(() => undefined);
 }
 
 async function onInstall(id: string, includeDependencies = false) {
@@ -824,8 +880,8 @@ function formatRelative(iso: string): string {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--line);
+  background: var(--bg-surface-alt);
+  border: 0;
   border-radius: 4px;
   min-width: 280px;
   flex: 1;
@@ -835,11 +891,18 @@ function formatRelative(iso: string): string {
 .search-box input {
   flex: 1;
   background: transparent;
-  border: none;
+  border: 0;
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
   color: var(--text-primary);
   font-family: var(--font-body);
   font-size: 12.5px;
-  outline: none;
+  outline: 0;
+}
+.search-box input::-webkit-search-decoration,
+.search-box input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
 .search-box .count {
   font-family: var(--font-mono);
@@ -1189,15 +1252,15 @@ function formatRelative(iso: string): string {
 .search-box {
   min-height: 42px;
   padding: 0 14px;
-  border-color: color-mix(in srgb, var(--border-default) 10%, transparent);
+  border: 0;
   border-radius: 13px;
-  background: color-mix(in srgb, var(--bg-surface) 65%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 2.5%, transparent);
+  background: var(--bg-surface-alt);
+  box-shadow: none;
 }
 
 .search-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent-hover) 45%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--bg-input);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .marketplace-grid {
@@ -1205,6 +1268,8 @@ function formatRelative(iso: string): string {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+
+.search-wrap { position:relative; width:min(760px,100%); }
 
 .submission-row,
 .status,

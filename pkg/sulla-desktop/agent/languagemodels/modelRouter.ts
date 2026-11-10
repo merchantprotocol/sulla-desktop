@@ -240,17 +240,18 @@ export class ModelRouter {
   /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
-  private async liveProviders(): Promise<Map<string, { connected: boolean; models: { id: string; label: string }[] }>> {
+  private async liveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: { id: string; label: string }[] }>> {
     const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
-    let available = new Map<string, boolean>();
-    try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), provider.connected === true])) } catch { /* fail closed */ }
+    let available = new Map<string, { connected: boolean; connectionUnknown: boolean }>();
+    try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), { connected: provider.connected === true, connectionUnknown: provider.connectionStatus === 'unknown' }])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
-      const connected = available.get(id) === true;
+      const connected = available.get(id)?.connected === true;
+      const connectionUnknown = available.get(id)?.connectionUnknown === true;
       let models: { id: string; label: string }[] = [];
       if (connected && mps?.getModelsForProvider) {
         try { models = (await mps.getModelsForProvider(id)).map((model: any) => ({ id: String(model.id), label: String(model.name || model.label || model.id) })) } catch { /* discovery is best effort */ }
       }
-      return [id, { connected, models }] as const;
+      return [id, { connected, connectionUnknown, models }] as const;
     }));
     return new Map(entries);
   }
@@ -258,7 +259,12 @@ export class ModelRouter {
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }): Promise<ModelCandidate[]> {
     const state = await this.getEditableState();
     const live = await this.liveProviders();
-    if (choice.mode === 'pin') return [{ provider: canonicalProviderId(choice.provider), model: choice.model }];
+    const pinned = choice.mode === 'pin'
+      ? { provider: canonicalProviderId(choice.provider), model: choice.model }
+      : null;
+    // A human's explicit selector choice is a hard route boundary. Recovery may retry this
+    // exact route, but it must never substitute a configured alternate provider or model.
+    if (pinned) return [pinned];
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
@@ -270,7 +276,9 @@ export class ModelRouter {
     await this.loadHealth();
     const now = Date.now(); const healthy: ModelCandidate[] = []; const backedOff: ModelCandidate[] = [];
     for (const item of source) {
-      if (!live.get(item.provider)?.connected) continue;
+      const provider = live.get(item.provider);
+      // Discovery is advisory; unknown status still enters authenticated execution.
+      if (!provider?.connected && !provider?.connectionUnknown) continue;
       if ([...healthy, ...backedOff].some(x => x.provider === item.provider && x.model === item.model)) continue;
       (this.backedOff(item.provider, now) ? backedOff : healthy).push(item);
     }
@@ -282,13 +290,14 @@ export class ModelRouter {
       this.emit();
       return backedOff;
     }
-    return [...healthy, ...backedOff];
+    const configured = [...healthy, ...backedOff];
+    return configured;
   }
 
   async providerInfo(): Promise<RoutingProviderInfo[]> {
     await this.loadHealth();
     const live = await this.liveProviders(); const now = Date.now();
-    return providerOrder.map(id => { const h = this.backedOff(id, now) ? this.health.get(id) : undefined; const current = live.get(id); const connected = current?.connected === true; return { id, name: id, connected, local: localProviders.has(id), subscription: subscriptionProviders.has(id), status: !connected ? 'disconnected' : h?.status || 'ready', coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null, lastError: h?.lastError || null, models: current?.models.length ? current.models : [] } });
+    return providerOrder.map(id => { const h = this.backedOff(id, now) ? this.health.get(id) : undefined; const current = live.get(id); const connected = current?.connected === true; return { id, name: id, connected, local: localProviders.has(id), subscription: subscriptionProviders.has(id), status: current?.connectionUnknown ? 'error' : !connected ? 'disconnected' : h?.status || 'ready', coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null, lastError: current?.connectionUnknown ? 'Connection status is temporarily unavailable; authentication is checked when starting a model.' : h?.lastError || null, models: current?.models.length ? current.models : [] } });
   }
 }
 

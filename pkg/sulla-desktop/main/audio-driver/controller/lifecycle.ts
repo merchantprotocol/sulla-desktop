@@ -166,6 +166,11 @@ export async function activate({ onLevel, onRebuild }: { onLevel?: (data: any) =
   // 4. Enable mirror
   const mirrorOk = await mirror.enable();
   log.info('Lifecycle', 'Mirror enable', { ok: mirrorOk });
+  if (!mirrorOk) {
+    log.error('Lifecycle', 'Cannot activate — audio mirror did not become active');
+    await deactivate({ removeDriver: false });
+    return { ok: false, mirrorActive: false };
+  }
 
   // 5. Register volume keys on macOS
   if (process.platform === 'darwin' && physicalDeviceUID) {

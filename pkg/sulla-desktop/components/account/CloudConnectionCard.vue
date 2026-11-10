@@ -31,7 +31,7 @@
 import { computed,onBeforeUnmount,onMounted,ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
-type Pref='enabled'|'workflows'|'skills'|'customAgents'|'recipes'|'useCases'|'liveAgents'|'usage'|'memory'|'conversations'|'files'|'vault'|'remoteAccess';
+type Pref='enabled'|'usage'|'memory'|'conversations'|'files'|'vault'|'remoteAccess';
 const status=ref<Record<string,any>|null>(null),busy=ref(false),error=ref('');const {tabs,createTab}=useBrowserTabs();
 const enabled=computed(()=>!!status.value?.preferences?.enabled);
 const objectStatuses=computed(()=>status.value?.objectSync??[]);
@@ -44,8 +44,7 @@ const channelLabel=computed(()=>({connected:'Connected',connecting:'Connecting�
 function revoke(clientId:string){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:revoke-client',clientId))}
 function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/cloud/devices.html')}
 const groups=[
- {title:'Your work',items:[['workflows','↻','Workflows','Definitions, schedules, run history and status'],['skills','✦','Saved Skills','Every skill and its instructions, including drafts'],['customAgents','◉','Custom Agents','Profiles, prompts, models and skills'],['recipes','⬡','Recipes',"What's installed and its status. Containers only run on this Desktop."],['useCases','▦','Use Cases',"Your library and what's switched on"]].map(row)},
- {title:'Activity',items:[['liveAgents','∿','Live agents',"What's running right now"],['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
+ {title:'Activity',items:[['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
  {title:'Private data',items:[privateRow('conversations','✉','Chat history','Your linked chat history','🔒 End-to-end encrypted'),privateRow('memory','⌘','Memory','What Sulla remembers about you and your business','🔒 End-to-end encrypted'),{...privateRow('files','▤','Files','Choose folders in File Manager','🔒 End-to-end encrypted'),link:openFiles},privateRow('vault','⚿','Passwords','Opens only with your master password','🔒 Zero-knowledge')]},
  {title:'Control',items:[{...row(['remoteAccess','⇄','Remote access','Let approved browsers and phones run tasks on this Desktop']),privacy:'Manage devices ›',link:()=>{showDevices.value=!showDevices.value}}]},
 ];

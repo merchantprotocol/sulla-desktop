@@ -79,6 +79,8 @@ jobs:
     # fail fast instead of burning the full 30-minute job default.
     - uses: ./.github/actions/yarn-install
       timeout-minutes: 20
+    - name: Test bundled-image safety detector
+      run: yarn vitest run scripts/lib/bundled-image-safety.spec.ts
     - run: yarn build
     # electron-builder silently skips macOS signing if the certificate is
     # missing. Fail before packaging so no unsigned ZIP can be uploaded or

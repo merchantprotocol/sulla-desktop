@@ -235,7 +235,11 @@ spec:
 
 Enforcement: the runtime container bind-mounts declared paths from the host into the function's namespace. Undeclared paths are invisible. The function's own directory (`/var/functions/<slug>/`) is always available read-only.
 
-### 6.4 No shell-out, no raw syscalls
+### 6.4 Brokered browser
+
+Functions may declare `spec.permissions.browser: true`, or `{ enabled: true, allowedOrigins: ["https://example.com"] }`. Desktop then injects invocation-scoped `SULLA_BROWSER_HOST_URL` and `SULLA_BROWSER_TOKEN` variables. The broker supports only open-and-wait, JSON-returning JavaScript evaluation, and close; all invocation-owned tabs are closed on completion. See [Brokered browser access](../../functions/browser-capability.md).
+
+### 6.5 No shell-out, no raw syscalls
 
 Python/Node functions cannot `os.system`, `subprocess.run`, or equivalent. The Sulla function SDK provides a sanctioned `run_command` helper that routes shell invocations through the `shell-runtime` with its own permission declarations. Bypassing this fails the permission check at load time (static analysis of the function's imports).
 

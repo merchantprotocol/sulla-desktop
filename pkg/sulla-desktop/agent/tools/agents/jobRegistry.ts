@@ -55,6 +55,8 @@ export interface AgentJobResult {
 
 export interface AgentJobTask {
   agentId:    string;
+  /** Canonical graph transport channel used to create and address this child. */
+  agentConfigChannel?: string;
   label:      string;
   prompt:     string;
   /** Per-run routing overrides required to rehydrate this exact agent. */
@@ -85,10 +87,16 @@ export interface AgentJobTask {
   completionDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
+  /** The visibility the caller asked for when it was downgraded (never silent). */
+  requestedVisibility?: 'tab';
+  /** Why a requested tab ran hidden instead (see TabVisibilityResolver). */
+  downgradeReason?: string;
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
   /** Durable leaf-worker wait details while status is parked. */
   waitReason?: string;
+  /** Consecutive delegated wake turns that produced no assistant output. */
+  emptyWakeCount?: number;
   wakeAt?: number;
   /** Monotonic execution generation; legacy tasks are generation 1. */
   generation?: number;
@@ -137,6 +145,8 @@ export interface CreateJobOptions {
   parentAgentId?: string;
   /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
   dedupeLabel?: string;
+  /** Durable caller-owned idempotency key. Unlike dedupeLabel this never expires. */
+  launchKey?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;

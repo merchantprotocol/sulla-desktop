@@ -6,85 +6,351 @@
 -->
 <template>
   <div class="studio-page">
-    <StudioTopbar v-model:search="search" :crumbs="selected ? ['Live Agents', selected.name] : ['Live Agents']" search-placeholder="Search running agents" @crumb="selected = null" />
+    <StudioTopbar
+      v-model:search="search"
+      :crumbs="selected ? ['Live Agents', selected.label] : ['Live Agents']"
+      search-placeholder="Search live agents"
+      @crumb="selected = null"
+    />
     <div ref="contentScroller" class="studio-content">
       <template v-if="selected">
-        <button class="back" type="button" @click="selected = null">‹ Live Agents</button>
+        <button
+          class="back"
+          type="button"
+          @click="selected = null"
+        >
+          ‹ Live Agents
+        </button>
         <div class="card hero">
-          <span class="fi purple big">◉</span><div><h1>{{ selected.name }}</h1><p>{{ selected.task }}</p>
-            <div class="meta"><span class="st" :class="statusClass(selected.status)"><i />{{ statusLabel(selected) }} · {{ elapsed(selected.startedAt) }}</span><span>Tokens unavailable</span><span>{{ selected.model || 'Model unavailable' }}</span></div>
-          </div><div class="acts"><button v-if="selected.canOpen" class="btn" type="button" @click="openLead(selected)">Open lead chat</button><button v-if="selected.canStop" class="btn danger" type="button" @click="stopTarget = selected">■ Stop</button></div>
+          <span class="fi purple big">◉</span><div>
+            <h1>{{ selected.label }}</h1><p>{{ selected.lastCheckinSummary || selected.stateReason || selected.state }}</p><div class="meta">
+              <span
+                class="st"
+                :class="statusClass(selected.state)"
+                :title="selected.stateReason || undefined"
+              ><i />{{ statusLabel(selected) }} · {{ elapsed(selected.startedAt) }}</span><span>{{ selected.agentId || 'Agent' }}</span>
+            </div>
+          </div><div class="acts">
+            <button
+              v-if="selected.canOpen"
+              class="btn"
+              type="button"
+              @click="openRow(selected)"
+            >
+              Open
+            </button><button
+              v-if="selected.canStop"
+              class="btn danger"
+              type="button"
+              :disabled="isPending('stop', selected)"
+              @click="stopTarget = selected"
+            >
+              ■ Stop
+            </button>
+          </div>
         </div>
         <div class="dgrid">
-          <div class="card box"><h2>Activity</h2>
-            <div v-if="detailLoading" class="empty">Loading activity…</div>
-            <div v-else-if="!detail?.entries.length" class="empty"><b>No recorded activity</b>This run has not written any conversation events yet.</div>
-            <div v-else class="tl"><div v-for="entry in detail.entries" :key="entry.offset ?? entry.feedSequence" class="ev" :class="{ tool: entry.kind === 'tool', you: entry.kind === 'user' }"><div class="who">{{ entryWho(entry) }} · {{ clock(entry.ts) }}</div><div class="msg">{{ entry.text }}</div></div></div>
-            <p v-if="selected.finished" class="finished-label">Finished — no longer running</p>
-            <form v-if="selected.canMessage" class="composer" @submit.prevent="sendMessage(selected)"><input v-model="message" placeholder="Message this agent…" aria-label="Message this agent"><button class="btn pri" type="submit" :disabled="busy || !message.trim()">{{ busy ? 'Sending…' : 'Send' }}</button></form><p v-if="actionError" class="error-text">{{ actionError }}</p>
-          </div>
-          <aside class="card side"><h3>Brief</h3><p class="brief">{{ selected.brief }}</p><h3>Run</h3><div class="kv"><span>Lead</span><b>{{ selected.lead }}</b></div><div class="kv"><span>Started</span><b>{{ when(selected.startedAt) }}</b></div><div class="kv"><span>Last check-in</span><b>{{ age(selected.lastActiveAt) }}</b></div><div class="kv"><span>Tokens</span><b>Unavailable</b></div></aside>
+          <div class="card box">
+            <h2>Activity</h2><div
+              v-if="detailLoading"
+              class="empty"
+            >
+              Loading activity…
+            </div><div
+              v-else-if="!detail?.entries.length"
+              class="empty"
+            >
+              <b>No recorded activity</b>This run has not written conversation events yet.
+            </div><div
+              v-else
+              class="tl"
+            >
+              <div
+                v-for="entry in detail.entries"
+                :key="entry.offset ?? entry.feedSequence"
+                class="ev"
+                :class="{ tool: entry.kind === 'tool', you: entry.kind === 'user' }"
+              >
+                <div class="who">
+                  {{ entryWho(entry) }} · {{ clock(entry.ts) }}
+                </div><div class="msg">
+                  {{ entry.text }}
+                </div>
+              </div>
+            </div><p
+              v-if="selectedUnavailable"
+              class="finished-label"
+            >
+              Finished — no longer running
+            </p><form
+              v-if="selected.canMessage"
+              class="composer"
+              @submit.prevent="sendMessage(selected)"
+            >
+              <input
+                v-model="message"
+                placeholder="Message this agent…"
+                aria-label="Message this agent"
+              ><button
+                class="btn pri"
+                type="submit"
+                :disabled="isPending('message', selected) || !message.trim()"
+              >
+                {{ isPending('message', selected) ? 'Sending…' : 'Send' }}
+              </button>
+            </form><p
+              v-if="actionError"
+              class="error-text"
+            >
+              {{ actionError }}
+            </p>
+          </div><aside class="card side">
+            <h3>Run</h3><div class="kv">
+              <span>Agent</span><b>{{ selected.agentId || 'Agent' }}</b>
+            </div><div class="kv">
+              <span>Started</span><b>{{ when(selected.startedAt) }}</b>
+            </div><div class="kv">
+              <span>Last check-in</span><b>{{ age(selected.lastCheckinAt) }}</b>
+            </div>
+          </aside>
         </div>
       </template>
       <template v-else>
-        <div class="tb"><h1>Live Agents</h1><span>Every agent running on this desktop right now, grouped by lead agent and chat.</span><div class="acts"><label class="kill-switch"><input type="checkbox" :checked="killController.switchOn.value" :disabled="killController.busy.value" @change="requestSwitchChange"><span>Kill All</span></label><span class="st" :class="polling ? 'ok' : 'bad'"><i />{{ polling ? `streaming · updated ${age(data.updatedAt)}` : 'updates paused' }}</span></div></div>
+        <div class="tb">
+          <h1>Live Agents</h1><span>Every agent running on this desktop right now, grouped by root chat.</span><div class="acts">
+            <label class="kill-switch"><input type="checkbox" :checked="killController.switchOn.value" :disabled="killController.busy.value" @change="requestSwitchChange"><span>Kill All</span></label><span class="st ok"><i />streaming · updated {{ age(client.snapshot.value.generatedAt) }}</span>
+          </div>
+        </div>
         <div v-if="killController.switchOn.value" class="kill-banner"><b>All agent launches paused</b><span>Turn off Kill All to allow new launches.</span></div>
         <p v-if="killController.notice.value" class="action-feedback ok-text">{{ killController.notice.value }}</p>
         <p v-if="killController.error.value" class="action-feedback error-text">{{ killController.error.value }}</p>
         <div class="stats">
-          <div class="card stat"><div class="lbl"><span class="dot success" />Agents running</div><b>{{ runningCount }}</b><small>across {{ chatCount }} lead {{ chatCount === 1 ? 'agent' : 'agents' }}</small></div>
-          <div class="card stat"><div class="lbl"><span class="dot accent" />Chats</div><b>{{ chatCount }}</b><small>{{ chatNames || 'No active chats' }}</small></div>
-          <div class="card stat"><div class="lbl"><span class="dot workflow" />Workflow runs</div><b>{{ workflowCount }}</b><small>{{ workflowNames || 'No active workflows' }}</small></div>
-          <div class="card stat"><div class="lbl"><span class="dot warning" />Needs attention</div><b>{{ attentionCount }}</b><small>{{ attentionCount ? 'stalled, quiet, or blocked' : 'Nothing needs attention' }}</small></div>
+          <div class="card stat">
+            <div class="lbl">
+              <span class="dot success" />Agents live
+            </div><b>{{ liveCount }}</b><small>across {{ groups.length }} root {{ groups.length === 1 ? 'chat' : 'chats' }}</small>
+          </div><div class="card stat">
+            <div class="lbl">
+              <span class="dot accent" />Chats
+            </div><b>{{ groups.length }}</b><small>full descendant trees</small>
+          </div><div class="card stat">
+            <div class="lbl">
+              <span class="dot workflow" />Parked
+            </div><b>{{ parkedCount }}</b><small>waiting on live children</small>
+          </div><div class="card stat">
+            <div class="lbl">
+              <span class="dot warning" />Needs attention
+            </div><b>{{ attentionCount }}</b><small>{{ attentionCount ? 'quiet, blocked, failed, or lost' : 'Nothing needs attention' }}</small>
+          </div>
         </div>
-        <div v-if="loading" class="card empty">Loading live agents…</div>
-        <div v-else-if="!filteredGroups.length" class="card empty"><b>{{ search ? 'No matching agents' : 'Nothing is running right now' }}</b>{{ search ? 'Try another search.' : 'Active chats and runs will appear here.' }}</div>
-        <div v-for="group in filteredGroups" :key="group.id" class="card group">
-          <div class="group-head"><span class="fi blue">◉</span><div><b class="group-title">{{ group.title }}</b><small>{{ group.name }} · {{ group.meta }} · {{ elapsed(group.startedAt) }}</small></div><div class="acts"><button v-if="group.agent" class="btn sm" type="button" @click="openAgentChat(group.agent)">Open chat</button><button v-if="group.parentThreadId && group.liveCount" class="btn sm danger" type="button" @click="killConfirmGroup = group">Kill all</button></div></div>
-          <div v-for="row in group.rows" :key="row.id" class="agent-row" :class="{ click: row.kind === 'task' }" @click="row.kind === 'task' && selectRow(row)"><span class="tree">└</span><div><b>{{ row.name }}</b><small>{{ row.task }}</small><small v-if="row.stopAttribution">{{ row.stopAttribution }}</small></div><span class="st" :class="statusClass(row.status)"><i />{{ statusLabel(row) }} · {{ elapsed(row.startedAt) }}</span><span class="mono muted">—</span><div class="row-actions"><button v-if="row.canMessage" class="btn sm" type="button" @click.stop="messageTarget = row">Message</button><button v-if="row.canStop" class="btn sm danger" type="button" @click.stop="stopTarget = row">Stop</button></div></div>
+        <div
+          v-if="!filteredGroups.length"
+          class="card empty"
+        >
+          <b>{{ search ? 'No matching agents' : 'Nothing is live right now' }}</b>{{ search ? 'Try another search.' : 'Agent runs will appear here.' }}
+        </div>
+        <div
+          v-for="group in filteredGroups"
+          :key="group.rootThreadId"
+          class="card group"
+        >
+          <div class="group-head">
+            <span class="fi blue">◉</span><div><b>{{ groupName(group.tree) }}</b><small> · root chat · {{ elapsed(group.tree[0]?.row.startedAt || null) }}</small></div><button v-if="rootLiveCount(group.rootThreadId)" class="btn sm danger" type="button" @click.stop="killConfirmRoot = group.rootThreadId">Kill all</button>
+          </div><div
+            v-for="node in flatten(group.tree)"
+            :key="node.row.key"
+            class="agent-row click"
+            :class="{ 'is-done': node.row.state === 'done' }"
+            :style="{ paddingLeft: `${14 + node.depth * 20}px` }"
+            @click="selectRow(node.row)"
+          >
+            <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small><small v-if="stopAttribution(node.row)">{{ stopAttribution(node.row) }}</small></div><span
+              class="st"
+              :class="statusClass(node.row.state)"
+              :title="node.row.stateReason || undefined"
+            ><i />{{ statusLabel(node.row) }}</span><span class="mono muted">{{ elapsed(node.row.startedAt) }}</span><div class="row-actions">
+              <button
+                v-if="node.row.canOpen"
+                class="btn sm"
+                type="button"
+                @click.stop="openRow(node.row)"
+              >
+                Open
+              </button><button
+                v-if="node.row.canMessage"
+                class="btn sm"
+                type="button"
+                :disabled="isPending('message', node.row)"
+                @click.stop="messageTarget = node.row"
+              >
+                Message
+              </button><button
+                v-if="node.row.canStop"
+                class="btn sm danger"
+                type="button"
+                :disabled="isPending('stop', node.row)"
+                @click.stop="stopTarget = node.row"
+              >
+                Stop
+              </button>
+            </div>
+          </div>
         </div>
       </template>
     </div>
-    <div v-if="messageTarget" class="overlay" @click.self="messageTarget = null"><form class="card modal" @submit.prevent="sendMessage(messageTarget)"><h2>Message {{ messageTarget.name }}</h2><textarea v-model="message" rows="4" placeholder="What should this agent know?" /><p v-if="actionError" class="error-text">{{ actionError }}</p><div class="modal-actions"><button class="btn" type="button" @click="messageTarget = null">Cancel</button><button class="btn pri" type="submit" :disabled="busy || !message.trim()">{{ busy ? 'Sending…' : 'Send message' }}</button></div></form></div>
-    <div v-if="stopTarget" class="overlay" @click.self="stopTarget = null"><div class="card modal"><h2>Stop {{ stopTarget.name }}?</h2><p>The current tool call may finish before the run stops.</p><p v-if="actionError" class="error-text">{{ actionError }}</p><div class="modal-actions"><button class="btn" type="button" @click="stopTarget = null">Cancel</button><button class="btn danger" type="button" :disabled="busy" @click="stopRun">{{ busy ? 'Stopping…' : 'Stop run' }}</button></div></div></div>
-    <div v-if="killConfirmGroup" class="overlay" @click.self="killConfirmGroup = null"><div class="card modal compact"><h2>Kill {{ killConfirmGroup.title }} and {{ killConfirmGroup.liveCount }} sub-agent{{ killConfirmGroup.liveCount === 1 ? '' : 's' }}?</h2><p>Their results won't be delivered.</p><div class="modal-actions"><button class="btn" type="button" @click="killConfirmGroup = null">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="confirmKillGroup">Kill all</button></div></div></div>
+    <div
+      v-if="messageTarget"
+      class="overlay"
+      @click.self="messageTarget = null"
+    >
+      <form
+        class="card modal"
+        @submit.prevent="sendMessage(messageTarget)"
+      >
+        <h2>Message {{ messageTarget.label }}</h2><textarea
+          v-model="message"
+          rows="4"
+          placeholder="What should this agent know?"
+        /><p
+          v-if="actionError"
+          class="error-text"
+        >
+          {{ actionError }}
+        </p><div class="modal-actions">
+          <button
+            class="btn"
+            type="button"
+            @click="messageTarget = null"
+          >
+            Cancel
+          </button><button
+            class="btn pri"
+            type="submit"
+            :disabled="isPending('message', messageTarget) || !message.trim()"
+          >
+            {{ isPending('message', messageTarget) ? 'Sending…' : 'Send message' }}
+          </button>
+        </div>
+      </form>
+    </div>
+    <div
+      v-if="stopTarget"
+      class="overlay"
+      @click.self="stopTarget = null"
+    >
+      <div class="card modal">
+        <h2>Stop {{ stopTarget.label }}?</h2><p>The current tool call may finish before the run stops.</p><p
+          v-if="actionError"
+          class="error-text"
+        >
+          {{ actionError }}
+        </p><div class="modal-actions">
+          <button
+            class="btn"
+            type="button"
+            @click="stopTarget = null"
+          >
+            Cancel
+          </button><button
+            class="btn danger"
+            type="button"
+            :disabled="isPending('stop', stopTarget)"
+            @click="stopRun"
+          >
+            {{ isPending('stop', stopTarget) ? 'Stopping…' : 'Stop run' }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <div v-if="killConfirmRoot" class="overlay" @click.self="killConfirmRoot = null"><div class="card modal compact"><h2>Kill this agent tree?</h2><p>The live agents in this root chat will stop and their results won't be delivered.</p><div class="modal-actions"><button class="btn" type="button" @click="killConfirmRoot = null">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="confirmKillRoot">Kill all</button></div></div></div>
     <div v-if="confirmSwitchOn" class="overlay" @click.self="confirmSwitchOn = false"><div class="card modal compact"><h2>Kill every live agent?</h2><p>This pauses all agent launches and prevents results from waking parent chats.</p><div class="modal-actions"><button class="btn" type="button" @click="confirmSwitchOn = false">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="enableKillSwitch">Kill all and pause</button></div></div></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import type { AgentConversationDetail, AgentsListResponse } from '@pkg/main/agentsIpc';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { AgentDetailFeed, type FeedDetail } from './live/AgentDetailFeed';
-import { AgentsListPoller } from './live/AgentsListPoller';
-import StudioTopbar from './StudioTopbar.vue';
-import { StopAttributionFormatter } from '../../agent/app/Formatters/StopAttributionFormatter';
-import { AgentJobLivenessPolicy } from '../../agent/services/AgentJobLivenessPolicy';
-import { LiveAgentsKillController } from './LiveAgentsKillController';
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
-type Agent = AgentsListResponse['agents'][number]; type Job = AgentsListResponse['jobs'][number]; type Task = Job['tasks'][number]; type RowStatus = 'running' | 'quiet' | 'blocked' | 'failed' | 'stopped' | 'workflow';
-interface LiveRow { id:string; kind:'task'|'workflow'; name:string; task:string; brief:string; lead:string; status:RowStatus; startedAt:number; lastActiveAt:number; model?:string; jobId?:string; taskIndex?:number; threadId?:string; parentThreadId?:string; stopAttribution?:string; killedByHuman?:boolean; canMessage:boolean; canStop:boolean; canOpen:boolean; finished?:boolean }
-interface LiveGroup { id:string; title:string; name:string; meta:string; startedAt:number; liveCount:number; parentThreadId?:string; agent?:Agent; rows:LiveRow[] }
-const livenessPolicy=new AgentJobLivenessPolicy(); const data=ref<AgentsListResponse>({agents:[],heartbeat:null,jobs:[],workflowRuns:[],updatedAt:0}); const now=ref(Date.now()); const loading=ref(true); const polling=ref(true); const search=ref(''); const selected=ref<LiveRow|null>(null); const detail=ref<FeedDetail|null>(null); const detailLoading=ref(false); const contentScroller=ref<HTMLElement|null>(null); const messageTarget=ref<LiveRow|null>(null); const stopTarget=ref<LiveRow|null>(null); const message=ref(''); const busy=ref(false); const actionError=ref(''); let clockTimer:ReturnType<typeof setInterval>|undefined;
-const stopFormatter=new StopAttributionFormatter();
-const killController=new LiveAgentsKillController(ipcRenderer); const killConfirmGroup=ref<LiveGroup|null>(null); const confirmSwitchOn=ref(false);
-function rowStatus(job:Job,task:Task):RowStatus { if(job.status==='stopped'||task.status==='stopped')return'stopped'; if(task.status==='blocked')return'blocked'; if(job.status==='failed'||task.status==='error')return'failed'; if(task.waitingForHuman||livenessPolicy.isStalled({createdAt:job.createdAt,startedAt:task.startedAt,lastActivityAt:task.latestCheckin?.createdAt??task.lastActivityAt??task.startedAt,hasCheckin:!!task.latestCheckin,now:now.value}))return'quiet'; return'running' }
-function taskRow(job:Job,task:Task,lead:string):LiveRow{const killedByHuman=(job as Job&{killedByHuman?:boolean}).killedByHuman===true||job.stoppedBy==='human';return{id:`${job.jobId}:${task.taskIndex}`,kind:'task',name:task.label||task.agentId,task:task.latestCheckin?.summary||task.lastActivity||task.taskId||'Working',brief:job.parentTitle||task.taskId||'No brief recorded.',lead,status:rowStatus(job,task),startedAt:task.startedAt,lastActiveAt:task.latestCheckin?.createdAt??task.lastActivityAt??task.startedAt,model:task.model,jobId:job.jobId,taskIndex:task.taskIndex,threadId:task.threadId,parentThreadId:job.parentThreadId,stopAttribution:stopFormatter.format(job.stoppedBy,job.stopReason),killedByHuman,canMessage:job.status==='running'&&['queued','running'].includes(task.status),canStop:job.status==='running'&&['queued','running'].includes(task.status),canOpen:!!(job.parentThreadId&&task.threadId)}}
-const groups=computed<LiveGroup[]>(()=>{const result:LiveGroup[]=[];const grouped=new Map<string,Job[]>();for(const job of data.value.jobs.filter(j=>j.status!=='completed')){const key=job.parentThreadId||job.parentChannel||job.jobId;grouped.set(key,[...(grouped.get(key)||[]),job])}for(const[key,jobs]of grouped){const first=jobs[0];const agent=data.value.agents.find(a=>a.channel===first.parentChannel||a.agentId===first.parentAgentId);const name=agent?.name||first.parentAgentId||first.parentChannel||'Agent run';const title=first.parentTitle||name;const rows=jobs.flatMap(j=>j.tasks.filter(t=>t.status!=='completed').map(t=>taskRow(j,t,name)));const liveCount=rows.filter(r=>!['stopped','failed'].includes(r.status)).length;if(rows.length)result.push({id:key,title,name,meta:first.parentChannel||'agent chat',startedAt:Math.min(...rows.map(r=>r.startedAt)),liveCount,parentThreadId:first.parentThreadId,agent,rows})}if(data.value.workflowRuns.length)result.push({id:'workflows',title:'Workflow runs',name:'Workflow manager',meta:'automated work',startedAt:Math.min(...data.value.workflowRuns.map(r=>r.startedAt)),liveCount:data.value.workflowRuns.length,rows:data.value.workflowRuns.map(run=>({id:run.executionId,kind:'workflow',name:run.name,task:run.error||run.activity,brief:run.slug,lead:'Workflow manager',status:run.status==='failed'?'failed':run.status==='suspended'?'quiet':'workflow',startedAt:run.startedAt,lastActiveAt:run.updatedAt,canMessage:false,canStop:false,canOpen:false}))});return result});
-const filteredGroups=computed(()=>{const q=search.value.trim().toLowerCase();if(!q)return groups.value;return groups.value.flatMap(g=>{const rows=g.rows.filter(r=>[r.name,r.task,r.model].some(v=>v?.toLowerCase().includes(q)));return g.name.toLowerCase().includes(q)?[g]:rows.length?[{...g,rows}]:[]})}); const allRows=computed(()=>groups.value.flatMap(g=>g.rows)); const runningCount=computed(()=>allRows.value.filter(r=>r.status==='running'||r.status==='workflow').length); const chatCount=computed(()=>groups.value.filter(g=>g.id!=='workflows').length); const chatNames=computed(()=>groups.value.filter(g=>g.id!=='workflows').map(g=>g.name).join(' · ')); const workflowCount=computed(()=>data.value.workflowRuns.length); const workflowNames=computed(()=>data.value.workflowRuns.map(r=>r.name).slice(0,2).join(' · ')); const attentionCount=computed(()=>allRows.value.filter(r=>['quiet','blocked','failed'].includes(r.status)).length);
-const invoke=(channel:string,...args:unknown[])=>(ipcRenderer as unknown as {invoke:(name:string,...values:unknown[])=>Promise<unknown>}).invoke(channel,...args);
-const detailFeed=new AgentDetailFeed(invoke,document,setInterval,clearInterval,snapshot=>{const container=contentScroller.value;const scrollTop=container?.scrollTop??0;const atBottom=!!container&&container.scrollHeight-container.clientHeight-scrollTop<=8;detail.value=snapshot.detail;detailLoading.value=snapshot.loading;if(container&&!snapshot.loading)void nextTick(()=>{container.scrollTop=atBottom?container.scrollHeight:scrollTop})});
-const listPoller=new AgentsListPoller(invoke,document,setInterval,clearInterval,next=>{data.value=next;if(selected.value){const fresh=allRows.value.find(row=>row.id===selected.value?.id);if(fresh)Object.assign(selected.value,fresh);else if(!selected.value.finished){selected.value.finished=true;selected.value.canMessage=false;selected.value.canStop=false;void detailFeed.finish()}}loading.value=false},available=>{polling.value=available;if(!available)loading.value=false});
-async function load(){await listPoller.refresh()}
-function requestSwitchChange(event:Event){const on=(event.target as HTMLInputElement).checked;if(on)confirmSwitchOn.value=true;else void killController.setSwitch(false)} async function enableKillSwitch(){if(await killController.setSwitch(true)){confirmSwitchOn.value=false;await load()}} async function confirmKillGroup(){const group=killConfirmGroup.value;if(!group?.parentThreadId)return;if(await killController.killTree(group.parentThreadId)){killConfirmGroup.value=null;await load()}}
-function selectRow(row:LiveRow){selected.value=row;actionError.value=''} async function sendMessage(row:LiveRow){if(!row.jobId||row.taskIndex===undefined||!message.value.trim())return;busy.value=true;actionError.value='';const result=await ipcRenderer.invoke('agents:message-job',row.jobId,row.taskIndex,message.value.trim());busy.value=false;if(!result.ok){actionError.value=result.error||'The message could not be delivered.';return}message.value='';messageTarget.value=null;await load()} async function stopRun(){const row=stopTarget.value;if(!row?.jobId)return;busy.value=true;actionError.value='';const result=await ipcRenderer.invoke('agents:stop-job',row.jobId);busy.value=false;if(!result.ok){actionError.value=result.error||'The run could not be stopped.';return}stopTarget.value=null;selected.value=null;await load()} async function openLead(row:LiveRow){if(row.jobId&&row.parentThreadId&&row.taskIndex!==undefined)await ipcRenderer.invoke('agents:open-job-in-tab',row.jobId,row.parentThreadId,row.taskIndex)}
-function openAgentChat(agent:Agent){selected.value={id:`agent:${agent.channel}`,kind:'task',name:agent.name,task:agent.statusNote||'Active chat',brief:agent.statusNote||'No brief recorded.',lead:agent.name,status:agent.status==='running'?'running':'quiet',startedAt:agent.startedAt,lastActiveAt:agent.lastActiveAt,canMessage:false,canStop:false,canOpen:false}}
-function statusClass(status:RowStatus){return status==='running'||status==='workflow'?'run':status==='failed'||status==='blocked'?'bad':'warn'} function statusLabel(row:Pick<LiveRow,'status'|'killedByHuman'>){if(row.killedByHuman)return'Killed by human';return({running:'Working',workflow:'Running',quiet:'Quiet',blocked:'Blocked',failed:'Failed',stopped:'Stopped'}as const)[row.status]} function elapsed(ts:number){const s=Math.max(0,Math.floor((now.value-ts)/1000));if(s<60)return`${s}s`;if(s<3600)return`${Math.floor(s/60)} min`;return`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`} function age(ts:number){return ts?`${elapsed(ts)} ago`:'not recorded'} function when(ts:number){return new Date(ts).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})} function clock(ts:string){const date=new Date(ts);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})} function entryWho(entry:AgentConversationDetail['entries'][number]){if(entry.kind==='user')return'You';if(entry.kind==='tool')return entry.toolName||'Tool';if(entry.kind==='event')return'Run';return selected.value?.name||'Agent'}
-watch(()=>selected.value?.threadId,threadId=>detailFeed.select(threadId));onMounted(()=>{listPoller.start();detailFeed.start();void killController.loadSwitch();clockTimer=setInterval(()=>{now.value=Date.now()},1_000)});onUnmounted(()=>{listPoller.dispose();detailFeed.dispose();if(clockTimer)clearInterval(clockTimer)});
+import StudioTopbar from './StudioTopbar.vue';
+
+import { StopAttributionFormatter } from '../../agent/app/Formatters/StopAttributionFormatter';
+import { AgentStateRowPresenter } from '@pkg/services/agentState/AgentStateRowPresenter';
+
+import type { AgentConversationDetail } from '@pkg/main/agentsIpc';
+import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
+import type { AgentStateRow, AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { LiveAgentsKillController } from './LiveAgentsKillController';
+import { AgentDetailFeed, type FeedDetail } from './live/AgentDetailFeed';
+
+const client = inject(AGENT_STATE_CLIENT_KEY);
+if (!client) throw new Error('AgentStateClient is not provided');
+const actions = new AgentActionController(ipcRenderer as any, client);
+const rowPresenter = new AgentStateRowPresenter(new StopAttributionFormatter());
+const now = ref(Date.now()); const search = ref(''); const selected = ref<AgentStateRow | null>(null); const selectedMissing = ref(false); const detail = ref<FeedDetail | null>(null); const contentScroller = ref<HTMLElement | null>(null); const detailLoading = ref(false); const messageTarget = ref<AgentStateRow | null>(null); const stopTarget = ref<AgentStateRow | null>(null); const message = ref(''); const actionError = ref(''); const pending = ref(new Set<string>()); const killController = new LiveAgentsKillController(ipcRenderer); const killConfirmRoot = ref<string | null>(null); const confirmSwitchOn = ref(false); let clockTimer: ReturnType<typeof setInterval> | undefined;
+const builder = computed(() => new AgentTreeBuilder(client.snapshot.value.rows));
+const groups = computed(() => builder.value.groups());
+const filteredGroups = computed(() => { const q = search.value.trim().toLowerCase(); if (!q) return groups.value; return groups.value.flatMap(group => { const matching = flatten(group.tree).filter(node => [node.row.label, node.row.agentId, node.row.lastCheckinSummary].some(value => value?.toLowerCase().includes(q))); return matching.length ? [{ ...group, tree: matching.map(node => ({ ...node, children: [] })) }] : [] }) });
+const liveStates = new Set<AgentRowState>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const selectedUnavailable = computed(() => selectedMissing.value || (selected.value !== null && !liveStates.has(selected.value.state)));
+const liveCount = computed(() => client.snapshot.value.rows.filter(row => liveStates.has(row.state)).length); const parkedCount = computed(() => client.snapshot.value.rows.filter(row => row.state === 'parked').length); const attentionCount = computed(() => client.snapshot.value.rows.filter(row => ['quiet', 'blocked', 'failed', 'lost'].includes(row.state)).length);
+function flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] { return builder.value.flatten(tree) }
+function groupName(tree: readonly AgentTreeNode[]): string { return tree[0]?.row.label || 'Agent run' }
+function pendingKey(action: 'message' | 'stop', row: AgentStateRow): string { return `${ action }:${ action === 'stop' ? row.jobId : row.key }` }
+function isPending(action: 'message' | 'stop', row: AgentStateRow): boolean { return pending.value.has(pendingKey(action, row)) }
+function rootLiveCount(rootThreadId: string): number { return client.snapshot.value.rows.filter(row => row.rootThreadId === rootThreadId && liveStates.has(row.state)).length }
+function requestSwitchChange(event: Event): void { const on = (event.target as HTMLInputElement).checked; if (on) confirmSwitchOn.value = true; else void killController.setSwitch(false) }
+async function enableKillSwitch(): Promise<void> { if (await killController.setSwitch(true)) confirmSwitchOn.value = false }
+async function confirmKillRoot(): Promise<void> { const root = killConfirmRoot.value; if (root && await killController.killTree(root)) killConfirmRoot.value = null }
+const invoke = (channel: string, ...args: unknown[]) => (ipcRenderer as unknown as { invoke: (name: string, ...values: unknown[]) => Promise<unknown> }).invoke(channel, ...args);
+const detailFeed = new AgentDetailFeed(invoke, document, setInterval, clearInterval, snapshot => {
+  const container = contentScroller.value; const scrollTop = container?.scrollTop ?? 0;
+  const atBottom = !!container && container.scrollHeight - container.clientHeight - scrollTop <= 8;
+  detail.value = snapshot.detail; detailLoading.value = snapshot.loading;
+  if (container && !snapshot.loading) void nextTick(() => { container.scrollTop = atBottom ? container.scrollHeight : scrollTop });
+});
+function selectRow(row: AgentStateRow): void { selected.value = row; selectedMissing.value = false; actionError.value = '' }
+async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
+async function stopRun(): Promise<void> { const row = stopTarget.value; if (!row || !actions.canStop(row)) return; const key = pendingKey('stop', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.stop(row); if (result.stale) { stopTarget.value = null; selected.value = null; return } if (!result.ok) { actionError.value = result.error || 'The run could not be stopped.'; return } stopTarget.value = null; selected.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
+async function openRow(row: AgentStateRow): Promise<void> {
+  const parent = row.parentJobId === null || row.parentTaskIndex === null ? null : client.snapshot.value.rows.find(candidate => candidate.jobId === row.parentJobId && candidate.taskIndex === row.parentTaskIndex);
+  const parentThreadId = parent?.threadId ?? row.rootThreadId;
+  if (row.canOpen && parentThreadId) await ipcRenderer.invoke('agents:open-job-in-tab' as any, row.jobId, parentThreadId, row.taskIndex);
+}
+function statusClass(state: AgentRowState): string { return ['working', 'queued', 'parked', 'done'].includes(state) ? 'run' : ['failed', 'blocked', 'lost'].includes(state) ? 'bad' : 'warn' }
+function stopAttribution(row: AgentStateRow): string { return rowPresenter.stopAttribution(row) }
+function statusLabel(row: AgentStateRow): string { const label = rowPresenter.statusLabel(row); if (label === 'Killed by human') return label; if (row.state === 'parked') return `Parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet') return `Quiet · ${ age(row.lastActivityAt) }`; return row.state.charAt(0).toUpperCase() + row.state.slice(1) }
+function elapsed(value: string | null): string { if (!value) return 'not started'; const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); if (seconds < 60) return `${ seconds }s`; if (seconds < 3600) return `${ Math.floor(seconds / 60) } min`; return `${ Math.floor(seconds / 3600) }h ${ Math.floor(seconds % 3600 / 60) }m` }
+function age(value: string | null): string { return value ? `${ elapsed(value) } ago` : 'not recorded' } function when(value: string | null): string { return value ? new Date(value).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : 'not recorded' } function clock(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) } function entryWho(entry: AgentConversationDetail['entries'][number]): string { if (entry.kind === 'user') return 'You'; if (entry.kind === 'tool') return entry.toolName || 'Tool'; if (entry.kind === 'event') return 'Run'; return selected.value?.label || 'Agent' }
+watch(() => selected.value?.threadId, threadId => detailFeed.select(threadId));
+watch(() => client.snapshot.value, snapshot => {
+  const current = new Map(snapshot.rows.map(row => [row.key, row]));
+  if (selected.value) {
+    const fresh = current.get(selected.value.key);
+    const wasUnavailable = selectedMissing.value || !liveStates.has(selected.value.state);
+
+    if (fresh) {
+      selected.value = fresh;
+      selectedMissing.value = false;
+      if (liveStates.has(fresh.state)) {
+        if (wasUnavailable) detailFeed.resume();
+      } else if (!wasUnavailable) {
+        void detailFeed.finish();
+      }
+    } else if (!selectedMissing.value) {
+      selected.value = { ...selected.value, canMessage: false, canStop: false };
+      selectedMissing.value = true;
+      void detailFeed.finish();
+    }
+  }
+  if (messageTarget.value) messageTarget.value = current.get(messageTarget.value.key) ?? null;
+  if (stopTarget.value) stopTarget.value = current.get(stopTarget.value.key) ?? null;
+});
+onMounted(() => { detailFeed.start(); void killController.loadSwitch(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000) }); onUnmounted(() => { detailFeed.dispose(); if (clockTimer) clearInterval(clockTimer); });
 </script>
 
 <style scoped lang="scss">
 @import '@pkg/assets/styles/studio-ui.scss';
-.group{margin-bottom:12px}.group-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--uc-line)}.group-head small,.muted{color:var(--uc-dim)}.group-title{font-size:14px}.group-head .acts{display:flex;gap:6px;margin-left:auto}.kill-switch{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;cursor:pointer}.kill-switch input{accent-color:var(--uc-danger)}.kill-banner{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:11px 14px;border:1px solid color-mix(in srgb,var(--uc-danger) 45%,var(--uc-line));border-radius:10px;background:color-mix(in srgb,var(--uc-danger) 10%,var(--uc-card));color:var(--uc-text)}.kill-banner span{color:var(--uc-muted);font-size:12px}.action-feedback{margin:0 0 10px}.ok-text{color:var(--uc-success)}.agent-row{display:grid;grid-template-columns:22px minmax(220px,1fr) 160px 90px auto;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--uc-line)}.agent-row:last-child{border-bottom:0}.agent-row.click{cursor:pointer}.agent-row.click:hover{background:var(--uc-paper)}.agent-row b,.agent-row small{display:block}.agent-row small{margin-top:2px;color:var(--uc-dim)}.tree{color:var(--uc-dim)}.row-actions{display:flex;justify-content:flex-end;gap:6px}.dot.success{background:var(--uc-success)}.dot.accent{background:var(--uc-accent)}.dot.workflow{background:#7656d8}.dot.warning{background:#c47a00}.tl{margin:14px 0}.ev{padding:12px 0 12px 18px;border-left:2px solid var(--uc-accent-line)}.ev.tool{border-color:var(--uc-line-strong)}.ev.you{border-color:#7656d8}.who{margin-bottom:4px;color:var(--uc-dim);font-size:11px}.msg{color:var(--uc-muted);line-height:1.5;white-space:pre-wrap}.composer{display:flex;gap:8px;margin-top:18px}.composer input,.modal textarea{flex:1;padding:9px 11px;border:1px solid var(--uc-line-strong);border-radius:8px;background:var(--uc-card);color:var(--uc-text);font:inherit}.brief{padding:12px 16px!important}.overlay{position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,#000 45%,transparent)}.modal{width:min(480px,100%);padding:20px}.modal.compact{width:min(420px,100%)}.modal h2{margin:0 0 8px}.modal textarea{width:100%;margin:12px 0;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.error-text{color:var(--uc-danger)!important}.hero>div:nth-child(2){min-width:0;flex:1}@media(max-width:900px){.agent-row{grid-template-columns:20px 1fr}.agent-row>.st,.agent-row>.mono,.row-actions{grid-column:2}.hero{flex-wrap:wrap}.hero .acts{width:100%;margin-left:82px}}
+.group{margin-bottom:12px}.group-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--uc-line)}.group-head small,.muted{color:var(--uc-dim)}.group-head .acts{margin-left:auto}.agent-row{display:grid;grid-template-columns:22px minmax(220px,1fr) 160px 90px auto;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--uc-line)}.agent-row:last-child{border-bottom:0}.agent-row.is-done{opacity:.72}.agent-row.click{cursor:pointer}.agent-row.click:hover{background:var(--uc-paper)}.agent-row b,.agent-row small{display:block}.agent-row small{margin-top:2px;color:var(--uc-dim)}.tree{color:var(--uc-dim)}.row-actions{display:flex;justify-content:flex-end;gap:6px}.dot.success{background:var(--uc-success)}.dot.accent{background:var(--uc-accent)}.dot.workflow{background:#7656d8}.dot.warning{background:#c47a00}.tl{margin:14px 0}.ev{padding:12px 0 12px 18px;border-left:2px solid var(--uc-accent-line)}.ev.tool{border-color:var(--uc-line-strong)}.ev.you{border-color:#7656d8}.who{margin-bottom:4px;color:var(--uc-dim);font-size:11px}.msg{color:var(--uc-muted);line-height:1.5;white-space:pre-wrap}.composer{display:flex;gap:8px;margin-top:18px}.composer input,.modal textarea{flex:1;padding:9px 11px;border:1px solid var(--uc-line-strong);border-radius:8px;background:var(--uc-card);color:var(--uc-text);font:inherit}.brief{padding:12px 16px!important}.overlay{position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,#000 45%,transparent)}.modal{width:min(480px,100%);padding:20px}.modal h2{margin:0 0 8px}.modal textarea{width:100%;margin:12px 0;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.error-text{color:var(--uc-danger)!important}.hero>div:nth-child(2){min-width:0;flex:1}@media(max-width:900px){.agent-row{grid-template-columns:20px 1fr}.agent-row>.st,.agent-row>.mono,.row-actions{grid-column:2}.hero{flex-wrap:wrap}.hero .acts{width:100%;margin-left:82px}}
 </style>

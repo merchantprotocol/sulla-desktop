@@ -283,6 +283,34 @@ describe('AgentDetailFeed', () => {
     feed.dispose();
   });
 
+  it('resumes the same thread during its final fetch and can finish it again', async() => {
+    // risk: activity continuity — a briefly missing row must not let an obsolete final fetch stop its resumed feed.
+    const firstFinalFetch = new Deferred<AgentConversationDetail>();
+    const clearTimer = vi.fn();
+    const setTimer = vi.fn(() => 8 as unknown as ReturnType<typeof setInterval>);
+    const snapshots: FeedSnapshot[] = [];
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(detail([{ kind: 'event', ts: '1', text: 'live', offset: 1 }]))
+      .mockReturnValueOnce(firstFinalFetch.promise)
+      .mockResolvedValueOnce(detail([{ kind: 'event', ts: '2', text: 'final', offset: 2 }]));
+    const feed = new AgentDetailFeed(invoke, new FakeVisibilitySource(), setTimer, clearTimer, snapshot => snapshots.push(snapshot));
+
+    feed.select('thread-1');
+    await vi.waitFor(() => expect(entryTexts(snapshots.at(-1))).toEqual(['live']));
+    const obsoleteFinish = feed.finish();
+    feed.resume();
+    firstFinalFetch.resolve(detail([{ kind: 'event', ts: '3', text: 'obsolete', offset: 3 }]));
+    await obsoleteFinish;
+
+    expect(clearTimer).not.toHaveBeenCalled();
+    expect(entryTexts(snapshots.at(-1))).toEqual(['live']);
+
+    await feed.finish();
+    expect(clearTimer).toHaveBeenCalledTimes(1);
+    expect(entryTexts(snapshots.at(-1))).toEqual(['live', 'final']);
+    feed.dispose();
+  });
+
   it('pauses while hidden and refreshes immediately when visible', async() => {
     // risk: resource usage — hidden pages must not poll, but returning users need fresh activity.
     const visibility = new FakeVisibilitySource();

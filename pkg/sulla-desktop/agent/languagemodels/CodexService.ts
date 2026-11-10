@@ -747,6 +747,25 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
     });
 
+    // Transport spawn is async (it records the durable execution identity first),
+    // so it runs before the stream promise; failures reject inside it after cleanup.
+    const spawned: { process?: childProcess.ChildProcessWithoutNullStreams; error?: unknown } = {};
+    if (!options.signal?.aborted) {
+      try {
+        spawned.process = await transport.spawn({
+          context: transportContext,
+          providerCommand,
+          remotePidFile: pidFile,
+          ...(transportContext.runtime === 'guest'
+            ? {
+              guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
+            }
+            : {}),
+        });
+      } catch (error) {
+        spawned.error = error;
+      }
+    }
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;
       const cleanupMcp = () => {
@@ -777,15 +796,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const setupParts = Object.entries(marks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
         perf.log(`[RunPhase] provider=codex convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTextAt) } totalToTextMs=${ d(runPhaseStart, firstTextAt) }`);
       };
-      const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
-        context: transportContext,
-        providerCommand,
-        ...(transportContext.runtime === 'guest'
-          ? {
-            guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
-          }
-          : {}),
-      });
+      if (!spawned.process) {
+        cleanupMcp();
+        instructionsFile.dispose();
+        reject(spawned.error);
+        return;
+      }
+      const proc: childProcess.ChildProcessWithoutNullStreams = spawned.process;
       proc.once('exit', () => instructionsFile.dispose());
       if (transportContext.runtime === 'guest') {
         proc.once('close', () => this.cleanupGuestCodexPluginTemp());

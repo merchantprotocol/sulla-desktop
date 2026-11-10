@@ -47,10 +47,14 @@ export function buildClaudeLaunchCommand(envAssignments: string[], claudeArgs: s
  * user's steering message just started — which then surface as
  * "returned no output". Also sweeps pidfiles older than a day.
  */
-export function buildRemoteKillCommand(pidFile: string, sig: 'TERM' | 'KILL'): string {
+export function buildRemoteKillCommand(pidFile: string, sig: 'TERM' | 'KILL', expected?: { pid:number; startTime:string }): string {
   const f = shq(pidFile);
   const dir = pidFile.slice(0, pidFile.lastIndexOf('/')) || '/';
   const base = pidFile.slice(pidFile.lastIndexOf('/') + 1).replace(/-[^-]*\.pid$/, '');
+
+  const generationFence = expected
+    ? `[ "$p" = '${ expected.pid }' ] && [ "$started" = '${ expected.startTime }' ] || exit 5; `
+    : '';
 
   const waitForExit = sig === 'KILL'
     ? `i=0; while [ -d "/proc/$p" ] && [ "$i" -lt 40 ]; do sleep 0.05; i=$((i + 1)); done; [ ! -d "/proc/$p" ] || exit 4; `
@@ -58,8 +62,9 @@ export function buildRemoteKillCommand(pidFile: string, sig: 'TERM' | 'KILL'): s
 
   return `read p started < ${ f } 2>/dev/null || exit 2; ` +
     `case "$p:$started" in *[!0-9:]*|:*) exit 2;; esac; ` +
+    generationFence +
     `current=$(awk '{print $22}' "/proc/$p/stat" 2>/dev/null || true); ` +
-    `if [ -n "$current" ] && [ "$current" != "$started" ]; then rm -f ${ f }; exit 0; fi; ` +
+    `if [ -n "$current" ] && [ "$current" != "$started" ]; then ${ expected ? 'exit 5' : `rm -f ${ f }; exit 0` }; fi; ` +
     `if [ -n "$current" ]; then kill -${ sig } "$p" 2>/dev/null || exit 3; fi; ` +
     waitForExit +
     `${ sig === 'KILL' ? `rm -f ${ f }; ` : '' }` +

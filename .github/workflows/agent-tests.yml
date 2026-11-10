@@ -105,6 +105,11 @@ jobs:
           --baseline .github/typecheck-baseline/renderer.txt
           --
           --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+      - name: Compile production agent bundle
+        if: env.WRITE_BASELINE == 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=12288
+        run: node scripts/ts-wrapper.js scripts/check-agent-production-bundle.ts
       - name: Regenerate agent runtime baseline
         if: env.WRITE_BASELINE == 'true'
         env:
@@ -217,6 +222,93 @@ jobs:
       - name: Install BusyBox for guest disk characterization
         if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Check whether CE-1 renderer smoke is affected
+        id: ce1
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -Eq '^(pkg/sulla-desktop/pages/CaptureStudio.vue|pkg/sulla-desktop/pages/capture-studio/|resources/camera-effects/|scripts/camera-effects-smoke)'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install pinned Electron binary for focused offline CE-1 smoke
+        if: steps.ce1.outputs.run == 'true'
+        run: node node_modules/electron/install.js
+      - name: Prove CE-1 pixel regression rejects prior scaled overscan
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 1
+        run: |
+          if CE1_REGRESSION_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-mutant.log 2>&1; then
+            cat /tmp/ce1-mutant.log
+            echo 'Regression did not reject scaled overscan'
+            exit 1
+          fi
+          cat /tmp/ce1-mutant.log
+          # Either the blur edge/opacity guards or the coordinate sentinel may reject it.
+          grep -Eq 'Scene coordinates changed|Transparent blur edge|High contrast background moved' /tmp/ce1-mutant.log
+      - name: Prove CE-1 pixel regression rejects a shifted auto-frame crop
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 1
+        run: |
+          if CE1_CROP_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-crop-mutant.log 2>&1; then
+            cat /tmp/ce1-crop-mutant.log
+            echo 'Regression did not reject shifted crop'
+            exit 1
+          fi
+          cat /tmp/ce1-crop-mutant.log
+          # The shifted crop also applies at autoFrame:false, so the first pixel guard to see it may be any of these.
+          grep -Eq 'Framed foreground/background coordinates changed|Crop/source coordinate mismatch|Scene coordinates changed|High contrast background moved' /tmp/ce1-crop-mutant.log
+      - name: Real offline CE-1 renderer inference and pixel regression
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs
+      - name: Prove mounted preview rejects primary and assignment regressions
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 3
+        run: |
+          for kind in PREVIEW ASSIGNMENT; do
+            if env CE1_${kind}_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-preview-mutant.log 2>&1; then
+              cat /tmp/ce1-preview-mutant.log
+              echo "Mounted preview did not reject $kind regression"
+              exit 1
+            fi
+            cat /tmp/ce1-preview-mutant.log
+            if [ "$kind" = PREVIEW ]; then
+              grep -q 'PREVIEW_PRIMARY_SENTINEL:' /tmp/ce1-preview-mutant.log
+            else
+              grep -q 'ASSIGNMENT_SENTINEL:' /tmp/ce1-preview-mutant.log
+            fi
+          done
+      - name: Prove CE-1 production menu regression rejects unreachable controls
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_MENU_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-menu-mutant.log 2>&1; then
+            cat /tmp/ce1-menu-mutant.log
+            echo "Menu regression was not rejected"
+            exit 1
+          fi
+          cat /tmp/ce1-menu-mutant.log
+          grep -q 'MENU_REACHABILITY_SENTINEL:' /tmp/ce1-menu-mutant.log
+      - name: Prove CE-1 saved-video check rejects raw recording
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_RECORDING_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-recording-mutant.log 2>&1; then
+            cat /tmp/ce1-recording-mutant.log
+            echo 'Regression did not reject raw recording'
+            exit 1
+          fi
+          cat /tmp/ce1-recording-mutant.log
+          grep -q 'RAW_LEAK_SENTINEL:' /tmp/ce1-recording-mutant.log
+      - name: Prove CE-1 source startup regression rejects untracked acquisition
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 2
+        run: |
+          if CE1_STARTUP_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-startup-mutant.log 2>&1; then
+            cat /tmp/ce1-startup-mutant.log
+            echo 'Regression did not reject untracked startup'
+            exit 1
+          fi
+          cat /tmp/ce1-startup-mutant.log
+          grep -q 'Shutdown skipped pending actual source startup' /tmp/ce1-startup-mutant.log
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}

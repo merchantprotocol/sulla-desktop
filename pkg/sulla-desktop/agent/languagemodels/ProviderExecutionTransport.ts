@@ -8,6 +8,7 @@ import * as childProcess from 'node:child_process';
 import * as path from 'node:path';
 
 import { buildRemoteKillCommand } from './claudeLaunchCommand';
+import { taskExecutionIdentityScope } from '../app/Services/TaskExecutionIdentityScope';
 import {
   createGuestRuntimeDirectory,
   GUEST_PROVIDER_FILES_ROOT,
@@ -77,6 +78,8 @@ export interface ProviderProcessLaunch {
   /** Existing Desktop guest launch. Omitted entirely for container requests. */
   guestCommand?:    ProviderCommand;
   stdio?:          childProcess.StdioOptions;
+  /** VM-side record written by the canonical provider shell after exec identity is known. */
+  remotePidFile?:   string;
 }
 
 export interface ProviderTerminationRequest {
@@ -94,12 +97,12 @@ export interface ProviderTerminationRequest {
 }
 
 /**
- * Exit codes of buildRemoteKillCommand that mean the process is gone: 0 (gone,
- * or the pidfile now names a different process) and 2 (no readable pidfile).
- * 3 (kill failed) and 4 (still alive after KILL) are unconfirmed.
+ * Only exit 0 is a positive, PID/start-time-fenced observation that the recorded
+ * execution is gone. Exit 2 means the durable handle is missing or unreadable and
+ * is unsafe: absence of the handle is not evidence that the process stopped.
  */
 export function remoteKillConfirmed(code: number | null): boolean {
-  return code === 0 || code === 2;
+  return code === 0;
 }
 
 export type ProviderFilePurpose = 'attachment' | 'mcp-config' | 'system-prompt';
@@ -136,7 +139,7 @@ export interface ProviderExecutionTransport {
     providerSessionId?: string;
     toolSessionId?:     string;
   }): ProviderTransportContext | Promise<ProviderTransportContext>;
-  spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams;
+  spawn(request: ProviderProcessLaunch): Promise<childProcess.ChildProcessWithoutNullStreams>;
   terminate(request: ProviderTerminationRequest): void | Promise<void>;
   readonly files: ProviderFileTransport;
 }
@@ -168,7 +171,8 @@ class GuestProviderFileTransport implements ProviderFileTransport {
   }
 }
 
-class GuestProviderExecutionTransport implements ProviderExecutionTransport {
+export class GuestProviderExecutionTransport implements ProviderExecutionTransport {
+  constructor(private readonly processes:Pick<typeof childProcess,'spawn'>=childProcess){}
   readonly runtime = 'guest' as const;
   readonly files = new GuestProviderFileTransport();
 
@@ -185,15 +189,48 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
     };
   }
 
-  spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams {
+  async spawn(request: ProviderProcessLaunch): Promise<childProcess.ChildProcessWithoutNullStreams> {
     const command = request.guestCommand;
     if (!command) throw new Error('Guest provider transport requires a guest launch command');
+    const assignment=taskExecutionIdentityScope.current();
+    const reservation=assignment&&request.remotePidFile
+      ?await assignment.store.reserveLaunch(assignment.jobId,assignment.taskIndex,{kind:'vm-process',pidFile:request.remotePidFile}):undefined;
+    let process:childProcess.ChildProcessWithoutNullStreams|undefined;
+    let externalSpawned=false;
+    try{
+      process=this.processes.spawn(command.executable, command.args, {
+        cwd: command.cwd, env: command.env, stdio: request.stdio,
+      }) as childProcess.ChildProcessWithoutNullStreams;
+      await new Promise<void>((resolve,reject)=>{process!.once('spawn',resolve);process!.once('error',reject);});
+      externalSpawned=true;
+      if(reservation&&request.remotePidFile){
+        const identity=await this.readVmIdentity(request.remotePidFile);
+        await assignment!.store.activate(reservation,{kind:'vm-process',pid:identity.pid,startTime:identity.startTime,pidFile:request.remotePidFile});
+      }
+      return process;
+    }catch(error){
+      // Once the wrapper has spawned, the guest command may already have detached.
+      // Keep its pidfile reservation discoverable for boot reconciliation; killing
+      // only the local wrapper is not proof that the guest execution is gone.
+      if(reservation&&!externalSpawned)await assignment!.store.failLaunch(reservation,(error as Error).message).catch(()=>undefined);
+      if(!externalSpawned){try{process?.kill('SIGKILL');}catch{/* process never started or already exited */}}
+      throw error;
+    }
+  }
 
-    return childProcess.spawn(command.executable, command.args, {
-      cwd:   command.cwd,
-      env:   command.env,
-      stdio: request.stdio,
-    }) as childProcess.ChildProcessWithoutNullStreams;
+  private async readVmIdentity(pidFile:string):Promise<{pid:number;startTime:string}>{
+    let lastError:Error=new Error('pid record unavailable');
+    for(let attempt=0;attempt<100;attempt++){
+      try{
+        const record=await new Promise<string>((resolve,reject)=>{
+          const child=this.processes.spawn(paths.sullaRuntime,['exec','--','cat',pidFile],{env:{...process.env,TERM:'dumb'},stdio:['ignore','pipe','ignore']});
+          let output='';child.stdout.on('data',chunk=>output+=String(chunk));child.once('error',reject);child.once('close',code=>code===0?resolve(output.trim()):reject(new Error(`pid record unavailable (${code})`)));
+        });
+        const match=/^(\d+) (\d+)$/.exec(record);if(!match)throw new Error('invalid pid record');
+        return {pid:Number(match[1]),startTime:match[2]};
+      }catch(error){lastError=error as Error;await new Promise(resolve=>setTimeout(resolve,50));}
+    }
+    throw lastError;
   }
 
   terminate(request: ProviderTerminationRequest): Promise<void> | void {
@@ -216,7 +253,7 @@ class GuestProviderExecutionTransport implements ProviderExecutionTransport {
         else resolve();
       };
       try {
-        const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
+        const proc = this.processes.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
           env:      { ...process.env, TERM: 'dumb' },
           stdio:    'ignore',
           detached: true,

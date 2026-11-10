@@ -82,6 +82,7 @@
         :pip-source="pipSource"
         @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
+        @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
       />
 
@@ -202,7 +203,7 @@
       :x="ctxMenu.x"
       :y="ctxMenu.y"
       :title="ctxMenu.title"
-      :items="ctxMenu.items"
+      :items="cameraContextItems"
       @close="ctxMenu.visible = false"
     />
 
@@ -463,6 +464,7 @@ import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
 import CameraBubble from './capture-studio/CameraBubble.vue';
 import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
 import ContextMenu from './capture-studio/ContextMenu.vue';
+import { CameraEffectsMenu } from './capture-studio/effects/CameraEffectsMenu';
 import FloatingControls from './capture-studio/FloatingControls.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
 import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
@@ -474,6 +476,7 @@ import { useInputEventTracker } from './capture-studio/composables/useInputEvent
 import { useMediaSources, QUALITY_PRESETS, type CropRegion, type QualityPreset, type ScreenSource } from './capture-studio/composables/useMediaSources';
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
+import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
@@ -482,7 +485,7 @@ import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-s
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 
 // ─── Context menu for source switching ───
-import type { CtxMenuItem } from './capture-studio/ContextMenu.vue';
+import type { CtxMenuItem } from './capture-studio/ContextMenuItem';
 
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
@@ -490,11 +493,11 @@ const { shell } = require('electron');
 // ─── Composables ───
 const audioDriver = useAudioDriver();
 const mediaSources = useMediaSources();
-const recorder = useRecorder();
+const recorder = useRecorder({ manageUnmount: false });
 const inputTracker = useInputEventTracker(recorder.logEvent);
 const settings = useSettings();
 const diskSpace = useDiskSpace();
-const speakerCapture = useSpeakerCapture();
+const speakerCapture = useSpeakerCapture({ manageUnmount: false });
 const micRecording = useMicRecording();
 
 // Loading state
@@ -503,6 +506,17 @@ const loadingMessage = ref('Initializing Capture Studio...');
 
 // ─── State ───
 const recording = ref(false);
+const captureLifecycle = new CaptureSessionLifecycle();
+// All entry points (UI, setup and RPC) share the parent teardown barrier.
+mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
+mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
+mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
+mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
+mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
+mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
+audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
+audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
+speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
 const cameraShape = ref('circle');
@@ -619,9 +633,13 @@ const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) 
 
 const activeSourceCount = computed(() => sources.filter(s => s.on).length);
 
-// Stream refs for primary and pip slots — updated explicitly after autoAssign
+// Slot refs follow source assignments as well as published stream replacements.
 const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
+
+// Both preview slots and recorder read the same published camera output.
+watch([primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream],
+  () => updateStreamAssignments(), { flush: 'sync' });
 
 function updateStreamAssignments() {
   const primary = primarySource.value;
@@ -752,8 +770,8 @@ function hasNativeSystemAudio(): boolean {
 async function enableSystemAudio(): Promise<void> {
   if (hasNativeSystemAudio()) return;
 
-  const native = await speakerCapture.acquireNative();
-  if (native) return;
+  const native = await speakerCapture.acquireNative(() => captureLifecycle.isClosing);
+  if (captureLifecycle.isClosing || native) return;
 
   // BlackHole/CoreAudio is intentionally fallback-only. It remains useful on
   // older Electron/macOS combinations where native loopback is unavailable.
@@ -771,6 +789,12 @@ async function disableSystemAudio(): Promise<void> {
 
 // ─── Source toggles (wired to real capture) ───
 async function toggleSrc(src: Source) {
+  return captureLifecycle.track(async() => {
+  if (captureLifecycle.isClosing) return;
+  if (src.type === 'camera') {
+    try { mediaSources.camera.assertMutable(); }
+    catch (error: any) { statusMessage.value = error.message; return; }
+  }
   console.log('[CaptureStudio] toggleSrc:', src.id, src.type, 'currently on:', src.on, '→', !src.on);
   src.on = !src.on;
 
@@ -779,13 +803,13 @@ async function toggleSrc(src: Source) {
       if (src.type === 'screen') {
         await mediaSources.acquireScreen();
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
-        updateStreamAssignments();
+        if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'camera') {
         await mediaSources.acquireCamera();
         console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
-        updateStreamAssignments();
+        if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'mic') {
-        await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
+        await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
       } else if (src.type === 'system') {
         await enableSystemAudio();
       }
@@ -797,7 +821,7 @@ async function toggleSrc(src: Source) {
     if (src.type === 'screen') {
       mediaSources.releaseScreen();
     } else if (src.type === 'camera') {
-      mediaSources.releaseCamera();
+      await mediaSources.releaseCamera();
     } else if (src.type === 'mic') {
       await audioDriver.stopMic();
     } else if (src.type === 'system') {
@@ -805,6 +829,7 @@ async function toggleSrc(src: Source) {
     }
   }
 
+  if (captureLifecycle.isClosing) { src.on = false; return; }
   autoAssign();
   updateStreamAssignments();
   console.log('[CaptureStudio] After autoAssign:', {
@@ -816,6 +841,7 @@ async function toggleSrc(src: Source) {
     cameraStream:  mediaSources.cameraStream.value ? 'active' : 'null',
     primaryStream: primaryStream.value ? 'active' : 'null',
   });
+  });
 }
 
 // ─── Layout selection ───
@@ -824,7 +850,11 @@ async function selectLayout(layout: string) {
 
   if (layout === 'camonly') {
     const cam = vids.find(s => s.type === 'camera') || vids[0];
-    if (cam) assign.primary = cam.id;
+    if (cam) {
+      // Keep the other slot distinct when promoting the secondary camera.
+      if (assign.pip === cam.id) assign.pip = assign.primary;
+      assign.primary = cam.id;
+    }
   }
 
   if (layout === 'sidebyside' && !assign.pip) {
@@ -934,6 +964,8 @@ async function startSetupRecording() {
 }
 
 async function toggleRecord() {
+  return captureLifecycle.run(async() => {
+  if (captureLifecycle.isClosing) return;
   if (!recording.value) {
     // Check disk space before starting
     const spaceCheck = diskSpace.checkBeforeRecording();
@@ -942,6 +974,13 @@ async function toggleRecord() {
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
     }
+
+    // Lock camera lifecycle before asynchronous recorder/audio startup.
+    try {
+      await mediaSources.camera.beginRecording();
+      if (captureLifecycle.isClosing) { mediaSources.camera.endRecording(); return; }
+    }
+    catch (error: any) { statusMessage.value = error.message; return; }
 
     // Gather active streams for recording — check stream.active not just existence
     const streams: { id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream; quality?: QualityPreset }[] = [];
@@ -967,6 +1006,7 @@ async function toggleRecord() {
     }
 
     if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
+      mediaSources.camera.endRecording();
       statusMessage.value = 'Enable at least one source to record';
       setTimeout(() => { statusMessage.value = '' }, 3000);
       return;
@@ -976,6 +1016,7 @@ async function toggleRecord() {
     try {
       sessionId = recorder.startSession(streams);
     } catch (e: any) {
+      mediaSources.camera.endRecording();
       console.error('[CaptureStudio] Failed to start recording session:', e.message || e);
       statusMessage.value = 'Failed to start recording: ' + (e.message || 'unknown error');
       setTimeout(() => { statusMessage.value = '' }, 5000);
@@ -983,6 +1024,7 @@ async function toggleRecord() {
     }
 
     if (!sessionId) {
+      mediaSources.camera.endRecording();
       statusMessage.value = recorder.error.value || 'Failed to start recording';
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
@@ -1025,11 +1067,17 @@ async function toggleRecord() {
       console.error('[CaptureStudio] Failed to attach audio stream:', e.message || e);
       await Promise.all([micRecording.stop(), speakerCapture.mode.value === 'blackhole' ? speakerCapture.stop() : Promise.resolve('')]);
       await recorder.stopSession();
+      mediaSources.camera.endRecording();
       statusMessage.value = `Failed to start recording audio: ${ e.message || 'unknown error' }`;
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
     }
 
+    if (captureLifecycle.isClosing) {
+      await recorder.stopSession();
+      mediaSources.camera.endRecording();
+      return;
+    }
     recording.value = true;
 
     // Start event tracking (mouse clicks, keystrokes, window focus)
@@ -1052,11 +1100,13 @@ async function toggleRecord() {
     if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
+    mediaSources.camera.endRecording();
     recording.value = false;
     diskSpace.stopMonitoring();
     statusMessage.value = 'Recording saved';
     setTimeout(() => { statusMessage.value = '' }, 5000);
   }
+  });
 }
 
 // ─── Screenshot ───
@@ -1190,7 +1240,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
       if (deviceLabel && deviceLabel !== 'default') {
         await audioDriver.setMicDevice(deviceLabel);
       }
-      await audioDriver.startMic(['webm-opus', 'pcm-s16le']);
+      await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -1360,7 +1410,7 @@ async function showScreenContextMenu(e: MouseEvent) {
             src.name = s.name;
             src.status = 'Capturing';
             autoAssign();
-            updateStreamAssignments();
+            if (!captureLifecycle.isClosing) updateStreamAssignments();
           }
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
@@ -1403,6 +1453,20 @@ async function showScreenContextMenu(e: MouseEvent) {
   }
 }
 
+const effectsMenuRevision = ref(0);
+const cameraEffectsMenu = new CameraEffectsMenu(
+  mediaSources.camera, () => recording.value || captureLifecycle.isClosing,
+  message => { statusMessage.value = message; },
+  () => { effectsMenuRevision.value++; },
+);
+const cameraContextItems = computed(() => {
+  // Service notifications invalidate active indicators on initialization/inference failure.
+  void effectsMenuRevision.value;
+  void mediaSources.cameraEffectsRevision.value;
+  return ctxMenu.title === 'Camera' ? [...ctxMenu.items, ...cameraEffectsMenu.items()] : ctxMenu.items;
+});
+watch(mediaSources.cameraEffectError, message => { if (message) statusMessage.value = message; });
+
 async function showCameraContextMenu(e: MouseEvent) {
   try {
     const cameras = await mediaSources.listVideoDevices();
@@ -1414,7 +1478,7 @@ async function showCameraContextMenu(e: MouseEvent) {
       action: async() => {
         try {
           await mediaSources.switchCamera(cam.deviceId);
-          updateStreamAssignments();
+          if (!captureLifecycle.isClosing) updateStreamAssignments();
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch camera:', err);
         }
@@ -1768,6 +1832,7 @@ useAgentBridge({
     return await mediaSources.listVideoDevices();
   },
   'camera.set': async(params) => {
+    mediaSources.camera.assertMutable();
     const deviceId = typeof params.deviceId === 'string' && params.deviceId ? params.deviceId : undefined;
     if (typeof params.quality === 'string') {
       const preset = params.quality as QualityPreset;
@@ -1783,8 +1848,8 @@ useAgentBridge({
       : await mediaSources.acquireCamera();
     return { ok: !!stream, deviceId: deviceId || null };
   },
-  'camera.release': () => {
-    mediaSources.releaseCamera();
+  'camera.release': async() => {
+    await mediaSources.releaseCamera();
     return { ok: true };
   },
 
@@ -1897,17 +1962,17 @@ onMounted(async() => {
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
 async function cleanupCaptureStudio() {
+  return captureLifecycle.close(async() => {
   console.log('[CaptureStudio] Cleaning up...');
 
-  // Stop recording if active
-  if (recording.value) {
-    await micRecording.stop();
-    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-    inputTracker.stopTracking();
-    await recorder.stopSession();
-    recording.value = false;
-    diskSpace.stopMonitoring();
-  }
+  // Stop even when async startup never reached the component recording flag.
+  await micRecording.stop();
+  if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
+  inputTracker.stopTracking();
+  await recorder.stopSession();
+  mediaSources.camera.endRecording();
+  recording.value = false;
+  diskSpace.stopMonitoring();
 
   // Stop teleprompter tracking
   teleprompterRef.value?.stopTracking?.();
@@ -1918,14 +1983,17 @@ async function cleanupCaptureStudio() {
     prompterEnabled.value = false;
   }
 
+  await recorder.stopSession();
+
   // Release all media streams (screen + camera)
   mediaSources.releaseScreen();
-  mediaSources.releaseCamera();
+  await mediaSources.camera.dispose();
   speakerCapture.releaseNative();
 
   // Disconnect from controllers
   try { await audioDriver.stopMic() } catch { /* already stopped */ }
   try { await audioDriver.stopSpeaker() } catch { /* already stopped */ }
+  });
 }
 
 ipcRenderer.on('app:before-quit', () => {
@@ -2572,6 +2640,7 @@ html, body {
   border-radius: 6px; cursor: pointer; transition: all 0.1s;
 }
 .ctx-menu-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.ctx-menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .ctx-menu-item.active { color: var(--accent); }
 
 .ctx-menu-has-sub {
