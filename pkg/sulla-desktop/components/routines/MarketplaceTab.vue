@@ -880,8 +880,8 @@ function formatRelative(iso: string): string {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--line);
+  background: var(--bg-surface-alt);
+  border: 0;
   border-radius: 4px;
   min-width: 280px;
   flex: 1;
@@ -891,11 +891,18 @@ function formatRelative(iso: string): string {
 .search-box input {
   flex: 1;
   background: transparent;
-  border: none;
+  border: 0;
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
   color: var(--text-primary);
   font-family: var(--font-body);
   font-size: 12.5px;
-  outline: none;
+  outline: 0;
+}
+.search-box input::-webkit-search-decoration,
+.search-box input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
 .search-box .count {
   font-family: var(--font-mono);
@@ -1245,15 +1252,15 @@ function formatRelative(iso: string): string {
 .search-box {
   min-height: 42px;
   padding: 0 14px;
-  border-color: color-mix(in srgb, var(--border-default) 10%, transparent);
+  border: 0;
   border-radius: 13px;
-  background: color-mix(in srgb, var(--bg-surface) 65%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 2.5%, transparent);
+  background: var(--bg-surface-alt);
+  box-shadow: none;
 }
 
 .search-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent-hover) 45%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--bg-input);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .marketplace-grid {
