@@ -7,13 +7,10 @@ import type { ModelRepository } from '../engine/ModelRepository';
 import type { VoiceLogger } from '../engine/VoiceEngines';
 import { OrtInferenceClient } from './OrtInferenceClient';
 import { OrtSileroVad, OrtSmartTurn, type VoiceClock } from './OrtVoiceEngines';
-<<<<<<< HEAD
 import type { KokoroSynthesizer } from '../tts/KokoroSynthesizer';
 import { KokoroTextToSpeech } from '../tts/KokoroTextToSpeech';
 import { WhisperOrtSpeechToText } from './WhisperOrtSpeechToText';
-=======
 import { WhisperOrtSpeechToText } from './WhisperOrtSpeechToText';
->>>>>>> 576771e547 (feat(voice): add local Whisper ONNX STT adapter)
 
 /** Constructs local engines only when explicitly enabled; never participates in the live renderer path by default. */
 export class LocalTurnEngineFactory {
