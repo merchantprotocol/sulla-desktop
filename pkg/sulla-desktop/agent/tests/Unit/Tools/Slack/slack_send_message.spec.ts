@@ -27,6 +27,14 @@ describe('slack_send_message', () => {
     expect(client.sendMessage).toHaveBeenCalledWith('C1', 'hello', undefined, undefined, undefined, 'team-a');
     expect(observer.onSent).toHaveBeenCalledTimes(1);
   });
+  it('posts in the requested Slack thread', async() => {
+    // risk: reply routing
+    const client = { sendMessage: vi.fn(async() => ({ ok: true, account: 'team-a', teamId: 'T1', ts: '2', threadTs: '1' })) };
+    vi.spyOn(registry, 'get').mockResolvedValue(client as any);
+    const worker = new SlackSendMessageWorker({ onSent: vi.fn() });
+    await (worker as any)._validatedCall({ channel: 'C1', text: 'reply', thread_ts: '1' });
+    expect(client.sendMessage).toHaveBeenCalledWith('C1', 'reply', '1', undefined, undefined, undefined);
+  });
   it('does not observe failed posts', async() => {
     // risk: false event recording
     const client = { sendMessage: vi.fn(async() => { throw new Error('denied'); }) };

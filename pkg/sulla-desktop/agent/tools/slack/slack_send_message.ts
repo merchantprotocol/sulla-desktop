@@ -9,7 +9,7 @@ import { stripProtocolTags } from '../../utils/stripProtocolTags';
 import { BaseTool, ToolResponse } from '../base';
 
 import type { SlackClient } from '../../integrations/slack/SlackClient';
-import { NoopOutboundSlackMessageObserver, type OutboundSlackMessageObserver } from './OutboundSlackMessageObserver';
+import { OutboundSlackMessageObserver, type SlackOutboundMessageObserverContract } from './OutboundSlackMessageObserver';
 
 function runtimeContext() {
   return {
@@ -25,12 +25,12 @@ function runtimeContext() {
  * Slack Send Message Tool - Worker class for execution
  */
 export class SlackSendMessageWorker extends BaseTool {
-  constructor(private readonly observer: OutboundSlackMessageObserver = new NoopOutboundSlackMessageObserver()) { super(); }
+  constructor(private readonly observer: SlackOutboundMessageObserverContract = new OutboundSlackMessageObserver()) { super(); }
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, text, account } = input;
+    const { channel, text, account, thread_ts: threadTs } = input;
     // Strip internal agent-protocol wrappers (AGENT_DONE / AGENT_BLOCKED /
     // AGENT_CONTINUE, etc.) so they never leak into user-visible Slack messages
     // (issue #96). stripProtocolTags is the single source of truth for these
@@ -88,7 +88,7 @@ export class SlackSendMessageWorker extends BaseTool {
         channel,
         textPreview: cleanText.slice(0, 80),
       });
-      const res = await slack.sendMessage(channel, cleanText, undefined, undefined, this.executionContext, account);
+      const res = await slack.sendMessage(channel, cleanText, typeof threadTs === 'string' ? threadTs : undefined, undefined, this.executionContext, account);
       console.log('[slack_send_message] sendMessage response', {
         invocationId,
         ok:         !!res?.ok,

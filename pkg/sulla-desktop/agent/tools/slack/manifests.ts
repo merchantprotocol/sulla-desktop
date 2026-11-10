@@ -61,6 +61,7 @@ export const slackToolManifests: ToolManifest[] = [
       account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       channel: { type: 'string', description: 'Channel ID where the message will be posted' },
       text:    { type: 'string', description: 'Message text to post' },
+      thread_ts: { type: 'string', optional: true, description: 'Slack parent timestamp to reply in an existing thread' },
     },
     operationTypes: ['read'],
     loader:         () => import('./slack_send_message'),
