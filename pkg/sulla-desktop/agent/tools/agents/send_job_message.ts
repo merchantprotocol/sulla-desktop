@@ -145,7 +145,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       targetedTasks: queued.map(({ target }) => target.taskIndex),
       deliveredLive,
       queuedForNextBoundary: queued.length - deliveredLive,
-      ...(reviewIds.length ? { reviewItemIds: reviewIds, reviewItemIdsByTask } : {}),
+      ...(reviewIds.length ? { reviewItemIds: reviewIds, reviewItemIdsByTask: reviewIdsByTask } : {}),
       ...(notWoken.length ? {
         notWoken: notWoken.map(entry => ({
           taskIndex: entry.taskIndex,
