@@ -602,7 +602,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
         config.approvalServiceId ?? '', config.approvalServiceToken, input,
       ),
-    }, undefined, domainSyncCodec), request => {
+    }, domainSyncCodec), request => {
       const identity = serviceIdentity(request);
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     });

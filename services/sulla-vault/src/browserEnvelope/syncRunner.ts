@@ -27,7 +27,6 @@ import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, 
 import { ensureSyncSchema } from './schema.js';
 
 import type { Database } from '../db.js';
-import { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
 import type pg from 'pg';
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
@@ -136,7 +135,6 @@ export class CloudVaultSyncRunner {
   constructor(
     private readonly db: Database,
     private readonly authority: CloudSyncAuthority,
-    private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
     private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
   ) {}
 
@@ -298,26 +296,11 @@ export class CloudVaultSyncRunner {
         let conflictCopies = 0;
         await this.transaction(async client => {
           if (remoteBundle && remoteBundle.bundleGeneration > num(state.bundle_generation)) {
-            const current = await client.query<LocalAccountRow & { login_hash_salt: Buffer; login_hash_verifier: Buffer }>(
-              'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf,login_hash_salt,login_hash_verifier FROM users WHERE id=$1 FOR UPDATE', [userId],
-            );
-            const row = current.rows[0];
-            if (!row) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
-            await this.rewrapHistory.preservePasswordWrap({
-              user_id: userId,
-              login_hash_salt: row.login_hash_salt,
-              login_hash_verifier: row.login_hash_verifier,
-              encrypted_user_key: row.encrypted_user_key,
-              kdf: row.kdf,
-            }, 'cloud_rewrap', client);
-            const nextKdf = { authority: 'container', version: 1, password: { salt: remoteBundle.kdf.salt, parameters: { memoryBytes: remoteBundle.kdf.memoryBytes, operations: remoteBundle.kdf.ops } } };
+            // Cloud's bundle is a password-wrapped copy for other devices. This
+            // Desktop must retain its locally authoritative user-key wrapping.
             await client.query(
-              'UPDATE users SET encrypted_user_key=$2,public_key=$3,encrypted_private_key=$4,kdf=$5,updated_at=now() WHERE id=$1',
-              [userId, remoteBundle.encryptedUserKey, remoteBundle.publicKey, remoteBundle.encryptedPrivateKey, nextKdf],
-            );
-            await client.query(
-              'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,updated_at=now() WHERE owner_user_id=$1',
-              [userId, remoteBundle.bundleGeneration, wrapFingerprint({ id: userId, encrypted_user_key: remoteBundle.encryptedUserKey, public_key: remoteBundle.publicKey, encrypted_private_key: remoteBundle.encryptedPrivateKey, kdf: nextKdf }, remoteBundle.recovery)],
+              'UPDATE cloud_vault_sync_state SET bundle_generation=$2,updated_at=now() WHERE owner_user_id=$1',
+              [userId, remoteBundle.bundleGeneration],
             );
           }
           for (const record of deltas) {
