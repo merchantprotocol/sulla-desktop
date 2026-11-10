@@ -34,6 +34,8 @@ export interface FleetTaskView {
   wakeAt?: string | null;
   stranded?: { stateKey: string; detectedAt: number; reason: string; alertedAt: number } | null;
   promotedToTab?: boolean;
+  /** Live tasks beneath this task's thread at any depth (grandchildren included). */
+  descendantsRunning?: number;
   result?: unknown;
   completion?: unknown;
 }

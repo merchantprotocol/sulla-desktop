@@ -35,12 +35,13 @@ describe('SubagentDirectoryBuilder', () => {
     const completedTask = { ...task(0, 'finished-worker'), status: 'completed', state: 'done', returned: true, finishedAt: new Date(now - 1_000).toISOString(), completion: { status: 'completed', summary: 'done', output: 'PR #2030 is ready' } };
     const completed: FleetJobView = { ...direct, jobId: 'completed', status: 'completed', finishedAt: completedTask.finishedAt, tasks: [completedTask] };
     const parkedTask = { ...task(0, 'manager'), status: 'parked', state: 'parked', promotedToTab: true };
-    const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 2, tasks: [parkedTask] };
+    const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 0, tasks: [{ ...parkedTask, descendantsRunning: 2 }] };
     const output = await new SubagentDirectoryBuilder(new FleetReader([completed, parked]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
     expect(output).toContain('finished-worker: "PR #2030 is ready"');
     expect(output).not.toContain('[object Object]');
     expect(output).toContain('hidden→tab');
-    expect(output).toContain('parked, waiting on 2 children');
+    expect(output).toContain('parked, waiting on 0 children');
+    expect(output).toContain('2 running descendants beneath them');
   });
 
   it('budgets whole lines and reports omitted rows without slicing tokens', async() => {
