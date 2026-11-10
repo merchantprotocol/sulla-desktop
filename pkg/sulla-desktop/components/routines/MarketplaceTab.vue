@@ -602,10 +602,10 @@ function onSort(s: SortValue) {
   mp.setSort(s).catch(() => undefined);
 }
 function submitSearch() { applyState(searchState.value).catch(() => undefined) }
+// The route `listing` watcher is the only detail loader; opening just sets the route.
 function onOpen(id: string) {
   mp.clearInstallResult();
   searchController.openListing(id).catch(() => undefined);
-  mp.loadDetail(id).catch(() => undefined);
 }
 function onCloseDetail() {
   mp.clearDetail();

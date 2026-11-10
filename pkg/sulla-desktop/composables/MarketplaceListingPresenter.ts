@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
-export interface MarketplaceListingPresentation { image: string; video: boolean; duration: string; price: string; topic: string; apps: string[]; draftsOnly: boolean }
+export interface MarketplaceListingPresentation { image: string; video: boolean; videoUrl: string; duration: string; price: string; topic: string; apps: string[]; draftsOnly: boolean }
 
 /** Formats listing fields once for all marketplace result surfaces. */
 export class MarketplaceListingPresenter {
@@ -13,6 +13,7 @@ export class MarketplaceListingPresenter {
     return {
       image,
       video,
+      videoUrl:   row.video_url || '',
       duration:   typeof row.video_duration_seconds === 'number' ? this.duration(row.video_duration_seconds) : '',
       price:      this.price(row),
       topic:      row.topic || row.category || 'Uncategorized',

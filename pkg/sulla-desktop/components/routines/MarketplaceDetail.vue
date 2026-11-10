@@ -34,7 +34,7 @@
         >
           {{ row.tagline }}
         </p>
-        <span v-if="priceLabel" class="price-badge">{{ priceLabel }}</span>
+        <span v-if="presentation.price" class="price-badge">{{ presentation.price }}</span>
         <p
           v-if="row.description"
           class="desc"
@@ -90,10 +90,10 @@
         class="right"
         :class="`kind-${row.kind}`"
       >
-        <video v-if="row.video_url" :src="row.video_url" :poster="mediaPoster" controls preload="none" />
+        <video v-if="presentation.videoUrl" :src="presentation.videoUrl" :poster="presentation.image" controls preload="none" />
         <img
-          v-else-if="mediaPoster"
-          :src="mediaPoster"
+          v-else-if="presentation.image"
+          :src="presentation.image"
           :alt="row.name"
         >
         <div
@@ -476,16 +476,18 @@ import { marked } from 'marked';
 import { Background, BackgroundVariant } from '@vue-flow/background';
 import { VueFlow, type Edge, type Node } from '@vue-flow/core';
 import { computed, provide, reactive, ref } from 'vue';
+import MarketplaceListingFacts from './MarketplaceListingFacts.vue';
+
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 
+import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListingPresenter';
 import { marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import LoopFrameNode from '@pkg/pages/routines/LoopFrameNode.vue';
 import RoutineEdge from '@pkg/pages/routines/RoutineEdge.vue';
 import RoutineNode from '@pkg/pages/routines/RoutineNode.vue';
 import StickyNoteNode from '@pkg/pages/routines/StickyNoteNode.vue';
-import MarketplaceListingFacts from './MarketplaceListingFacts.vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 
 const props = withDefaults(defineProps<{
@@ -535,8 +537,7 @@ async function allowInstall(){
 provide('routines-mode', ref<'edit' | 'run'>('run'));
 const kindInfo = computed(() => marketplaceKindInfo(props.row.kind));
 const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
-const priceLabel = computed(() => props.row.price_cents === 0 ? 'Free' : typeof props.row.price_cents === 'number' && props.row.price_cents > 0 ? new Intl.NumberFormat(undefined, { style: 'currency', currency: props.row.currency || 'USD' }).format(props.row.price_cents / 100) : '');
-const mediaPoster = computed(() => props.row.poster_url || props.row.photos?.[0] || props.row.hero_media?.poster || props.row.hero_media?.url || '');
+const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
 const detailTab = ref<'graph' | 'docs'>('graph');
 
 const initials = computed(() => {

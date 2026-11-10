@@ -20,4 +20,8 @@ describe('MarketplaceListingPresenter', () => {
     expect(presenter.present({ ...base, photos: ['first.jpg', 'second.jpg'], poster_url: 'poster.jpg' }).image).toBe('first.jpg');
     expect(presenter.present({ ...base, hero_media: { type: 'image', url: 'hero.jpg' } }).image).toBe('hero.jpg');
   });
+  it('exposes the playable video URL only for video listings', () => {
+    expect(presenter.present({ ...base, video_url: 'https://e.test/v.mp4' }).videoUrl).toBe('https://e.test/v.mp4');
+    expect(presenter.present({ ...base, photos: ['first.jpg'] }).videoUrl).toBe('');
+  });
 });
