@@ -12,7 +12,19 @@ export interface SupervisedDriver {
 
 /** Reconciles desired state with observable driver liveness and attempt age. */
 export class SyncDriverSupervisor {
+  private timer:ReturnType<typeof setInterval>|null=null;
   constructor(private readonly now: () => number = () => Date.now()) {}
+
+  start(reconcile:()=>void):void {
+    if(this.timer)return;
+    this.timer=setInterval(reconcile,30_000);
+    this.timer.unref?.();
+  }
+
+  stop():void {
+    if(this.timer)clearInterval(this.timer);
+    this.timer=null;
+  }
 
   reconcile(driver: SupervisedDriver, shouldBeActive: boolean): boolean {
     if (!shouldBeActive) return false;

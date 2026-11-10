@@ -46,7 +46,6 @@ let channel: SecureDesktopChannel | null = null;
 let signedIn = false;
 let prefsListenerInstalled = false;
 const syncDriverSupervisor=new SyncDriverSupervisor();
-let syncDriverSupervisorTimer:ReturnType<typeof setInterval>|null=null;
 
 function reconcileSyncDrivers():void {
   if(!signedIn)return;
@@ -68,15 +67,12 @@ function reconcileSyncDrivers():void {
 }
 
 function startSyncDriverSupervisor():void {
-  if(syncDriverSupervisorTimer)return;
-  syncDriverSupervisorTimer=setInterval(reconcileSyncDrivers,30_000);
-  syncDriverSupervisorTimer.unref?.();
+  syncDriverSupervisor.start(reconcileSyncDrivers);
   reconcileSyncDrivers();
 }
 
 function stopSyncDriverSupervisor():void {
-  if(syncDriverSupervisorTimer)clearInterval(syncDriverSupervisorTimer);
-  syncDriverSupervisorTimer=null;
+  syncDriverSupervisor.stop();
 }
 
 /**
