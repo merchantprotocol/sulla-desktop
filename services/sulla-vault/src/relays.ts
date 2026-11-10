@@ -64,7 +64,6 @@ const MAX_BOOTSTRAP_BYTES = 64 * 1024;
 const BOOTSTRAP_TIMEOUT_MS = 10_000;
 const RECONNECT_MAX_MS = 30_000;
 const SENSITIVE_KEY = /(?:^|_)(?:token|authorization|cookie|password|secret|session_key|session_id|resume_gateway_url|response_url)(?:$|_)/i;
-const SLACK_SOCKET_HOSTS = new Set(['wss-primary.slack.com', 'wss-backup.slack.com']);
 const GATEWAY_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_AUDIO_CHUNK_BYTES = 64 * 1024;
 const MAX_AUDIO_COMMAND_BYTES = 90 * 1024;

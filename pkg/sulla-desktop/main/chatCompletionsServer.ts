@@ -205,14 +205,6 @@ export class ChatCompletionsServer {
       content:      content.slice(0, 100),
     });
 
-    if (msg.type === 'user_message' && metadata?.origin === 'slack' && metadata?.eventType === 'app_mention') {
-      console.log('[ChatCompletionsAPI] Tasker listener received Slack app_mention trigger', {
-        id:            msg.id,
-        slackChannel:  metadata?.channel,
-        slackThreadTs: metadata?.threadTs,
-        slackUser:     metadata?.user,
-      });
-    }
   }
 
   private async loadApiToken(): Promise<void> {
