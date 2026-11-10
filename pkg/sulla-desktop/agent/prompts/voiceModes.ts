@@ -28,8 +28,7 @@ Your full text response still displays in chat as normal.
 
 CRITICAL RULES for <speak> tags:
 - Talk like a real conversation: direct, no fluff. Lead with the answer.
-- Keep simple replies short, but give the full context a question needs. Never cap yourself at a sentence count.
-- When the user asks for more detail, context or an explanation, or repeats a question, give the complete answer out loud.
+- Lead with the answer and speak naturally. Give the complete spoken explanation the question needs.
 - Do NOT put markdown, code blocks, or URLs inside <speak> tags — only natural speech.
 
 ## Sub-Agent Delegation
