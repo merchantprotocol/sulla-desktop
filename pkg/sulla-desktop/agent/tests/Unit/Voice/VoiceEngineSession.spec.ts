@@ -23,8 +23,9 @@ describe('VoiceEngineSession behavior', () => {
     let signal: AbortSignal | undefined;
     const tts = { async *synthesize(_text: string, id: number, s: AbortSignal) { signal = s; yield { sequenceId: id, data: new Uint8Array([1]), sampleRate: 24000 }; await new Promise(resolve => setTimeout(resolve, 0)); yield { sequenceId: id, data: new Uint8Array([2]), sampleRate: 24000 }; } };
     const session = new VoiceEngineSession(new FakeSpeechToText(), tts, logger); session.startTurn(); const emitted: number[] = [];
-    const speaking = (async () => { for await (const chunk of session.speak('hello', chunk => emitted.push(chunk.data[0]))) {} })();
-    await Promise.resolve(); session.cancelTurn(); await speaking;
+    let firstAudio!: () => void; const audioStarted = new Promise<void>(resolve => { firstAudio = resolve; });
+    const speaking = (async () => { for await (const chunk of session.speak('hello', chunk => { emitted.push(chunk.data[0]); firstAudio(); })) {} })();
+    await audioStarted; session.cancelTurn(); await speaking;
     expect(signal?.aborted).toBe(true); expect(emitted).toEqual([1]);
   });
   it('returns a cancelled turn transcript intact for caller merge', () => { // risk: transcript word loss

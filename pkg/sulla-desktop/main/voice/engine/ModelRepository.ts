@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, Writable } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Writable } from 'node:stream';
 import { mkdir, rename, rm, stat, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -30,5 +31,5 @@ export class ModelRepository {
     await rename(temp, target); return target;
   }
   private async matches(path: string, expected: string): Promise<boolean> { try { return await this.hash(path) === expected; } catch { return false; } }
-  private async hash(path: string): Promise<string> { const hash = createHash('sha256'); await pipeline(createReadStream(path), new Writable({ write(chunk, _encoding, callback) { hash.update(chunk); callback(); } })); return hash.digest('hex'); }
+  private async hash(path: string): Promise<string> { const hash = createHash('sha256'); await pipeline(createReadStream(path), new Writable({ write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) { hash.update(chunk); callback(); } })); return hash.digest('hex'); }
 }
