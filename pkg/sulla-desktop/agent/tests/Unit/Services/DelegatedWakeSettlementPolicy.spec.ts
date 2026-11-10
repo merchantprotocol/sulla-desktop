@@ -24,4 +24,15 @@ describe('DelegatedWakeSettlementPolicy', () => {
     // risk: lost delegated work
     expect(policy.shouldPark({ liveChildren: 0, pendingWait: false, consecutiveEmptyWakes: 0 })).toBe(false);
   });
+
+  it('preserves a durable wait reason when a successful turn did not own an empty wake', () => {
+    // risk: durable leaf-worker wait state is erased by unrelated output
+    expect(policy.completionUpdate({ emptyWakeCount: 0, waitReason: 'waiting for approval' })).toBeUndefined();
+  });
+
+  it('clears only its own empty-wake reason when resetting the retry counter', () => {
+    // risk: durable leaf-worker wait state is erased while resetting empty-wake retries
+    expect(policy.completionUpdate({ emptyWakeCount: 2, waitReason: 'waiting for approval' })).toEqual({ emptyWakeCount: 0 });
+    expect(policy.completionUpdate({ emptyWakeCount: 2, waitReason: 'empty wake turn; parked with 1 live children' })).toEqual({ emptyWakeCount: 0, waitReason: undefined });
+  });
 });

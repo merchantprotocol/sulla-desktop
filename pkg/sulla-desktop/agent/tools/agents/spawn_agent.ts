@@ -14,6 +14,7 @@ import {
   type AgentContractSpec,
 } from './contract';
 import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
+import { FailedManagerCompletionRerouter } from '../../services/FailedManagerCompletionRerouter';
 import { emitSubAgentExchange } from './jobExchange';
 import { threadSlug } from './threadSlug';
 import {
@@ -616,6 +617,7 @@ export class SpawnAgentWorker extends BaseTool {
           )));
         };
         const wakeSettlementPolicy = new DelegatedWakeSettlementPolicy();
+        const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
         const runFreshTurn = async(currentState: any) => {
           const wakeInput = subState.messages[subState.messages.length - 1];
           const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
@@ -639,16 +641,22 @@ export class SpawnAgentWorker extends BaseTool {
                 await agentJobLifecycle.resume(activityJobId, index);
                 return await runFreshTurn(currentState);
               } else {
-              const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
-              const completionIds = Array.isArray(wakeInput?.metadata?.completionEntries)
-                ? wakeInput.metadata.completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',')
-                : 'none';
-              throw new Error(`Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`);
+                const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
+                const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
+                const completionIds = completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',') || 'none';
+                const failureReason = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
+                if (activityJobId && completionEntries.length) {
+                  const failedManager = await getJob(activityJobId);
+                  if (failedManager) await failedManagerCompletionRerouter.route(failedManager, index, failureReason, completionEntries);
+                }
+                throw new Error(failureReason);
               }
             }
           }
           if (activityJobId && (returnedAfterTurn || subState.messages.filter((message: any) => message?.role === 'assistant').length > assistantCount)) {
-            await updateJobTask(activityJobId, index, { emptyWakeCount: 0, waitReason: undefined });
+            const currentTask = (await getJob(activityJobId))?.tasks[index];
+            const completionUpdate = currentTask && wakeSettlementPolicy.completionUpdate(currentTask);
+            if (completionUpdate) await updateJobTask(activityJobId, index, completionUpdate);
           }
           await acknowledgeCompletionInput(wakeInput);
           return { finalState: currentState, returned: returnedAfterTurn };
