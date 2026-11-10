@@ -34,6 +34,7 @@ import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegi
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
 import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotificationService';
+import { CustodyCompletionRequeueService } from '../Services/CustodyCompletionRequeueService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { ConfirmedTaskTeardownService } from '../Services/ConfirmedTaskTeardownService';
 import { PlatformTaskExecutionTerminationTransport } from '../Services/PlatformTaskExecutionTerminationTransport';
@@ -58,6 +59,7 @@ export class AgentJobServiceProvider {
   readonly activity: AgentTaskActivityProjector;
   readonly stranded: StrandedManagerScheduler;
   readonly completionAcknowledgements: CompletionAcknowledgementService;
+  readonly completionRequeue: CustodyCompletionRequeueService;
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
   readonly executionIdentities: TaskExecutionIdentityRepository;
@@ -109,6 +111,7 @@ export class AgentJobServiceProvider {
     this.recovery = new JobRecoveryService(this.jobs,this.wrapUp,launchReconciler);
     this.service = new AgentJobService(this.jobs, this.runtime, this.recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);
     this.completionAcknowledgements = new CompletionAcknowledgementService(this.service, strandedEpisodes, completionInboxStore);
+    this.completionRequeue = new CustodyCompletionRequeueService(completionInboxStore, this.custody);
     this.delivery = new JobCompletionDelivery(this.service, this.custody);
   }
 

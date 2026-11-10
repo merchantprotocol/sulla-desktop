@@ -26,6 +26,7 @@ export const completionInboxStore = {
   take: (...args: Parameters<AgentCompletionInboxService['take']>) => agentCompletionProvider.inbox.take(...args),
   registerIdleDispatcher: (...args: Parameters<AgentCompletionInboxService['registerIdleDispatcher']>) => agentCompletionProvider.inbox.registerIdleDispatcher(...args),
   clear: () => agentCompletionProvider.inbox.clear(),
+  requeue: (...args: Parameters<AgentCompletionInboxService['requeue']>) => agentCompletionProvider.inbox.requeue(...args),
 };
 
 /** The inbox operations job services depend on; satisfied by the live adapter and by any inbox instance. */
