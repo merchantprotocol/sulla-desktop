@@ -66,6 +66,43 @@ describe('Domain vault-sync-v3 codec parity', () => {
     }
   }, 20_000);
 
+  it('unlocks every KAT bundle with the domain codec to the same user key as the old envelope', async() => {
+    // risk: crypto/data integrity — production unlocks via DomainVaultSyncCodec; a different user key makes sync data unreadable.
+    const kat = await fixture();
+    const sodium = await loadSodium();
+    const old = createSyncEnvelope(sodium);
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+    const password = 'correct horse battery staple · sync v3';
+
+    for (const side of [kat.desktop, kat.browser]) {
+      const oldKey = old.unlockBundle(side.bundle, password);
+      const domainKey = domain.unlockBundle(side.bundle, password);
+      try {
+        expect(Buffer.from(domainKey).toString('hex')).toBe(Buffer.from(oldKey).toString('hex'));
+      } finally {
+        oldKey.fill(0);
+        domainKey.fill(0);
+      }
+    }
+  }, 20_000);
+
+  it('rejects a wrong password on both the old and the domain unlock paths', async() => {
+    // risk: crypto/authentication — the escrow maps any unlock throw to wrong_password, so both paths must throw.
+    const kat = await fixture();
+    const sodium = await loadSodium();
+    const old = createSyncEnvelope(sodium);
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
+
+    for (const side of [kat.desktop, kat.browser]) {
+      let oldCode: string | undefined;
+      let domainThrew = false;
+      try { old.unlockBundle(side.bundle, 'wrong password'); } catch (error) { oldCode = (error as { code?: string }).code; }
+      try { domain.unlockBundle(side.bundle, 'wrong password'); } catch { domainThrew = true; }
+      expect(oldCode).toBe('wrong_password');
+      expect(domainThrew).toBe(true);
+    }
+  });
+
   it('preserves the old malformed-record error code', async() => {
     // risk: crypto/data integrity — malformed sync input must fail closed with a stable caller-visible code.
     const sodium = await loadSodium();

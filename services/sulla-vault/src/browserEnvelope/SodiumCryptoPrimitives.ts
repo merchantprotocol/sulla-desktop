@@ -1,3 +1,6 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type { CryptoPrimitives, RandomSource } from '@sulla/domain';
 
 /** libsodium implementation of the domain package's crypto boundary. */
