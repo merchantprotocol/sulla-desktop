@@ -161,60 +161,115 @@ describe('local ONNX turn inference safety', () => {
     class FakeChild {
       handlers: Record<string, (value: any) => void> = {};
       requests: any[] = [];
-      on(event: string, callback: (value: any) => void): void { this.handlers[event] = callback; }
-      postMessage(request: any): void { this.requests.push(request); }
-      respond(index: number): void { this.handlers.message({ id: index + 1, ok: true, probability: 0.9, state: new Float32Array(256) }); }
+
+      on(event: string, callback: (value: any) => void): void {
+        this.handlers[event] = callback;
+      }
+
+      postMessage(request: any): void {
+        this.requests.push(request);
+      }
+
+      respond(index: number): void {
+        this.handlers.message({
+          id: index + 1,
+          ok: true,
+          probability: 0.9,
+          state: new Float32Array(256),
+        });
+      }
     }
     const child = new FakeChild();
-    const client = new OrtInferenceClient('unused', 1000, 3, 1, () => child);
+    const client = new OrtInferenceClient('unused', 1_000, 3, 1, () => child);
     const vad = new OrtSileroVad(client, 'silero', { now: () => 1_234 });
     const first = Float32Array.from({ length: 512 }, (_, index) => index);
     const firstEvents = vad.process(first, 1, new AbortController().signal);
     expect(child.requests[0].audio).toHaveLength(576);
-    expect([...child.requests[0].audio.slice(0, 64)]).toEqual(new Array(64).fill(0));
+    expect([...child.requests[0].audio.slice(0, 64)]).toEqual(
+      new Array(64).fill(0),
+    );
     child.respond(0);
-    await expect(firstEvents).resolves.toEqual([{ kind: 'speech-start', sequenceId: 1, timestampMs: 1_234 }]);
+    await expect(firstEvents).resolves.toEqual([
+      { kind: 'speech-start', sequenceId: 1, timestampMs: 1_234 },
+    ]);
 
     const second = new Float32Array(512).fill(900);
     const secondEvents = vad.process(second, 1, new AbortController().signal);
-    expect([...child.requests[1].audio.slice(0, 64)]).toEqual(Array.from({ length: 64 }, (_, index) => index + 448));
+    expect([...child.requests[1].audio.slice(0, 64)]).toEqual(
+      Array.from({ length: 64 }, (_, index) => index + 448),
+    );
     child.respond(1);
     await expect(secondEvents).resolves.toEqual([]);
+
+    const thirdEvents = vad.process(second, 2, new AbortController().signal);
+    expect([...child.requests[2].audio.slice(0, 64)]).toEqual(
+      new Array(64).fill(0),
+    );
+    child.respond(2);
+    await expect(thirdEvents).resolves.toEqual([
+      { kind: 'speech-start', sequenceId: 2, timestampMs: 1_234 },
+    ]);
   });
 
   it('rejects pending calls on utility exit and respawns for the next call', async () => { // risk: stale/hung inference after crash
     class FakeChild {
       handlers: Record<string, (value: any) => void> = {};
-      on(event: string, callback: (value: any) => void): void { this.handlers[event] = callback; }
+      on(event: string, callback: (value: any) => void): void {
+        this.handlers[event] = callback;
+      }
+
       postMessage(): void {}
-      exit(): void { this.handlers.exit(1); }
+
+      exit(): void {
+        this.handlers.exit(1);
+      }
     }
     const children: FakeChild[] = [];
-    const client = new OrtInferenceClient('unused', 1000, 3, 1, () => {
+    const client = new OrtInferenceClient('unused', 1_000, 3, 1, () => {
       const next = new FakeChild();
       children.push(next);
       return next;
     });
-    const pending = client.infer({ operation: 'vad', modelPath: 'silero', audio: new Float32Array(512) });
+    const pending = client.infer({
+      operation: 'vad',
+      modelPath: 'silero',
+      audio: new Float32Array(512),
+    });
     children[0].exit();
     await expect(pending).rejects.toThrow(/exited/);
-    const next = client.infer({ operation: 'vad', modelPath: 'silero', audio: new Float32Array(512) });
+    const next = client.infer({
+      operation: 'vad',
+      modelPath: 'silero',
+      audio: new Float32Array(512),
+    });
     expect(children).toHaveLength(2);
-    children[1].handlers.message({ id: 2, ok: true, probability: 0.1, state: new Float32Array(256) });
+    children[1].handlers.message({
+      id: 2,
+      ok: true,
+      probability: 0.1,
+      state: new Float32Array(256),
+    });
     await expect(next).resolves.toMatchObject({ ok: true, probability: 0.1 });
   });
-  it.each([0, 16_001, 160_000])('creates the fixed 800-frame Smart Turn window for %s samples', samples => { // risk: malformed model input from padding/cropping
+  it.each([0, 16_001, 160_000])(
+    'creates the fixed 800-frame Smart Turn window for %s samples',
+    samples => { // risk: malformed model input from padding/cropping
     const features = new WhisperLogMelExtractor().extract(new Float32Array(samples));
     expect(features).toHaveLength(800 * 80);
     expect([...features].every(Number.isFinite)).toBe(true);
-  });
+    },
+  );
 
   it('places a 1 kHz tone in the expected mel row across frames', () => { // risk: scrambled Smart Turn model input
-    const audio = Float32Array.from({ length: 128_000 }, (_, index) => Math.sin((2 * Math.PI * 1_000 * index) / 16_000));
+    const audio = Float32Array.from({ length: 128_000 }, (_, index) =>
+      Math.sin((2 * Math.PI * 1_000 * index) / 16_000),
+    );
     const features = new WhisperLogMelExtractor().extract(audio);
     const rowEnergy = Array.from({ length: 80 }, (_, bin) => {
       let total = 0;
-      for (let frame = 100; frame < 700; frame++) total += features[bin * 800 + frame];
+      for (let frame = 100; frame < 700; frame++) {
+        total += features[bin * 800 + frame];
+      }
       return total / 600;
     });
 
@@ -223,7 +278,10 @@ describe('local ONNX turn inference safety', () => {
 
   it('matches the exact 400-point FFT power bins against the direct DFT', () => { // risk: corrupted business-critical Smart Turn features
     const extractor = new WhisperLogMelExtractor();
-    const frame = Float32Array.from({ length: 400 }, (_, index) => Math.sin(index * 12.34) + Math.cos(index * 0.91) * 0.25);
+    const frame = Float32Array.from(
+      { length: 400 },
+      (_, index) => Math.sin(index * 12.34) + Math.cos(index * 0.91) * 0.25,
+    );
     const hann = (index: number) => 0.5 - 0.5 * Math.cos((2 * Math.PI * index) / 400);
     const expected = Array.from({ length: 201 }, (_, frequency) => {
       let real = 0;

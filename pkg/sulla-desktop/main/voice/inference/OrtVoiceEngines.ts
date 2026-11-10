@@ -22,7 +22,13 @@ export interface OrtSileroVadOptions {
   minSilenceMs?: number;
 }
 
-/** Streaming Silero adapter with per-sequence recurrent state and 64-sample context. */
+/**
+ * Streaming Silero VAD for pinned onnx-community/silero-vad revision
+ * e71cae966052b992a7eca6b17738916ce0eca4ec. Its 16 kHz streaming signature
+ * follows the V5 OnnxWrapper: 512 new samples + 64 prior context, state [2,1,128].
+ * Reference: snakers4/silero-vad/src/silero_vad/utils_vad.py at
+ * 066409f3d9db45a30d21dfcbf9147826ffdd7052 (context_size=64, input+context).
+ */
 export class OrtSileroVad implements Vad {
   private readonly state = new Float32Array(256);
   private readonly context = new Float32Array(64);

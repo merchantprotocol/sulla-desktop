@@ -36,9 +36,12 @@ export class WhisperLogMelExtractor {
 
     const output = new Float32Array(this.melBins * this.frameCount);
     // Match pipecat-ai/smart-turn/inference.py at a347da2bbb569a64b09c8d4d9c14faf1ee04bd14
-    // and transformers v4.44.2 audio_utils.spectrogram (power=2, center=True,
-    // reflect padding) and WhisperFeatureExtractor._np_extract_fbank_features:
-    // https://github.com/huggingface/transformers/blob/v4.44.2/src/transformers/audio_utils.py
+    // and Hugging Face Transformers commit 174890280b340b89c5bfa092f6b4fb0e2dc2d7fc:
+    // audio_utils.py blob d46b0eb62e0e7e6a4b8c339278600945ebad4064 and
+    // models/whisper/feature_extraction_whisper.py blob a79eeedd0a295c744ee16405582002a0cd77ed19.
+    // Their WhisperFeatureExtractor uses power=2, centered reflect-padded STFT,
+    // then drops its final frame. log10 floor, max-8 clamp and (x+4)/4 follow
+    // _np_extract_fbank_features; the filterbank uses Slaney's 2/(upper-lower) norm.
     // It drops the final STFT frame, uses log10(clamp(x, 1e-10)), clamps at max-8,
     // then applies (x+4)/4. Feature matrix order is [mel, frame].
     for (let frame = 0; frame < this.frameCount; frame++) {
