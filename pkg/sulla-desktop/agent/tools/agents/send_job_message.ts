@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import { PendingReturnedTaskMessage } from '../../app/Services/PendingReturnedTaskMessage';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
@@ -27,12 +28,14 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
   if (targets.length === 0) {
     const returnedJob = await agentJobProvider.jobs.job(jobId);
+    const pendingTaskMessage = new PendingReturnedTaskMessage();
     const pendingReturnedTask = returnedJob?.tasks.find((task, index) =>
-      (taskIndex === undefined || taskIndex === index) && (task.returnedAt || task.finishedAt) && task.completion && !task.completionDeliveredAt);
-    if (pendingReturnedTask) {
+      (taskIndex === undefined || taskIndex === index) && pendingTaskMessage.forTask(task));
+    const pendingMessage = pendingReturnedTask && pendingTaskMessage.forTask(pendingReturnedTask);
+    if (pendingMessage) {
       return {
         successBoolean: false,
-        responseString: `Task returned at ${new Date(pendingReturnedTask.returnedAt ?? pendingReturnedTask.finishedAt ?? 0).toISOString()}; its result is pending in your inbox — read it first.`,
+        responseString: pendingMessage,
       };
     }
     return {

@@ -45,7 +45,7 @@ describe('AgentCompletionRecoveryService', () => {
     const inbox = new AgentCompletionInboxService(new CompletionIdleDispatcher(), new CompletionFormatter(8_000));
     const source = { getPendingCompletions: vi.fn().mockResolvedValue([{
       jobId: 'job-sweep', status: 'completed', createdAt: 1, finishedAt: 10, taskCount: 1,
-      tasks: [{ completion: result('sweep'), returnedAt: 10 }], results: [result('sweep')],
+      tasks: [{ completion: result('sweep'), returnedAt: 10, completionFirstDeliveredAt: 50 }], results: [result('sweep')],
       parentChannel: 'parent', parentThreadId: 'thread',
     }]) };
     const recovery = new AgentCompletionRecoveryService(source as any, inbox, undefined, () => 200_000, timer as any);
@@ -90,7 +90,7 @@ describe('AgentCompletionRecoveryService', () => {
     const completion = result('unconsumed');
     const job: any = {
       jobId: 'job-unconsumed', status: 'parked', createdAt: 1, finishedAt: 10, taskCount: 1,
-      tasks: [{ completion, returnedAt: 10 }], results: [completion],
+      tasks: [{ completion, returnedAt: 10, completionFirstDeliveredAt: 50 }], results: [completion],
       parentChannel: 'parent', parentThreadId: 'thread',
     };
     const source = { getPendingCompletions: vi.fn().mockResolvedValue([job]) };

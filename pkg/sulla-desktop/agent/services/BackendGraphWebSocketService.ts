@@ -269,7 +269,10 @@ export class BackendGraphWebSocketService {
           timestamp: Date.now(),
           metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
         } as any);
-        for (const entry of entries) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+        for (const entry of entries) {
+          await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+          await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+        }
       } else {
         // No live graph state to inject into — should not happen alongside
         // a live waiter, but requeue rather than drop the completion.
@@ -857,6 +860,7 @@ export class BackendGraphWebSocketService {
       // The completion is now part of this turn's input. Persist consumption
       // before the model call so a process restart cannot replay it as new.
       for (const entry of this.claimedCompletionEntries(state, metadata)) {
+        await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
         await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);

@@ -92,7 +92,9 @@ export class AgentCompletionRecoveryService extends Service {
             jobId: job.jobId,
             taskIndex,
             results: [result],
-            notice: this.sweepAgeMs > 0 ? `[re-delivery: first delivered at ${new Date(returnedAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}` : undefined,
+            notice: task.completionFirstDeliveredAt && this.sweepAgeMs > 0
+              ? `[re-delivery: first delivered at ${new Date(task.completionFirstDeliveredAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}`
+              : undefined,
           });
         }
       });

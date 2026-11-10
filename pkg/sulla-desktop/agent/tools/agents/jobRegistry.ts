@@ -83,6 +83,7 @@ export interface AgentJobTask {
   completion?: AgentJobResult;
   /** Set only after this task's contract is dispatched into a parent turn. */
   completionDeliveredAt?: number;
+  completionFirstDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
