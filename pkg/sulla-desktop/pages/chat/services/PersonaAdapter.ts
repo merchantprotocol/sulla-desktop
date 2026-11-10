@@ -327,7 +327,7 @@ export class PersonaAdapter {
     return options?.supportSessionId ? {
       supportSessionId: options.supportSessionId,
       allowedToolNames: options.supportToolNames || [],
-      conversationContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
+      supportContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
     } : {};
   }
 
