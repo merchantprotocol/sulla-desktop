@@ -11,6 +11,16 @@ export interface PendingCompletionSource {
   pendingCompletions?(): Promise<AgentJob[]>;
 }
 
+export interface CompletionRecoveryTimer {
+  every(callback: () => void, intervalMs: number): ReturnType<typeof setInterval>;
+  clear(timer: ReturnType<typeof setInterval>): void;
+}
+
+export class SystemCompletionRecoveryTimer implements CompletionRecoveryTimer {
+  every(callback: () => void, intervalMs: number): ReturnType<typeof setInterval> { return setInterval(callback, intervalMs); }
+  clear(timer: ReturnType<typeof setInterval>): void { clearInterval(timer); }
+}
+
 /** Decides whether a task result has already entered a parent turn. */
 export class CompletionDeliveryPolicy {
   isDelivered(job: AgentJob, task: AgentJobTask): boolean {
@@ -27,9 +37,21 @@ export class AgentCompletionRecoveryService extends Service {
     private readonly source: PendingCompletionSource,
     private readonly inbox: AgentCompletionInboxService,
     private readonly deliveryPolicy = new CompletionDeliveryPolicy(),
+    private readonly clock: () => number = Date.now,
+    private readonly timer: CompletionRecoveryTimer = new SystemCompletionRecoveryTimer(),
   ) {
     super();
   }
+
+  start(intervalMs = 120_000, minimumAgeMs = 120_000): void {
+    if (this.sweepTimer) return;
+    this.sweepAgeMs = minimumAgeMs;
+    this.sweepTimer = this.timer.every(() => { void this.recover().catch(error => console.warn('[AgentCompletionRecovery] sweep failed:', error)); }, intervalMs);
+    (this.sweepTimer as any).unref?.();
+  }
+
+  private sweepTimer?: ReturnType<typeof setInterval>;
+  private sweepAgeMs = 0;
 
   recover(): Promise<void> {
     if (!this.recoveryPromise) {
@@ -41,6 +63,8 @@ export class AgentCompletionRecoveryService extends Service {
   }
 
   dispose(): void {
+    if (this.sweepTimer) this.timer.clear(this.sweepTimer);
+    this.sweepTimer = undefined;
     this.inFlight.clear();
     this.recoveryPromise = null;
   }
@@ -62,11 +86,13 @@ export class AgentCompletionRecoveryService extends Service {
     try {
       job.tasks.forEach((task, taskIndex) => {
         const result = task.completion ?? job.results[taskIndex];
-        if (result && !this.deliveryPolicy.isDelivered(job, task)) {
+        const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt;
+        if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= this.sweepAgeMs) {
           this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, {
             jobId: job.jobId,
             taskIndex,
             results: [result],
+            notice: this.sweepAgeMs > 0 ? `[re-delivery: first delivered at ${new Date(returnedAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}` : undefined,
           });
         }
       });

@@ -26,6 +26,15 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
 
   const targets = await AgentJobMessagingModel.targetsForJob(jobId, taskIndex);
   if (targets.length === 0) {
+    const returnedJob = await agentJobProvider.jobs.job(jobId);
+    const pendingReturnedTask = returnedJob?.tasks.find((task, index) =>
+      (taskIndex === undefined || taskIndex === index) && (task.returnedAt || task.finishedAt) && task.completion && !task.completionDeliveredAt);
+    if (pendingReturnedTask) {
+      return {
+        successBoolean: false,
+        responseString: `Task returned at ${new Date(pendingReturnedTask.returnedAt ?? pendingReturnedTask.finishedAt ?? 0).toISOString()}; its result is pending in your inbox — read it first.`,
+      };
+    }
     return {
       successBoolean: false,
       responseString: taskIndex === undefined

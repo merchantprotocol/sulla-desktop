@@ -21,6 +21,7 @@ export class AgentCompletionServiceProvider {
       new CompletionFormatter(COMPLETION_RESULT_LIMIT),
     );
     this.recovery = new AgentCompletionRecoveryService(new PendingCompletionRegistrySource(), this.inbox);
+    this.recovery.start();
   }
 
   dispose(): void {

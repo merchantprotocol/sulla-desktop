@@ -250,7 +250,7 @@ export class BackendGraphWebSocketService {
    * instead would run disconnected from that still-blocked Promise, leaving
    * it (and the job it is waiting to complete) blocked forever.
    */
-  private handleCompletionWake(channelId: string, threadId: string): void {
+  private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
     if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
@@ -269,6 +269,7 @@ export class BackendGraphWebSocketService {
           timestamp: Date.now(),
           metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
         } as any);
+        for (const entry of entries) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       } else {
         // No live graph state to inject into — should not happen alongside
         // a live waiter, but requeue rather than drop the completion.
@@ -852,6 +853,11 @@ export class BackendGraphWebSocketService {
           for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
         }
         return 'deferred';
+      }
+      // The completion is now part of this turn's input. Persist consumption
+      // before the model call so a process restart cannot replay it as new.
+      for (const entry of this.claimedCompletionEntries(state, metadata)) {
+        await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
