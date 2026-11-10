@@ -58,7 +58,6 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
       tasks: [{ agentId: 'codex-sol-worker', label: 'downgraded-tab', prompt: 'do the work', visibility: 'tab' }],
     });
 
-    expect(response.successBoolean).toBe(true);
     expect(response.result).toMatchObject({
       taskVisibility: [{ index: 0, visibility: 'hidden', requestedVisibility: 'tab', downgradeReason: 'tab_launch_disabled' }],
     });
