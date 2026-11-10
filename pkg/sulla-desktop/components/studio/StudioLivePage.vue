@@ -124,6 +124,7 @@
         <div v-if="killController.switchOn.value" class="kill-banner"><b>All agent launches paused</b><span>Turn off Kill All to allow new launches.</span></div>
         <p v-if="killController.notice.value" class="action-feedback ok-text">{{ killController.notice.value }}</p>
         <p v-if="killController.error.value" class="action-feedback error-text">{{ killController.error.value }}</p>
+        <p v-if="client.error.value" class="action-feedback error-text">Couldn't load live agents: {{ client.error.value }}</p>
         <div class="stats">
           <div class="card stat">
             <div class="lbl">

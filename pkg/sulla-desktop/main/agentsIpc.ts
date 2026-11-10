@@ -31,6 +31,7 @@ import { readConversationLog, readConversationPreview, type AgentConversationEnt
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
+import { debugErrorService } from './DebugErrorService';
 
 // ── Response shape ───────────────────────────────────────────────────────────
 
@@ -468,7 +469,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
     let checkin = null;
     try { checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null; }
-    catch (error) { console.warn(`[agents:thread-jobs] telemetry failed: ${ job.jobId }#${ taskIndex }`, error); }
+    catch (error) { void debugErrorService.reportError(`agents:thread-jobs:telemetry:${ job.jobId }#${ taskIndex }`, error); }
     const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
     const lastActivityAt = activity.lastActivityAt;
 
@@ -521,7 +522,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      console.warn(`[agents:thread-jobs] card degraded: ${ job.jobId }#${ taskIndex }`, error);
+      void debugErrorService.reportError(`agents:thread-jobs:card:${ job.jobId }#${ taskIndex }`, error);
       return {
         jobId: job.jobId,
         taskIndex,
@@ -591,7 +592,7 @@ async function fetchAgents(): Promise<AgentsListResponse['agents']> {
         lastActiveAt: a.lastActiveAt,
       }));
   } catch (error) {
-    console.warn('[agents:list] active agents fetch failed', error);
+    void debugErrorService.reportError('agents:list:active-agents', error);
     return [];
   }
 }
@@ -603,7 +604,7 @@ async function fetchHeartbeat(): Promise<AgentsListResponse['heartbeat']> {
     );
     return getHeartbeatService().getStatus();
   } catch (error) {
-    console.warn('[agents:list] heartbeat fetch failed', error);
+    void debugErrorService.reportError('agents:list:heartbeat', error);
     return null;
   }
 }
@@ -710,12 +711,12 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         tasks,
       };
       } catch (error) {
-        console.warn(`[agents:list] job enrichment failed: ${ job.jobId }`, error);
+        void debugErrorService.reportError(`agents:list:job-enrichment:${ job.jobId }`, error);
         return { jobId: job.jobId, status: job.status, createdAt: job.createdAt, finishedAt: job.finishedAt, taskCount: job.taskCount, error: job.error, parentChannel: job.parentChannel, parentThreadId: job.parentThreadId, parentAgentId: job.parentAgentId, tasks: [] };
       }
     }));
   } catch (error) {
-    console.warn('[agents:list] jobs fetch failed', error);
+    void debugErrorService.reportError('agents:list:jobs', error);
     throw error;
   }
 }
@@ -752,7 +753,7 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
       error: row.error || undefined,
     }));
   } catch (error) {
-    console.warn('[agents:list] workflow runs fetch failed', error);
+    void debugErrorService.reportError('agents:list:workflow-runs', error);
     return [];
   }
 }

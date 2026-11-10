@@ -16,7 +16,7 @@ export interface DebugErrorRecord {
 
 export function useDebugErrors() {
   const errors = ref<DebugErrorRecord[]>([]);
-  const onReported = (_event: unknown, record: DebugErrorRecord) => errors.value.unshift(record);
+  const onReported = (_event: unknown, record: DebugErrorRecord) => { errors.value = [record, ...errors.value].slice(0, 100) };
   const onWindowError = (event: ErrorEvent) => ipcRenderer.send('debug:report', 'window.onerror', { message: event.message, stack: event.error?.stack });
   const onUnhandledRejection = (event: PromiseRejectionEvent) => {
     const error = event.reason;

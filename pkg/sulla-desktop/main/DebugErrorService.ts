@@ -47,9 +47,17 @@ export class DebugErrorService {
       message,
       stack,
     };
-    this.dependencies.relay(record);
     const file = path.join(this.dependencies.logsDir(), 'debug-errors.log');
-    await this.dependencies.append(file, `${ JSON.stringify(record) }\n`);
+    try {
+      this.dependencies.relay(record);
+    } catch (relayError) {
+      this.dependencies.warn('debug:error-relay', relayError);
+    }
+    try {
+      await this.dependencies.append(file, `${ JSON.stringify(record) }\n`);
+    } catch (writeError) {
+      this.dependencies.warn('debug:error-log-write', writeError);
+    }
   }
 }
 
@@ -75,7 +83,7 @@ export const debugErrorService = new DebugErrorService({
 });
 
 export function initDebugErrorReporting(): void {
-  process.on('uncaughtException', error => { void debugErrorService.reportError('main:uncaughtException', error) });
+  process.on('uncaughtExceptionMonitor', error => { void debugErrorService.reportError('main:uncaughtException', error) });
   process.on('unhandledRejection', reason => { void debugErrorService.reportError('main:unhandledRejection', reason) });
   const { ipcMain } = require('electron') as typeof import('electron');
   ipcMain.on('debug:report', (_event, source: string, error: { message?: string; stack?: string }) => {
