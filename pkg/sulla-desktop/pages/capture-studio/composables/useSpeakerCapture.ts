@@ -16,12 +16,14 @@
  */
 
 import { ref, onUnmounted, type Ref } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
+import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
 
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-
-const { ipcRenderer } = require('electron');
 
 const SAMPLE_RATE = 16000;
 const CHANNELS = 1;
@@ -85,7 +87,24 @@ function computePcmRms(pcm: Buffer): number {
   return Math.min(1, Math.sqrt(sum / samples) * 3);
 }
 
-export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
+export function useSpeakerCapture(
+  optionsOrIntegrity: { manageUnmount?: boolean } | SpeakerCaptureIntegrity = {},
+  injectedIntegrityOrCustody?: SpeakerCaptureIntegrity | NativeCaptureCustody,
+  injectedCustody?: NativeCaptureCustody,
+) {
+  const options = optionsOrIntegrity instanceof SpeakerCaptureIntegrity ? {} : optionsOrIntegrity;
+  const integrity = optionsOrIntegrity instanceof SpeakerCaptureIntegrity
+    ? optionsOrIntegrity
+    : injectedIntegrityOrCustody instanceof SpeakerCaptureIntegrity
+      ? injectedIntegrityOrCustody
+      : new SpeakerCaptureIntegrity();
+  const nativeCustody = optionsOrIntegrity instanceof SpeakerCaptureIntegrity
+    ? injectedIntegrityOrCustody instanceof NativeCaptureCustody
+      ? injectedIntegrityOrCustody
+      : injectedCustody ?? new NativeCaptureCustody(integrity)
+    : injectedIntegrityOrCustody instanceof NativeCaptureCustody
+      ? injectedIntegrityOrCustody
+      : injectedCustody ?? new NativeCaptureCustody(integrity);
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -96,7 +115,7 @@ export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
   let writeStream: any = null;
   let filePath = '';
   let totalDataBytes = 0;
-  let pending = Buffer.alloc(0);
+  let pending: Buffer = Buffer.alloc(0);
   let analyserContext: AudioContext | null = null;
   let analyserFrame: number | null = null;
 
@@ -133,43 +152,66 @@ export function useSpeakerCapture(options: { manageUnmount?: boolean } = {}) {
   /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
   async function acquireNative(isCancelled: () => boolean = () => false): Promise<MediaStream | null> {
     releaseNative();
+    const requestGeneration = nativeCustody.begin();
+    let displayStream: MediaStream | null = null;
+    let requestStream: MediaStream | null = null;
     try {
       // Electron's main-process display-media handler supplies the display and
       // `audio: 'loopback'`. Chromium still requires video in this request;
       // discard it immediately and retain only the loopback audio track.
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
         audio: true,
         video: true,
       });
+      if (!nativeCustody.accept(requestGeneration, displayStream)) return null;
       if (isCancelled()) {
-        displayStream.getTracks().forEach(track => track.stop());
+        nativeCustody.reject(displayStream);
         return null;
       }
       const audioTracks = displayStream.getAudioTracks();
       displayStream.getVideoTracks().forEach(track => track.stop());
-      if (audioTracks.length === 0) {
-        displayStream.getTracks().forEach(track => track.stop());
-        console.warn('[useSpeakerCapture] Native loopback returned no audio track');
+      const usableTracks = integrity.usableTracks(audioTracks);
+      for (const track of audioTracks) {
+        if (!usableTracks.includes(track)) track.stop();
+      }
+      if (usableTracks.length === 0) {
+        integrity.stopTracks(displayStream.getTracks());
+        console.warn('[useSpeakerCapture] Native loopback returned no live audio track');
         return null;
       }
 
-      const stream = new MediaStream(audioTracks);
+      const stream = new MediaStream(usableTracks);
+      requestStream = stream;
+      usableTracks.forEach(track => track.addEventListener('ended', () => {
+        if (nativeStream.value === stream) releaseNative();
+      }, { once: true }));
+
+      // ScreenCaptureKit can resolve getDisplayMedia with an already-ended
+      // audio track. Yield once so that lifecycle event is observable before
+      // publishing native success and suppressing the BlackHole fallback.
+      if (!await nativeCustody.acceptAfterYield(requestGeneration, stream)) return null;
+      if (!stream.active || integrity.usableTracks(stream.getAudioTracks()).length === 0) {
+        integrity.stopTracks(stream.getTracks());
+        console.warn('[useSpeakerCapture] Native loopback audio track ended before it became usable');
+        return null;
+      }
+
       nativeStream.value = stream;
       mode.value = 'native';
       active.value = true;
-      audioTracks.forEach(track => track.addEventListener('ended', () => {
-        if (nativeStream.value === stream) releaseNative();
-      }, { once: true }));
       startNativeMeter(stream);
       console.log('[useSpeakerCapture] Native Electron loopback acquired');
       return stream;
     } catch (err: any) {
+      if (requestStream && nativeStream.value === requestStream) releaseNative();
+      else nativeCustody.reject(displayStream);
       console.warn('[useSpeakerCapture] Native loopback unavailable; falling back to BlackHole:', err?.message || err);
       return null;
     }
   }
 
   function releaseNative(): void {
+    nativeCustody.release();
     const stream = nativeStream.value;
     nativeStream.value = null;
     if (stream) stream.getTracks().forEach(track => track.stop());
