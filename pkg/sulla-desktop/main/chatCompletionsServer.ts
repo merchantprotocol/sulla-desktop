@@ -18,7 +18,8 @@ import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrok
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
-import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
+import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
+import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeToolExecutionContextToAccount, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
@@ -1328,6 +1329,21 @@ export class ChatCompletionsServer {
         if (executionContext && usesContainerVaultAuthority() && needsGitHubCredential) {
           try {
             executionContext = await scopeToolExecutionContext(executionContext, 'github', githubRepositoryFromArgs(params));
+          } catch (error) {
+            return res.status(403).json({ success: false, error: (error as Error).message });
+          }
+        }
+        // Slack tools need a signed scope for the account they call, or the
+        // broker transport refuses every Web API request.
+        if (canonicalCategory === 'slack' && usesContainerVaultAuthority()) {
+          if (!executionContext) {
+            return res.status(403).json({ success: false, error: 'Tool session is missing verified execution context' });
+          }
+          try {
+            const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+            const requestedAccount = typeof params.account === 'string' ? params.account : undefined;
+            const slackAccountId = await new SlackAccountResolver(getIntegrationService()).resolve(requestedAccount);
+            executionContext = await scopeToolExecutionContextToAccount(executionContext, 'slack', slackAccountId);
           } catch (error) {
             return res.status(403).json({ success: false, error: (error as Error).message });
           }
