@@ -168,7 +168,8 @@ class FilesSyncV1Impl {
           this.lastSuccessLogAt=now;
         }
       }
-      this.backoff=sent.status==='retry'?Math.min(this.backoff*2,MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
+      const retryAfter=Number((sent.detail as {retryAfterMs?:unknown}|null)?.retryAfterMs);
+      this.backoff=sent.status==='retry'?Math.min(Math.max(this.backoff*2,retryAfter||0),MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
     } catch(error) {
       const code=error instanceof FilesSyncClientError?error.code:'sync_failed';
       const outcome=this.health.failed(code,error instanceof Error?error.message:'');

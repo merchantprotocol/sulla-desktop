@@ -277,7 +277,7 @@ export class CloudSyncService {
       } catch (error) {
         return this.failed(current, safeError(error), undefined);
       }
-      return this.handleResponse(current, response.status, response.body);
+      return this.handleResponse(current, response.status, response.body, response.headers);
     });
   }
 
@@ -345,12 +345,16 @@ export class CloudSyncService {
 
   // ---- signed responses ----
 
-  private async handleResponse(operation:QueuedOperation, status:number, body:any):Promise<{ status:SendStatus; detail:unknown }> {
+  private async handleResponse(operation:QueuedOperation, status:number, body:any, headers:Record<string,string> = {}):Promise<{ status:SendStatus; detail:unknown }> {
     const collectionId = operation.collectionId;
     const ok = status >= 200 && status < 300;
     if (status === 401 || status === 403) {
       // Stale timestamp or signature problems are fixed by re-signing; main retries with backoff.
       return this.failed(operation, 'Sulla Cloud rejected the device signature', { status, error: body?.error });
+    }
+    if (status === 429) {
+      const retryAfterMs = Math.min(5 * 60_000, Math.max(1_000, Number(headers['retry-after']) * 1_000 || 1_000));
+      return this.failed(operation, 'Sulla Cloud is busy; retrying shortly', { status, retryAfterMs, error: body?.error });
     }
     switch (operation.op) {
       case 'create': {
