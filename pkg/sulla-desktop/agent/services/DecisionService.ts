@@ -10,6 +10,7 @@ import { PendingDecisionRepository } from '../repositories/PendingDecisionReposi
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { getWebSocketClientService } from './WebSocketClientService';
 import { LateDecisionAnswerHandler } from './LateDecisionAnswerHandler';
+import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 
 import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
@@ -26,7 +27,7 @@ export class DecisionService {
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: async conversationId => (await ConversationHistoryModel.getByThread(conversationId)) ?? await ConversationHistoryModel.getById(conversationId) },
-      getWebSocketClientService(),
+      new LazyLateAnswerMessageSender(() => getWebSocketClientService()),
     );
   }
   private readonly session = randomUUID();
