@@ -92,8 +92,9 @@ class PerPrTestRunner {
       const proofDelay = Number.parseInt(process.env.TEST_PR_BUDGET_PROOF_DELAY_MS ?? '0', 10);
       if (proofDelay > 0) await this.processRunner.run(process.execPath, ['-e', `setTimeout(() => {}, ${ proofDelay })`], deadline);
       if (files.length > 0) {
+        const changedSpecs = files.filter(file => file.endsWith('.spec.ts'));
         const selection = this.requiresSmoke(files)
-          ? ['run', '--config', 'vitest.agent.config.mts', ...PerPrTestRunner.smokeSpecs]
+          ? ['run', '--config', 'vitest.agent.config.mts', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
           : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts'];
         this.output.log(this.requiresSmoke(files) ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
         await this.processRunner.run('yarn', ['vitest', ...selection], deadline);
@@ -103,7 +104,7 @@ class PerPrTestRunner {
       if (error instanceof Error && error.message === 'TEST_BUDGET_EXCEEDED') {
         this.output.error("TEST BUDGET EXCEEDED: per-PR tests took >60s — make them faster, don't raise the budget (see ARCHITECTURE-GUARD.md)");
       } else this.output.error(error);
-      process.exitCode = 1;
+      process.exitCode = error instanceof Error && error.message === 'TEST_BUDGET_EXCEEDED' ? 124 : 1;
     }
   }
 }

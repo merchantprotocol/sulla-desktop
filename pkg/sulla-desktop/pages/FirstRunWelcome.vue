@@ -117,12 +117,6 @@ const syncCategories = ref([
   { key: 'files', label: 'Files', description: 'make your Sulla Files available everywhere', enabled: true },
   { key: 'memory', label: 'Memory', description: 'keep what Sulla learns consistent', enabled: true },
   { key: 'vault', label: 'Password vault', description: 'store an encrypted backup', enabled: true },
-  { key: 'skills', label: 'Skills', description: 'reuse your installed skills', enabled: true },
-  { key: 'workflows', label: 'Workflows', description: 'keep automations available', enabled: true },
-  { key: 'customAgents', label: 'Agents', description: 'sync your custom agents', enabled: true },
-  { key: 'recipes', label: 'Recipes', description: 'sync installed recipes', enabled: true },
-  { key: 'useCases', label: 'Use cases', description: 'sync saved starter jobs', enabled: true },
-  { key: 'liveAgents', label: 'Live agents', description: 'sync agent configuration', enabled: true },
   { key: 'usage', label: 'Usage', description: 'sync usage history', enabled: true },
 ]);
 // One @, a dotted domain, no empty labels (no trailing or doubled dots).

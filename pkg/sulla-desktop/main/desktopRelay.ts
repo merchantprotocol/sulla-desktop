@@ -56,6 +56,7 @@ import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 import { RelayLivenessWatchdog } from '@pkg/main/relayLivenessWatchdog';
+import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 
 
 const console = Logging.background;
@@ -80,6 +81,7 @@ const PING_INTERVAL_MS = 20_000;
 const STALE_SOCKET_MS  = 45_000;
 const WATCHDOG_DRIFT_THRESHOLD_MS = 5_000;
 const WATCHDOG_PONG_DEADLINE_MS = 5_000;
+const RELAY_LIVENESS_HOLDER = 'desktop-relay';
 // If a freshly-opened socket doesn't fire `open` in this window, we assume
 // it's stuck and tear it down. Prevents a wedged connect from pinning the
 // client in "connecting" forever.
@@ -343,6 +345,7 @@ export class DesktopRelayClient {
 
   /** Stop all heartbeat/watchdog/connect timers. Idempotent. */
   private teardownLiveness() {
+    releaseRelayLiveness(RELAY_LIVENESS_HOLDER);
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     if (this.watchdog) { this.watchdog.stop(); this.watchdog = null; }
     if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
@@ -425,6 +428,7 @@ export class DesktopRelayClient {
       }
       if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
       this.connected = true;
+      acquireRelayLiveness(RELAY_LIVENESS_HOLDER);
       this.lastError = '';
       this.lastFailure = null;
       this.reconnectDelay = RECONNECT_BASE_MS;

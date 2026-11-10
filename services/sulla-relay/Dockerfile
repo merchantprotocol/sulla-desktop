@@ -10,6 +10,8 @@ COPY services/sulla-relay/verify ./services/sulla-relay/verify
 COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime/relayProtocol.ts ./pkg/sulla-desktop/runtime/relayProtocol.ts
 COPY pkg/sulla-desktop/runtime/relayTunnelClient.ts ./pkg/sulla-desktop/runtime/relayTunnelClient.ts
+COPY pkg/sulla-desktop/runtime/LateToolResultStore.ts ./pkg/sulla-desktop/runtime/LateToolResultStore.ts
+COPY packages/runtime-protocol/src/toolDeadlinePolicy.ts ./packages/runtime-protocol/src/toolDeadlinePolicy.ts
 RUN cd services/sulla-relay && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime

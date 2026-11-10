@@ -17,10 +17,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 100
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # Parity walks history from HEAD to the pinned sulla-tools commit. Run it
+      # before the depth=1 base fetch below, which marks the base tip shallow
+      # and cuts the merge commit's history, so every PR failed this check.
+      - name: Bundled sulla-tools parity
+        run: node scripts/check-bundled-tools-parity.mjs
+      - name: Bundled sulla-tools parity tests
+        run: node --test scripts/check-bundled-tools-parity.test.mjs
+      - name: Bundled sulla-files migration parity
+        run: node scripts/check-bundled-files-parity.mjs
+      - name: Bundled sulla-files migration parity tests
+        run: node --test scripts/check-bundled-files-parity.test.mjs
+      - name: Bundled sulla-vault API parity
+        run: node scripts/check-bundled-vault-parity.mjs
+      - name: Bundled sulla-vault API parity tests
+        run: node --test scripts/check-bundled-vault-parity.test.mjs
       - name: Fetch PR base (allowlist may only shrink)
         if: github.event_name == 'pull_request'
         run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"

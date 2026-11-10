@@ -151,7 +151,7 @@ export class ConversationKeywordsModel {
   }
 
   /**
-   * SQL recall fast path for the Conversation Reader: rank prior threads by
+   * SQL keyword-index lookup used by explicit conversation search: rank prior threads by
    * how many distinctive query words their indexed keywords contain, each
    * word weighted by inverse thread frequency (words present in more than
    * maxCommonFraction of threads are ignored). Excludes the current thread.

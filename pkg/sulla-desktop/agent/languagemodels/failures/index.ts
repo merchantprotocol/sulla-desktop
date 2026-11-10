@@ -135,7 +135,8 @@ export function legacyProviderFailure(providerId: string, value: unknown, option
   if (/timeout|timed out|etimedout|stalled/.test(message)) return make(TimedOut);
   if (/no response|empty response|returned empty|no extractable prompt/.test(message)) return make(EmptyResponse);
   if (message.includes('workspace routing discovery failed')) return make(RoutingUnavailable);
-  if (/revoked|forbidden|access denied/.test(message)) return make(AuthRevoked);
+  // Generic forbidden/access-denied transport text is not proof that credentials were revoked.
+  if (/(?:oauth|credential|token|access) (?:was |has been )?revoked|revoked (?:oauth|credential|token|access)/.test(message)) return make(AuthRevoked);
   if (/unauthorized|invalid api key|expired token|not logged in|sign.?in required|\b401\b/.test(message)) return make(AuthExpired);
   if (/quota|usage balance|weekly limit|session limit|balance exhausted/.test(message)) return make(QuotaExceeded);
   if (/rate limit|too many requests/.test(message)) return make(RateLimited);

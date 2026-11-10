@@ -1,10 +1,11 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY services/sulla-tools/package.json ./services/sulla-tools/package.json
-COPY vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz ./vendor/sulla-core/sulla-foundation-0.1.0-1c11fa5.tgz
+COPY vendor/sulla-core/sulla-foundation-0.1.0-2213270.tgz ./vendor/sulla-core/sulla-foundation-0.1.0-2213270.tgz
 RUN corepack prepare yarn@1.22.22 --activate \
   && cd services/sulla-tools \
   && yarn install --production --ignore-scripts --non-interactive \
+  && yarn cache clean \
   && ln -s services/sulla-tools/node_modules /app/node_modules \
   && test -f /app/node_modules/@sulla/foundation/dist/index.js
 COPY services/sulla-tools/src ./services/sulla-tools/src

@@ -29,4 +29,6 @@ export function codexSandboxArgs(_readOnly?: boolean): string[] {
 export const CODEX_NATIVE_SPAWN_FEATURE_PINS = [
   'features.multi_agent=false',
   'features.multi_agent_v2=false',
+  'features.plugins=false',
+  'features.remote_plugin=false',
 ];

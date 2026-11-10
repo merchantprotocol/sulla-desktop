@@ -9,6 +9,8 @@ import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
 import { completeJob, findTaskByThread, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { ReviewItemClosureValidator } from '../../app/Services/ReviewItemClosureValidator';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -40,7 +42,29 @@ export class ReturnResultWorker extends BaseTool {
     }
     const task = job.tasks[taskIndex];
     if (task.returnedAt) return { successBoolean: false, responseString: `Job ${ job.jobId } already returned its contract.` };
-    if (job.status !== 'running') return { successBoolean: false, responseString: `Job ${ job.jobId } is ${ job.status }; it no longer accepts a return.` };
+    if (!['running', 'parked'].includes(job.status)) return { successBoolean: false, responseString: `Job ${ job.jobId } is ${ job.status }; it no longer accepts a return.` };
+
+    const reviewUpdates = Array.isArray(input.reviewUpdates) ? input.reviewUpdates : [];
+    const openReviewItems = await agentJobProvider.reviewItems.itemsForTask(job.jobId, taskIndex, true);
+    const reviewError = new ReviewItemClosureValidator().validate(reviewUpdates, openReviewItems.map(item => item.id));
+    if (reviewError) return { successBoolean: false, responseString: reviewError };
+    for (const update of reviewUpdates) {
+      if (update.status === 'acknowledged') await agentJobProvider.reviewItems.acknowledge(job.jobId, taskIndex, update.id);
+      else await agentJobProvider.reviewItems.close(job.jobId, taskIndex, update.id, update.status, update.commit, update.reason, 'worker');
+    }
+    const obligation = await agentJobProvider.reviewGate.refusal(job.jobId, taskIndex);
+    if (obligation) return { successBoolean: false, responseString: obligation };
+
+    // A manager owns its children until they settle or are explicitly stopped.
+    // Returning here would make its thread terminal and strand every later
+    // child completion, so parking is expressed only by ending the turn.
+    const runningChildren = await agentJobProvider.service.openChildrenForThread(threadId);
+    if (runningChildren > 0) {
+      return {
+        successBoolean: false,
+        responseString: `you have ${ runningChildren } running children; park by ending your turn, or stop them first`,
+      };
+    }
 
     const contract = task.contract ?? normalizeContract(undefined);
     const candidate = contractCandidate(contract, input);
@@ -77,6 +101,17 @@ export class ReturnResultWorker extends BaseTool {
     }
 
     if (recorded.visibility !== 'tab') {
+      // A rehydrated parked manager has no original promise chain left to
+      // settle it after a restart, so its return commits and wakes its parent
+      // here. A live runner sees the same recorded return and completion is
+      // idempotently coalesced by job id.
+      if (job.status === 'parked' || Number(job.restartResumeCount) > 0) {
+        await finishRecoveredJob(recorded);
+        return {
+          successBoolean: true,
+          responseString: `Contract "${ contract.name }" returned to the parent. Parked job ${ job.jobId } is closed.`,
+        };
+      }
       return {
         successBoolean: true,
         responseString: `Contract "${ contract.name }" returned for job ${ job.jobId }. End your turn now; your parent receives it when this run ends.`,
@@ -89,6 +124,16 @@ export class ReturnResultWorker extends BaseTool {
       responseString: `Contract "${ contract.name }" returned to the parent chat. Job ${ job.jobId } is closed.`,
     };
   }
+}
+
+
+async function finishRecoveredJob(job: AgentJob): Promise<void> {
+  if (!job.tasks.every(task => task.returnedAt)) return;
+  const results = job.tasks.map(task => returnedJobResult(task, task.label, task.threadId ?? ''));
+  await completeJob(job.jobId, results);
+  await deliverJobCompletion(job, results);
+  const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
+  for (const task of job.tasks) agentJobLifecycle.wake(task.threadId ?? '');
 }
 
 /** Close a tab job on its return: settle, tell both chats, wake the parent. */
@@ -113,7 +158,7 @@ async function finishTabJob(job: AgentJob, taskIndex: number): Promise<void> {
   const { confirmAgentTabReturn } = await import('../../services/AgentTabOpener');
   if (threadId) confirmAgentTabReturn(threadId, result.contract ?? 'result');
 
-  const delivered = await deliverJobCompletion(job, [result]);
+  const delivered = await deliverJobCompletion(job, [result], taskIndex);
   await safeFinishDelegationByRef(job.jobId, {
     outcome:         result.status === 'completed' ? 'completed' : 'failed',
     detail:          result.status === 'completed' ? '' : `${ result.status }: ${ result.output }`,

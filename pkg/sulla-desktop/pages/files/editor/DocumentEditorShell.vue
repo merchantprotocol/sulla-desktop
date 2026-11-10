@@ -32,7 +32,7 @@
             <span v-if="readOnly" class="property readonly">Read only</span>
           </div>
         </template>
-        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
+        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
         <div v-if="slashOpen" ref="insertMenu" class="slash-menu" role="menu" tabindex="-1" aria-label="Insert block" @keydown="navigateMenu" :style="{left:`${menuPoint.x}px`,top:`${menuPoint.y}px`}">
           <section v-for="section in menuSections" :key="section.label"><h2>{{ section.label }}</h2><button v-for="entry in section.entries" :key="entry.label" type="button" role="menuitem" :disabled="entry.disabled" @click="insertMarkdown(entry.text)"><span v-html="entry.icon" /><div><b>{{ entry.label }}</b><small>{{ entry.description }}</small></div></button></section>
         </div>

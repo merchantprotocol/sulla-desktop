@@ -100,7 +100,7 @@ export function buildGraphToolHandler(
         result = await worker.call(args ?? {});
       }
       return {
-        content: [{ type: 'text', text: String(result.result ?? result.error ?? '') }],
+        content: [{ type: 'text', text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? result.error ?? '') }],
         isError: !result.success,
       };
     } catch (err) {

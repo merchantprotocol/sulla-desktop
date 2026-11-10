@@ -28,7 +28,7 @@ class CloudDataSyncImpl{
  getStatus(){return Object.values(this.status)}
  async syncEnabled(force=false){const p=await getCloudPreferences().catch(()=>null);if(!p?.enabled)return;for(const k of Object.keys(PATH) as ProjectionKind[])if(k==='modelCatalog'?p.enabled:isCloudKindEnabled(p,k as CloudDataKind))await this.syncNow(k,force)}
  syncNow(kind:ProjectionKind,force=true){const old=this.inFlight.get(kind);if(old)return old;const run=this.run(kind,force).finally(()=>this.inFlight.delete(kind));this.inFlight.set(kind,run);return run}
- async deleteCloudCopy(kind:CloudDataKind){if(!await isCloudSignedIn())return false;const deviceId=await getDesktopDeviceId();const apiKind=kind==='liveAgents'?'agents':kind==='useCases'?'use-cases':PATH[kind as ProjectionKind]??kind;const r=await cloudRequest('DELETE',`/cloud-runtime/v1/device/${apiKind}?deviceId=${encodeURIComponent(deviceId)}`);return r.ok}
+ async deleteCloudCopy(kind:CloudDataKind){if(!await isCloudSignedIn())return false;const deviceId=await getDesktopDeviceId();const apiKind=PATH[kind as ProjectionKind]??kind;const r=await cloudRequest('DELETE',`/cloud-runtime/v1/device/${apiKind}?deviceId=${encodeURIComponent(deviceId)}`);return r.ok}
  async deleteAll(){if(!await isCloudSignedIn())return false;const deviceId=await getDesktopDeviceId();return (await cloudRequest('DELETE',`/cloud-runtime/v1/device?deviceId=${encodeURIComponent(deviceId)}`)).ok}
  private set(k:ProjectionKind,v:Omit<ProjectionStatus,'kind'>){return this.status[k]={kind:k,...v}}
  private async run(kind:ProjectionKind,force:boolean):Promise<ProjectionStatus>{try{

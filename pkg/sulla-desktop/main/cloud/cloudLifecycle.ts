@@ -144,9 +144,9 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (prefs.vault) VaultSyncV3.start(); else VaultSyncV3.stop();
   if (prefs.files) FilesSyncV1.start(); else FilesSyncV1.stop();
   if (prefs.memory) MemorySyncV1.start(); else MemorySyncV1.stop();
-  if (prefs.useCases) DeviceInstallSync.start(); else DeviceInstallSync.stop();
-  if (prefs.workflows || prefs.liveAgents) CloudRuntimeProjectionSync.start(); else CloudRuntimeProjectionSync.stop();
-  if (prefs.skills || prefs.customAgents || prefs.recipes || prefs.usage) CloudDataSync.start(); else CloudDataSync.stop();
+  // Marketplace/installable projections are intentionally not user-syncable.
+  DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop();
+  if (prefs.usage) CloudDataSync.start(); else CloudDataSync.stop();
   if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
 
@@ -266,7 +266,7 @@ export function initCloudConnectionEvents(): void {
     if (kind === 'vault') await VaultSyncV3.syncNow();
     else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await MemorySyncV1.syncNow(); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
     else if (kind === 'memory') await MemorySyncV1.syncNow();
-    else if (['skills','customAgents','recipes','usage'].includes(kind)) { await CloudDataSync.syncNow(kind as ProjectionKind, true); if (kind === 'usage') await ByoUsageSync.flush(); }
+    else if (kind === 'usage') { await CloudDataSync.syncNow(kind as ProjectionKind, true); await ByoUsageSync.flush(); }
     return getCloudConnectionStatus();
   });
 

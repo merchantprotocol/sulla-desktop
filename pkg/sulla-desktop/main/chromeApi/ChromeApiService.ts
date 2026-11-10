@@ -378,7 +378,30 @@ export class ChromeApiService implements ChromeApi {
 
       if (props.hidden) {
         // Create a detached WebContentsView — functional but not visible
-        const browserSession = getBrowserSession();
+        // Guarded function tabs get a private session so their blocking
+        // webRequest handler cannot affect ordinary hidden or visible tabs.
+        const browserSession = props.requestGuard
+          ? Electron.session.fromPartition(`function-browser-${ tabId }`)
+          : getBrowserSession();
+        if (props.requestGuard) {
+          const pendingChecks = new Map<string, Promise<void>>();
+          browserSession.webRequest.onBeforeRequest((details, callback) => {
+            // Coalesce concurrent requests for the same URL, but discard the
+            // result afterward so later connections resolve DNS again. Electron
+            // has no post-DNS/pre-connect hook, so this is the narrowest
+            // available DNS-rebinding window.
+            let check = pendingChecks.get(details.url);
+            if (!check) {
+              check = props.requestGuard!(details.url);
+              pendingChecks.set(details.url, check);
+              void check.then(
+                () => pendingChecks.delete(details.url),
+                () => pendingChecks.delete(details.url),
+              );
+            }
+            void check.then(() => callback({ cancel: false }), () => callback({ cancel: true }));
+          });
+        }
         const view = new WebContentsView({
           webPreferences: {
             // Same-origin policy on, like every other browser-session view.
@@ -400,6 +423,7 @@ export class ChromeApiService implements ChromeApi {
 
         this.hiddenViews.set(tabId, view);
         this.attachWebNavigationListeners(tabId, view.webContents);
+        if (props.denyPopups) view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
         view.webContents.loadURL(props.url).catch((err) => {
           console.error(`[ChromeApi] Hidden tab load failed tabId=${ tabId }:`, err);
