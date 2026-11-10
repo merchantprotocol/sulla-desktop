@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ utilityProcess: { fork: vi.fn() } }));
@@ -152,6 +153,7 @@ describe('ModelRepository integrity', () => {
     }
   });
 });
+
 
 describe('local ONNX turn inference safety', () => {
   it('rejects pending calls on utility exit and respawns for the next call', async () => { // risk: stale/hung inference after crash

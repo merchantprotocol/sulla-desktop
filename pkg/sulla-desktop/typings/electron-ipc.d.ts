@@ -43,6 +43,16 @@ export interface MarketplaceBrowseRow {
   kind_label?:          string;
   desktop_only?:        boolean;
   summary?:             Record<string, unknown> | null;
+  // Optional listing facets from the browse API. Missing = no data; never invented.
+  price_cents?:             number | null;
+  currency?:                string | null;
+  video_url?:               string | null;
+  video_duration_seconds?:  number | null;
+  poster_url?:              string | null;
+  photos?:                  string[];
+  requires_apps?:           string[];
+  approval_mode?:           'drafts_only' | 'acts' | null;
+  topic?:                   string | null;
 }
 
 export interface SullaFileReference {
