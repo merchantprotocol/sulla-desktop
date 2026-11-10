@@ -7,6 +7,8 @@ import type { ModelRepository } from '../engine/ModelRepository';
 import type { VoiceLogger } from '../engine/VoiceEngines';
 import { OrtInferenceClient } from './OrtInferenceClient';
 import { OrtSileroVad, OrtSmartTurn, type VoiceClock } from './OrtVoiceEngines';
+import type { KokoroSynthesizer } from '../tts/KokoroSynthesizer';
+import { KokoroTextToSpeech } from '../tts/KokoroTextToSpeech';
 
 /** Constructs local engines only when explicitly enabled; never participates in the live renderer path by default. */
 export class LocalTurnEngineFactory {
@@ -16,9 +18,10 @@ export class LocalTurnEngineFactory {
     private readonly logger: VoiceLogger,
     private readonly clock: VoiceClock,
     private readonly enabled = false,
+    private readonly kokoro: KokoroSynthesizer | null = null,
   ) {}
 
-  async create(): Promise<{ vad: OrtSileroVad; semantic: OrtSmartTurn } | null> {
+  async create(): Promise<{ vad: OrtSileroVad; semantic: OrtSmartTurn; tts: KokoroTextToSpeech | null } | null> {
     if (!this.enabled) return null;
     try {
       const [vad, smart] = await Promise.all([
@@ -28,6 +31,7 @@ export class LocalTurnEngineFactory {
       return {
         vad: new OrtSileroVad(this.client, vad, this.clock),
         semantic: new OrtSmartTurn(this.client, smart, this.logger),
+        tts: this.kokoro ? new KokoroTextToSpeech(this.kokoro, this.logger) : null,
       };
     } catch (error) {
       this.logger.debug('Local turn models unavailable; heuristic remains active', error);
