@@ -72,6 +72,32 @@ describe('VoiceTurnAccumulator end of turn', () => {
   });
 });
 
+describe('VoiceTurnAccumulator default timers', () => {
+  it('commits with browser-strict timers that reject a foreign `this` (Chromium Illegal invocation)', () => {
+    vi.useRealTimers();
+    const realSet = globalThis.setTimeout; const realClear = globalThis.clearTimeout;
+    const pending: Array<() => void> = [];
+    const strictSet = function (this: unknown, fn: () => void) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      pending.push(fn); return pending.length as any;
+    };
+    const strictClear = function (this: unknown) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    };
+    vi.stubGlobal('setTimeout', strictSet); vi.stubGlobal('clearTimeout', strictClear);
+    try {
+      const onCommit = vi.fn();
+      const turn = createVoiceTurnAccumulator({ onInterim: () => {}, onCommit, isTTSPlaying: () => false });
+      expect(() => turn.handleEvent({ event_type: 'transcript_turn', text: 'are you there' })).not.toThrow();
+      expect(() => turn.handleEvent({ event_type: 'utterance_end' })).not.toThrow();
+      pending.at(-1)?.();
+      expect(onCommit).toHaveBeenCalledWith('are you there');
+    } finally {
+      vi.unstubAllGlobals(); globalThis.setTimeout = realSet; globalThis.clearTimeout = realClear;
+    }
+  });
+});
+
 describe('TranscriptNoiseFilter', () => {
   it('keeps real speech and drops tag-only or hallucinated text', () => {
     const f = new TranscriptNoiseFilter();
