@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SpeechChunkGate } from './SpeechChunkGate';
 
 const pcm = Buffer.alloc(1024 * 2);
-const client = (probability: number) => ({ infer: vi.fn(async ({ audio }: { audio: Float32Array }) => ({ ok: true, probabilities: Array(audio.length / 512).fill(probability), state: new Float32Array(256) })) });
+const client = (probability: number) => ({ infer: vi.fn(async ({ audio }: { audio: Float32Array }) => ({ ok: true, probabilities: Array(Math.floor((audio.length - 64) / 512)).fill(probability), state: new Float32Array(256) })) });
 
 describe('SpeechChunkGate', () => {
   it('drops noise and forwards speech through Silero inference', async () => {
@@ -46,8 +46,10 @@ describe('SpeechChunkGate', () => {
     expect(await gate.shouldTranscribe(pcm)).toBe(true);
     expect(warn).toHaveBeenCalledTimes(1);
 
-    const missing = new SpeechChunkGate(client(0), '/missing.onnx', () => false, warn);
+    const missingWarn = vi.fn();
+    const missing = new SpeechChunkGate(client(0), '/missing.onnx', () => false, missingWarn);
     expect(await missing.shouldTranscribe(pcm)).toBe(true);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(await missing.shouldTranscribe(pcm)).toBe(true);
+    expect(missingWarn).toHaveBeenCalledTimes(1);
   });
 });
