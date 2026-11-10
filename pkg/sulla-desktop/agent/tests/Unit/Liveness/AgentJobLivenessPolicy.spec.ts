@@ -23,4 +23,22 @@ describe('AgentJobLivenessPolicy', () => {
     // risk: orchestration liveness — genuinely abandoned workers still need attention.
     expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 11 * 60_000 })).toBe(true);
   });
+
+  it('reaps only old hidden non-parked work with no live graph', () => {
+    // risk: stale orchestration rows must settle without killing active or intentionally parked work.
+    const stale = { createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 2 * 60 * 60_000,
+      hasLiveGraph: false, isTab: false, isParked: false, lostAfterMs: 2 * 60 * 60_000 };
+    expect(policy.isLost(stale)).toBe(true);
+    expect(policy.isLost({ ...stale, hasLiveGraph: true })).toBe(false);
+    expect(policy.isLost({ ...stale, isTab: true })).toBe(false);
+    expect(policy.isLost({ ...stale, isParked: true })).toBe(false);
+    expect(policy.isLost({ ...stale, now: stale.now - 1 })).toBe(false);
+  });
+
+  it('uses recent check-ins to preserve a long-running job', () => {
+    // risk: valid long sessions must not be marked lost just because their row is old.
+    expect(policy.isLost({ createdAt: 0, startedAt: 0, lastActivityAt: 2 * 60 * 60_000 - 1,
+      hasCheckin: true, now: 2 * 60 * 60_000, hasLiveGraph: false, isTab: false, isParked: false,
+      lostAfterMs: 2 * 60 * 60_000 })).toBe(false);
+  });
 });

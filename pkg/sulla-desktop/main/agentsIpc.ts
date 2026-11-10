@@ -464,6 +464,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
+    try {
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
     let checkin = null;
     try { checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null; }
@@ -518,6 +519,25 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
           }
         : {}),
     };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[agents:thread-jobs] card degraded: ${ job.jobId }#${ taskIndex }`, error);
+      return {
+        jobId: job.jobId,
+        taskIndex,
+        agentId: task.agentId,
+        label: task.label,
+        status: task.status === 'parked' ? 'parked' : task.status === 'completed' ? 'done'
+          : task.status === 'stopped' ? 'stopped' : ['error', 'lost', 'blocked'].includes(task.status) ? 'failed' : 'running',
+        createdAt: task.startedAt ?? job.createdAt,
+        finishedAt: task.finishedAt ?? job.finishedAt,
+        conversationId: task.threadId,
+        lastActivity: clipLine(`Details unavailable: ${ reason }`),
+        lastActivityAt: task.startedAt ?? job.createdAt,
+        kind: isTab ? 'tab' : 'job',
+        contract: task.contract?.name ?? 'result',
+      };
+    }
   })));
 
   return cards.filter((card): card is ThreadAgentCard => card !== null)
