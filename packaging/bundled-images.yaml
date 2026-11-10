@@ -15,7 +15,7 @@ images:
   - { name: sulla-postgres, source: ghcr.io/merchantprotocol/sulla-postgres:latest }
   - { name: redis, source: redis:7-alpine }
   - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:latest }
-  - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-5782845e0cc9750e220d1e35e67929a6381551a0 }
+  - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-7b05d560728560b79879231540741f5431e797e5 }
   - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:latest }
   - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-ad11dc6ef3374c3cedd24351c6e5bfd6d0f051aa }
   - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:latest }
