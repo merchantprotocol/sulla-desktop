@@ -10,7 +10,6 @@ import { OrtSileroVad, OrtSmartTurn, type VoiceClock } from './OrtVoiceEngines';
 import type { KokoroSynthesizer } from '../tts/KokoroSynthesizer';
 import { KokoroTextToSpeech } from '../tts/KokoroTextToSpeech';
 import { WhisperOrtSpeechToText } from './WhisperOrtSpeechToText';
-import { WhisperOrtSpeechToText } from './WhisperOrtSpeechToText';
 
 /** Constructs local engines only when explicitly enabled; never participates in the live renderer path by default. */
 export class LocalTurnEngineFactory {
