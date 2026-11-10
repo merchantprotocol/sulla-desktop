@@ -2,9 +2,30 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../../services/DelegatedTurnSettlementPolicy';
+import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError, TurnEndClassifier } from '../../../services/DelegatedTurnSettlementPolicy';
+import { extractAgentTurnOutcome } from '../../../tools/agents/agentTurnOutcome';
 describe('DelegatedTurnSettlementPolicy', () => {
   const policy = new DelegatedTurnSettlementPolicy();
+  it('does not complete explicit continue markers and auto-parks, capped at three', () => {
+    // risk: a worker ending with unfinished work wakes its parent as completed
+    const input = { returned: false, openChildren: 0, pendingWait: false, reminderSent: true, finalText: '<AGENT_CONTINUE> still working', schemaContract: false };
+    expect(policy.decide(input)).toBe('auto_park');
+    expect(policy.decide({ ...input, autoParkCount: 2 })).toBe('auto_park');
+    expect(policy.decide({ ...input, autoParkCount: 3 })).toBe('fail');
+  });
+  it('completes explicit done text and never penalizes pending waits', () => {
+    // risk: explicit completion or a legitimate wait is misclassified as abandoned work
+    expect(new TurnEndClassifier().classify('<AGENT_DONE> result')).toBe('completed');
+    expect(extractAgentTurnOutcome({ messages: [{ role: 'assistant', content: '<AGENT_DONE> result' }] }).status).toBe('completed');
+    expect(extractAgentTurnOutcome({ messages: [{ role: 'assistant', content: '<AGENT_BLOCKED> need input' }] }).status).toBe('blocked');
+    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: true, reminderSent: true, finalText: '<AGENT_CONTINUE>', autoParkCount: 3 })).toBe('wait_park');
+  });
+  it('preserves schema contract reminder-then-fail for unmarked missing returns', () => {
+    // risk: schema-constrained workers stop receiving the contract enforcement path
+    const input = { returned: false, openChildren: 0, pendingWait: false, schemaContract: true, finalText: 'work update' };
+    expect(policy.decide({ ...input, reminderSent: false })).toBe('remind');
+    expect(policy.decide({ ...input, reminderSent: true })).toBe('fail');
+  });
   it('parks each repeated wait and reaches terminal only after the worker returns', () => {
     // risk: a second long wait is mistaken for a missing contract and kills a healthy worker
     const turns = [
