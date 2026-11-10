@@ -8,9 +8,14 @@ import { DelegatedWakeSettlementPolicy } from '../../../services/DelegatedWakeSe
 describe('DelegatedWakeSettlementPolicy', () => {
   const policy = new DelegatedWakeSettlementPolicy();
 
-  it('parks an empty wake while a child is live, then fails on the third consecutive empty wake', () => {
+  it('re-parks an empty completion wake when one sibling is still live', () => {
     // risk: lost delegated work
+    // A settled sibling's result woke the manager, but another worker remains active.
     expect(policy.shouldPark({ liveChildren: 1, pendingWait: false, consecutiveEmptyWakes: 1 })).toBe(true);
+  });
+
+  it('fails after the third consecutive empty wake even while children remain live', () => {
+    // risk: indefinitely parked manager after repeated no-output wakes
     expect(policy.shouldPark({ liveChildren: 1, pendingWait: false, consecutiveEmptyWakes: 2 })).toBe(true);
     expect(policy.shouldPark({ liveChildren: 1, pendingWait: false, consecutiveEmptyWakes: 3 })).toBe(false);
   });
