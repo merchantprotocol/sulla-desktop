@@ -44,6 +44,7 @@ import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
+import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -250,7 +251,7 @@ export class BackendGraphWebSocketService {
    * instead would run disconnected from that still-blocked Promise, leaving
    * it (and the job it is waiting to complete) blocked forever.
    */
-  private handleCompletionWake(channelId: string, threadId: string): void {
+  private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
     if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
@@ -269,6 +270,10 @@ export class BackendGraphWebSocketService {
           timestamp: Date.now(),
           metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
         } as any);
+        for (const entry of entries) {
+          await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+          await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+        }
       } else {
         // No live graph state to inject into — should not happen alongside
         // a live waiter, but requeue rather than drop the completion.
@@ -672,6 +677,7 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
+    const completionConsumption = new CompletionConsumptionRecorder();
     const { getModelProviderService } = await import('./ModelProviderService');
     const modelProvider = getModelProviderService();
     // Before the saved model choice loads (it waits for the vault on a
@@ -853,6 +859,13 @@ export class BackendGraphWebSocketService {
         }
         return 'deferred';
       }
+      // The completion is now part of this turn's input. Persist consumption
+      // before the model call so a process restart cannot replay it as new.
+      for (const entry of this.claimedCompletionEntries(state, metadata)) {
+        completionConsumption.recordInjected([entry]);
+        await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+        await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+      }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
       // Only a dormant parked TASK — no live in-process waiter held this
@@ -991,6 +1004,7 @@ export class BackendGraphWebSocketService {
         if (message?.metadata?.source === 'sub_agent_completion') delete message.metadata.completionEntries;
       }
       turnConsumedInput = true;
+      completionConsumption.confirmSeen();
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
@@ -1029,7 +1043,10 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
-          for (const entry of this.claimedCompletionEntries(state, metadata)) requeueAgentCompletion(channelId, threadId, entry);
+          await completionConsumption.releaseOnAbort(async entry => {
+            requeueAgentCompletion(channelId, threadId, entry);
+            await agentJobProvider.completionAcknowledgements.release(entry);
+          });
           for (const message of state?.messages ?? []) {
             if ((message as any)?.metadata?.source === 'sub_agent_completion') delete (message as any).metadata.completionEntries;
           }

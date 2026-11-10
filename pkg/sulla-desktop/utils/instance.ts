@@ -3,9 +3,27 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import os from 'os';
+import path from 'path';
+
 export const TEST_INSTANCE_NAME = 'firstrun-test';
 export const TEST_INSTANCE_FLAG = '--sulla-test-instance';
 export const TEST_PORT_OFFSET = 10_000;
+
+/** Keeps host child processes on the selected instance's runtime sockets. */
+export class InstanceEnvironmentConfigurator {
+  runtimeDirectory(): string {
+    const instance = requestedInstance();
+    return path.join(os.homedir(), 'Library', 'Application Support', instance ? `Sulla-${ instance }` : 'Sulla', 'runtime');
+  }
+
+  configureRuntimeDirectory(): void {
+    if (requestedInstance() && !process.env.SULLA_RUNTIME_DIR) {
+      process.env.SULLA_RUNTIME_DIR = this.runtimeDirectory();
+    }
+  }
+}
+
 export const TEST_AUTOPILOT_MODES = ['mac-only', 'cloud-fake'] as const;
 export type TestAutopilotMode = typeof TEST_AUTOPILOT_MODES[number];
 

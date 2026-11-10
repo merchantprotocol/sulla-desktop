@@ -30,6 +30,11 @@ interface PendingHttp {
   ownerReplicaId: string;
   deviceId:       string;
   timer:          ReturnType<typeof setTimeout>;
+  category:       string;
+  tool:           string;
+  operationTypes: string[];
+  startedAt:      number;
+  deadlineMs:     number;
 }
 
 interface LocalRoute {
@@ -169,11 +174,16 @@ export class RelayService {
       tool,
       args:            body.args,
       deadlineAt:      Date.now() + deadlineMs,
+      operationTypes:  Array.isArray(body.operationTypes) ? body.operationTypes.filter((type): type is string => typeof type === 'string') : [],
     };
+    const startedAt = Date.now();
     const timer = setTimeout(() => {
       this.timeoutRequest(requestId).catch(error => console.error('[sulla-relay] Timeout cleanup failed:', error));
     }, deadlineMs);
-    this.pendingHttp.set(requestId, { response, ownerReplicaId: presence.replicaId, deviceId, timer });
+    this.pendingHttp.set(requestId, {
+      response, ownerReplicaId: presence.replicaId, deviceId, timer, category, tool,
+      operationTypes: envelope.operationTypes ?? [], startedAt, deadlineMs,
+    });
     response.on('close', () => {
       if (!response.writableEnded && this.pendingHttp.has(requestId)) {
         this.cancelRequest(requestId).catch(error => console.error('[sulla-relay] Cancellation failed:', error));
@@ -325,7 +335,16 @@ export class RelayService {
     const pending = this.pendingHttp.get(requestId);
     if (!pending) return;
     this.pendingHttp.delete(requestId);
-    sendJson(pending.response, 504, { error: relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true) });
+    const sideEffectUnknown = pending.operationTypes.some(type => ['create', 'update', 'delete', 'execute'].includes(type));
+    const toolName = `${ pending.category }/${ pending.tool }`;
+    const details = {
+      tool: toolName,
+      deadlineMs: pending.deadlineMs,
+      elapsedMs: Date.now() - pending.startedAt,
+      ...(sideEffectUnknown ? { sideEffectUnknown: true } : {}),
+      hint: sideEffectUnknown ? `check state before retrying, e.g. github/list_prs for ${ pending.tool }` : 'safe to retry once',
+    };
+    sendJson(pending.response, 504, { error: { ...relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true), details } });
     await this.publishOrCancelLocal(pending.ownerReplicaId, requestId, pending.deviceId);
   }
 

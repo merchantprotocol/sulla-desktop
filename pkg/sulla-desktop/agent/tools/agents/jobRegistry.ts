@@ -85,6 +85,10 @@ export interface AgentJobTask {
   completionDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
+  /** The visibility the caller asked for when it was downgraded (never silent). */
+  requestedVisibility?: 'tab';
+  /** Why a requested tab ran hidden instead (see TabVisibilityResolver). */
+  downgradeReason?: string;
   stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
   stopReason?: string;
   /** Durable leaf-worker wait details while status is parked. */

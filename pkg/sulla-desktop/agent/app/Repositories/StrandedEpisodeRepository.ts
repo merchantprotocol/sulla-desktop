@@ -50,6 +50,10 @@ export class StrandedEpisodeRepository {
     return rows.length === 1;
   }
 
+  async reopen(stateKey: string): Promise<void> {
+    await this.connection.run(`UPDATE agent_stranded_episodes SET status = 'pending', delivered_at = NULL WHERE state_key = $1 AND status = 'delivered'`, [stateKey]);
+  }
+
   async deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> {
     const rows = await this.connection.select(`SELECT DISTINCT ON (manager_job_id, manager_task_index) manager_job_id, manager_task_index, state_key, reason
       FROM agent_stranded_episodes WHERE status = 'delivered' ORDER BY manager_job_id, manager_task_index, delivered_at DESC`);

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { ToolExecutionContext } from './executionContext.js';
+import { ToolDeadlinePolicy } from './toolDeadlinePolicy.js';
 
 export interface ToolResult {
   success: boolean;
@@ -12,13 +13,15 @@ export interface ToolResult {
 }
 
 export interface DesktopExecutor {
-  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number }): Promise<ToolResult>;
+  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult>;
 }
 
 export class HttpDesktopExecutor implements DesktopExecutor {
+  private readonly deadlinePolicy = new ToolDeadlinePolicy();
+
   constructor(private readonly endpoint: string, private readonly bearerToken: string) {}
 
-  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number }): Promise<ToolResult> {
+  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), opts.deadlineMs);
     try {
@@ -37,7 +40,14 @@ export class HttpDesktopExecutor implements DesktopExecutor {
       return body as ToolResult;
     } catch (error) {
       const timeoutHit = error instanceof Error && error.name === 'AbortError';
-      return { success: false, error: { code: timeoutHit ? 'deadline_exceeded' : 'desktop_unavailable', message: timeoutHit ? 'Desktop executor deadline exceeded' : `Desktop executor unavailable: ${ error instanceof Error ? error.message : String(error) }` } };
+      return {
+        success: false,
+        error: {
+          code: timeoutHit ? 'deadline_exceeded' : 'desktop_unavailable',
+          message: timeoutHit ? 'Desktop executor deadline exceeded' : `Desktop executor unavailable: ${ error instanceof Error ? error.message : String(error) }`,
+          ...(timeoutHit ? { details: this.deadlinePolicy.timeoutDetails(tool, opts.deadlineMs, opts.deadlineMs, opts.operationTypes) } : {}),
+        },
+      };
     } finally {
       clearTimeout(timeout);
     }

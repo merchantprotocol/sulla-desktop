@@ -78,6 +78,14 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         AND (tasks -> $2::int) ->> 'completionDeliveredAt' IS NULL`, [jobId, taskIndex, deliveredAt]);
   }
 
+  async markTaskCompletionFirstDelivered(jobId: string, taskIndex: number, deliveredAt: number): Promise<void> {
+    await this.connection.run(`UPDATE agent_jobs
+      SET tasks = jsonb_set(tasks, ARRAY[$2::text, 'completionFirstDeliveredAt'], to_jsonb($3::bigint), true)
+      WHERE job_id = $1
+        AND (tasks -> $2::int) IS NOT NULL
+        AND (tasks -> $2::int) ->> 'completionFirstDeliveredAt' IS NULL`, [jobId, taskIndex, deliveredAt]);
+  }
+
   async updateTaskCompletions(jobId: string, taskIndex: number, tasks: AgentJobTask[], results: AgentJobResult[]): Promise<void> {
     const task = tasks[taskIndex];
     const generation = task?.generation ?? 1;
@@ -132,7 +140,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       RETURNING r.generation, r.reopen_count, r.lease_id
     ) UPDATE agent_jobs j SET status = 'running', finished_at = NULL, completion_delivered_at = NULL,
       tasks = jsonb_set(j.tasks, ARRAY[$2::text],
-        ((j.tasks -> $2::int) - 'result' - 'summary' - 'returnedAt' - 'completion' - 'completionDeliveredAt' - 'finishedAt') ||
+        ((j.tasks -> $2::int) - 'result' - 'summary' - 'returnedAt' - 'completion' - 'completionDeliveredAt' - 'completionFirstDeliveredAt' - 'finishedAt') ||
         jsonb_build_object('status', 'running', 'generation', claimed.generation, 'reopenCount', claimed.reopen_count, 'reopenLeaseId', claimed.lease_id), false)
       FROM claimed WHERE j.job_id = $1 RETURNING claimed.generation, claimed.lease_id`, [jobId, taskIndex, expectedGeneration, leaseId]);
     return rows[0] ? { generation: Number(rows[0].generation), leaseId: String(rows[0].lease_id) } : undefined;
