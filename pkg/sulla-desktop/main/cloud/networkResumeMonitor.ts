@@ -44,7 +44,7 @@ const SYSTEM_CLOCK: NetworkResumeClock = {
  */
 export class NetworkResumeMonitor extends EventEmitter {
   private readonly clock: NetworkResumeClock;
-  private wasOnline: boolean;
+  private wasOnline = false;
   private debounce: unknown = null;
   private poll: unknown = null;
   private readonly onPowerResume = (): void => this.scheduleEmit();
@@ -52,11 +52,11 @@ export class NetworkResumeMonitor extends EventEmitter {
   constructor(private readonly deps: NetworkResumeDeps) {
     super();
     this.clock = deps.clock ?? SYSTEM_CLOCK;
-    this.wasOnline = deps.net.isOnline();
   }
 
   start(): void {
     if (this.poll) return;
+    this.wasOnline = this.deps.net.isOnline();
     this.deps.power.on('resume', this.onPowerResume);
     this.deps.power.on('unlock-screen', this.onPowerResume);
     this.poll = this.clock.setInterval(() => this.checkConnectivity(), NETWORK_POLL_MS);

@@ -31,7 +31,8 @@ import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { MemorySyncV1 } from './memorySyncV1';
 import { SyncDriverSupervisor } from './syncDriverSupervisor';
-import { NetworkResumeMonitor } from './networkResumeMonitor';
+import { NetworkResumeMonitor, type NetworkResumePowerSource, type NetworkStatusSource } from './networkResumeMonitor';
+import { CloudResumeSync } from './cloudResumeSync';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -76,26 +77,21 @@ function stopSyncDriverSupervisor():void {
   syncDriverSupervisor.stop();
 }
 
-let networkResume: NetworkResumeMonitor | null = null;
+// Electron modules are read on first use, not at import, so this file loads before app ready.
+const powerEvents: NetworkResumePowerSource = {
+  on: (event, listener) => { if (event === 'resume') powerMonitor.on('resume', listener); else powerMonitor.on('unlock-screen', listener) },
+  removeListener: (event, listener) => { if (event === 'resume') powerMonitor.removeListener('resume', listener); else powerMonitor.removeListener('unlock-screen', listener) },
+};
+const networkStatus: NetworkStatusSource = { isOnline: () => net.isOnline() };
 
-function getNetworkResumeMonitor(): NetworkResumeMonitor {
-  if (!networkResume) {
-    networkResume = new NetworkResumeMonitor({ power: powerMonitor, net });
-    networkResume.on('online', () => resumeCloudSyncAfterReconnect());
-  }
-  return networkResume;
-}
-
-/** Network is back or the laptop woke: push pending local edits now instead of waiting for the next tick. */
-function resumeCloudSyncAfterReconnect():void {
-  if (!signedIn) return;
-  getCloudPreferences().then(prefs => {
-    if (!prefs.enabled) return;
-    FilesSyncV1.resetBackoff();
-    FilesSyncV1.wake();
-    if (prefs.vault) return VaultSyncV3.syncNow();
-  }).catch(() => undefined);
-}
+const cloudResumeSync = new CloudResumeSync({
+  files: FilesSyncV1,
+  vault: VaultSyncV3,
+  preferences: () => getCloudPreferences(),
+  isSignedIn: () => signedIn,
+});
+const networkResume = new NetworkResumeMonitor({ power: powerEvents, net: networkStatus });
+networkResume.on('online', () => { cloudResumeSync.handleOnline().catch(() => undefined) });
 
 /**
  * Native, local-only approval. Default button is Deny; the dialog can only
@@ -227,7 +223,7 @@ function installPrefsListener() {
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
   startSyncDriverSupervisor();
-  getNetworkResumeMonitor().start();
+  networkResume.start();
   installPrefsListener();
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
@@ -243,7 +239,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   stopSyncDriverSupervisor();
-  networkResume?.stop();
+  networkResume.stop();
   channel?.stop();
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
