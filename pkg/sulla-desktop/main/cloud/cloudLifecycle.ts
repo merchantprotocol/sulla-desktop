@@ -17,7 +17,7 @@
  * Signed out ⇒ everything stops.
  */
 
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, net, powerMonitor } from 'electron';
 
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
@@ -31,6 +31,7 @@ import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { MemorySyncV1 } from './memorySyncV1';
 import { SyncDriverSupervisor } from './syncDriverSupervisor';
+import { NetworkResumeMonitor } from './networkResumeMonitor';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -73,6 +74,27 @@ function startSyncDriverSupervisor():void {
 
 function stopSyncDriverSupervisor():void {
   syncDriverSupervisor.stop();
+}
+
+let networkResume: NetworkResumeMonitor | null = null;
+
+function getNetworkResumeMonitor(): NetworkResumeMonitor {
+  if (!networkResume) {
+    networkResume = new NetworkResumeMonitor({ power: powerMonitor, net });
+    networkResume.on('online', () => resumeCloudSyncAfterReconnect());
+  }
+  return networkResume;
+}
+
+/** Network is back or the laptop woke: push pending local edits now instead of waiting for the next tick. */
+function resumeCloudSyncAfterReconnect():void {
+  if (!signedIn) return;
+  getCloudPreferences().then(prefs => {
+    if (!prefs.enabled) return;
+    FilesSyncV1.resetBackoff();
+    FilesSyncV1.wake();
+    if (prefs.vault) return VaultSyncV3.syncNow();
+  }).catch(() => undefined);
 }
 
 /**
@@ -205,6 +227,7 @@ function installPrefsListener() {
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
   startSyncDriverSupervisor();
+  getNetworkResumeMonitor().start();
   installPrefsListener();
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
@@ -220,6 +243,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   stopSyncDriverSupervisor();
+  networkResume?.stop();
   channel?.stop();
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
