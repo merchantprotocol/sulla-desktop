@@ -13,7 +13,7 @@
  * clause breaks (then word breaks). The first unit is kept short so audio
  * starts sooner; later units render while earlier ones play.
  */
-export function splitForSynthesis(text: string, max = 160, firstMax = 90): string[] {
+export function splitForSynthesis(text: string, max = 160, firstMax = 45): string[] {
   const sentences = text.match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g) ?? [text];
   const out: string[] = [];
 

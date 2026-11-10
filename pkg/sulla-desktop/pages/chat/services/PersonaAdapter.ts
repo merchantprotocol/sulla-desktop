@@ -22,6 +22,7 @@
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+import { VoiceAgentRouting } from './VoiceAgentRouting';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
@@ -51,6 +52,7 @@ export interface PersonaAdapterOptions {
 }
 
 export class PersonaAdapter {
+  private readonly voiceAgentRouting = new VoiceAgentRouting();
   private ci:           ChatInterface;
   private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
@@ -359,12 +361,13 @@ export class PersonaAdapter {
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
+    const agentId = this.voiceAgentRouting.resolve(inputSource, this.controller.thread.value.agentId);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
     const selection = {
       ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
       ...(inputSource ? { inputSource } : {}),
       ...(voiceTurnId ? { voiceTurnId } : {}),
-      ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
+      ...(agentId ? { agentId } : {}),
       modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
