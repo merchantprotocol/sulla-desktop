@@ -24,6 +24,7 @@ import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from '
 import type { DomainVaultSyncCodec } from './DomainVaultSyncCodec.js';
 import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js';
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
+import { VaultWrapFingerprint } from './wrapFingerprint.js';
 import { ensureSyncSchema } from './schema.js';
 
 import type { Database } from '../db.js';
@@ -92,10 +93,6 @@ export class HeadChainLinkPolicy {
 }
 
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-/** Fingerprint of what the bundle wraps; changes on a password change, KDF change or key rotation. */
-const wrapFingerprint = (account: LocalAccountRow, recovery?: unknown) => sha256Hex(Buffer.from(JSON.stringify([
-  account.kdf, account.encrypted_user_key, account.public_key, account.encrypted_private_key, recovery ?? null,
-])));
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
 /** True when `next` grants agents anything `current` doesn't (§4: remote widening waits for the owner). */
@@ -132,6 +129,7 @@ export class CloudVaultSyncRunner {
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly headChainLinkPolicy = new HeadChainLinkPolicy();
+  private readonly wrapFingerprint = new VaultWrapFingerprint();
 
   constructor(
     private readonly db: Database,
@@ -226,8 +224,8 @@ export class CloudVaultSyncRunner {
         configured: true, vaultId: state.vault_id, headSeq: num(state.head_seq), lastPushAt: state.last_push_at,
         lastPullAt: state.last_pull_at, lastError: state.last_error, policyReviewPending: num(review.rows[0]?.n),
         pendingChanges: num(pending.rows[0]?.n),
-        // The master password (or KDF) changed since the last upload: the Cloud bundle needs a rewrap.
-        bundleStale: Boolean(account && state.bundle_sha && wrapFingerprint(account, recovery) !== state.bundle_sha),
+        // A semantic wrap change since the last verified bundle needs a rewrap.
+        bundleStale: Boolean(account && state.bundle_sha && this.wrapFingerprint.forAccount(account, recovery) !== state.bundle_sha),
       };
     });
   }
@@ -315,10 +313,6 @@ export class CloudVaultSyncRunner {
               'UPDATE users SET encrypted_user_key=$2,public_key=$3,encrypted_private_key=$4,kdf=$5,updated_at=now() WHERE id=$1',
               [userId, remoteBundle.encryptedUserKey, remoteBundle.publicKey, remoteBundle.encryptedPrivateKey, nextKdf],
             );
-            await client.query(
-              'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,updated_at=now() WHERE owner_user_id=$1',
-              [userId, remoteBundle.bundleGeneration, wrapFingerprint({ id: userId, encrypted_user_key: remoteBundle.encryptedUserKey, public_key: remoteBundle.publicKey, encrypted_private_key: remoteBundle.encryptedPrivateKey, kdf: nextKdf }, remoteBundle.recovery)],
-            );
           }
           for (const record of deltas) {
             const prior = known.get(record.id);
@@ -326,6 +320,25 @@ export class CloudVaultSyncRunner {
             const outcome = await this.applyRecord(client, envelope, userId, userKey, record, prior);
             applied += 1;
             conflictCopies += outcome.conflictCopy ? 1 : 0;
+          }
+          // The pull is now verified and applied. Record the remote fingerprint
+          // only when its effective wrap equals the local account wrap. This also
+          // repairs stale fingerprints on an unchanged-generation pull without
+          // masking a real local password/KDF/key change.
+          if (remoteBundle && remoteBundle.bundleGeneration >= num(state.bundle_generation)) {
+            const localAccount = await client.query<LocalAccountRow>(
+              'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1 AND disabled_at IS NULL', [userId],
+            );
+            const localRecovery = await client.query<LocalRecoveryRow>(
+              'SELECT recovery_salt,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [userId],
+            );
+            const account = localAccount.rows[0];
+            if (account && this.wrapFingerprint.forAccount(account, localRecovery.rows[0] ?? null) === this.wrapFingerprint.forBundleFields(remoteBundle)) {
+              await client.query(
+                'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,updated_at=now() WHERE owner_user_id=$1',
+                [userId, remoteBundle.bundleGeneration, this.wrapFingerprint.forBundleFields(remoteBundle)],
+              );
+            }
           }
           await client.query(
             `UPDATE cloud_vault_sync_state SET head_seq=$2,head_mac=$3,last_pull_at=now(),last_error=NULL,updated_at=now() WHERE owner_user_id=$1`,
@@ -476,7 +489,7 @@ export class CloudVaultSyncRunner {
         `INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_push_at)
          VALUES ($1,$2,1,1,1,$3,$4,now())
          ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,bundle_sha=$4,last_push_at=now(),last_error=NULL,updated_at=now()`,
-        [userId, vaultId, head.mac, wrapFingerprint(account, recovery)],
+        [userId, vaultId, head.mac, this.wrapFingerprint.forAccount(account, recovery)],
       );
       for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null, false);
     });
@@ -495,7 +508,7 @@ export class CloudVaultSyncRunner {
     }
     const bundle = envelope.buildBundle(fields, userKey);
     const body = Buffer.from(JSON.stringify({ bundle, expectedBundleGeneration: num(state.bundle_generation) }));
-    const fingerprint = wrapFingerprint(account, recovery);
+    const fingerprint = this.wrapFingerprint.forAccount(account, recovery);
     return this.stash(userId, 'rewrap', 'PUT', `/cloud-vault-sync/vaults/${ state.vault_id }?op=rewrap&deviceId=${ encodeURIComponent(deviceId) }`, body, state.vault_id, async(_res, client) => {
       await client.query(
         'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,last_error=NULL,updated_at=now() WHERE owner_user_id=$1',
