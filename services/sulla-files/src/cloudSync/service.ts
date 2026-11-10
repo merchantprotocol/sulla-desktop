@@ -43,6 +43,7 @@ class HttpStatusError extends Error {
 function safeError(error:unknown):string {
   const code = (error as { code?:unknown })?.code;
   if (code === 'FILE_OFFLINE') return 'Sulla Cloud is unreachable';
+  if (code === 'FILE_BUSY') return 'Sulla Cloud is busy; retrying shortly';
   if (code === 'FILES_SYNC_INTEGRITY' || code === 'FILE_INTEGRITY') return `Integrity check failed: ${ String((error as Error).message).slice(0, 200) }`;
   return 'Cloud backup step failed';
 }
@@ -701,6 +702,8 @@ export class CloudSyncService {
   }
 
   private async dropSession(collectionId:string):Promise<void> {
+    const uploadId = (await this.repository.sync(collectionId))?.uploadSession?.uploadId;
+    if (uploadId) await this.api.abortUpload(uploadId).catch(() => undefined);
     await this.staging.clear(collectionId);
     await this.repository.dropCollectionOperations(collectionId, ['upload-open', 'commit']);
     await this.repository.saveSession(collectionId, null, 0, 'idle');
