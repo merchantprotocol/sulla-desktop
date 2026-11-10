@@ -10,7 +10,7 @@ import type { Database } from './db.js';
 import type { CloudSyncAuthority } from './browserEnvelope/syncRunner.js';
 import { ensureSyncSchema } from './browserEnvelope/schema.js';
 import type { FilesAuditEmitter } from './filesAudit.js';
-import { createSyncEnvelope, loadSodium } from './browserEnvelope/envelope.js';
+import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import { unwrapMemorySyncKey, wrapMemorySyncKey } from './memorySyncKeyWrap.js';
 
 const subtle=webcrypto.subtle, enc=new TextEncoder();
@@ -48,7 +48,7 @@ export async function transportWrap(key32:Uint8Array,recipientPublicKey:string,r
 export class FilesCloudEscrowService {
   private restoredCloudKey?:{userKey:Uint8Array;vaultId:string;vaultEpoch:number;expiresAt:number};
   private readonly restoreKeyTtlMs=5*60_000;
-  constructor(private readonly db:Database,private readonly authority:CloudSyncAuthority,private readonly audit?:FilesAuditEmitter){}
+  constructor(private readonly db:Database,private readonly authority:CloudSyncAuthority,private readonly audit?:FilesAuditEmitter, private readonly codecProvider:DomainVaultSyncCodecProvider=new DomainVaultSyncCodecProvider()){}
   async wrapMemoryKey(memoryKey:string){
     const raw=new Uint8Array(Buffer.from(memoryKey,'base64'));if(raw.byteLength!==32)throw new FilesCloudEscrowError('invalid_request',400);
     return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{try{const wrappedKey=await wrapMemorySyncKey(userKey,userId,raw);assertCurrent();return{wrappedKey}}finally{raw.fill(0)}})
@@ -86,7 +86,7 @@ export class FilesCloudEscrowService {
     if(fetched.status!==200)throw new FilesCloudEscrowError('cloud_bundle_unavailable',fetched.status||502);
     const body=typeof fetched.body==='string'?JSON.parse(fetched.body):fetched.body as any;
     const bundle=body?.bundle??body;
-    const envelope=createSyncEnvelope(await loadSodium());
+    const envelope=await this.codecProvider.get();
     let userKey:Uint8Array;
     try { userKey=envelope.unlockBundle(bundle,password) }
     catch { throw new FilesCloudEscrowError('wrong_password',401,'That Cloud vault password was not accepted.'); }

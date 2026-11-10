@@ -90,7 +90,8 @@ import type {
 } from './contracts.js';
 import { transportWrap } from './filesCloudEscrow.js';
 import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
-import { createSyncEnvelope, loadSodium, type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
+import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
+import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
@@ -603,6 +604,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
   private readonly filesAudit: FilesAuditEmitter;
+  private codecProvider = new DomainVaultSyncCodecProvider();
+
   private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
 
   constructor(
@@ -1447,7 +1450,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault enrollment was not approved');
     const keys=this.requireKeys();
-    const env=createSyncEnvelope(await loadSodium());
+    const env=await this.codecProvider.get();
     const bundle=input.bundle as SyncBundle, head=input.head as SyncHead;
     env.verifyBundle(bundle,keys.userKey);
     if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
@@ -1467,7 +1470,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       plain=await this.filesTransport.unwrap(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
       const payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain)) as {userKey:string;bundle:SyncBundle;head:SyncHead};
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
-      const env=createSyncEnvelope(await loadSodium()); env.verifyBundle(payload.bundle,userKey);
+      const env=await this.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
       const wrapped=await unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
       privateKey=await unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);

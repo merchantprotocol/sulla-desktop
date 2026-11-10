@@ -359,6 +359,9 @@ class SullaFilesWatcher {
     }
   }
 
+  /** Files sync must wait until initialization and the current unlock both settle. */
+  isReadyForSync():boolean { return this.started && !this.stopped && this.unlockPermitted && this.unlocking === 0 }
+
   private watchRoot(id:string,rootPath:string):void {
     this.watchers.get(id)?.close();
     try { this.watchers.set(id,fs.watch(rootPath,{recursive:process.platform !== 'linux',persistent:false},()=>{

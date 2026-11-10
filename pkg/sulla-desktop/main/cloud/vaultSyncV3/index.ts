@@ -31,6 +31,7 @@ import { signDeviceMessage } from '../deviceKey';
 import { ContainerSyncError, VaultSyncContainer, type PreparedSync, type SyncOp } from './containerClient';
 
 import Logging from '@pkg/utils/logging';
+import { SyncDriverHealth } from '../syncDriverHealth';
 
 const console = Logging.background;
 
@@ -47,9 +48,13 @@ export interface VaultSyncStatus {
   skipped?:    string;
   conflicts?:  number;
   pendingPolicyReview?: number;
+  health?: ReturnType<SyncDriverHealth['snapshot']>;
 }
 
 class VaultSyncV3Impl {
+  private readonly health = new SyncDriverHealth();
+  private lastSuccessLogAt = 0;
+  private lastCounts = { pushed: 0, pulled: 0 };
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
@@ -58,22 +63,30 @@ class VaultSyncV3Impl {
 
   start(): void {
     if (this.reconcileTimer) return;
-    this.reconcileTimer = setInterval(() => { this.syncIfEnabled().catch(() => undefined) }, RECONCILE_MS);
+    this.health.setRunning(true);
+    this.health.scheduledIn(RECONCILE_MS);
+    this.reconcileTimer = setInterval(() => {
+      this.health.scheduledIn(RECONCILE_MS);
+      this.syncIfEnabled().catch(() => undefined);
+    }, RECONCILE_MS);
     this.pollTimer = setInterval(() => { this.pushIfDirty().catch(() => undefined) }, POLL_MS);
     this.reconcileTimer.unref?.();
     this.pollTimer.unref?.();
     this.syncIfEnabled().catch(() => undefined);
   }
 
+  restart():void { this.stop(); this.start() }
+
   stop(): void {
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.debounce) clearTimeout(this.debounce);
     this.reconcileTimer = this.pollTimer = this.debounce = null;
+    this.health.setRunning(false);
   }
 
   getStatus(): VaultSyncStatus[] {
-    return [this.status];
+    return [{ ...this.status, health: this.health.snapshot() }];
   }
 
   /** Call after the vault unlocks: queued local edits go up, Cloud edits come down. */
@@ -90,6 +103,7 @@ class VaultSyncV3Impl {
     const prefs = await getCloudPreferences().catch(() => null);
     if (!prefs?.enabled || !prefs.vault || this.inFlight || this.debounce) return;
     const local = await VaultSyncContainer.status().catch(() => null);
+    this.health.setPendingLocalEdits(local?.pendingChanges ?? 0);
     if (!local?.configured || !local.pendingChanges) return;
     this.debounce = setTimeout(() => {
       this.debounce = null;
@@ -100,7 +114,21 @@ class VaultSyncV3Impl {
 
   /** Reconcile now: enable on first run, otherwise pull then push. */
   syncNow(): Promise<VaultSyncStatus> {
-    this.inFlight ??= this.run().finally(() => { this.inFlight = null });
+    this.inFlight ??= (async() => {
+      this.health.attempted();
+      const before = this.health.snapshot();
+      const result = await this.run();
+      if (!result.lastError && result.lastSyncAt) {
+        const local = await VaultSyncContainer.status().catch(() => null);
+        if (this.health.succeeded(local?.pendingChanges ?? 0)) console.log('[VaultSyncV3] back online; sync resumed');
+        const now = Date.now();
+        if (before.consecutiveFailures > 0 || now - this.lastSuccessLogAt >= RECONCILE_MS) {
+          console.log(`[VaultSyncV3] sync ok pushed=${ this.lastCounts.pushed } pulled=${ this.lastCounts.pulled }`);
+          this.lastSuccessLogAt = now;
+        }
+      }
+      return result;
+    })().finally(() => { this.inFlight = null });
     return this.inFlight;
   }
 
@@ -158,6 +186,7 @@ class VaultSyncV3Impl {
   }
 
   private async run(): Promise<VaultSyncStatus> {
+    this.lastCounts = { pushed: 0, pulled: 0 };
     try {
       const prefs = await getCloudPreferences();
       if (!prefs.enabled || !prefs.vault) return this.set({ skipped: 'disabled' });
@@ -172,12 +201,14 @@ class VaultSyncV3Impl {
           if (sent.error === 'vault_exists') return this.set({ lastError: 'Another vault already has a Cloud copy on this account. Replace it from this desktop, or restore from Cloud.' });
           throw new ContainerSyncError(sent.error || 'cloud_error', sent.status);
         }
+        this.lastCounts.pushed++;
         console.log('[VaultSyncV3] Cloud copy created');
         return this.set({ lastSyncAt: new Date().toISOString() });
       }
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const pulled = await VaultSyncContainer.pull(who.deviceId);
+        this.lastCounts.pulled += pulled.applied;
         if (pulled.cloudMissing) return this.set({ lastError: 'The Cloud copy was deleted. Turn sync off and on again to upload a new one.' });
         if (attempt === 1) {
           // Master password changed here since the last upload: rewrap the Cloud bundle so the
@@ -194,6 +225,7 @@ class VaultSyncV3Impl {
           if (!('idle' in resumed) && !resumed.ok) throw new ContainerSyncError(resumed.error || 'cloud_error', resumed.status);
         }
         const sent = await this.prepareSignSend('commit', who);
+        if (!('idle' in sent) && sent.ok) this.lastCounts.pushed++;
         if ('idle' in sent || sent.ok) {
           const after = await VaultSyncContainer.status().catch(() => null);
           return this.set({
@@ -212,19 +244,24 @@ class VaultSyncV3Impl {
   }
 
   private fail(err: unknown): VaultSyncStatus {
+    const message = err instanceof Error ? err.message : String(err);
+    const outcome = this.health.failed(err instanceof ContainerSyncError ? err.code : 'sync_failed', message);
+    if (outcome !== 'error') {
+      if (outcome === 'offline_started') console.warn('[VaultSyncV3] offline; will resume when the network is back');
+      return this.set({ lastSyncAt: this.status.lastSyncAt, lastError: 'Offline. Sync resumes when this computer is back online.' });
+    }
     if (err instanceof ContainerSyncError) {
       if (err.status === 423 || err.code === 'vault_locked') return this.set({ skipped: 'vault_locked' });
       if (err.code === 'password_kdf_missing') return this.set({ lastError: 'Sign in to Sulla Cloud again to finish updating encrypted sync.' });
       if (err.code === 'device_revoked') return this.set({ lastError: 'This desktop was removed from your Sulla Cloud account.' });
       if (err.code === 'integrity_failed') return this.set({ lastError: 'The Cloud copy failed an integrity check. Sync stopped; nothing local changed.' });
     }
-    const message = err instanceof Error ? err.message : String(err);
     console.warn(`[VaultSyncV3] sync failed: ${ message }`);
     return this.set({ lastSyncAt: this.status.lastSyncAt, lastError: message });
   }
 
   private set(s: Omit<VaultSyncStatus, 'kind'>): VaultSyncStatus {
-    this.status = { kind: 'vault', ...s };
+    this.status = { kind: 'vault', ...s, health: this.health.snapshot() };
     return this.status;
   }
 }
