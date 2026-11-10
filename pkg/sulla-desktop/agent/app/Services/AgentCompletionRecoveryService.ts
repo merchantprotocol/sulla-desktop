@@ -88,7 +88,9 @@ export class AgentCompletionRecoveryService extends Service {
       job.tasks.forEach((rawTask, taskIndex) => {
         const task = rawTask as AgentJobTask & { completionFirstDeliveredAt?: number };
         const result = task.completion ?? job.results[taskIndex];
-        const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt;
+        // Older persisted jobs may not have any timestamps; treat them as long-pending
+        // so an immediate startup recovery still delivers their saved completion.
+        const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt ?? 0;
         if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= minimumAgeMs) {
           this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, {
             jobId: job.jobId,
