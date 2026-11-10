@@ -53,10 +53,10 @@ export class AgentTeamRollupProjector {
     const states: Record<string, number> = {};
     let oldestQuietAgeMs: number | null = null; let openBlockers = 0; let unprocessedResults = 0;
     for (const task of tasks) {
-      const blockers = task.latestCheckin?.blockers.length ?? 0;
       const state = task.state;
       states[state] = (states[state] ?? 0) + 1;
-      openBlockers += blockers;
+      // 'blocked' is only projected for a live task with an unresolved blocker, so it is the blocker count.
+      if (state === 'blocked') openBlockers += task.latestCheckin?.blockers.length || 1;
       if (state === 'quiet') oldestQuietAgeMs = Math.max(oldestQuietAgeMs ?? 0, this.now() - Date.parse(task.lastActivityAt));
       if ((task.returned || task.completion) && !task.completionDeliveredAt) unprocessedResults++;
     }

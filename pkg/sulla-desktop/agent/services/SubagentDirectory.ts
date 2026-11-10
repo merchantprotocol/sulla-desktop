@@ -40,15 +40,18 @@ export class SubagentDirectoryBuilder {
 
   private describe(job: FleetJobView, task: FleetTaskView, team?: AgentTeamRollup): ChildRow | null {
     const finishedAt = task.finishedAt ? Date.parse(task.finishedAt) : job.finishedAt ? Date.parse(job.finishedAt) : undefined;
-    const open = ['running', 'parked'].includes(job.status) && ['working', 'quiet', 'queued', 'parked', 'blocked'].includes(task.state);
+    const open = ['working', 'quiet', 'queued', 'parked', 'blocked'].includes(task.state);
     if (!open && task.completionDeliveredAt && finishedAt && this.now() - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
     const lastActivity = Date.parse(task.lastActivityAt); const stalled = open && this.now() - lastActivity >= SUBAGENT_STALL_MS;
     const visibility = task.promotedToTab ? 'hidden→tab' : String(task.visibility ?? 'hidden');
-    const openState = task.state === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : task.state;
+    const descendants = task.descendantsRunning ?? 0;
+    const descendantLabel = `${ descendants } running descendant${ descendants === 1 ? '' : 's' }`;
+    const openState = task.state === 'parked' ? `parked, waiting on ${ descendantLabel }` : task.state;
     const parts = [task.agentId, visibility, open ? `${ openState } ${ this.span(this.now() - Date.parse(task.startedAt)) }` : `${ task.returned ? 'returned' : task.status }`, `contract ${ String(task.contract ?? 'result') }`];
     if (task.latestCheckin) parts.push(`last check-in ${ this.ago(this.now() - Date.parse(task.latestCheckin.time)) } ${ this.quote(task.latestCheckin.summary) }`);
     else if (open) parts.push('no check-in yet');
-    if (task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
+    if (task.state === 'blocked' && task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
+    if (open && task.state !== 'parked' && descendants > 0) parts.push(descendantLabel);
     if (team) parts.push(this.team(team));
     if (task.stranded) parts.push(`⚠ stranded: ${ this.quote(task.stranded.reason) }`);
     if (stalled) parts.push(`⚠ stalled (${ task.state } ${ this.span(this.now() - lastActivity) })`);

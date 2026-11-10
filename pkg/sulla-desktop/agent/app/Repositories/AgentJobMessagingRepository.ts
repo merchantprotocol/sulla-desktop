@@ -144,9 +144,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobId],
       ),
       this.connection.select<any>(
-        `SELECT task_index, count(*)::int AS count
+        `SELECT task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = $1 AND delivered_at IS NULL
+          WHERE job_id = $1
           GROUP BY task_index`,
         [jobId],
       ),
@@ -156,6 +158,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       latestCheckin: null,
       checkins: [],
       undeliveredMessages: 0,
+      lastMessageDeliveredAt: null,
     };
 
     for (const row of checkinRows ?? []) {
@@ -164,7 +167,9 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       entry.latestCheckin ??= this.rowToCheckin(row);
     }
     for (const row of messageRows ?? []) {
-      ensure(Number(row.task_index)).undeliveredMessages = Number(row.count);
+      const entry = ensure(Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
     }
 
     return telemetry;
@@ -182,9 +187,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobIds as unknown as string],
       ),
       this.connection.select<any>(
-        `SELECT job_id, task_index, count(*)::int AS count
+        `SELECT job_id, task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = ANY($1::text[]) AND delivered_at IS NULL
+          WHERE job_id = ANY($1::text[])
           GROUP BY job_id, task_index`,
         [jobIds as unknown as string],
       ),
@@ -192,10 +199,14 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     const result: Record<string, Record<number, AgentJobTaskTelemetry>> = {};
     const ensure = (jobId: string, index: number) => {
       result[jobId] ??= {};
-      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0 };
+      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0, lastMessageDeliveredAt: null };
     };
     for (const row of checkinRows ?? []) ensure(row.job_id, Number(row.task_index)).latestCheckin = this.rowToCheckin(row);
-    for (const row of messageRows ?? []) ensure(row.job_id, Number(row.task_index)).undeliveredMessages = Number(row.count);
+    for (const row of messageRows ?? []) {
+      const entry = ensure(row.job_id, Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
+    }
     return result;
   }
 }

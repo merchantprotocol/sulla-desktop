@@ -8,7 +8,8 @@ import type { ConversationTitleRepository } from '../Repositories/ConversationTi
 import type { AgentStateService } from './AgentStateService';
 import { AgentLineageIndex } from './AgentLineageIndex';
 import type { FleetJobView, FleetTaskView } from './AgentFleetTypes';
-import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
+import { AgentTaskActivityProjector, OPEN_TASK_STATES } from './AgentTaskActivityProjector';
+import { DescendantWaitCounter } from './DescendantWaitCounter';
 
 export interface AgentFleetTelemetryReader {
   telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>>;
@@ -23,6 +24,16 @@ export interface AgentFleetRequest {
 }
 
 type FleetObject = Record<string, unknown>;
+
+/** Per-read state shared by every job and task view built from one lineage snapshot. */
+interface FleetReadContext {
+  index: AgentLineageIndex;
+  waits: DescendantWaitCounter;
+  titles: Record<string, string | null>;
+  detailed: boolean;
+  stranded: Map<string, { stateKey: string; reason: string }>;
+  openTasksOnly: boolean;
+}
 
 /** Authoritative, lineage-enriched fleet read model consumed by agent supervision tools. */
 export class AgentFleetProjectionService {
@@ -43,7 +54,7 @@ export class AgentFleetProjectionService {
       : all;
     const selected = this.bound(scoped, request.limit, request.includeFinished);
     const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
-    return this.project(selected, all, telemetry, false, stranded);
+    return this.project(selected, all, telemetry, false, stranded, request.includeFinished === false);
   }
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
@@ -94,21 +105,19 @@ export class AgentFleetProjectionService {
     telemetry: Record<string, Record<number, AgentJobTaskTelemetry>>,
     detailed: boolean,
     stranded: Map<string, { stateKey: string; reason: string }>,
+    openTasksOnly = false,
   ): Promise<FleetJobView[]> {
     const index = new AgentLineageIndex(all);
     const roots = [...new Set(selected.map(job => index.lineage(job).rootThreadId).filter((value): value is string => !!value))];
     const titles = await this.titles.titlesForThreadIds(roots);
-    return selected.map(job => this.jobView(job, index, titles, telemetry[job.jobId] ?? {}, detailed, stranded));
+    const view: FleetReadContext = { index, waits: new DescendantWaitCounter(index), titles, detailed, stranded, openTasksOnly };
+    return selected
+      .map(job => this.jobView(job, view, telemetry[job.jobId] ?? {}))
+      .filter(job => !openTasksOnly || job.tasks.length > 0);
   }
 
-  private jobView(
-    job: AgentJob,
-    index: AgentLineageIndex,
-    titles: Record<string, string | null>,
-    telemetry: Record<number, AgentJobTaskTelemetry>,
-    detailed: boolean,
-    stranded: Map<string, { stateKey: string; reason: string }>,
-  ): FleetJobView {
+  private jobView(job: AgentJob, context: FleetReadContext, telemetry: Record<number, AgentJobTaskTelemetry>): FleetJobView {
+    const { index, titles, detailed } = context;
     const lineage = index.lineage(job);
     const fields = {
       parentThreadId: job.parentThreadId ?? null,
@@ -132,14 +141,18 @@ export class AgentFleetProjectionService {
       stoppedBy: job.stoppedBy,
       stopReason: job.stopReason,
       ...(detailed ? { error: job.error, results: job.results, orphanedChildNotices: job.orphanedChildNotices ?? [] } : {}),
-      tasks: job.tasks.map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, telemetry[taskIndex], detailed, stranded.get(`${ job.jobId }#${ taskIndex }`))),
+      tasks: job.tasks
+        .map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, context, telemetry[taskIndex]))
+        .filter(task => !context.openTasksOnly || OPEN_TASK_STATES.has(task.state)),
     };
   }
 
-  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false, stranded?: { stateKey: string; reason: string }): FleetTaskView {
+  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, context: FleetReadContext, telemetry?: AgentJobTaskTelemetry): FleetTaskView {
+    const { detailed, stranded: strandedMap } = context;
+    const stranded = strandedMap.get(`${ job.jobId }#${ taskIndex }`);
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
-    const activity = this.activity.project(job, task, taskIndex, latestCheckin);
+    const activity = this.activity.project(job, task, taskIndex, latestCheckin, telemetry?.lastMessageDeliveredAt ?? null);
     return {
       taskIndex,
       agentId: task.agentId,
@@ -164,6 +177,7 @@ export class AgentFleetProjectionService {
       rootThreadId: fields.rootThreadId as string | null,
       ...fields,
       latestCheckin: this.checkin(latestCheckin, !detailed),
+      descendantsRunning: context.waits.runningDescendantsOf(task),
       wakeAt: task.wakeAt ? new Date(task.wakeAt).toISOString() : null,
       stranded: stranded ? { ...stranded, detectedAt: 0, alertedAt: 0 } : null,
       result: task.result,
