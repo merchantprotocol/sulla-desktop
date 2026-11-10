@@ -97,6 +97,8 @@ const PURPOSE_TAGS = {
   'support-desktop-v1': 'sulla-support-desktop-v1',
   'support-request-v1': 'sulla-support-request-v1',
   'support-guest-v1': 'sulla-support-guest-v1',
+  'slack-inbound-v1': 'sulla-slack-inbound-v1',
+  'slack-workspace-v1': 'sulla-slack-workspace-v1',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;
