@@ -52,8 +52,8 @@ export class VoiceInferenceProcess {
     request: OrtRequest,
   ): Promise<Pick<OrtResponse, 'text'>> {
     if (!request.decoderPath || !request.tokenizerPath) throw new Error('Whisper model paths are required');
-    const signal = { get aborted() { return thisProcess.cancelled.has(request.id); } };
-    const thisProcess = this;
+    const cancelled = this.cancelled;
+    const signal = { get aborted() { return cancelled.has(request.id); } };
     const features = new WhisperLogMelExtractor(30, false, false).extract(request.audio);
     const featureTensor = new this.runtime.Tensor('float32', features, [1, 80, 3000]);
     const encoderInput = encoder.inputNames.find(name => name.includes('input_features')) ?? encoder.inputNames[0];

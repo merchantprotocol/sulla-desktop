@@ -31,7 +31,7 @@ export class WhisperGreedyDecoder {
   async decode(
     session: WhisperDecoderSession,
     encoderHiddenStates: WhisperTensor,
-    signal: AbortSignal,
+    signal: { readonly aborted: boolean },
   ): Promise<number[]> {
     const generated: number[] = [];
     const cacheInputs = session.inputNames.filter(name => name.startsWith('past_key_values.'));
