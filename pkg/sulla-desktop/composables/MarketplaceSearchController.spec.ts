@@ -37,4 +37,16 @@ describe('MarketplaceSearchController', () => {
     expect(router.currentRoute.value.query).not.toHaveProperty('listing');
     expect(router.currentRoute.value.query).toMatchObject({ q: 'mail', topic: 'Ops', type: 'routine' });
   });
+
+  it('writes a single topic or type filter as a results route', async() => {
+    const router = new FakeRouter();
+    const controller = new MarketplaceSearchController(router as any, () => new MarketplaceSearchService([]));
+    await controller.apply({ ...state, q: '', topics: ['Operations'], kinds: [], media: [], price: [], length: [], apps: [], approval: [] });
+    expect(router.currentRoute.value.query).toMatchObject({ topic: 'Operations' });
+    expect(controller.isResultsMode).toBe(true);
+    await controller.apply({ ...state, q: '', topics: [], kinds: ['skill'], media: [], price: [], length: [], apps: [], approval: [] });
+    expect(router.currentRoute.value.query).toMatchObject({ type: 'skill' });
+    expect(router.currentRoute.value.query).not.toHaveProperty('topic');
+    expect(controller.isResultsMode).toBe(true);
+  });
 });
