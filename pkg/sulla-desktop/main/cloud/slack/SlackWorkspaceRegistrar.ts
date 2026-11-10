@@ -29,13 +29,13 @@ export class SlackWorkspaceRegistrar {
         const auth = await this.api.authTest(context, account.account_id);
         const teamId = typeof auth.team_id === 'string' ? auth.team_id : '';
         const botId = typeof auth.bot_id === 'string' ? auth.bot_id : '';
+        if (teamId) this.accountsByTeam.register(teamId, account.account_id);
         if (!teamId || !botId) continue;
         const bot = await this.api.botsInfo(botId, context, account.account_id);
         const apiAppId = bot.bot?.app_id;
         if (typeof apiAppId !== 'string' || !apiAppId) continue;
         await this.cloud.registerWorkspace(apiAppId, teamId);
         this.registeredOrClaimedAccounts.add(account.account_id);
-        this.accountsByTeam.register(teamId, account.account_id);
         console.info('[SlackWorkspaceRegistrar] Registered workspace', { teamId, accountId: account.account_id });
       } catch (error) {
         if (error instanceof Error && error.message === 'workspace_claimed') {
