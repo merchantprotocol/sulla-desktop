@@ -2,9 +2,15 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+
+import { describe, expect, it, vi } from 'vitest';
 import { BaseNode } from '../../nodes/BaseNode';
 import type { BaseThreadState, NodeResult } from '../../nodes/Graph';
+
+// BaseNode's static import graph reaches Electron-only modules (e.g. services/VaultKeyService, ChatArtifactService).
+// Headless CI has no Electron binary, so mock the package the same way the other agent specs do.
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
 class ContextInjectionNode extends BaseNode {
   constructor() { super('test-context', 'test-context'); }
