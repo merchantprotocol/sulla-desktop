@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import { describe, expect, it, vi } from 'vitest';
 import { HeuristicEndOfTurnDetector, SentenceFragmenter, SpokenReplyGovernor, TurnBuffer } from './ConversationTurnPolicy';
 import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
