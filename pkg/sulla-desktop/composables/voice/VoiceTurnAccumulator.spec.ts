@@ -2,16 +2,83 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createVoiceTurnAccumulator, TranscriptNoiseFilter } from './VoiceTurnAccumulator';
 
+function setup() {
+  const onCommit = vi.fn();
+  const turn = createVoiceTurnAccumulator({
+    onInterim: () => {}, onCommit, isTTSPlaying: () => false, now: () => Date.now(),
+  });
+  return { turn, onCommit };
+}
+
+beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
-describe('VoiceTurnAccumulator', () => {
-  it('risk: data accuracy — buffered words commit on fallback after speech-start without another transcript', () => {
-    vi.useFakeTimers(); const onCommit = vi.fn();
-    const turn = createVoiceTurnAccumulator({ onInterim: () => {}, onCommit, isTTSPlaying: () => false, fallbackMs: 8000 });
-    turn.handleEvent({ event_type: 'transcript_turn', text: 'keep these words' });
-    turn.speechStarted(); vi.advanceTimersByTime(7999); expect(onCommit).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1); expect(onCommit).toHaveBeenCalledWith('keep these words');
+
+describe('VoiceTurnAccumulator end of turn', () => {
+  it('commits when background noise keeps VAD speaking forever', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_turn', text: 'what is on my calendar today' });
+    for (let i = 0; i < 200; i++) { turn.speechStarted(); vi.advanceTimersByTime(16); }
+    expect(onCommit).toHaveBeenCalledWith('what is on my calendar today');
+  });
+
+  it('does not cut the user off while new words keep arriving', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_partial', text: 'remind me to' });
+    vi.advanceTimersByTime(1000);
+    turn.handleEvent({ event_type: 'transcript_partial', text: 'call the bank' });
+    vi.advanceTimersByTime(1000);
+    expect(onCommit).not.toHaveBeenCalled();
+    turn.handleEvent({ event_type: 'transcript_turn', text: 'remind me to call the bank tomorrow' });
+    vi.advanceTimersByTime(1500);
+    expect(onCommit).toHaveBeenCalledWith('remind me to call the bank tomorrow');
+  });
+
+  it('keeps every partial chunk when no final transcript arrives', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_partial', text: 'first part' });
+    turn.handleEvent({ event_type: 'transcript_partial', text: 'second part' });
+    vi.advanceTimersByTime(1500);
+    expect(onCommit).toHaveBeenCalledWith('first part second part');
+  });
+
+  it('noise hallucinations and repeated chunks do not hold the turn open', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_turn', text: 'send the report' });
+    vi.advanceTimersByTime(1000);
+    turn.handleEvent({ event_type: 'transcript_partial', text: '[BLANK_AUDIO]' });
+    turn.handleEvent({ event_type: 'transcript_partial', text: 'Thank you.' });
+    vi.advanceTimersByTime(500);
+    expect(onCommit).toHaveBeenCalledWith('send the report');
+  });
+
+  it('waits longer when the user trails off mid-thought', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_turn', text: 'book a table for two and' });
+    vi.advanceTimersByTime(1500);
+    expect(onCommit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1500);
+    expect(onCommit).toHaveBeenCalledWith('book a table for two and');
+  });
+
+  it('utterance_end commits sooner than the words-stable deadline', () => {
+    const { turn, onCommit } = setup();
+    turn.handleEvent({ event_type: 'transcript_turn', text: 'turn on the lights' });
+    turn.handleEvent({ event_type: 'utterance_end' });
+    vi.advanceTimersByTime(700);
+    expect(onCommit).toHaveBeenCalledWith('turn on the lights');
+  });
+});
+
+describe('TranscriptNoiseFilter', () => {
+  it('keeps real speech and drops tag-only or hallucinated text', () => {
+    const f = new TranscriptNoiseFilter();
+    expect(f.isNoise('[BLANK_AUDIO]')).toBe(true);
+    expect(f.isNoise('(background noise)')).toBe(true);
+    expect(f.isNoise('Thank you.')).toBe(true);
+    expect(f.isNoise('thank you for the update on the project')).toBe(false);
+    expect(f.isNoise('so what time is it')).toBe(false);
   });
 });

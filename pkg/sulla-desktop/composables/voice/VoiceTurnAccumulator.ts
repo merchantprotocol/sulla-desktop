@@ -9,9 +9,15 @@ export interface VoiceTurnAccumulatorConfig {
   onInterim: (text: string) => void;
   onCommit: (text: string) => void;
   isTTSPlaying: () => boolean;
+  /** @deprecated Ignored. Turns now end when the words stop changing, not on a VAD-driven fallback. */
   fallbackMs?: number;
+  /** Short hold after the main-process utterance_end (VAD silence) signal. */
   endOfTurnHoldMs?: number;
+  /** Commit once the transcript has stopped changing for this long, whatever the VAD says. */
+  wordsStableMs?: number;
   endOfTurnDetector?: EndOfTurnDetector;
+  noiseFilter?: TranscriptNoiseFilter;
+  now?: () => number;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
 }
@@ -23,74 +29,132 @@ export interface VoiceTurnAccumulator {
   speechStarted: () => void;
 }
 
-/** Owns transcript buffering and commit timers for a single voice session. */
+/** Recognises transcripts that are only background noise or Whisper's known silence hallucinations. */
+export class TranscriptNoiseFilter {
+  private readonly tagOnly = /^[\s[\](){}*.\-_,!?♪]*(?:[[(][^\])]*[\])][\s.,!?]*)+$/;
+  private readonly hallucinations = new Set([
+    'you', 'thank you', 'thanks', 'thank you very much', 'thanks for watching', 'thank you for watching',
+    'bye', 'okay', 'oh', 'um', 'uh', 'hmm', 'mm', 'so', '.', '...',
+  ]);
+
+  isNoise(text: string): boolean {
+    const clean = text.trim();
+    if (!clean) return true;
+    if (this.tagOnly.test(clean)) return true;
+    if (!/[a-z0-9]/i.test(clean)) return true;
+    return this.hallucinations.has(clean.toLowerCase().replace(/[.,!?]+$/g, '').trim());
+  }
+}
+
+type TimerKind = 'hold' | 'stable' | null;
+
+/**
+ * Owns transcript buffering and the commit decision for one voice session.
+ *
+ * A turn ends when the WORDS stop changing (wordsStableMs, extended for unfinished phrases),
+ * or sooner after the main-process utterance_end signal. Raw VAD frames never postpone a
+ * commit: background noise keeps VAD "speaking" forever, which used to hold the turn open.
+ * Nothing is dropped: a follow-up after a commit becomes a new turn that the chat layer merges.
+ */
 export class VoiceTurnAccumulatorService implements VoiceTurnAccumulator {
   private readonly text = new TurnBuffer();
   private partialText = '';
+  private lastPartialChunk = '';
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private timerKind: TimerKind = null;
+  private lastWordChangeAt = 0;
   private readonly setTimer: typeof setTimeout;
   private readonly clearTimerFn: typeof clearTimeout;
   private readonly detector: EndOfTurnDetector;
-  private readonly fallbackMs: number;
+  private readonly noise: TranscriptNoiseFilter;
+  private readonly now: () => number;
   private readonly holdMs: number;
+  private readonly stableMs: number;
 
   constructor(private readonly config: VoiceTurnAccumulatorConfig) {
     this.setTimer = config.setTimer ?? setTimeout;
     this.clearTimerFn = config.clearTimer ?? clearTimeout;
     this.detector = config.endOfTurnDetector ?? new HeuristicEndOfTurnDetector();
-    this.fallbackMs = config.fallbackMs ?? 8000;
+    this.noise = config.noiseFilter ?? new TranscriptNoiseFilter();
+    this.now = config.now ?? (() => Date.now());
     this.holdMs = config.endOfTurnHoldMs ?? 700;
+    this.stableMs = config.wordsStableMs ?? 1500;
   }
 
   private clearTimer(): void {
     if (this.timer !== null) this.clearTimerFn(this.timer);
     this.timer = null;
+    this.timerKind = null;
   }
 
-  private arm(delay: number): void {
+  private arm(kind: Exclude<TimerKind, null>, delay: number): void {
     this.clearTimer();
-    this.timer = this.setTimer(() => this.commitNow(), delay);
+    this.timerKind = kind;
+    this.timer = this.setTimer(() => this.commitNow(), Math.max(0, delay));
+  }
+
+  private currentText(): string {
+    return [this.text.text, this.partialText].filter(Boolean).join(' ');
+  }
+
+  private stableDelay(): number {
+    const due = this.lastWordChangeAt + this.detector.delayMs(this.currentText(), this.stableMs);
+    return due - this.now();
+  }
+
+  private wordsChanged(): void {
+    this.lastWordChangeAt = this.now();
+    this.arm('stable', this.stableDelay());
   }
 
   commitNow(): void {
     this.clearTimer();
-    const transcript = this.text.text;
+    const transcript = this.currentText();
     this.text.clear();
     this.partialText = '';
-    this.config.onCommit(transcript);
+    this.lastPartialChunk = '';
+    if (transcript) this.config.onCommit(transcript);
   }
 
   handleEvent(msg: any): void {
     if (msg?.event_type === 'utterance_end') {
-      this.arm(this.detector.delayMs(this.text.text, this.holdMs));
+      if (this.currentText()) this.arm('hold', this.detector.delayMs(this.currentText(), this.holdMs));
       return;
     }
     if (!msg?.text || this.config.isTTSPlaying()) return;
     const transcript = String(msg.text).trim();
-    if (!transcript) return;
-    this.clearTimer();
+    if (this.noise.isNoise(transcript)) return;
     if (msg.event_type === 'transcript_partial') {
+      // Partials arrive as incremental chunks; keep every one. An exact repeat of the last
+      // chunk is a stuck recogniser on noise, so it must not count as new words.
+      if (transcript === this.lastPartialChunk) return;
+      this.lastPartialChunk = transcript;
       this.partialText = this.partialText ? `${ this.partialText } ${ transcript }` : transcript;
-      this.config.onInterim(this.text.text ? `${ this.text.text } ${ this.partialText }` : this.partialText);
+      this.config.onInterim(this.currentText());
+      this.wordsChanged();
       return;
     }
     this.text.append(transcript);
     this.partialText = '';
+    this.lastPartialChunk = '';
     this.config.onInterim(this.text.text);
-    this.arm(this.fallbackMs);
+    this.wordsChanged();
   }
 
-  /** Cancel only the short end-of-turn hold; preserve/re-arm buffered-text fallback. */
+  /**
+   * VAD reports speech. Only cancels a pending short utterance_end hold, falling back to the
+   * words-stable deadline measured from the last real word, so noise can never extend a turn.
+   */
   speechStarted(): void {
-    if (this.timer === null || !this.text.text) return;
-    this.clearTimer();
-    this.arm(this.fallbackMs);
+    if (this.timerKind !== 'hold' || !this.currentText()) return;
+    this.arm('stable', this.stableDelay());
   }
 
   reset(): void {
     this.clearTimer();
     this.text.clear();
     this.partialText = '';
+    this.lastPartialChunk = '';
   }
 }
 
