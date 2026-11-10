@@ -22,6 +22,7 @@ import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
@@ -693,7 +694,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     if (options.state) {
       try {
         const host = getMCPServerHost();
-        mcpSession = bindCodexMcpSession(host, options.state, null);
+        mcpSession = bindCodexMcpSession(host, options.state, null, currentAgentContainerRuntime());
         if (mcpSession) log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
       } catch (err) {
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
