@@ -5,7 +5,7 @@ import { ChannelInboundDelivery } from '@pkg/agent/channels/ChannelInboundDelive
 import { EmptyThreadContextSource } from '@pkg/agent/channels/EmptyThreadContextSource';
 import { InboundEventProcessor } from '@pkg/agent/channels/InboundEventProcessor';
 import { InboundRouterService } from '@pkg/agent/channels/InboundRouterService';
-import { PostgresConversationBindingRepository } from '@pkg/agent/channels/PostgresConversationBindingRepository';
+import { PostgresConversationBindingRepository } from '@pkg/agent/app/Repositories/PostgresConversationBindingRepository';
 import { SlackChannelAdapter } from '@pkg/agent/channels/SlackChannelAdapter';
 import { SlackSenderAllowlist } from '@pkg/agent/channels/SlackSenderAllowlist';
 import { ExistingSlackJobSender, LocalSlackChatSender, ConversationHistorySlackThreadFactory } from './SlackInboundServices';

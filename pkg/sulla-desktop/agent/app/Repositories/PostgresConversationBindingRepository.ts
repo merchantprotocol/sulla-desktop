@@ -1,8 +1,8 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { postgresClient } from '../database/PostgresClient';
-import type { BindingKind, BindingTarget, ChannelName, ConversationBinding, ConversationBindingRepository } from './types';
+import { postgresClient } from '../../database/PostgresClient';
+import type { BindingKind, BindingTarget, ChannelName, ConversationBinding, ConversationBindingRepository } from '../../channels/types';
 interface BindingRow { kind: BindingKind; channel_type: ChannelName; workspace_id: string; conversation_id: string; thread_key: string | null; sender_id: string | null; target_kind: 'chat' | 'job'; thread_id: string | null; job_id: string | null; task_index: number | null; agent_id: string | null }
 export class PostgresConversationBindingRepository implements ConversationBindingRepository {
   constructor(private readonly db = postgresClient) {}
