@@ -9,29 +9,40 @@ interface ComplexValue {
   imaginary: number;
 }
 
-/** Computes Whisper's 80-bin log-mel frames for Smart Turn's 8-second window. */
+/** Computes Whisper's 80-bin log-mel frames for an injected audio window. */
 export class WhisperLogMelExtractor {
-  readonly frameCount = 800;
+  readonly frameCount: number;
   readonly melBins = 80;
   private readonly hann = new Float64Array(400);
 
-  constructor() {
+  constructor(
+    private readonly windowSeconds = 8,
+    private readonly normalizeAudio = true,
+    private readonly alignAudioToWindowEnd = true,
+  ) {
+    if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+      throw new Error('Whisper feature window must be positive');
+    }
+    this.frameCount = windowSeconds * 100;
     for (let index = 0; index < this.hann.length; index++) {
       this.hann[index] = 0.5 - 0.5 * Math.cos((2 * Math.PI * index) / 400);
     }
   }
 
   extract(audio: Float32Array): Float32Array {
-    const sampleCount = 16_000 * 8;
+    const sampleCount = 16_000 * this.windowSeconds;
     const padded = new Float64Array(sampleCount);
-    const copied = audio.subarray(Math.max(0, audio.length - sampleCount));
-    padded.set(copied, sampleCount - copied.length);
+    const copied = audio.subarray(this.alignAudioToWindowEnd ? Math.max(0, audio.length - sampleCount) : 0,
+      this.alignAudioToWindowEnd ? undefined : sampleCount);
+    padded.set(copied, this.alignAudioToWindowEnd ? sampleCount - copied.length : 0);
 
-    const mean = padded.reduce((sum, value) => sum + value, 0) / padded.length;
-    const variance = padded.reduce((sum, value) => sum + (value - mean) ** 2, 0) / padded.length;
-    const deviation = Math.sqrt(variance) || 1;
-    for (let index = 0; index < padded.length; index++) {
-      padded[index] = (padded[index] - mean) / deviation;
+    if (this.normalizeAudio) {
+      const mean = padded.reduce((sum, value) => sum + value, 0) / padded.length;
+      const variance = padded.reduce((sum, value) => sum + (value - mean) ** 2, 0) / padded.length;
+      const deviation = Math.sqrt(variance) || 1;
+      for (let index = 0; index < padded.length; index++) {
+        padded[index] = (padded[index] - mean) / deviation;
+      }
     }
 
     const output = new Float32Array(this.melBins * this.frameCount);

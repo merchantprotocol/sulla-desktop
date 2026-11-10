@@ -7,8 +7,12 @@ import { utilityProcess } from 'electron';
 
 export interface OrtRequest {
   id: number;
-  operation: 'vad' | 'smart-turn';
+  operation: 'vad' | 'smart-turn' | 'stt' | 'cancel';
   modelPath: string;
+  decoderPath?: string;
+  tokenizerPath?: string;
+  targetId?: number;
+  sequenceId?: number;
   audio: Float32Array;
   state?: Float32Array;
   threads: number;
@@ -20,6 +24,7 @@ export interface OrtResponse {
   probability?: number;
   state?: Float32Array;
   error?: string;
+  text?: string;
 }
 
 interface Child {
@@ -52,15 +57,31 @@ export class OrtInferenceClient {
       utilityProcess.fork(entry, [], { serviceName: 'sulla-voice-ort' }) as unknown as Child,
   ) {}
 
-  async infer(request: Omit<OrtRequest, 'id' | 'threads'>): Promise<OrtResponse> {
+  async infer(
+    request: Omit<OrtRequest, 'id' | 'threads'>,
+    signal?: AbortSignal,
+    timeoutMs = this.timeoutMs,
+  ): Promise<OrtResponse> {
     const child = this.getChild();
     const id = ++this.nextId;
+    if (signal?.aborted) throw new Error('ONNX inference aborted');
     return new Promise((resolve, reject) => {
+      const abort = () => {
+        child.postMessage({ id: ++this.nextId, operation: 'cancel', targetId: id, modelPath: '', audio: new Float32Array(), threads: this.threads });
+        const entry = this.pending.get(id);
+        if (entry) {
+          clearTimeout(entry.timer);
+          this.pending.delete(id);
+          reject(new Error('ONNX inference aborted'));
+        }
+      };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        signal?.removeEventListener('abort', abort);
         reject(new Error('ONNX inference timed out'));
-      }, this.timeoutMs);
-      this.pending.set(id, { child, resolve, reject, timer });
+      }, timeoutMs);
+      this.pending.set(id, { child, resolve: value => { signal?.removeEventListener('abort', abort); resolve(value); }, reject: error => { signal?.removeEventListener('abort', abort); reject(error); }, timer });
+      signal?.addEventListener('abort', abort, { once: true });
       try {
         child.postMessage({ ...request, id, threads: this.threads });
       } catch (error) {

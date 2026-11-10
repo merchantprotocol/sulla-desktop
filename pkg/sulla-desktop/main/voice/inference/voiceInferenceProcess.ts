@@ -4,12 +4,17 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import * as ort from 'onnxruntime-node';
+import { readFile } from 'node:fs/promises';
 import type { OrtRequest, OrtResponse } from './OrtInferenceClient';
 import { WhisperLogMelExtractor } from './WhisperLogMelExtractor';
+import { WhisperGreedyDecoder, type WhisperTensor } from './WhisperGreedyDecoder';
+import { WhisperTokenizerDecoder } from './WhisperTokenizerDecoder';
 
 /** Owns model sessions and Smart Turn feature extraction in the utility process. */
 export class VoiceInferenceProcess {
   private readonly sessions = new Map<string, Promise<ort.InferenceSession>>();
+  private readonly cancelled = new Set<number>();
+  private readonly tokenizerDecoders = new Map<string, Promise<WhisperTokenizerDecoder>>();
 
   constructor(
     private readonly runtime: typeof ort,
@@ -22,16 +27,54 @@ export class VoiceInferenceProcess {
   }
 
   private async handle(request: OrtRequest): Promise<void> {
+    if (request.operation === 'cancel') {
+      if (request.targetId !== undefined) this.cancelled.add(request.targetId);
+      return;
+    }
     try {
       const session = await this.session(request.modelPath, request.threads);
       const response =
         request.operation === 'vad'
           ? await this.runVad(session, request)
-          : await this.runSmartTurn(session, request);
+          : request.operation === 'smart-turn'
+            ? await this.runSmartTurn(session, request)
+            : await this.runWhisper(session, request);
       this.port.postMessage({ id: request.id, ok: true, ...response } satisfies OrtResponse);
     } catch (error) {
       this.port.postMessage({ id: request.id, ok: false, error: String(error) } satisfies OrtResponse);
+    } finally {
+      this.cancelled.delete(request.id);
     }
+  }
+
+  private async runWhisper(
+    encoder: ort.InferenceSession,
+    request: OrtRequest,
+  ): Promise<Pick<OrtResponse, 'text'>> {
+    if (!request.decoderPath || !request.tokenizerPath) throw new Error('Whisper model paths are required');
+    const signal = { get aborted() { return thisProcess.cancelled.has(request.id); } };
+    const thisProcess = this;
+    const features = new WhisperLogMelExtractor(30, false, false).extract(request.audio);
+    const featureTensor = new this.runtime.Tensor('float32', features, [1, 80, 3000]);
+    const encoderInput = encoder.inputNames.find(name => name.includes('input_features')) ?? encoder.inputNames[0];
+    const encoded = await encoder.run({ [encoderInput]: featureTensor });
+    if (signal.aborted) throw new Error('Whisper transcription aborted');
+    const hiddenName = encoder.outputNames.find(name => name.includes('last_hidden_state')) ?? encoder.outputNames[0];
+    const hidden = encoded[hiddenName] as unknown as WhisperTensor;
+    if (!hidden) throw new Error('Whisper encoder returned no hidden states');
+    const decoder = await this.session(request.decoderPath, request.threads);
+    let tokenizer = this.tokenizerDecoders.get(request.tokenizerPath);
+    if (!tokenizer) {
+      tokenizer = readFile(request.tokenizerPath, 'utf8').then(json => new WhisperTokenizerDecoder(json));
+      this.tokenizerDecoders.set(request.tokenizerPath, tokenizer);
+    }
+    const decoderLoop = new WhisperGreedyDecoder({
+      int64: (values, dims) => new this.runtime.Tensor('int64', values, dims) as unknown as WhisperTensor,
+      bool: (values, dims) => new this.runtime.Tensor('bool', values, dims) as unknown as WhisperTensor,
+      float32: (values, dims) => new this.runtime.Tensor('float32', values, dims) as unknown as WhisperTensor,
+    });
+    const ids = await decoderLoop.decode(decoder as unknown as Parameters<WhisperGreedyDecoder['decode']>[0], hidden, signal);
+    return { text: (await tokenizer).decode(ids).trim() };
   }
 
   private session(modelPath: string, threads: number): Promise<ort.InferenceSession> {
