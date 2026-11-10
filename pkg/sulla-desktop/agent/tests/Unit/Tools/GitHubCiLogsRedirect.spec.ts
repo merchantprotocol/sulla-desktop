@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GitHubLogStreamFetcher } from '../../../../tools/github/githubLogStreamFetcher';
+import { GitHubLogStreamFetcher } from '../../../tools/github/githubLogStreamFetcher';
 
 describe('GitHub Actions log redirect handling', () => {
   afterEach(() => vi.unstubAllGlobals());
