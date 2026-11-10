@@ -32,8 +32,9 @@
  * ```
  */
 
-import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
+import { app, ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import crypto from 'crypto';
+import path from 'path';
 
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
@@ -47,6 +48,8 @@ import * as micPcmSocket from './service/mic-pcm-socket';
 import * as micSocket from './service/mic-socket';
 import * as speakerSocket from './service/speaker-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
+import { OrtInferenceClient } from '../voice/inference/OrtInferenceClient';
+import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
 
 const rendererLog = createLogger('renderer');
 
@@ -587,6 +590,15 @@ function registerIpcHandlers(): void {
       } catch { /* unauthenticated/local installs use the model default */ }
     }
 
+    // Silero is optional and lazy: missing weights/ORT fail open in SpeechChunkGate.
+    // The model path matches ModelRepository's installed `voice-models` artifact.
+    const ortEntry = path.join(__dirname, '../voice/inference/voiceInferenceProcess.js');
+    const sileroPath = path.join(app.getPath('userData'), 'voice-models', 'vad-silero-onnx.model');
+    whisperTranscribe.configureSpeechChunkGate(new SpeechChunkGate(
+      new OrtInferenceClient(ortEntry), sileroPath,
+      undefined,
+      message => log.warn('WhisperTranscribe', message),
+    ));
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,
