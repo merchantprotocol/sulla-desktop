@@ -85,7 +85,8 @@ export class AgentCompletionRecoveryService extends Service {
     if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) return;
     this.inFlight.add(job.jobId);
     try {
-      job.tasks.forEach((task, taskIndex) => {
+      job.tasks.forEach((rawTask, taskIndex) => {
+        const task = rawTask as AgentJobTask & { completionFirstDeliveredAt?: number };
         const result = task.completion ?? job.results[taskIndex];
         const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt;
         if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= minimumAgeMs) {
