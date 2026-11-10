@@ -15,9 +15,8 @@ export class BrokerRedirectPolicy {
   constructor(private readonly allowedHosts: readonly string[] = [
     'pipelines.actions.githubusercontent.com',
     'results-receiver.actions.githubusercontent.com',
-    '*.actions.githubusercontent.com',
+    '*.blob.core.windows.net',
     'pipelines*.actions.githubusercontent.com',
-    'productionresultssa*.blob.core.windows.net',
   ]) {}
 
   allowsGitHubLogRedirect(context: BrokerRedirectContext): boolean {

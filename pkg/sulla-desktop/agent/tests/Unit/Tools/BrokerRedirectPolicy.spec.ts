@@ -14,7 +14,7 @@ describe('BrokerRedirectPolicy', () => {
   it('passes through only allow-listed GitHub Actions log redirects', () => {
     // risk: credential disclosure — only the signed redirect may leave the vault broker.
     expect(policy.allowsGitHubLogRedirect(context('/repos/acme/app/actions/jobs/123/logs', 'https://pipelines1.actions.githubusercontent.com/log?sig=secret'))).toBe(true);
-    expect(policy.allowsGitHubLogRedirect(context('/repos/acme/app/actions/runs/123/attempts/2/logs', 'https://productionresultssa.blob.core.windows.net/log?sig=secret'))).toBe(true);
+    expect(policy.allowsGitHubLogRedirect(context('/repos/acme/app/actions/runs/123/attempts/2/logs', 'https://logs.blob.core.windows.net/log?sig=secret'))).toBe(true);
   });
 
   it('denies untrusted hosts and every non-log redirect', () => {

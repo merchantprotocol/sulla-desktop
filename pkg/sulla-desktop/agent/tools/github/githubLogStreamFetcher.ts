@@ -17,9 +17,8 @@ export class GitHubLogStreamFetcher {
   private readonly redirectHosts: readonly string[] = [
     'pipelines.actions.githubusercontent.com',
     'results-receiver.actions.githubusercontent.com',
-    '*.actions.githubusercontent.com',
+    '*.blob.core.windows.net',
     'pipelines*.actions.githubusercontent.com',
-    'productionresultssa*.blob.core.windows.net',
   ];
 
   constructor(private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init)) {}
