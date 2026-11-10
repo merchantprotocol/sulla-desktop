@@ -183,8 +183,11 @@ export class JobCompletionDelivery {
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
-      const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
-      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, results, orphanReason, taskIndex, terminal);
+      const managerTask = orphan.manager.tasks[orphan.managerTaskIndex];
+      const lastCheckIn = managerTask?.waitReason ? `; last check-in: ${ managerTask.waitReason }` : '';
+      const orphanHeader = `orphaned from failed manager ${ orphan.manager.jobId }#${ orphan.managerTaskIndex }: ${ managerTask?.completion?.output ?? orphan.manager.error ?? orphan.manager.stopReason ?? orphan.notice.managerStatus }${ lastCheckIn}`;
+      const orphanResults = results.map(result => ({ ...result, output: `[${ orphanHeader }]\n\n${ result.output }` }));
+      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, undefined, taskIndex, terminal);
     }
     const channel = job.parentChannel || 'sulla-desktop';
     await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal);
