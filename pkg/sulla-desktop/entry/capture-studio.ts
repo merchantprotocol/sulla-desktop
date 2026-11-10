@@ -29,7 +29,29 @@ await initiateWindowContext();
 const app = createApp(CaptureStudio);
 
 // Native require is kept outside webpack's dynamic module resolution.
-const nativeRequire = createRequire(path.join(process.resourcesPath, 'ce1-native.cjs'));
+// Webpack can swap `module` for a stub whose createRequire is not a function
+// (seen as "this.loadRuntime is not a function" -> blur always failed), so
+// try createRequire first and fall back to the renderer's real require.
+function resolveNativeRequire(): (filename: string) => any {
+  const anchor = path.join(process.resourcesPath, 'ce1-native.cjs');
+  const candidates: Array<() => unknown> = [
+    () => createRequire(anchor),
+    () => (window as any).require,
+    // eslint-disable-next-line no-eval
+    () => (0, eval)('require'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const found = candidate();
+
+      if (typeof found === 'function') return found as (filename: string) => any;
+    } catch { /* try the next one */ }
+  }
+  // Never break the whole window: effects report the failure and fall back to raw video.
+  return () => { throw new Error('No native require available for camera effects'); };
+}
+const nativeRequire = resolveNativeRequire();
 const cameraEffects = new CameraEffectsComposition(paths.resources, nativeRequire, filename => readFile(filename), document, window, error => console.warn('[CameraEffects]', error));
 app.provide(cameraEffectsKey, cameraEffects.effects);
 
