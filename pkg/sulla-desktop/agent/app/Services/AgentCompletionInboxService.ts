@@ -30,6 +30,7 @@ interface CompletionInbox {
 
 /** Owns the per-thread, per-task completion queue with no fixed delivery delay. */
 export class AgentCompletionInboxService extends Service {
+  private static readonly ACKNOWLEDGED_KEY_LIMIT = 2048;
   private readonly inboxes = new Map<string, CompletionInbox>();
   private readonly claimedKeys = new Set<string>();
   private readonly acknowledgedKeys = new Set<string>();
@@ -81,7 +82,13 @@ export class AgentCompletionInboxService extends Service {
   acknowledge(entry: PendingCompletion): void {
     const key = this.entryKey(entry);
     this.claimedKeys.delete(key);
+    this.acknowledgedKeys.delete(key);
     this.acknowledgedKeys.add(key);
+    while (this.acknowledgedKeys.size > AgentCompletionInboxService.ACKNOWLEDGED_KEY_LIMIT) {
+      const oldest = this.acknowledgedKeys.values().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.acknowledgedKeys.delete(oldest);
+    }
   }
 
   requeue(channel: string, threadId: string, entry: PendingCompletion): boolean {

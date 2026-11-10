@@ -72,4 +72,13 @@ describe('AgentCompletionInboxService', () => {
     expect(inbox.enqueue('parent', 'thread', notice)).toBe(false);
     expect(inbox.pendingCount()).toBe(0);
   });
+
+  it('bounds retained acknowledged dedupe keys with oldest-first eviction', () => {
+    // risk: unbounded memory growth from completed tasks over a long app lifetime.
+    const { inbox } = createInbox();
+    const oldest = completion('oldest', 0);
+    inbox.acknowledge(oldest);
+    for (let index = 0; index < 2048; index++) inbox.acknowledge(completion(`job-${ index }`, 0));
+    expect(inbox.enqueue('parent', 'thread', oldest)).toBe(true);
+  });
 });
