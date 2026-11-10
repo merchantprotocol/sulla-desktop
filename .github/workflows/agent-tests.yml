@@ -253,7 +253,8 @@ jobs:
             exit 1
           fi
           cat /tmp/ce1-crop-mutant.log
-          grep -Eq 'Framed foreground/background coordinates changed|Crop/source coordinate mismatch' /tmp/ce1-crop-mutant.log
+          # The shifted crop also applies at autoFrame:false, so the first pixel guard to see it may be any of these.
+          grep -Eq 'Framed foreground/background coordinates changed|Crop/source coordinate mismatch|Scene coordinates changed|High contrast background moved' /tmp/ce1-crop-mutant.log
       - name: Real offline CE-1 renderer inference and pixel regression
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2
