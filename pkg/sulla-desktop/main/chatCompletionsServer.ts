@@ -114,6 +114,7 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
   gitlab:    'https://gitlab.com/api/v4',
   bitbucket: 'https://api.bitbucket.org/2.0',
   forgejo:   'https://codeberg.org/api/v1',
+  slack:     'https://slack.com/api',
 };
 
 export class ChatCompletionsServer {
@@ -1627,6 +1628,7 @@ export class ChatCompletionsServer {
           const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
           const auth = getIntegrationConfigLoader().getClient(slug)?.getIntegration().auth;
           const injections: import('../vault-broker').BrokerInjection[] = [];
+          if (slug === 'slack') injections.push({ field: 'bot_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
           if (auth?.auth.type === 'oauth2' || slug === 'grok') {
             injections.push({ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
           } else if (auth?.auth.type === 'bearer' || slug === 'cloudflare') {
@@ -1651,7 +1653,7 @@ export class ChatCompletionsServer {
             return res.status(direct.status).json({ success: direct.ok, status: direct.status, result });
           }
           const forwarded = await broker.execute(broker.requestFor(ctx, {
-            operation: 'catalog.http',
+            operation: slug === 'slack' ? 'slack.web-api' : 'catalog.http',
             ref:       { integrationId: slug, accountId },
             url:       url.toString(),
             method:    method.toUpperCase(),

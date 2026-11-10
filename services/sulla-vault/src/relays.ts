@@ -12,7 +12,7 @@ import type { BrokerRelaySendRequest } from './contracts.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { SULLA_CLOUD_HOST } from './sullaCloudRelay.js';
 
-export type VaultRelayOperation = 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
+export type VaultRelayOperation = 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
 
 export interface VaultRelayOpenRequest {
   relayId:     string;
@@ -305,75 +305,6 @@ abstract class BaseRelaySession implements RelaySession {
     } catch {
       return null;
     }
-  }
-}
-
-class SlackRelaySession extends BaseRelaySession {
-  private readonly acknowledgements = new Map<number, { envelopeId: string; timer: NodeJS.Timeout }>();
-
-  constructor(relayId: string, credential: string, abortSignal: AbortSignal) {
-    super(relayId, 'slack.socket-mode', credential, abortSignal);
-  }
-
-  async start(): Promise<void> {
-    await this.reconnect();
-  }
-
-  send(command: BrokerRelaySendRequest): Promise<void> {
-    if (jsonBytes(command) > MAX_COMMAND_BYTES) throw new Error('relay_command_too_large');
-    if (command.type !== 'slack.ack' || !Number.isSafeInteger(command.sequence)) {
-      throw new Error('relay_command_denied');
-    }
-    const pending = this.acknowledgements.get(command.sequence!);
-    if (!pending || this.socket?.readyState !== WebSocket.OPEN) throw new Error('relay_ack_not_pending');
-    const responsePayload = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
-      ? sanitized(command.payload, this.sensitiveValues)
-      : undefined;
-    this.socket.send(JSON.stringify({ envelope_id: pending.envelopeId, ...(responsePayload ? { payload: responsePayload } : {}) }));
-    clearTimeout(pending.timer);
-    this.acknowledgements.delete(command.sequence!);
-    return Promise.resolve();
-  }
-
-  override close(reason?: string): void {
-    for (const pending of this.acknowledgements.values()) clearTimeout(pending.timer);
-    this.acknowledgements.clear();
-    super.close(reason);
-  }
-
-  protected onOpen(_socket: WebSocket): void {}
-
-  protected onMessage(socket: WebSocket, data: unknown): void {
-    const frame = this.parse(data);
-    if (!frame || typeof frame.envelope_id !== 'string' || !frame.envelope_id) return;
-    const sequence = this.output.push(`slack.${ String(frame.type || 'event') }`, frame.payload ?? {});
-    const timer = setTimeout(() => {
-      const pending = this.acknowledgements.get(sequence);
-      if (!pending || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ envelope_id: pending.envelopeId }));
-      this.acknowledgements.delete(sequence);
-    }, 2_500);
-    timer.unref?.();
-    this.acknowledgements.set(sequence, { envelopeId: frame.envelope_id, timer });
-  }
-
-  protected async reconnect(): Promise<void> {
-    if (this.closed) return;
-    const response = await fetch('https://slack.com/api/apps.connections.open', {
-      method:   'POST',
-      headers:  { authorization: `Bearer ${ this.credential }`, 'content-type': 'application/x-www-form-urlencoded' },
-      body:     '',
-      redirect: 'error',
-      signal:   AbortSignal.any([this.authoritySignal, AbortSignal.timeout(BOOTSTRAP_TIMEOUT_MS)]),
-    });
-    const body = await readBoundedJson(response).catch(() => null) as { ok?: boolean; url?: string } | null;
-    if (!response.ok || !body?.ok || typeof body.url !== 'string') {
-      throw new Error('slack_relay_connect_failed');
-    }
-    const socketUrl = assertProviderWebSocket(body.url, SLACK_SOCKET_HOSTS);
-    this.sensitiveValues.add(socketUrl.toString());
-    for (const value of socketUrl.searchParams.values()) this.sensitiveValues.add(value);
-    this.connect(socketUrl.toString());
   }
 }
 
@@ -924,9 +855,7 @@ export class DefaultVaultRelayManager implements VaultRelayManager {
   async open(request: VaultRelayOpenRequest): Promise<VaultRelayHandle> {
     if (!request.relayId || !request.credential || request.abortSignal.aborted) throw new Error('invalid_relay_request');
     if (this.sessions.has(request.relayId)) throw new Error('relay_already_exists');
-    const session: RelaySession = request.operation === 'slack.socket-mode'
-      ? new SlackRelaySession(request.relayId, request.credential, request.abortSignal)
-      : request.operation === 'discord.gateway'
+    const session: RelaySession = request.operation === 'discord.gateway'
         ? new DiscordRelaySession(request.relayId, request.credential, request.abortSignal)
         : request.operation === 'sulla-cloud.relay'
           ? new SullaCloudRelaySession(

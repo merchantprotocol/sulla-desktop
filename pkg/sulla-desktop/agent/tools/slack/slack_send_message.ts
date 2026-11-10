@@ -9,6 +9,7 @@ import { stripProtocolTags } from '../../utils/stripProtocolTags';
 import { BaseTool, ToolResponse } from '../base';
 
 import type { SlackClient } from '../../integrations/slack/SlackClient';
+import { NoopOutboundSlackMessageObserver, type OutboundSlackMessageObserver } from './OutboundSlackMessageObserver';
 
 function runtimeContext() {
   return {
@@ -24,11 +25,12 @@ function runtimeContext() {
  * Slack Send Message Tool - Worker class for execution
  */
 export class SlackSendMessageWorker extends BaseTool {
+  constructor(private readonly observer: OutboundSlackMessageObserver = new NoopOutboundSlackMessageObserver()) { super(); }
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, text } = input;
+    const { channel, text, account } = input;
     // Strip internal agent-protocol wrappers (AGENT_DONE / AGENT_BLOCKED /
     // AGENT_CONTINUE, etc.) so they never leak into user-visible Slack messages
     // (issue #96). stripProtocolTags is the single source of truth for these
@@ -86,7 +88,7 @@ export class SlackSendMessageWorker extends BaseTool {
         channel,
         textPreview: cleanText.slice(0, 80),
       });
-      const res = await slack.sendMessage(channel, cleanText, undefined, undefined, this.executionContext);
+      const res = await slack.sendMessage(channel, cleanText, undefined, undefined, this.executionContext, account);
       console.log('[slack_send_message] sendMessage response', {
         invocationId,
         ok:         !!res?.ok,
@@ -96,9 +98,11 @@ export class SlackSendMessageWorker extends BaseTool {
       });
 
       if (res.ok) {
+        await this.observer.onSent({ account: res.account, teamId: res.teamId, channel, ts: res.ts, threadTs: res.threadTs ?? null, executionContext: this.executionContext });
         return {
           successBoolean: true,
           responseString: `Slack message sent successfully to channel ${ channel } at timestamp ${ res.ts }`,
+          result: { account: res.account, teamId: res.teamId, channel, ts: res.ts, threadTs: res.threadTs ?? null },
         };
       }
 
