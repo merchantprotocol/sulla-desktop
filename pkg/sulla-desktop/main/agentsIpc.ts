@@ -465,7 +465,9 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
-    const checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null;
+    let checkin = null;
+    try { checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null; }
+    catch (error) { console.warn(`[agents:thread-jobs] telemetry failed: ${ job.jobId }#${ taskIndex }`, error); }
     const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
     const lastActivityAt = activity.lastActivityAt;
 
@@ -568,7 +570,8 @@ async function fetchAgents(): Promise<AgentsListResponse['agents']> {
         startedAt:    a.startedAt,
         lastActiveAt: a.lastActiveAt,
       }));
-  } catch {
+  } catch (error) {
+    console.warn('[agents:list] active agents fetch failed', error);
     return [];
   }
 }
@@ -579,7 +582,8 @@ async function fetchHeartbeat(): Promise<AgentsListResponse['heartbeat']> {
       '@pkg/agent/services/HeartbeatService'
     );
     return getHeartbeatService().getStatus();
-  } catch {
+  } catch (error) {
+    console.warn('[agents:list] heartbeat fetch failed', error);
     return null;
   }
 }
@@ -603,7 +607,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     // from the last hour. Enriching every historical job reads one log file
     // per task on each 3s poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
-    const allJobs = (await agentJobProvider.states.jobs()).filter(job => {
+    const allJobs = (await agentJobProvider.states.list(100, true)).filter(job => {
       if (job.status === 'completed') return false;
       if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
@@ -616,6 +620,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     const logsDir = resolveSullaLogsDir();
 
     return Promise.all(allJobs.map(async job => {
+      try {
       const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
       const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
@@ -684,9 +689,14 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         parentTitle: parent?.title || undefined,
         tasks,
       };
+      } catch (error) {
+        console.warn(`[agents:list] job enrichment failed: ${ job.jobId }`, error);
+        return { jobId: job.jobId, status: job.status, createdAt: job.createdAt, finishedAt: job.finishedAt, taskCount: job.taskCount, error: job.error, parentChannel: job.parentChannel, parentThreadId: job.parentThreadId, parentAgentId: job.parentAgentId, tasks: [] };
+      }
     }));
-  } catch {
-    return [];
+  } catch (error) {
+    console.warn('[agents:list] jobs fetch failed', error);
+    throw error;
   }
 }
 
@@ -721,7 +731,8 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
       progress: typeof row.payload?.percent === 'number' ? row.payload.percent : undefined,
       error: row.error || undefined,
     }));
-  } catch {
+  } catch (error) {
+    console.warn('[agents:list] workflow runs fetch failed', error);
     return [];
   }
 }
