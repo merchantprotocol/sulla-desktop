@@ -84,7 +84,7 @@ const TOOL_TO_SCOPE = new Map<string, ScopeConfig>(
 export class SlackScopeCommandWorker extends BaseTool {
   name = '';
   description = '';
-  schemaDef: any = {};
+  schemaDef: any = { account: { type: 'string', optional: true, description: 'Slack account id; defaults to the active Slack account.' } };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const scopeConfig = TOOL_TO_SCOPE.get(this.name);
@@ -95,7 +95,7 @@ export class SlackScopeCommandWorker extends BaseTool {
       };
     }
 
-    const { apiMethod, params = {} } = input;
+    const { apiMethod, params = {}, account } = input;
     try {
       const slack = await registry.get<SlackClient>('slack');
       if (!slack) {
@@ -105,7 +105,7 @@ export class SlackScopeCommandWorker extends BaseTool {
         };
       }
 
-      const result = await slack.apiCall(apiMethod, params, this.executionContext);
+      const result = await slack.apiCall(apiMethod, params, this.executionContext, account);
       const success = result?.ok !== false;
 
       return {
@@ -182,7 +182,7 @@ const TOOL_TO_API_COMMAND = new Map<string, ApiCommandConfig>(
 export class SlackApiCommandWorker extends BaseTool {
   name = '';
   description = '';
-  schemaDef: any = {};
+  schemaDef: any = { account: { type: 'string', optional: true, description: 'Slack account id; defaults to the active Slack account.' } };
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const command = TOOL_TO_API_COMMAND.get(this.name);
@@ -194,6 +194,7 @@ export class SlackApiCommandWorker extends BaseTool {
     }
 
     const params = input?.params && typeof input.params === 'object' ? input.params : {};
+    const account = input?.account;
 
     try {
       const slack = await registry.get<SlackClient>('slack');
@@ -204,7 +205,7 @@ export class SlackApiCommandWorker extends BaseTool {
         };
       }
 
-      const result = await slack.apiCall(command.apiMethod, params, this.executionContext);
+      const result = await slack.apiCall(command.apiMethod, params, this.executionContext, account);
       const success = result?.ok !== false;
 
       return {
