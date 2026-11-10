@@ -20,6 +20,10 @@ asarUnpack:
   # build/Release/better_sqlite3.node. The sidecar's ENTIRE runtime dep tree
   # stays on real disk so it boots even without asar-aware resolution.
   - 'node_modules/better-sqlite3/**'
+  - 'node_modules/onnxruntime-node/**'
+  - 'node_modules/onnxruntime-common/**'
+  - 'node_modules/adm-zip/**'
+  - 'node_modules/global-agent/**'
   - 'node_modules/bindings/**'
   - 'node_modules/file-uri-to-path/**'
   - 'node_modules/fast-glob/**'

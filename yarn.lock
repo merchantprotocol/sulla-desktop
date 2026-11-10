@@ -15007,3 +15007,21 @@ zod@3.25.76, "zod@^3.25 || ^4.0", zod@^3.25.0:
   version "3.25.76"
   resolved "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz"
   integrity sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==
+adm-zip@0.5.16:
+  version "0.5.16"
+  resolved "https://registry.npmjs.org/adm-zip/-/adm-zip-0.5.16.tgz#0b5e4c779f07dedea5805cdccb1147071d94a909"
+  integrity sha512-TGw5yVi4saajsSEgz25grObGHEUaDrniwvA2qwSC060KfqGPdglhvPMA2lPIoxs3PQIItj2iag35fONcQqgUaQ==
+
+onnxruntime-common@1.23.0:
+  version "1.23.0"
+  resolved "https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.23.0.tgz#ab254b0725fc837597000e705f885db523d6c37e"
+  integrity sha512-Auz8S9D7vpF8ok7fzTobvD1XdQDftRf/S7pHmjeCr3Xdymi4z1C7zx4vnT6nnUjbpelZdGwda0BmWHCCTMKUTg==
+
+onnxruntime-node@1.23.0:
+  version "1.23.0"
+  resolved "https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.23.0.tgz#0a4cb06147f41d5fa0dd8a6880c3bc9304a6c8f5"
+  integrity sha512-j7QVuR4ouektZjOopKtXcIGsB3C6R9kVbgS10lc2e5SxoWMUhmCwxNl4qBslpWJaPrFxvrQrQaQLQdqku8V19w==
+  dependencies:
+    adm-zip "^0.5.16"
+    global-agent "^3.0.0"
+    onnxruntime-common "1.23.0"
