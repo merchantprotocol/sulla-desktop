@@ -16,6 +16,11 @@ export class CloudOfflineError extends Error {
   readonly code = 'FILE_OFFLINE';
 }
 
+export class CloudBusyError extends Error {
+  readonly code = 'FILE_BUSY';
+  constructor(readonly retryAfterSeconds:number) { super('Sulla Cloud is busy; retrying shortly') }
+}
+
 export interface CloudResponse<T = unknown> { status:number; headers:Record<string, string>; body:T }
 
 export interface ChangesPage { versions:unknown[]; head:SyncHead }
@@ -78,10 +83,16 @@ export class FilesSyncCloudApi {
     return response.status;
   }
 
+  async abortUpload(uploadId:string):Promise<void> {
+    const response = await this.call(`${ BASE }/uploads/${ uploadId }`, 'DELETE');
+    if (response.status !== 200 && response.status !== 404) throw Object.assign(new Error(`Cloud upload abort failed (${ response.status })`), { status: response.status });
+  }
+
   /** Raw wire bytes, checked against the server's X-Content-SHA256 when it sends one. */
   async getChunk(collectionId:string, chunkId:string):Promise<Buffer> {
     const response = await this.call<string>(`${ BASE }/collections/${ collectionId }/chunks/${ chunkId }`, 'GET', undefined, undefined, { responseType: 'base64' });
-    if (response.status >= 500 || response.status === 429) throw new CloudOfflineError('Sulla Cloud is unavailable');
+    if (response.status === 429) throw new CloudBusyError(Math.max(1, Number(response.headers['retry-after']) || 1));
+    if (response.status >= 500) throw new CloudOfflineError('Sulla Cloud is unavailable');
     if (response.status !== 200 || typeof response.body !== 'string') {
       throw Object.assign(new Error(`Cloud chunk request failed (${ response.status })`), { status: response.status, code: 'FILE_INTEGRITY' });
     }
