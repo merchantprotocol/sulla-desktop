@@ -138,7 +138,7 @@ class CameraEffectsSmoke {
       }
       for (const name of ['useMediaSources', 'useRecorder', 'useAgentBridge', 'useAudioDriver', 'useSpeakerCapture']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/composables', name + '.ts'), 'utf8');
-        source = source.replaceAll("'../effects/", "'./");
+        source = source.replaceAll("'../effects/", "'./").replaceAll("'../services/", "'./");
         if (name === 'useRecorder' && process.env.CE1_RECORDING_MUTANT === '1') {
           source = source.replace('new MediaRecorder(src.stream, recorderOpts)', 'new MediaRecorder(window.__ce1Raw, recorderOpts)');
         }
@@ -146,6 +146,15 @@ class CameraEffectsSmoke {
           compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
         }).outputText);
       }
+      // Include the real speaker integrity/custody services added by main, keeping
+      // the isolated smoke bundle on the same production code path.
+      for (const name of ['SpeakerCaptureIntegrity', 'NativeCaptureCustody']) {
+        const source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/services', name + '.ts'), 'utf8');
+        fs.writeFileSync(path.join(this.directory, name + '.js'), ts.transpileModule(source, {
+          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+        }).outputText);
+      }
+      fs.writeFileSync(path.join(this.directory, 'ipcRenderer.js'), 'exports.ipcRenderer = require(\'electron\').ipcRenderer;');
       // Only filesystem location is substituted: real recorder, native writer, real encoded WebM.
       fs.writeFileSync(path.join(this.directory, 'paths.js'), 'exports.default = { sullaHome: ' + JSON.stringify(this.directory) + ' };');
       // Same app:// scheme + public HTML (no CSP) as the real Capture Studio.
@@ -161,7 +170,7 @@ class CameraEffectsSmoke {
         entry: path.join(this.directory, 'renderer.cjs'),
         output: { path: this.directory, filename: 'renderer.js' },
         optimization: { minimize: false },
-        resolve: { modules: [path.resolve('node_modules'), 'node_modules'], alias: { '@pkg/utils/paths': path.join(this.directory, 'paths.js') } },
+        resolve: { modules: [path.resolve('node_modules'), 'node_modules'], alias: { '@pkg/utils/paths': path.join(this.directory, 'paths.js'), '@pkg/utils/ipcRenderer$': path.join(this.directory, 'ipcRenderer.js') } },
       }, (error, stats) => error || stats.hasErrors() ? reject(error || new Error(stats.toString())) : resolve()));
       await app.whenReady();
       protocol.handle('app', request => net.fetch(pathToFileURL(path.join(this.directory, new URL(request.url).pathname)).href));
