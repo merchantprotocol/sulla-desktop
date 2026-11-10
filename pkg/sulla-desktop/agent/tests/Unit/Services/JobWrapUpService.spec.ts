@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 import { JobWrapUpService, type JobWrapUpMessageSender, type JobWrapUpTimer } from '../../../app/Services/JobWrapUpService';
 import type { StopPrincipalValue } from '../../../app/ValueObjects/StopPrincipal';
 
+// execute() awaits claim, durable stop, teardown and ack before re-arming; drain them all.
+const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
+
 class FakeTimer implements JobWrapUpTimer {
   private next = 0;
   readonly callbacks = new Map<ReturnType<typeof setTimeout>, () => void>();
@@ -75,7 +78,7 @@ describe('JobWrapUpService', () => {
     await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).rejects.toThrow('send failed after reserve');
     await expect(service.request('job-1', [0], principal, 'attributed reason', 1, 'return now')).resolves.toEqual(['pending']);
     expect(messages.attempts).toBe(1); expect(timer.callbacks.size).toBe(1);
-    timer.elapse(); await Promise.resolve(); await Promise.resolve();
+    timer.elapse(); await flush();
     expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]); expect(persistence.completed).toBe(1);
   });
 
@@ -85,7 +88,7 @@ describe('JobWrapUpService', () => {
     const stops = new AttributedFakeStops(); stops.outcome=outcome; const persistence = new FakePersistence();
     const timer=new FakeTimer(); const service = new JobWrapUpService(stops as any, new FakeMessages(), timer, persistence);
     await service.request('job-1',[0],principal,'attributed reason',0,'',true);
-    timer.elapse(); await Promise.resolve(); await Promise.resolve();
+    timer.elapse(); await flush();
     expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]);
     expect(persistence.completed).toBe(0); expect(timer.callbacks.size).toBe(1);
   });
@@ -96,7 +99,7 @@ describe('JobWrapUpService', () => {
     const identities={current:'generation-old',async currentGeneration(){return this.current;}};
     const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence,identities);
     await service.request('job-1',[0],principal,'attributed reason',1,'',true);identities.current='generation-new';
-    timer.elapse();await Promise.resolve();await Promise.resolve();
+    timer.elapse();await flush();
     expect(stops.stopped).toEqual([{jobId:'job-1',taskIndex:0,generation:'generation-old'}]);
   });
 
@@ -104,7 +107,7 @@ describe('JobWrapUpService', () => {
     // risk: false receipt — an ack=false race must retry rather than strand teardown.
     const timer=new FakeTimer();const stops=new AttributedFakeStops();const persistence=new FakePersistence();persistence.acknowledgeResult=false;
     const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence);
-    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await Promise.resolve();await Promise.resolve();
+    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await flush();
     expect(timer.callbacks.size).toBe(1);expect(stops.stopped).toHaveLength(1);
   });
 
@@ -112,8 +115,8 @@ describe('JobWrapUpService', () => {
     // risk: orphan execution — transient runtime failure must not strand the durable claim.
     const timer=new FakeTimer();const stops=new AttributedFakeStops();stops.outcome='unavailable';const persistence=new FakePersistence();
     const service=new JobWrapUpService(stops as any,new FakeMessages(),timer,persistence);
-    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await Promise.resolve();await Promise.resolve();
-    expect(timer.callbacks.size).toBe(1);stops.outcome='confirmed';timer.elapse();await Promise.resolve();await Promise.resolve();
+    await service.request('job-1',[0],principal,'attributed reason',1,'',true);timer.elapse();await flush();
+    expect(timer.callbacks.size).toBe(1);stops.outcome='confirmed';timer.elapse();await flush();
     expect(stops.stopped).toHaveLength(2);expect(persistence.completed).toBe(1);
   });
 
