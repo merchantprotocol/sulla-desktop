@@ -84,6 +84,13 @@ const BUNDLE_V2_UPLOAD_ENABLED = process.env.SULLA_CLOUD_BUNDLE_VERSION === '2';
 const POLICY_RANK = { metadata: 0, autofill: 1, full: 2 } as const;
 const ITEM_TYPES = new Set(['login', 'note', 'card', 'identity', 'apiKey']);
 
+/** The server head only authenticates its immediate predecessor link. */
+export class HeadChainLinkPolicy {
+  expectedPreviousMac(headSeq: number, localSeq: number, localMac: string): string | undefined {
+    return headSeq <= localSeq + 1 ? localMac : undefined;
+  }
+}
+
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 /** Fingerprint of what the bundle wraps; changes on a password change, KDF change or key rotation. */
 const wrapFingerprint = (account: LocalAccountRow, recovery?: unknown) => sha256Hex(Buffer.from(JSON.stringify([
@@ -124,6 +131,7 @@ export class CloudVaultSyncRunner {
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
+  private readonly headChainLinkPolicy = new HeadChainLinkPolicy();
 
   constructor(
     private readonly db: Database,
@@ -275,7 +283,16 @@ export class CloudVaultSyncRunner {
           if (prior && record.generation < num(prior.generation)) throw new EnvelopeError('rollback', 'Cloud served an older record generation');
           merged.set(record.id, record);
         }
-        envelope.verifyHead(head, userKey, { vaultId: state.vault_id, scope: 'personal', records: merged.values() as Iterable<SyncRecord>, minSeq: since, expectedPrevHeadMac: state.head_mac });
+        envelope.verifyHead(head, userKey, {
+          vaultId: state.vault_id,
+          scope: 'personal',
+          records: merged.values() as Iterable<SyncRecord>,
+          minSeq: since,
+          // A head links to exactly one predecessor. The locally stored MAC can
+          // be checked only for a one-step advance (or the unchanged head).
+          ...(this.headChainLinkPolicy.expectedPreviousMac(head.seq, since, state.head_mac) !== undefined
+            ? { expectedPrevHeadMac: state.head_mac } : {}),
+        });
         assertCurrent();
         let applied = 0;
         let conflictCopies = 0;
