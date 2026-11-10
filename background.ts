@@ -81,7 +81,7 @@ import { isDevEnv } from '@pkg/utils/environment';
 import Logging, { clearLoggingDirectory, setLogLevel } from '@pkg/utils/logging';
 import { fetchMacOsVersion, getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
-import { configureInstancePorts, isFirstRunTestInstance, requestedInstance, testAutopilotMode, TEST_INSTANCE_FLAG } from '@pkg/utils/instance';
+import { configureInstancePorts, InstanceEnvironmentConfigurator, isFirstRunTestInstance, requestedInstance, testAutopilotMode, TEST_INSTANCE_FLAG } from '@pkg/utils/instance';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { handleDeepLink, findDeepLinkInArgv } from '@pkg/main/deepLink';
 import { executable } from '@pkg/utils/resources';
@@ -110,6 +110,7 @@ if (requestedTestInstance && !isFirstRunTestInstance()) {
   process.exit(202);
 }
 configureInstancePorts();
+new InstanceEnvironmentConfigurator().configureRuntimeDirectory();
 const firstRunTestAutopilot = testAutopilotMode();
 
 Electron.app.setPath('userData', path.join(paths.appHome, 'electron'));

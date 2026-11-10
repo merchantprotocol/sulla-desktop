@@ -20,7 +20,9 @@ import {
   type AgentPolicy, type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type SyncEnvelope, type SyncHead, type SyncRecord } from './envelope.js';
+import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from './envelope.js';
+import type { DomainVaultSyncCodec } from './DomainVaultSyncCodec.js';
+import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js';
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
 
@@ -118,7 +120,7 @@ function responseBody(body: unknown): any {
 }
 
 export class CloudVaultSyncRunner {
-  private envelope: SyncEnvelope | null = null;
+  private envelope: DomainVaultSyncCodec | null = null;
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -127,10 +129,11 @@ export class CloudVaultSyncRunner {
     private readonly db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
+    private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
   ) {}
 
-  private async env(): Promise<SyncEnvelope> {
-    this.envelope ??= createSyncEnvelope(await loadSodium());
+  private async env() {
+    this.envelope ??= await this.codecProvider.get();
     return this.envelope;
   }
 
@@ -320,7 +323,7 @@ export class CloudVaultSyncRunner {
   }
 
   private async applyRecord(
-    client: pg.PoolClient, envelope: SyncEnvelope, userId: string, userKey: Uint8Array, record: SyncRecord, prior: KnownRow | undefined,
+    client: pg.PoolClient, envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, record: SyncRecord, prior: KnownRow | undefined,
   ): Promise<{ conflictCopy: boolean }> {
     const local = (await client.query<{ revision: string; deleted_at: string | null; agent_policy: AgentPolicy; integration_ref: string | null; ciphertext: unknown; encrypted_item_key: unknown; item_type: string }>(
       `SELECT revision,deleted_at,agent_policy,integration_ref,ciphertext,encrypted_item_key,item_type
@@ -348,6 +351,7 @@ export class CloudVaultSyncRunner {
       return { conflictCopy: false };
     }
 
+    if (!record.item) throw new EnvelopeError('malformed_record', 'Cloud record is missing its item body');
     const plaintext = parseRemoteItem(envelope.decryptItem(record.item, userKey, userId, record.id));
     if (local && !local.deleted_at && localChanged) {
       // Both sides changed with no human present: keep both. Cloud keeps the id; the local version becomes a copy.
@@ -429,7 +433,7 @@ export class CloudVaultSyncRunner {
     });
   }
 
-  private async prepareCreate(envelope: SyncEnvelope, userId: string, userKey: Uint8Array, state: StateRow | null, deviceId: string, replace: boolean) {
+  private async prepareCreate(envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, state: StateRow | null, deviceId: string, replace: boolean) {
     const account = await this.account(userId);
     if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
     const vaultId = replace || !state ? randomUUID() : state.vault_id;
@@ -462,7 +466,7 @@ export class CloudVaultSyncRunner {
   }
 
   /** Password or KDF changed on this Desktop: re-upload only the bundle, CAS on bundleGeneration. */
-  private async prepareRewrap(envelope: SyncEnvelope, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
+  private async prepareRewrap(envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
     const account = await this.account(userId);
     if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
     let fields;
@@ -483,7 +487,7 @@ export class CloudVaultSyncRunner {
     });
   }
 
-  private async prepareCommit(envelope: SyncEnvelope, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
+  private async prepareCommit(envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
     const known = await this.known(userId);
     const rows = (await this.db.query<{ id: string; revision: string; deleted_at: string | null; ciphertext: unknown; encrypted_item_key: unknown }>(
       `SELECT id,revision,deleted_at,ciphertext,encrypted_item_key FROM items WHERE owner_user_id=$1 AND collection_id IS NULL ORDER BY id`, [userId],

@@ -15,6 +15,7 @@ import * as childProcess from 'child_process';
 import Logging from '@pkg/utils/logging';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import paths from '@pkg/utils/paths';
+import { sullaRuntimeDirectory } from './sullaRuntime/artifacts';
 
 const log = Logging.background;
 
@@ -35,7 +36,7 @@ function install(cli: GuestCli): Promise<void> {
   firstRunTrace(cli === 'codex' ? 'codex' : 'claude', 'CLI version check/install started', { pinnedVersion });
 
   return new Promise<void>((resolve, reject) => {
-    const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
+    const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env, SULLA_RUNTIME_DIR: sullaRuntimeDirectory() } });
     let output = '';
     const timer = setTimeout(() => { try { proc.kill() } catch { /* dead */ } reject(new Error(`installing ${ cli } timed out after 5 minutes`)) }, 5 * 60 * 1000);
     proc.stdout.on('data', (d) => { output += d.toString() });

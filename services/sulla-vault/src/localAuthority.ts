@@ -90,7 +90,8 @@ import type {
 } from './contracts.js';
 import { transportWrap } from './filesCloudEscrow.js';
 import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
-import { createSyncEnvelope, loadSodium, type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
+import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
+import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
@@ -107,6 +108,7 @@ import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHi
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
+import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 
 const CHALLENGE_TTL_MS = 30_000;
 const CACHE_UPDATE_TTL_MS = 60_000;
@@ -602,6 +604,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
   private readonly filesAudit: FilesAuditEmitter;
+  private codecProvider = new DomainVaultSyncCodecProvider();
+
+  private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
 
   constructor(
     private readonly db: Database,
@@ -1445,7 +1450,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault enrollment was not approved');
     const keys=this.requireKeys();
-    const env=createSyncEnvelope(await loadSodium());
+    const env=await this.codecProvider.get();
     const bundle=input.bundle as SyncBundle, head=input.head as SyncHead;
     env.verifyBundle(bundle,keys.userKey);
     if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
@@ -1465,7 +1470,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       plain=await this.filesTransport.unwrap(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
       const payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain)) as {userKey:string;bundle:SyncBundle;head:SyncHead};
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
-      const env=createSyncEnvelope(await loadSodium()); env.verifyBundle(payload.bundle,userKey);
+      const env=await this.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
       const wrapped=await unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
       privateKey=await unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
@@ -2368,7 +2373,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
-        brokerTransferLimits(input.operation).response,
+        brokerTransferLimits(input.operation).response, input.operation, input.ref.integrationId,
       );
       if (prepared.item) await this.audit(input, prepared.item, false, null);
       return result;
@@ -3256,6 +3261,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             return;
           }
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
+            const location = response.headers.location;
+            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
+              operation: input.operation, integrationId: input.ref.integrationId, requestUrl: prepared.target,
+              status: response.statusCode, location,
+            })) {
+              response.resume();
+              started = true;
+              sink.start(302, { location });
+              this.inFlight.delete(request);
+              sink.end();
+              resolve();
+              return;
+            }
             response.resume();
             request.destroy(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
             return;
@@ -3320,6 +3338,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     redactResponseBody = true,
     maxRequestBytes = MAX_RESPONSE_BYTES,
     maxResponseBytes = MAX_RESPONSE_BYTES,
+    operation = 'broker.request',
+    integrationId?: string,
   ): Promise<BrokerExecuteResponse> {
     const method = methodInput.toUpperCase();
     if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -3360,6 +3380,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             return;
           }
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
+            const location = response.headers.location;
+            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
+              operation, integrationId, requestUrl: url,
+              status: response.statusCode, location,
+            })) {
+              response.resume();
+              this.inFlight.delete(request);
+              resolve({ status: 302, headers: { location }, body: '' });
+              return;
+            }
             response.resume();
             reject(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
             return;
