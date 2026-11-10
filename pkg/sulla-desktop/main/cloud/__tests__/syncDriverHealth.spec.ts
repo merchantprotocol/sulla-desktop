@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { describe, expect, it } from 'vitest';
 import { SyncDriverHealth } from '../syncDriverHealth';
 
 describe('SyncDriverHealth', () => {
