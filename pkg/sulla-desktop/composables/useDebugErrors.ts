@@ -27,6 +27,9 @@ export function useDebugErrors() {
 
   onMounted(() => {
     ipcRenderer.on('debug:error' as any, onReported as any);
+    void ipcRenderer.invoke('debug:errors:list' as any).then((records: DebugErrorRecord[]) => { errors.value = records }).catch(error => {
+      ipcRenderer.send('debug:report' as any, 'debug-overlay:initial-errors', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' });
+    });
     window.addEventListener('error', onWindowError);
     window.addEventListener('unhandledrejection', onUnhandledRejection);
   });

@@ -26,7 +26,11 @@ export interface DebugErrorServiceDependencies {
 }
 
 export class DebugErrorService {
+  private readonly recentErrors: DebugError[] = [];
+
   constructor(private readonly dependencies: DebugErrorServiceDependencies) {}
+
+  recent(): DebugError[] { return [...this.recentErrors] }
 
   async reportError(source: string, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
@@ -47,6 +51,8 @@ export class DebugErrorService {
       message,
       stack,
     };
+    this.recentErrors.unshift(record);
+    if (this.recentErrors.length > 100) this.recentErrors.length = 100;
     const file = path.join(this.dependencies.logsDir(), 'debug-errors.log');
     try {
       this.dependencies.relay(record);
@@ -91,4 +97,5 @@ export function initDebugErrorReporting(): void {
     reported.stack = error?.stack || reported.stack;
     void debugErrorService.reportError(`renderer:${ source }`, reported);
   });
+  ipcMain.handle('debug:errors:list', () => debugErrorService.recent());
 }
