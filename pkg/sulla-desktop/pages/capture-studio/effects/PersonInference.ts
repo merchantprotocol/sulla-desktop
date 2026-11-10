@@ -102,7 +102,7 @@ export class BoundedPersonInference implements PersonInference {
     const width = 'videoWidth' in frame ? frame.videoWidth : frame.width;
     const height = 'videoHeight' in frame ? frame.videoHeight : frame.height;
     if (!width || !height) throw new Error('Inference input is empty');
-    const scale = Math.min(1, 512 / width, 512 / height);
+    const scale = Math.min(1, 256 / width, 256 / height);
     const targetWidth = Math.max(1, Math.floor(width * scale));
     const targetHeight = Math.max(1, Math.floor(height * scale));
     if (this.canvas.width !== targetWidth) this.canvas.width = targetWidth;
