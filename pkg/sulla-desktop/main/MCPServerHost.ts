@@ -45,7 +45,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { toolRegistry } from '@pkg/agent/tools/registry';
-import { currentAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { ContainerExecutionContextFactory, type AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
@@ -96,6 +96,7 @@ export class MCPServerHost {
   private starting: Promise<void> | null = null;
 
   private readonly sessions = new ToolSessionRegistry();
+  private readonly executionContexts = new ContainerExecutionContextFactory();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   get running(): boolean {
@@ -125,9 +126,9 @@ export class MCPServerHost {
    * Revoke as soon as the invocation finishes (finally block) to avoid
    * leaking references to a graph state that's no longer active.
    */
-  registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
+  registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, binding?: AgentContainerRuntimeBinding): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs));
+    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs, binding));
 
     return {
       id,
@@ -153,9 +154,9 @@ export class MCPServerHost {
    * would leave every CLI/MCP call in the turn on "Expired tool session".
    * Keeps the session's own TTL unless one is passed.
    */
-  rebindSession(id: string, state: BaseThreadState, ttlMs?: number): boolean {
+  rebindSession(id: string, state: BaseThreadState, ttlMs?: number, binding?: AgentContainerRuntimeBinding): boolean {
     const effectiveTtl = ttlMs ?? DEFAULT_SESSION_TTL_MS;
-    return this.sessions.rebind(id, state, ttlMs, this.containerExecutionContext(state, effectiveTtl));
+    return this.sessions.rebind(id, state, ttlMs, this.containerExecutionContext(state, effectiveTtl, binding));
   }
 
   /** Bind CLI calls to the same live graph as their provider MCP session. */
@@ -545,28 +546,7 @@ export class MCPServerHost {
     return server;
   }
 
-  private containerExecutionContext(state: BaseThreadState, ttlMs: number): ToolExecutionContext | undefined {
-    const runtime = currentAgentContainerRuntime();
-    if (!runtime) return undefined;
-    const now = Math.floor(Date.now() / 1000);
-    const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames ?? [];
-
-    return {
-      v:         1,
-      iss:       'sulla-desktop',
-      aud:       'sulla-tools',
-      sub:       runtime.subject,
-      org_id:    runtime.orgId,
-      agent_id:  runtime.agentId,
-      pod_id:    runtime.podId,
-      thread_id: runtime.threadId,
-      job_id:    runtime.jobId,
-      device_id: runtime.deviceId,
-      scopes:    allowed.length === 0 || allowed.includes('exec') ? ['*'] : [...allowed],
-      iat:       now,
-      exp:       now + Math.ceil(ttlMs / 1000),
-      jti:       crypto.randomUUID(),
-      request_id: crypto.randomUUID(),
-    };
+  private containerExecutionContext(state: BaseThreadState, ttlMs: number, binding?: AgentContainerRuntimeBinding): ToolExecutionContext | undefined {
+    return this.executionContexts.create(state, ttlMs, binding);
   }
 }
