@@ -72,7 +72,10 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     expect(entry).toBeDefined();
     const [pending] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
     expect(pending.status).toBe('pending');
-    const tasks = { markTaskCompletionDelivered: async() => { throw new Error('stranded notice must not acknowledge a task completion') } };
+    const tasks = {
+      markTaskCompletionDelivered: async() => { throw new Error('stranded notice must not acknowledge a task completion'); },
+      releaseTaskCompletion: async() => { throw new Error('stranded notice must not release a task completion'); },
+    };
     await new CompletionAcknowledgementService(tasks, episodes, inbox).acknowledge(entry);
     const [delivered] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE manager_job_id = $1', [id]);
     expect(delivered.status).toBe('delivered');
@@ -94,7 +97,7 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     expect(await restarted.tick()).toBe(1);
     const [replayed] = restartedInbox.take('sulla-desktop', 'grandparent-thread');
     expect(replayed.dedupeKey).toContain(`stranded:${ restartId }`);
-    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {} }, episodes, restartedInbox).acknowledge(replayed);
+    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {}, releaseTaskCompletion: async() => {} }, episodes, restartedInbox).acknowledge(replayed);
     expect(await restarted.tick()).toBe(0);
   });
 
@@ -120,7 +123,7 @@ dbDescribe('StrandedManagerScheduler durable delivery', () => {
     const scheduler = new StrandedManagerScheduler(fleet as never, detector, episodes, new StrandedManagerAlertService(inbox));
     expect(await scheduler.tick()).toBe(1);
     const [entry] = inbox.take('sulla-desktop', 'grandparent-thread');
-    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {} }, episodes, inbox).acknowledge(entry);
+    await new CompletionAcknowledgementService({ markTaskCompletionDelivered: async() => {}, releaseTaskCompletion: async() => {} }, episodes, inbox).acknowledge(entry);
     fleet.jobs = [manager(id, { wakeAt: iso(-60_000) }), child(id)];
     expect(await scheduler.tick()).toBe(0);
     fleet.jobs = [manager(id), child(id)];
