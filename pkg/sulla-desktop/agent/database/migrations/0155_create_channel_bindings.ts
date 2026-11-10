@@ -26,6 +26,7 @@ export const up = `
   CREATE TABLE IF NOT EXISTS inbound_receipts (
     channel_type TEXT NOT NULL,
     event_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing','complete')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(channel_type,event_id)
   );

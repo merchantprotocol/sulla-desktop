@@ -8,16 +8,16 @@ export class InboundRouterService implements InboundRouter {
     private readonly threads: PersistentThreadFactory, private readonly context: ThreadContextSource) {}
 
   async route(message: InboundMessage): Promise<{ binding: ConversationBinding; trustLevel: 'directive' | 'information_only'; content: string } | null> {
-    let binding = await this.bindings.findThread(message.channel, message.workspaceId, message.conversationId, message.threadKey);
+    let binding: ConversationBinding | null = await this.bindings.findThread(message.channel, message.workspaceId, message.conversationId, message.threadKey);
     if (!binding) {
       if (message.isDirectMessage) {
-        binding = await this.bindings.findFallback('dm_person', message.channel, message.workspaceId, message.senderId) ?? undefined as never;
+        binding = await this.bindings.findFallback('dm_person', message.channel, message.workspaceId, message.senderId);
         if (!binding) {
-          const threadId = await this.threads.create(`Slack · ${message.displayName || message.senderId}`, { channel: message.channel, workspaceId: message.workspaceId, conversationId: message.conversationId });
+          const threadId = await this.threads.create(`Slack · ${message.displayName || message.senderId}`, { channel: message.channel, workspaceId: message.workspaceId, conversationId: message.conversationId, senderId: message.senderId });
           binding = await this.bindings.save({ kind: 'dm_person', channel: message.channel, workspaceId: message.workspaceId, conversationId: message.conversationId, senderId: message.senderId, target: { kind: 'chat', threadId } });
         }
       } else {
-        binding = await this.bindings.findFallback('inbox', message.channel, message.workspaceId) ?? undefined as never;
+        binding = await this.bindings.findFallback('inbox', message.channel, message.workspaceId);
         if (!binding) {
           const threadId = await this.threads.create('Slack inbox', { channel: message.channel, workspaceId: message.workspaceId, conversationId: message.conversationId });
           binding = await this.bindings.save({ kind: 'inbox', channel: message.channel, workspaceId: message.workspaceId, conversationId: message.conversationId, target: { kind: 'chat', threadId } });

@@ -18,7 +18,10 @@ export class PostgresConversationBindingRepository implements ConversationBindin
     const existing = binding.kind === 'thread_reply' && binding.threadKey ? await this.findThread(binding.channel,binding.workspaceId,binding.conversationId,binding.threadKey) : await this.findFallback(binding.kind,binding.channel,binding.workspaceId,binding.senderId);
     if (!existing) throw new Error('Conversation binding conflict could not be resolved'); return existing;
   }
-  async claimReceipt(channel: ChannelName, eventId: string): Promise<boolean> { const result = await this.db.queryOne<{event_id:string}>(`INSERT INTO inbound_receipts(channel_type,event_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING event_id`, [channel,eventId]); return !!result; }
+  async claimReceipt(channel: ChannelName, eventId: string): Promise<boolean> { const result = await this.db.queryOne<{event_id:string}>(`INSERT INTO inbound_receipts(channel_type,event_id,status) VALUES($1,$2,'processing') ON CONFLICT DO NOTHING RETURNING event_id`, [channel,eventId]); return !!result; }
+  async completeReceipt(channel: ChannelName, eventId: string): Promise<void> { await this.db.queryOne(`UPDATE inbound_receipts SET status='complete' WHERE channel_type=$1 AND event_id=$2`, [channel,eventId]); }
+  async isReceiptComplete(channel: ChannelName, eventId: string): Promise<boolean> { return !!(await this.db.queryOne(`SELECT event_id FROM inbound_receipts WHERE channel_type=$1 AND event_id=$2 AND status='complete'`, [channel,eventId])); }
+  async releaseReceipt(channel: ChannelName, eventId: string): Promise<void> { await this.db.queryOne(`DELETE FROM inbound_receipts WHERE channel_type=$1 AND event_id=$2 AND status='processing'`, [channel,eventId]); }
   private map(row: BindingRow): ConversationBinding {
     const target: BindingTarget = row.target_kind === 'chat' && row.thread_id ? {kind:'chat',threadId:row.thread_id} : row.job_id ? {kind:'job',jobId:row.job_id,...(row.task_index === null ? {} : {taskIndex:row.task_index})} : (()=>{throw new Error('Invalid persisted channel target')})();
     return {kind:row.kind,channel:row.channel_type,workspaceId:row.workspace_id,conversationId:row.conversation_id,...(row.thread_key?{threadKey:row.thread_key}:{}),...(row.sender_id?{senderId:row.sender_id}:{}),target,...(row.agent_id?{agentId:row.agent_id}:{})};

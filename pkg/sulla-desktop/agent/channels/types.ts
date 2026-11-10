@@ -20,10 +20,13 @@ export interface ConversationBindingRepository {
   findFallback(kind: 'dm_person' | 'inbox', channel: ChannelName, workspaceId: string, senderId?: string): Promise<ConversationBinding | null>;
   save(binding: ConversationBinding): Promise<ConversationBinding>;
   claimReceipt(channel: ChannelName, eventId: string): Promise<boolean>;
+  completeReceipt(channel: ChannelName, eventId: string): Promise<void>;
+  isReceiptComplete(channel: ChannelName, eventId: string): Promise<boolean>;
+  releaseReceipt(channel: ChannelName, eventId: string): Promise<void>;
 }
 export interface InboundRouter { route(message: InboundMessage): Promise<{ binding: ConversationBinding; trustLevel: 'directive' | 'information_only'; content: string } | null> }
 export interface InboundMessageDelivery { deliver(binding: ConversationBinding, message: InboundMessage, content: string, trustLevel: 'directive' | 'information_only'): Promise<void> }
 export interface SenderAllowlist { allows(channel: ChannelName, senderId: string): Promise<boolean> }
 export interface ThreadContextSource { fetchRecent(workspaceId: string, conversationId: string, threadKey: string, limit: number): Promise<string[]> }
-export interface PersistentThreadFactory { create(title: string, metadata: { channel: ChannelName; workspaceId: string; conversationId: string }): Promise<string> }
+export interface PersistentThreadFactory { create(title: string, metadata: { channel: ChannelName; workspaceId: string; conversationId: string; senderId?: string }): Promise<string> }
 export interface ChannelEventHandler { handle(frame: Record<string, unknown>): Promise<void> }

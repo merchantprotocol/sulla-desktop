@@ -4,7 +4,7 @@
 import type { BindingKind, ChannelName, ConversationBinding, ConversationBindingRepository } from './types';
 export class InMemoryConversationBindingRepository implements ConversationBindingRepository {
   private readonly bindings: ConversationBinding[] = [];
-  private readonly receipts = new Set<string>();
+  private readonly receipts = new Map<string, 'processing' | 'complete'>();
   async findThread(channel: ChannelName, workspaceId: string, conversationId: string, threadKey: string): Promise<ConversationBinding | null> {
     return this.bindings.find(b => b.kind === 'thread_reply' && b.channel === channel && b.workspaceId === workspaceId && b.conversationId === conversationId && b.threadKey === threadKey) ?? null;
   }
@@ -19,6 +19,9 @@ export class InMemoryConversationBindingRepository implements ConversationBindin
     this.bindings.push(binding); return binding;
   }
   async claimReceipt(channel: ChannelName, eventId: string): Promise<boolean> {
-    const key = `${channel}:${eventId}`; if (this.receipts.has(key)) return false; this.receipts.add(key); return true;
+    const key = `${channel}:${eventId}`; if (this.receipts.has(key)) return false; this.receipts.set(key, 'processing'); return true;
   }
+  async completeReceipt(channel: ChannelName, eventId: string): Promise<void> { this.receipts.set(`${channel}:${eventId}`, 'complete'); }
+  async isReceiptComplete(channel: ChannelName, eventId: string): Promise<boolean> { return this.receipts.get(`${channel}:${eventId}`) === 'complete'; }
+  async releaseReceipt(channel: ChannelName, eventId: string): Promise<void> { if (this.receipts.get(`${channel}:${eventId}`) === 'processing') this.receipts.delete(`${channel}:${eventId}`); }
 }

@@ -8,13 +8,22 @@ export class InboundEventProcessor implements ChannelEventHandler {
     private readonly acknowledge?: (ids: string[]) => Promise<void>) {}
   async handle(frame: Record<string, unknown>): Promise<void> {
     const event = frame.event as Record<string, unknown>;
-    if (!event) return;
+    if (!event) { await this.ackFrame(frame); return; }
     const message = this.adapter.normalize(event, frame);
-    if (!message) return;
-    if (!(await this.receipts.claimReceipt(message.channel, message.eventId))) { await this.ackFrame(frame); return; }
-    const route = await this.router.route(message);
-    if (route) await this.delivery.deliver(route.binding, message, route.content, route.trustLevel);
-    await this.ackFrame(frame);
+    if (!message) { await this.ackFrame(frame); return; }
+    if (!(await this.receipts.claimReceipt(message.channel, message.eventId))) {
+      if (await this.receipts.isReceiptComplete(message.channel, message.eventId)) await this.ackFrame(frame);
+      return;
+    }
+    try {
+      const route = await this.router.route(message);
+      if (route) await this.delivery.deliver(route.binding, message, route.content, route.trustLevel);
+      await this.receipts.completeReceipt(message.channel, message.eventId);
+      await this.ackFrame(frame);
+    } catch (error) {
+      await this.receipts.releaseReceipt(message.channel, message.eventId);
+      throw error;
+    }
   }
   private async ackFrame(frame: Record<string, unknown>): Promise<void> { if (typeof frame.id === 'string' && this.acknowledge) await this.acknowledge([frame.id]); }
 }
