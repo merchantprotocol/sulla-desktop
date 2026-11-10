@@ -17,7 +17,7 @@
  * Signed out ⇒ everything stops.
  */
 
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, net, powerMonitor } from 'electron';
 
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
@@ -31,6 +31,8 @@ import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { MemorySyncV1 } from './memorySyncV1';
 import { SyncDriverSupervisor } from './syncDriverSupervisor';
+import { NetworkResumeMonitor, type NetworkResumePowerSource, type NetworkStatusSource } from './networkResumeMonitor';
+import { CloudResumeSync } from './cloudResumeSync';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -74,6 +76,22 @@ function startSyncDriverSupervisor():void {
 function stopSyncDriverSupervisor():void {
   syncDriverSupervisor.stop();
 }
+
+// Electron modules are read on first use, not at import, so this file loads before app ready.
+const powerEvents: NetworkResumePowerSource = {
+  on: (event, listener) => { if (event === 'resume') powerMonitor.on('resume', listener); else powerMonitor.on('unlock-screen', listener) },
+  removeListener: (event, listener) => { if (event === 'resume') powerMonitor.removeListener('resume', listener); else powerMonitor.removeListener('unlock-screen', listener) },
+};
+const networkStatus: NetworkStatusSource = { isOnline: () => net.isOnline() };
+
+const cloudResumeSync = new CloudResumeSync({
+  files: FilesSyncV1,
+  vault: VaultSyncV3,
+  preferences: () => getCloudPreferences(),
+  isSignedIn: () => signedIn,
+});
+const networkResume = new NetworkResumeMonitor({ power: powerEvents, net: networkStatus });
+networkResume.on('online', () => { cloudResumeSync.handleOnline().catch(() => undefined) });
 
 /**
  * Native, local-only approval. Default button is Deny; the dialog can only
@@ -205,6 +223,7 @@ function installPrefsListener() {
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
   startSyncDriverSupervisor();
+  networkResume.start();
   installPrefsListener();
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
@@ -220,6 +239,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   stopSyncDriverSupervisor();
+  networkResume.stop();
   channel?.stop();
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();

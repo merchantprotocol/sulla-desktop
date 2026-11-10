@@ -120,7 +120,7 @@ class VaultSyncV3Impl {
       const result = await this.run();
       if (!result.lastError && result.lastSyncAt) {
         const local = await VaultSyncContainer.status().catch(() => null);
-        this.health.succeeded(local?.pendingChanges ?? 0);
+        if (this.health.succeeded(local?.pendingChanges ?? 0)) console.log('[VaultSyncV3] back online; sync resumed');
         const now = Date.now();
         if (before.consecutiveFailures > 0 || now - this.lastSuccessLogAt >= RECONCILE_MS) {
           console.log(`[VaultSyncV3] sync ok pushed=${ this.lastCounts.pushed } pulled=${ this.lastCounts.pulled }`);
@@ -244,14 +244,18 @@ class VaultSyncV3Impl {
   }
 
   private fail(err: unknown): VaultSyncStatus {
-    this.health.failed(err instanceof ContainerSyncError ? err.code : 'sync_failed');
+    const message = err instanceof Error ? err.message : String(err);
+    const outcome = this.health.failed(err instanceof ContainerSyncError ? err.code : 'sync_failed', message);
+    if (outcome !== 'error') {
+      if (outcome === 'offline_started') console.warn('[VaultSyncV3] offline; will resume when the network is back');
+      return this.set({ lastSyncAt: this.status.lastSyncAt, lastError: 'Offline. Sync resumes when this computer is back online.' });
+    }
     if (err instanceof ContainerSyncError) {
       if (err.status === 423 || err.code === 'vault_locked') return this.set({ skipped: 'vault_locked' });
       if (err.code === 'password_kdf_missing') return this.set({ lastError: 'Sign in to Sulla Cloud again to finish updating encrypted sync.' });
       if (err.code === 'device_revoked') return this.set({ lastError: 'This desktop was removed from your Sulla Cloud account.' });
       if (err.code === 'integrity_failed') return this.set({ lastError: 'The Cloud copy failed an integrity check. Sync stopped; nothing local changed.' });
     }
-    const message = err instanceof Error ? err.message : String(err);
     console.warn(`[VaultSyncV3] sync failed: ${ message }`);
     return this.set({ lastSyncAt: this.status.lastSyncAt, lastError: message });
   }

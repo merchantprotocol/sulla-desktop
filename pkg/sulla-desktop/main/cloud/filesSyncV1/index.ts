@@ -44,6 +44,8 @@ class FilesSyncV1Impl {
   restart():void { this.stop(); this.start() }
   stop():void { this.stopped=true; this.health.setRunning(false); if(this.timer) clearTimeout(this.timer); this.timer=null }
   wake():void { if(!this.stopped) this.schedule(0) }
+  /** Called when the network returns: the next attempt should not wait out a long offline backoff. */
+  resetBackoff():void { this.backoff=1_000 }
   async status():Promise<FilesSyncStatus & {driverHealth:ReturnType<SyncDriverHealth['snapshot']>}> { return {...await FilesSyncContainer.status(),driverHealth:this.health.snapshot()} }
   driverHealth():ReturnType<SyncDriverHealth['snapshot']> { return this.health.snapshot() }
   async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
@@ -158,7 +160,8 @@ class FilesSyncV1Impl {
       if(sent.status==='failed')throw new FilesSyncClientError('send_failed',502);
       if(sent.status==='sent') {
         const previous=this.health.snapshot();
-        this.health.succeeded();
+        const recovered=this.health.succeeded();
+        if(recovered) console.log('[FilesSyncV1] back online; sync resumed');
         const now=Date.now();
         if(previous.consecutiveFailures>0||now-this.lastSuccessLogAt>=10*60_000) {
           console.log('[FilesSyncV1] sync ok pushed=1 pulled=0');
@@ -168,8 +171,9 @@ class FilesSyncV1Impl {
       this.backoff=sent.status==='retry'?Math.min(this.backoff*2,MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
     } catch(error) {
       const code=error instanceof FilesSyncClientError?error.code:'sync_failed';
-      this.health.failed(code);
-      if(code!=='vault_locked'&&code!=='no_cloud_vault')console.warn(`[FilesSyncV1] driver retry: ${code}`);
+      const outcome=this.health.failed(code,error instanceof Error?error.message:'');
+      if(outcome==='offline_started')console.warn('[FilesSyncV1] offline; will resume when the network is back');
+      else if(outcome==='error'&&code!=='vault_locked'&&code!=='no_cloud_vault')console.warn(`[FilesSyncV1] driver retry: ${code}`);
       this.schedule(this.backoff=Math.min(this.backoff*2,MAX_BACKOFF_MS));
     } finally { this.running=false }
   }
