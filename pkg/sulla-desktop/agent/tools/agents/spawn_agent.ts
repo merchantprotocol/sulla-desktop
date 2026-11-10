@@ -36,6 +36,7 @@ import {
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { agentWaitProvider } from '../../services/AgentWaitServices';
+import { AgentWaitRequest } from '../../services/AgentWaitRequest';
 import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
 import { DelegatedWakeSettlementPolicy } from '../../services/DelegatedWakeSettlementPolicy';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
@@ -665,6 +666,7 @@ export class SpawnAgentWorker extends BaseTool {
         let finalState = await executeGraph();
         let returned = await returnedTask();
         let reminderSent = false;
+        let autoParkCount = 0;
         const settlementPolicy = new DelegatedTurnSettlementPolicy();
         while (activityJobId && taskAbortSignal?.aborted !== true) {
           const openChildren = await agentJobLifecycle.openChildren(threadId);
@@ -674,14 +676,39 @@ export class SpawnAgentWorker extends BaseTool {
           // that race, so consume the queued wake instead of fabricating a
           // missing-contract failure.
           const taskStillParked = (await getJob(activityJobId))?.tasks[index]?.status === 'parked';
+          const turnOutcome = extractAgentTurnOutcome(finalState, task.prompt);
           const settlement = settlementPolicy.decide({
             returned: Boolean(returned), openChildren, pendingWait: Boolean(pendingWait) || taskStillParked, reminderSent,
+            autoParkCount, finalText: turnOutcome.text, schemaContract: Boolean(contract.schema),
           });
           if (settlement === 'terminal' || settlement === 'fail') break;
 
           if (settlement === 'remind') {
             subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
             reminderSent = true;
+            const turn = await runFreshTurn(finalState);
+            finalState = turn.finalState;
+            returned = turn.returned;
+            continue;
+          }
+
+          if (settlement === 'auto_park') {
+            autoParkCount += 1;
+            const reason = 'ended turn without returning; auto-parked';
+            await agentWaitProvider.parking.park(activityJobId, index, AgentWaitRequest.create(300, reason));
+            subState.metadata.delegatedRunActive = false;
+            await containerLifecycle?.park();
+            await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
+            if (taskAbortSignal?.aborted) break;
+            await agentJobLifecycle.resume(activityJobId, index);
+            await agentWaitProvider.cancel(activityJobId, index);
+            if (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true, autoParkCount, finalText: turnOutcome.text, schemaContract: Boolean(contract.schema) }) === 'fail') {
+              finalState = { ...finalState, messages: [...(finalState.messages ?? []), { role: 'assistant', content: 'ended turn 3 times without returning' }] };
+              break;
+            }
+            await containerLifecycle?.resume();
+            subState.metadata.delegatedRunActive = true;
+            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.' });
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
             returned = turn.returned;
@@ -720,7 +747,7 @@ export class SpawnAgentWorker extends BaseTool {
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
-          taskResult = contract.schema && status !== 'blocked'
+          taskResult = (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent, autoParkCount, finalText: text, schemaContract: Boolean(contract.schema) }) === 'fail') && status !== 'blocked'
             ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(settlementPolicy.failureCause(finalState)).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
