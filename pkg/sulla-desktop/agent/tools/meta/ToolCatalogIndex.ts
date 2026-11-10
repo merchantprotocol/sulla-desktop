@@ -21,14 +21,6 @@ export interface ToolCatalogEntry {
   line: string;
 }
 
-/** Internal plumbing the agent already has; never listed. */
-export const BROWSE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
-  'file_search',
-  'read_file',
-  'write_file',
-  'browse_tools',
-]);
-
 /**
  * Per-instance catalog of formatted tool lines. Rebuilt only when the
  * registry generation changes (the set of tool names per category), so
@@ -42,7 +34,13 @@ export class ToolCatalogIndex {
   constructor(
     private readonly source: ToolCatalogSource,
     private readonly formatter: ToolCommandFormatter = new ToolCommandFormatter(),
-    private readonly excluded: ReadonlySet<string> = BROWSE_EXCLUDED_TOOLS,
+    // Internal plumbing the agent already has; never listed. Built per instance, not at module scope.
+    private readonly excluded: ReadonlySet<string> = new Set([
+      'file_search',
+      'read_file',
+      'write_file',
+      'browse_tools',
+    ]),
   ) {}
 
   /** Categories that have at least one browsable tool. */
