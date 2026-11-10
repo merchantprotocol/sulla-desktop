@@ -40,7 +40,8 @@ describe('SubagentDirectoryBuilder', () => {
     expect(output).toContain('finished-worker: "PR #2030 is ready"');
     expect(output).not.toContain('[object Object]');
     expect(output).toContain('hidden→tab');
-    expect(output).toContain('parked, waiting on 2 running descendants');
+    expect(output).toContain('parked, waiting on 0 children');
+    expect(output).toContain('2 running descendants beneath them');
   });
 
   it('budgets whole lines and reports omitted rows without slicing tokens', async() => {
