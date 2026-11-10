@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { NobleCryptoPrimitives } from '@sulla/domain';
 import { DomainVaultSyncCodec } from '../../../../../../services/sulla-vault/src/browserEnvelope/DomainVaultSyncCodec';
 import { SodiumCryptoPrimitives } from '../../../../../../services/sulla-vault/src/browserEnvelope/SodiumCryptoPrimitives';
-import { loadSodium } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
+import { loadSodium, type SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
 import { CloudVaultSyncRunner, HeadChainLinkPolicy } from '../../../../../../services/sulla-vault/src/browserEnvelope/syncRunner';
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
 
@@ -162,7 +162,7 @@ describe('vault sync head-chain gap verification', () => {
     const crypto = new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives());
     const codec = new DomainVaultSyncCodec(crypto, crypto);
     const key = new Uint8Array(32).fill(9);
-    const records = [];
+    const records: SyncRecord[] = [];
     const oldHeadMac = 'a'.repeat(43);
 
     try {
