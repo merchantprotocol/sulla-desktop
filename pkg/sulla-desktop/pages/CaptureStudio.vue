@@ -99,7 +99,7 @@
             class="dot"
             :class="systemAudioMode !== 'none' ? 'green' : 'off'"
           />
-          System audio{{ systemAudioMode === 'native' ? ' (native)' : systemAudioMode === 'blackhole' ? ' (BlackHole)' : '' }}
+          Speaker audio
         </div>
         <div
           v-if="recording"
