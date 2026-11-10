@@ -40,8 +40,8 @@ import { newMessageId, type MessageId } from '../types/chat';
 
 import {
   TTSPlayerService,
-  createVoiceBargeInDetector,
   createVoiceTurnAccumulator,
+  SpokenReplyGovernor,
 } from '@pkg/composables/voice';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
 import { newVoiceTurnId, voiceTrace } from '@pkg/composables/voice/VoiceTrace';
@@ -121,8 +121,10 @@ export class VoiceSessionAdapter {
   private voiceTurnId = '';
   private vadSpeaking = false;
   private speakSegment = 0;
-
-  private readonly bargeIn = createVoiceBargeInDetector();
+  /** Last voice input, replaceable only while its answer has not started playing. */
+  private submittedVoiceText = '';
+  private answerAudioStarted = false;
+  private spokenReply = new SpokenReplyGovernor();
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
@@ -157,6 +159,7 @@ export class VoiceSessionAdapter {
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!this.capturing) return;
+    if (data.speaking) this.turn.speechStarted();
     this.lastLevel = Math.max(0, Math.min(1, data.level));
     this.lastSpeaking = !!data.speaking;
     if (this.lastSpeaking !== this.vadSpeaking) {
@@ -167,11 +170,11 @@ export class VoiceSessionAdapter {
       });
     }
 
-    // Hands-free barge-in: sustained speech while Sulla talks stops her.
+    // Hands-free barge-in: the first VAD speech event cuts off playback.
     // (Hold-to-talk stops TTS outright on activation.)
-    if (this.mode === 'handsfree' && this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
+    if (this.mode === 'handsfree' && this.lastSpeaking && this.tts.isPlaying) {
       logBargeIn();
-      voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'sustained_vad_during_playback' });
+      voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'speech_start_during_playback' });
       this.tts.stop();
     }
 
@@ -195,6 +198,7 @@ export class VoiceSessionAdapter {
 
     this.unsubs.push(
       this.tts.on('playbackStart', () => this.handleTtsStart()),
+      this.tts.on('audioStarted', () => { this.answerAudioStarted = true; }),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
       controller.on('voiceCommand', e => this.handleCommand(e.command)),
       controller.on('speakRequested', e => this.speak(e.text, undefined, e.voiceTurnId)),
@@ -301,7 +305,6 @@ export class VoiceSessionAdapter {
 
     this.capturing = true;
     this.turn.reset();
-    this.bargeIn.reset();
     this.lastLevel = 0;
     this.lastSpeaking = false;
     this.vadSpeaking = false;
@@ -395,7 +398,6 @@ export class VoiceSessionAdapter {
     this.finishing = false;
     this.active = false;
     this.startPromise = null;
-    this.bargeIn.reset();
     this.turn.reset();
 
     ipcRenderer.removeListener('gateway-transcript', this.onTranscript);
@@ -503,7 +505,19 @@ export class VoiceSessionAdapter {
     this.controller.stopVoice(true);
 
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (transcript && speakable) this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+    if (transcript && speakable && this.submittedVoiceText && !this.answerAudioStarted) {
+      const merged = `${ this.submittedVoiceText } ${ transcript }`;
+      if (this.controller.runState.value.phase !== 'idle') this.controller.stop();
+      this.tts.stop();
+      this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+      this.submittedVoiceText = merged;
+      this.spokenReply = new SpokenReplyGovernor();
+    } else if (transcript && speakable) {
+      this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+      this.submittedVoiceText = transcript;
+      this.answerAudioStarted = false;
+      this.spokenReply = new SpokenReplyGovernor();
+    }
     else voiceTrace(this.voiceTurnId, 'turn_skipped', { reason: transcript ? 'non_speech_only' : 'empty_transcript' });
 
     // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
@@ -537,7 +551,9 @@ export class VoiceSessionAdapter {
       textLength: text.trim().length,
     });
     voiceTrace(this.voiceTurnId, 'speak_segment', { elapsedMs: Date.now() - this.captureRequestedAt, segment: ++this.speakSegment, size: text.trim().length });
-    this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
+    const governed = this.spokenReply.accept(text);
+    governed.fragments.forEach((fragment, index) => this.tts.enqueue(fragment, `${ messageId ?? `speak_${ Date.now() }` }_${ index }`));
+    if (governed.showScreenNotice) this.tts.enqueue('The full answer is on screen.', `voice-summary-${ this.voiceTurnId }`);
   }
 
   /** Stop any in-flight TTS playback. */
@@ -552,7 +568,6 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsStart(): void {
-    this.bargeIn.reset();
     // If we already have a TTS bubble in the transcript we leave it alone —
     // TTSPlayerService fires playbackStart for every sentence in the queue.
     if (!this.activeTtsMessageId) {
@@ -576,7 +591,6 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsEnd(): void {
-    this.bargeIn.reset();
     const id = this.activeTtsMessageId;
     this.activeTtsMessageId = null;
     if (id) this.controller.removeMessage(id);

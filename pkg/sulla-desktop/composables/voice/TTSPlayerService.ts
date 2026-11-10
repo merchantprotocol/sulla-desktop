@@ -11,7 +11,7 @@
  *   - Look-ahead prefetch (fetch next sentence while current plays)
  *   - Sequence counter to prevent race conditions
  *   - Content deduplication (10s window)
- *   - System-voice fallback while the default Kokoro model becomes ready
+ *   - Kokoro-only playback; unavailable sentences are skipped rather than system-voiced
  *
  * This service is the ONLY component that plays TTS audio. All TTS goes through
  * enqueue() -> playNext() -> IPC 'audio-speak'. The enqueue() method logs a caller
@@ -23,13 +23,6 @@ import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup,
 import { splitForSynthesis } from './speechText';
 import { voiceTrace } from './VoiceTrace';
 
-// Speaking-rate multipliers for the native OS voice, mirroring Sulla Mobile's TtsService.
-const RATE_MAP: Record<string, number> = {
-  slow:   0.85,
-  normal: 1.0,
-  fast:   1.2,
-};
-
 // The one player allowed to make sound. Every chat tab (and the classic voice
 // session) owns its own player; without this, replies from several
 // conversations talk over each other. Newest speaker wins.
@@ -40,6 +33,8 @@ const audible: { player: TTSPlayerService | null } = { player: null };
 export interface TTSPlayerEvents {
   /** Audio playback started for a sentence */
   playbackStart: void;
+  /** First audible sample started (after synthesis), distinct from queue processing. */
+  audioStarted: void;
   /** Audio playback ended for a sentence */
   playbackEnd:   void;
   /** Queue is now empty and nothing is playing */
@@ -80,9 +75,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   private prefetchingText: string | null = null;
 
   // ── TTS provider config ──
-  // Cached provider selection. Loaded lazily from settings and cleared on stop() so a
-  // provider/voice change in Audio Settings takes effect on the next spoken turn.
-  private ttsConfig: { provider: string; voiceURI: string; rate: number } | null = null;
+  // Kokoro is the only voice-mode provider; cached until stop() to re-warm on the next turn.
+  private ttsConfig: { provider: string } | null = null;
   private kokoroWarmed = false;
 
   constructor(config: TTSPlayerConfig) {
@@ -176,11 +170,6 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     // Re-read provider/voice config next turn (may have changed in Audio Settings)
     this.ttsConfig = null;
 
-    // Cancel native OS voice playback (system provider) if active
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-
     this.playing = false;
     this.isPlaying = false;
     this.emit('queueEmpty', undefined as any);
@@ -232,15 +221,10 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     try {
       const cfg = await this.getTtsConfig();
 
-      // Native OS voice: speak in-renderer via SpeechSynthesis — no IPC, no prefetch, no audio blob.
-      if (cfg.provider === 'system' || await this.kokoroNeedsSystemFallback(cfg.provider)) {
-        if (seq !== this.sequence) {
-          this.playing = false;
-
-          return;
-        }
-        await this.speakNative(text, cfg.voiceURI, cfg.rate);
-        logTTSPlayEnd(text, Date.now() - playStartTime);
+      // Voice mode is Kokoro-only: unavailable audio is skipped, never spoken
+      // through an Apple/native system voice.
+      if (cfg.provider !== 'kokoro' || await this.kokoroNeedsSystemFallback('kokoro')) {
+        console.info('[TTSPlayer] Kokoro unavailable; skipping sentence rather than using a system voice');
         this.emit('playbackEnd', undefined as any);
 
         return;
@@ -325,6 +309,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
           };
           audio.play().then(() => {
             timingFirstAudio();
+            this.emit('audioStarted', undefined as any);
             vlog('TIMING', 'PLAYBACK_STARTED', { durationMs: Date.now() - playStartTime });
             voiceTrace(this.traceTurnId, 'playback_start', { segment, durationMs: Date.now() - playStartTime });
           }).catch((err) => {
@@ -406,26 +391,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   // ─── Provider config ──────────────────────────────────────────
 
   /**
-   * Reads the selected TTS provider, voice, and rate from settings (cached until
-   * stop() clears it). Defaults to on-device Kokoro (Bella) — free and keyless;
-   * the native OS voice covers the one-time model download.
+   * Uses on-device Kokoro exclusively; missing model/audio skips the sentence.
    */
-  private async getTtsConfig(): Promise<{ provider: string; voiceURI: string; rate: number }> {
+  private async getTtsConfig(): Promise<{ provider: string }> {
     if (this.ttsConfig) return this.ttsConfig;
-    try {
-      const [provider, voiceURI, rateKey] = await Promise.all([
-        this.ipcInvoke('sulla-settings-get', 'audioTtsProvider', 'kokoro'),
-        this.ipcInvoke('sulla-settings-get', 'audioTtsVoice', ''),
-        this.ipcInvoke('sulla-settings-get', 'audioTtsRate', 'normal'),
-      ]);
-      this.ttsConfig = {
-        provider: provider || 'kokoro',
-        voiceURI: voiceURI || '',
-        rate:     RATE_MAP[rateKey as string] ?? 1.0,
-      };
-    } catch {
-      this.ttsConfig = { provider: 'kokoro', voiceURI: '', rate: 1.0 };
-    }
+    this.ttsConfig = { provider: 'kokoro' };
 
     // Load the on-device model before the first sentence needs it (no-op when warm;
     // starts the one-time download when the model is missing).
@@ -454,41 +424,4 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     }
   }
 
-  // ─── Native (OS) Voice ────────────────────────────────────────
-
-  /**
-   * Speaks text through the OS speech engine via SpeechSynthesis. In Electron on
-   * macOS these are the native system voices. Honors the selected voiceURI (or an
-   * auto pick of the default English voice) and speaking rate.
-   */
-  private speakNative(text: string, voiceURI: string, rate: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
-      if (!synth) {
-        console.warn('[TTSPlayer:native] speechSynthesis not available');
-        resolve();
-
-        return;
-      }
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      const allVoices = synth.getVoices();
-
-      if (voiceURI && voiceURI !== 'auto') {
-        const match = allVoices.find(v => v.voiceURI === voiceURI);
-        if (match) utterance.voice = match;
-      } else {
-        // Auto: prefer the OS default English voice, else the first English voice.
-        const english = allVoices.filter(v => v.lang?.toLowerCase().startsWith('en'));
-        const pick = english.find(v => v.default) || english[0];
-        if (pick) utterance.voice = pick;
-      }
-
-      utterance.rate = rate;
-      utterance.onstart = () => timingFirstAudio();
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
-      synth.speak(utterance);
-    });
-  }
 }

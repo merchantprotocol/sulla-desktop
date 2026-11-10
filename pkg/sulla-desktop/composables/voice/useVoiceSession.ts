@@ -27,7 +27,6 @@
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
 import { TTSPlayerService } from './TTSPlayerService';
-import { createVoiceBargeInDetector } from './VoiceBargeInDetector';
 import { logBargeIn } from './VoiceLogger';
 import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
 
@@ -210,15 +209,13 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   // ── VAD event handler (audio level meter + barge-in) ──
 
-  const bargeInDetector = createVoiceBargeInDetector();
-
   const onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!isRecording.value) return;
+    if (data.speaking) turnAccumulator.speechStarted();
     audioLevel.value = Math.round(Math.min(100, data.level * 100));
 
-    // Barge-in: sustained user speech while Sulla is speaking stops TTS.
-    // The grace period keeps brief noises from interrupting playback.
-    if (bargeInDetector.update(data.speaking, isTTSPlaying.value)) {
+    // Barge-in at the first VAD speech event cancels playback and queued fragments.
+    if (data.speaking && isTTSPlaying.value) {
       logBargeIn();
       ttsPlayer.stop();
     }
@@ -233,7 +230,6 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     isRecording.value = true;
     pipelineState.value = 'LISTENING';
     turnAccumulator.reset();
-    bargeInDetector.reset();
     startDurationTimer();
 
     // Start mic with PCM format for whisper

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { HeuristicEndOfTurnDetector, TurnBuffer, type EndOfTurnDetector } from './ConversationTurnPolicy';
+
 /**
  * VoiceTurnAccumulator — the shared state machine that turns a stream of
  * `gateway-transcript` events into ONE committed voice message per utterance.
@@ -35,6 +37,9 @@ export interface VoiceTurnAccumulatorConfig {
   isTTSPlaying: () => boolean;
   /** Fallback commit delay (ms) if `utterance_end` never arrives. Defaults to 8000. */
   fallbackMs?: number;
+  /** Silence grace after utterance_end; speech during this window joins this turn. */
+  endOfTurnHoldMs?: number;
+  endOfTurnDetector?: EndOfTurnDetector;
 }
 
 export interface VoiceTurnAccumulator {
@@ -44,14 +49,18 @@ export interface VoiceTurnAccumulator {
   commitNow: () => void;
   /** Drop all accumulated state without committing (e.g. on startRecording). */
   reset: () => void;
+  /** Cancel pending end-of-turn commit when VAD hears resumed speech. */
+  speechStarted: () => void;
 }
 
 export function createVoiceTurnAccumulator(config: VoiceTurnAccumulatorConfig): VoiceTurnAccumulator {
   const fallbackMs = config.fallbackMs ?? 8000;
+  const holdMs = config.endOfTurnHoldMs ?? 700;
+  const detector = config.endOfTurnDetector ?? new HeuristicEndOfTurnDetector();
 
   // Authoritative text from transcript_turn events (one full-utterance transcript when
   // main-process re-transcription is on). `partial` is live-display only.
-  let committedText = '';
+  const committedText = new TurnBuffer();
   let partialText = '';
   let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -64,8 +73,8 @@ export function createVoiceTurnAccumulator(config: VoiceTurnAccumulatorConfig): 
 
   function commit(): void {
     clearTimer();
-    const text = committedText.trim();
-    committedText = '';
+    const text = committedText.text;
+    committedText.clear();
     partialText = '';
     config.onCommit(text);
   }
@@ -73,7 +82,8 @@ export function createVoiceTurnAccumulator(config: VoiceTurnAccumulatorConfig): 
   function handleEvent(msg: any): void {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     if (msg?.event_type === 'utterance_end') {
-      commit();
+      clearTimer();
+      fallbackTimer = setTimeout(commit, detector.delayMs(committedText.text, holdMs));
       return;
     }
 
@@ -85,15 +95,18 @@ export function createVoiceTurnAccumulator(config: VoiceTurnAccumulatorConfig): 
     const text = String(msg.text).trim();
     if (!text) return;
 
+    // A resumed phrase during the grace period is still the same user turn.
+    clearTimer();
+
     if (msg.event_type === 'transcript_partial') {
       // Live feedback only — accumulate for display, never commit a partial.
       partialText = partialText ? `${ partialText } ${ text }` : text;
-      config.onInterim(committedText ? `${ committedText } ${ partialText }` : partialText);
+      config.onInterim(committedText.text ? `${ committedText.text } ${ partialText }` : partialText);
     } else {
       // transcript_turn — authoritative text for the turn.
-      committedText = committedText ? `${ committedText } ${ text }` : text;
+      committedText.append(text);
       partialText = '';
-      config.onInterim(committedText);
+      config.onInterim(committedText.text);
 
       // Arm the long fallback only; the real commit comes from `utterance_end`.
       clearTimer();
@@ -104,9 +117,10 @@ export function createVoiceTurnAccumulator(config: VoiceTurnAccumulatorConfig): 
   return {
     handleEvent,
     commitNow: commit,
+    speechStarted() { clearTimer(); },
     reset() {
       clearTimer();
-      committedText = '';
+      committedText.clear();
       partialText = '';
     },
   };
