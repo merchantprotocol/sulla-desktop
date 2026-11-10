@@ -9,7 +9,7 @@ import type { OrtRequest, OrtResponse } from './OrtInferenceClient';
 export class VoiceInferenceProcess {
   private readonly sessions = new Map<string, Promise<ort.InferenceSession>>();
   constructor(private readonly runtime: typeof ort, private readonly port: NonNullable<NodeJS.Process['parentPort']>) {
-    this.port.on('message', message => { void this.handle(message as OrtRequest); });
+    this.port.on('message', event => { void this.handle(event.data as OrtRequest); });
   }
   private async handle(request: OrtRequest): Promise<void> {
     try {

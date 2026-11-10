@@ -16,7 +16,7 @@ export class OrtSileroVad implements Vad {
     if (frame.length !== 512) throw new Error('VAD frames must be 512 samples at 16 kHz');
     const response = await this.client.infer({ operation: 'vad', modelPath: this.modelPath, audio: frame, state: this.state });
     if (!response.ok || response.probability === undefined || !response.state) throw new Error('VAD inference unavailable');
-    this.state = response.state; const events: VadEvent[] = []; const now = Date.now();
+    this.state = new Float32Array(response.state); const events: VadEvent[] = []; const now = Date.now();
     if (!this.speaking && response.probability >= this.startThreshold) { this.speaking = true; this.silenceMs = 0; events.push({ kind: 'speech-start', sequenceId, timestampMs: now }); }
     else if (this.speaking) { this.silenceMs = response.probability < this.endThreshold ? this.silenceMs + 32 : 0; if (this.silenceMs >= this.minSilenceMs) { this.speaking = false; this.silenceMs = 0; events.push({ kind: 'speech-end', sequenceId, timestampMs: now }); } }
     return events;
