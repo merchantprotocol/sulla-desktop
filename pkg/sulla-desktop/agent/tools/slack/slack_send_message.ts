@@ -9,7 +9,7 @@ import { stripProtocolTags } from '../../utils/stripProtocolTags';
 import { BaseTool, ToolResponse } from '../base';
 
 import type { SlackClient } from '../../integrations/slack/SlackClient';
-import { NoopOutboundSlackMessageObserver, type OutboundSlackMessageObserver } from './OutboundSlackMessageObserver';
+import { OutboundSlackMessageObserver, type SlackOutboundMessageObserverContract } from './OutboundSlackMessageObserver';
 
 function runtimeContext() {
   return {
@@ -25,12 +25,26 @@ function runtimeContext() {
  * Slack Send Message Tool - Worker class for execution
  */
 export class SlackSendMessageWorker extends BaseTool {
-  constructor(private readonly observer: OutboundSlackMessageObserver = new NoopOutboundSlackMessageObserver()) { super(); }
+  constructor(private readonly observer: SlackOutboundMessageObserverContract = new OutboundSlackMessageObserver()) { super(); }
   name = '';
   description = '';
 
+  /** Slack already posted, so a recording failure must never turn this into a reported send failure. */
+  private async recordSentSafely(sent: { invocationId: string; channel: string; ts: string; account: string; teamId: string; threadTs: string | null }): Promise<void> {
+    try {
+      await this.observer.onSent({ account: sent.account, teamId: sent.teamId, channel: sent.channel, ts: sent.ts, threadTs: sent.threadTs, executionContext: this.executionContext });
+    } catch (error) {
+      console.warn('[slack_send_message] Sent to Slack but binding recording failed', {
+        invocationId: sent.invocationId,
+        channel:      sent.channel,
+        ts:           sent.ts,
+        errorName:    (error as Error)?.name ?? 'unknown',
+      });
+    }
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, text, account } = input;
+    const { channel, text, account, thread_ts: threadTs } = input;
     // Strip internal agent-protocol wrappers (AGENT_DONE / AGENT_BLOCKED /
     // AGENT_CONTINUE, etc.) so they never leak into user-visible Slack messages
     // (issue #96). stripProtocolTags is the single source of truth for these
@@ -88,7 +102,7 @@ export class SlackSendMessageWorker extends BaseTool {
         channel,
         textPreview: cleanText.slice(0, 80),
       });
-      const res = await slack.sendMessage(channel, cleanText, undefined, undefined, this.executionContext, account);
+      const res = await slack.sendMessage(channel, cleanText, typeof threadTs === 'string' ? threadTs : undefined, undefined, this.executionContext, account);
       console.log('[slack_send_message] sendMessage response', {
         invocationId,
         ok:         !!res?.ok,
@@ -98,7 +112,7 @@ export class SlackSendMessageWorker extends BaseTool {
       });
 
       if (res.ok) {
-        await this.observer.onSent({ account: res.account, teamId: res.teamId, channel, ts: res.ts, threadTs: res.threadTs ?? null, executionContext: this.executionContext });
+        await this.recordSentSafely({ invocationId, channel, ts: res.ts, account: res.account, teamId: res.teamId, threadTs: res.threadTs ?? null });
         return {
           successBoolean: true,
           responseString: `Slack message sent successfully to channel ${ channel } at timestamp ${ res.ts }`,

@@ -14,6 +14,10 @@ export class SlackCloudClient {
     await this.workspaceRequest('POST', apiAppId, teamSlackId, 'register');
   }
 
+  async registerWorkspace(apiAppId: string, teamSlackId: string): Promise<void> {
+    await this.register(apiAppId, teamSlackId);
+  }
+
   async unregister(apiAppId: string, teamSlackId: string): Promise<void> {
     await this.workspaceRequest('DELETE', apiAppId, teamSlackId, 'unregister');
   }

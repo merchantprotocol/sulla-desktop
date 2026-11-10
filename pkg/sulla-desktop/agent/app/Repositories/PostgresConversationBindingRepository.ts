@@ -15,7 +15,11 @@ export class PostgresConversationBindingRepository implements ConversationBindin
   async save(binding: ConversationBinding): Promise<ConversationBinding> {
     const result = await this.db.queryOne<BindingRow>(`INSERT INTO conversation_bindings(kind,channel_type,workspace_id,conversation_id,thread_key,sender_id,target_kind,thread_id,job_id,task_index,agent_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING RETURNING *`, [binding.kind,binding.channel,binding.workspaceId,binding.conversationId,binding.threadKey ?? null,binding.senderId ?? null,binding.target.kind,binding.target.kind==='chat'?binding.target.threadId:null,binding.target.kind==='job'?binding.target.jobId:null,binding.target.kind==='job'?binding.target.taskIndex ?? null:null,binding.agentId ?? null]);
     if (result) return this.map(result);
-    const existing = binding.kind === 'thread_reply' && binding.threadKey ? await this.findThread(binding.channel,binding.workspaceId,binding.conversationId,binding.threadKey) : await this.findFallback(binding.kind,binding.channel,binding.workspaceId,binding.senderId);
+    const existing = binding.kind === 'thread_reply' && binding.threadKey
+      ? await this.findThread(binding.channel, binding.workspaceId, binding.conversationId, binding.threadKey)
+      : binding.kind === 'dm_person' || binding.kind === 'inbox'
+        ? await this.findFallback(binding.kind, binding.channel, binding.workspaceId, binding.senderId)
+        : null;
     if (!existing) throw new Error('Conversation binding conflict could not be resolved'); return existing;
   }
   async claimReceipt(channel: ChannelName, eventId: string): Promise<boolean> { const result = await this.db.queryOne<{event_id:string}>(`INSERT INTO inbound_receipts(channel_type,event_id,status) VALUES($1,$2,'processing') ON CONFLICT DO NOTHING RETURNING event_id`, [channel,eventId]); return !!result; }

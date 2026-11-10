@@ -27,6 +27,14 @@ describe('slack_send_message', () => {
     expect(client.sendMessage).toHaveBeenCalledWith('C1', 'hello', undefined, undefined, undefined, 'team-a');
     expect(observer.onSent).toHaveBeenCalledTimes(1);
   });
+  it('posts in the requested Slack thread', async() => {
+    // risk: reply routing
+    const client = { sendMessage: vi.fn(async() => ({ ok: true, account: 'team-a', teamId: 'T1', ts: '2', threadTs: '1' })) };
+    vi.spyOn(registry, 'get').mockResolvedValue(client as any);
+    const worker = new SlackSendMessageWorker({ onSent: vi.fn() });
+    await (worker as any)._validatedCall({ channel: 'C1', text: 'reply', thread_ts: '1' });
+    expect(client.sendMessage).toHaveBeenCalledWith('C1', 'reply', '1', undefined, undefined, undefined);
+  });
   it('does not observe failed posts', async() => {
     // risk: false event recording
     const client = { sendMessage: vi.fn(async() => { throw new Error('denied'); }) };
@@ -36,5 +44,16 @@ describe('slack_send_message', () => {
     const result = await (worker as any)._validatedCall({ channel: 'C1', text: 'hello' });
     expect(result.successBoolean).toBe(false);
     expect(observer.onSent).not.toHaveBeenCalled();
+  });
+  it('still reports success when binding recording throws after Slack posted', async() => {
+    // risk: duplicate message to a real person if the agent resends a post that already landed
+    const client = { sendMessage: vi.fn(async() => ({ ok: true, account: 'team-a', teamId: 'T1', ts: '3', threadTs: null })) };
+    vi.spyOn(registry, 'get').mockResolvedValue(client as any);
+    const observer = { onSent: vi.fn(async() => { throw new Error('db down'); }) };
+    const worker = new SlackSendMessageWorker(observer);
+    const result = await (worker as any)._validatedCall({ channel: 'C1', text: 'hello' });
+    expect(result.successBoolean).toBe(true);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(observer.onSent).toHaveBeenCalledTimes(1);
   });
 });
