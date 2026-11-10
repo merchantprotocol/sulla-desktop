@@ -52,7 +52,7 @@ export function hasTurnContext(text: string | null | undefined): boolean {
 // sit in the system prompt; these travel per turn only while a voice mode is
 // active, so text-mode sessions pay nothing.
 
-const VOICE_TURN_DIRECTIVE = 'voice mode: user is speaking via microphone. Wrap the spoken part of your reply in <speak>...</speak> in natural conversational sentences, no markdown/code/URLs inside the tags. Answer in 1–3 short spoken sentences (about 60 words maximum), with a 3–10 word first sentence for fast playback. Put longer explanations in visible chat text, speak a concise summary followed by “the full answer is on screen,” and ask before a long spoken explanation. For anything slow, give a brief <speak> ack and delegate via spawn_agent — never block the conversation.';
+const VOICE_TURN_DIRECTIVE = 'voice mode: user is speaking via microphone. Wrap the spoken part of your reply in <speak>...</speak> in natural conversational sentences, no markdown/code/URLs inside the tags. Lead with the answer. For anything slow, give a brief <speak> ack and delegate via spawn_agent — never block the conversation.';
 
 const SECRETARY_TURN_DIRECTIVE = `secretary mode: silently observe the meeting — never respond conversationally, never emit <speak>. Extract from the transcript and return exactly:
 <secretary_analysis>
