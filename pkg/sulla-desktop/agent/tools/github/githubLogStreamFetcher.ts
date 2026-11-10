@@ -17,6 +17,9 @@ export class GitHubLogStreamFetcher {
   private readonly redirectHosts: readonly string[] = [
     'pipelines.actions.githubusercontent.com',
     'results-receiver.actions.githubusercontent.com',
+    '*.actions.githubusercontent.com',
+    'pipelines*.actions.githubusercontent.com',
+    'productionresultssa*.blob.core.windows.net',
   ];
 
   constructor(private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init)) {}
@@ -49,7 +52,11 @@ export class GitHubLogStreamFetcher {
 
   isAllowedRedirect(url: URL): boolean {
     if (url.protocol !== 'https:') return false;
-    if (this.redirectHosts.includes(url.hostname)) return true;
-    return url.hostname.endsWith('.blob.core.windows.net') || /^pipelines[^.]*\.actions\.githubusercontent\.com$/.test(url.hostname);
+    return this.redirectHosts.some(pattern => {
+      if (pattern.startsWith('*.')) return url.hostname.endsWith(pattern.slice(1));
+      if (!pattern.includes('*')) return url.hostname === pattern;
+      const [prefix, suffix] = pattern.split('*');
+      return url.hostname.startsWith(prefix) && url.hostname.endsWith(suffix);
+    });
   }
 }
