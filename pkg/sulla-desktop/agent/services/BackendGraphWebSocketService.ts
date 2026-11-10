@@ -10,7 +10,7 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -20,6 +20,7 @@ import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
+import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
@@ -37,13 +38,13 @@ import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentI
 import { DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
 import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
 import { postgresClient } from '../database/PostgresClient';
-import { markTaskCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
+import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -187,6 +188,20 @@ export class BackendGraphWebSocketService {
     return true;
   }
 
+  /** Every completion claim owned by this turn, including steers injected into a live delegated run. */
+  private claimedCompletionEntries(state: AgentGraphState | undefined, metadata: Record<string, any> | undefined): PendingCompletion[] {
+    const entries = [
+      ...(Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []),
+      ...((state?.messages ?? []).flatMap((message: any) =>
+        message?.metadata?.source === 'sub_agent_completion' && Array.isArray(message.metadata.completionEntries)
+          ? message.metadata.completionEntries
+          : [])),
+    ] as PendingCompletion[];
+    const unique = new Map<string, PendingCompletion>();
+    for (const entry of entries) unique.set(entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`, entry);
+    return [...unique.values()];
+  }
+
   /** True while a turn is in flight for this thread (an idle chat is not running). */
   hasActiveRun(channelId: string, threadId: string): boolean {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
@@ -236,7 +251,7 @@ export class BackendGraphWebSocketService {
    * instead would run disconnected from that still-blocked Promise, leaving
    * it (and the job it is waiting to complete) blocked forever.
    */
-  private handleCompletionWake(channelId: string, threadId: string): void {
+  private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
     if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
@@ -255,6 +270,10 @@ export class BackendGraphWebSocketService {
           timestamp: Date.now(),
           metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
         } as any);
+        for (const entry of entries) {
+          await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+          await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+        }
       } else {
         // No live graph state to inject into — should not happen alongside
         // a live waiter, but requeue rather than drop the completion.
@@ -469,7 +488,7 @@ export class BackendGraphWebSocketService {
     this.agentInbox.replayPending().catch(err =>
       console.warn('[BackendGraphWS] Failed to replay pending agent inbox messages:', err));
     const interruptedRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.jobs,
+      agentJobProvider.states,
       async(job, taskIndex) => {
         const task = job.tasks[taskIndex];
         const channel = job.parentChannel || 'sulla-desktop';
@@ -659,6 +678,7 @@ export class BackendGraphWebSocketService {
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
+    const completionConsumption = new CompletionConsumptionRecorder();
     const { getModelProviderService } = await import('./ModelProviderService');
     const modelProvider = getModelProviderService();
     // Before the saved model choice loads (it waits for the vault on a
@@ -705,6 +725,15 @@ export class BackendGraphWebSocketService {
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
     let newRoute: { prediction: ReflexRouteResult | null; agent: RoutableAgent } | null = null;
+    const threadModelSelection = new ThreadModelOverridePolicy().parse(metadata as Record<string, unknown> | undefined);
+
+    // Default is resolved from Preferences on every turn. It is not a snapshot of the legacy
+    // primary slot or of whatever Preferences happened to contain when the thread was created.
+    if (!explicitAgentId && threadModelSelection.mode === 'default' && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
+      const routedAgent = await resolveDefaultRouteAgent();
+      agentId = routedAgent.graphAgentId;
+      newRoute = { prediction: null, agent: routedAgent };
+    }
 
     // The renderer allocates a threadId before its first send, so first-turn
     // detection must use actual graph/saved history rather than !threadIdFromMsg.
@@ -712,7 +741,7 @@ export class BackendGraphWebSocketService {
     // Reflex routing is opt-in (reflexRouteEnabled); when it's on, a confident
     // match picks a front-door agent. Otherwise the chat opens on Sulla. Any
     // routed choice is stored on the thread so it stays sticky.
-    if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
+    else if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
       const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
@@ -781,12 +810,12 @@ export class BackendGraphWebSocketService {
         (state.metadata as any).supportSessionId = supportSessionId;
         const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
         (state.metadata as any).allowedToolNames = supportTabTools;
-        (state.metadata as any).conversationContext = typeof metadata?.conversationContext === 'string' ? metadata.conversationContext : '';
+        (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
         (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
       } else if ((state.metadata as any).supportSessionId) {
         delete (state.metadata as any).supportSessionId;
         delete (state.metadata as any).allowedToolNames;
-        delete (state.metadata as any).conversationContext;
+        delete (state.metadata as any).supportContext;
         delete (state as any).llmTools;
       }
 
@@ -803,15 +832,7 @@ export class BackendGraphWebSocketService {
 
       // Model choices from the chat picker are scoped to this thread state;
       // they never mutate ModelProviderService or global settings.
-      const providerId = typeof metadata?.providerId === 'string' ? metadata.providerId : '';
-      const modelId = typeof metadata?.modelId === 'string' ? metadata.modelId : '';
-      if (providerId || modelId) {
-        state.metadata.agent = {
-          ...(state.metadata.agent ?? {}),
-          ...(providerId ? { provider: providerId } : {}),
-          ...(modelId ? { model: modelId } : {}),
-        };
-      }
+      state.metadata.agent = new ThreadModelOverridePolicy().apply(state.metadata.agent as any, threadModelSelection);
 
       if (metadata?.runLocation === 'vm' || metadata?.runLocation === 'container') {
         state.metadata.agent = { ...(state.metadata.agent ?? {}), runLocation: metadata.runLocation };
@@ -838,6 +859,13 @@ export class BackendGraphWebSocketService {
           for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
         }
         return 'deferred';
+      }
+      // The completion is now part of this turn's input. Persist consumption
+      // before the model call so a process restart cannot replay it as new.
+      for (const entry of this.claimedCompletionEntries(state, metadata)) {
+        completionConsumption.recordInjected([entry]);
+        await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+        await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
@@ -971,14 +999,13 @@ export class BackendGraphWebSocketService {
       } else {
         await graph.execute(state, startNode);
       }
-      // Completion steers are acknowledged only after a successful graph turn actually consumed them.
+      // Completion claims are acknowledged only after a successful graph turn actually consumed them.
+      for (const entry of this.claimedCompletionEntries(state, metadata)) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       for (const message of state.messages as any[]) {
-        const steerMeta = message?.metadata;
-        if (steerMeta?.source !== 'sub_agent_completion' || !steerMeta.steerDeliveredAt) continue;
-        for (const entry of Array.isArray(steerMeta.completionEntries) ? steerMeta.completionEntries : []) await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
-        delete steerMeta.completionEntries;
+        if (message?.metadata?.source === 'sub_agent_completion') delete message.metadata.completionEntries;
       }
       turnConsumedInput = true;
+      completionConsumption.confirmSeen();
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
@@ -1003,9 +1030,6 @@ export class BackendGraphWebSocketService {
     } finally {
       if (isCurrentRun()) {
         if (turnConsumedInput) {
-          for (const entry of Array.isArray(metadata?.completionEntries) ? metadata.completionEntries : []) {
-            await markTaskCompletionDelivered(String(entry.jobId), Number(entry.taskIndex));
-          }
           // An orchestrator job message (send_job_message waking a parked
           // manager) is acked only now, after the turn it was handed to
           // actually ran — not when wakeParkedAgent was first called. A turn
@@ -1020,7 +1044,13 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
-          for (const entry of metadata?.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+          await completionConsumption.releaseOnAbort(async entry => {
+            requeueAgentCompletion(channelId, threadId, entry);
+            await agentJobProvider.completionAcknowledgements.release(entry);
+          });
+          for (const message of state?.messages ?? []) {
+            if ((message as any)?.metadata?.source === 'sub_agent_completion') delete (message as any).metadata.completionEntries;
+          }
         }
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask
@@ -1049,7 +1079,7 @@ export class BackendGraphWebSocketService {
         // would otherwise sit unread in an idle thread. Run it as a new turn.
         // Skipped when the run was stopped by the user — stop means stop.
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        const completions = takeAgentCompletions(channelId, threadId);
+        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
         if (leftovers.length || completions.length) {
           const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
           const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId && candidate.taskIndex === entry.taskIndex) === index);

@@ -6,7 +6,7 @@
 import * as crypto from 'crypto';
 
 const DEFAULT_MAX_CONVERSATIONS = 128;
-const CONTENT_HASHED_SECTIONS = new Set(['conversation_context', 'subagent_directory']);
+const CONTENT_HASHED_SECTIONS = new Set(['subagent_directory']);
 const ITEM_ID = /(?:\[id:[^\]]+\]|\[skill:[^\]]+\]|\[[A-Za-z0-9_-]{4,}\])/;
 const SECTION = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
 

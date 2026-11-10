@@ -8,7 +8,7 @@ import { getPendingCredential } from '../../main/firstRun/pendingCredentials';
 import { ensureCodexAuthFile, extractChatgptAccountId } from '../util/codexAuthFile';
 import { createGuestCodexBrokerLease } from './codexGuestBrokerLease';
 import { createCodexPendingMemoryBridge } from './codexPendingMemoryBridge';
-import { AuthExpired, RoutingUnavailable, VaultLocked } from './failures';
+import { AuthExpired, ProviderFailure, RoutingUnavailable, legacyProviderFailure } from './failures';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
@@ -75,7 +75,8 @@ export async function resolveCodexExecutionAuth(input: {
       const lease = await createCodexPendingMemoryBridge({ accessToken: pending.values.access_token, chatgptAccountId }, input);
       return fromLease('pending-memory-bridge', lease);
     } catch (err) {
-      throw new AuthExpired('codex', { cause: err });
+      if (err instanceof ProviderFailure) throw err;
+      throw legacyProviderFailure('codex', err);
     }
   }
 
@@ -86,7 +87,8 @@ export async function resolveCodexExecutionAuth(input: {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (/routing claim/i.test(message)) throw new RoutingUnavailable('codex', { cause: err });
-      throw new VaultLocked('codex', { cause: err });
+      if (err instanceof ProviderFailure) throw err;
+      throw legacyProviderFailure('codex', err);
     }
   }
 

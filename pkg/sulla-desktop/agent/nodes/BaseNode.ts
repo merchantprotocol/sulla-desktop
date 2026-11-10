@@ -11,10 +11,11 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getAgentOverrideService, getPrimaryService, getServiceByProvider, getSubconsciousService } from '../languagemodels';
+import { getPrimaryService, getServiceByProvider, getSubconsciousService, modelRouteService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
+import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
 import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
@@ -31,7 +32,6 @@ import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
-import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -505,7 +505,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
   protected parallelToolCalls = false;
   private routingCandidates: ModelCandidate[] = [];
-  private routingPinned = false;
 
   constructor(id: string, name: string) {
     this.id = id;
@@ -522,14 +521,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
     // own Model setting > the list.
     const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
-    this.routingPinned = choice.mode === 'pin';
-    this.routingCandidates = await modelRouter.resolve(target, choice);
-    if (this.routingCandidates.length) {
-      const first = this.routingCandidates[0];
-      return getServiceByProvider(first.provider, first.model);
-    }
-    const override = await getAgentOverrideService({ ...(state.metadata as any).agent, modelChoice: choice });
-    return override ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
+    const routed = await modelRouteService.resolve(target, choice);
+    this.routingCandidates = routed ? [...routed.candidates] : [];
+    return routed?.service ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
@@ -814,7 +808,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<human_identity_context>, <observational_memory>, <observation_context>, <user_observations>, <conversation_context>,
+   * (<human_identity_context>, <observational_memory>, <observation_context>, <user_observations>,
    * <subagent_directory>, <routine_digest>, <lane_health>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
@@ -825,8 +819,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -875,16 +869,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['projects_observations', 'projectsObservationContext'],
       ['skills_observations', 'skillsObservationContext'],
       ['installed_skills', 'skillRecallContext'],
-      ['conversation_context', 'conversationContext'],
+      // Remote support restrictions are control context, not historical recall.
+      ['support_context', 'supportContext'],
       ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],
       ['brain_memory', 'brainMemoryContext'],
     ];
     const blocks = fields.flatMap(([tag, key]) => {
-      const value = key === 'conversationContext'
-        ? sanitizeConversationContext(metadata[key])
-        : metadata[key];
+      const value = metadata[key];
       return typeof value === 'string' && value.trim()
         ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]
         : [];
@@ -1225,13 +1218,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
       if ((err as any)?.unsafeToFallback) throw err;
 
-      const candidates = this.routingCandidates.length
-        ? this.routingCandidates.slice(0, this.routingPinned ? 1 : undefined)
-        : [{ provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '' }];
+      const candidates = new ModelRecoveryPolicy().candidates(this.routingCandidates, {
+        provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '',
+      });
       let lastErr: unknown = err;
       let lastRecovery = classifyLLMFailure(err);
+      const recoveryPolicy = new ModelRecoveryPolicy();
       const failedFirst = candidates[0];
       firstRunTrace('chat', 'provider call failed', { provider: failedFirst.provider, model: failedFirst.model, recoveryKind: lastRecovery.kind, error: redactLLMFailureMessage(err) });
+      if (!recoveryPolicy.canAdvance(lastRecovery) && !lastRecovery.retryPrimary) throw err;
 
       for (let index = 0; index < candidates.length; index++) {
         const candidate = candidates[index];
@@ -1249,7 +1244,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // The primary's initial call happened above. Every fallback candidate starts fresh;
         // its own error (never the preceding provider's) decides whether it gets two retries.
         let recovery = index === 0 ? lastRecovery : undefined;
-        const attempts = index === 0 ? ((recovery!.retryPrimary || recovery!.kind === 'unknown') ? 2 : 0) : 3;
+        const attempts = index === 0 ? recoveryPolicy.additionalAttempts(recovery!) : 3;
 
         for (let attempt = 0; attempt < attempts; attempt++) {
           try {
@@ -1302,6 +1297,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // Count at most once per turn/provider, after that provider's bounded attempts are exhausted.
         if (attemptEpoch === undefined) await modelRouter.markFailure(candidate.provider, lastErr);
         else await modelRouter.markFailure(candidate.provider, lastErr, undefined, attemptEpoch);
+        if (recovery && !recoveryPolicy.canAdvance(recovery)) throw lastErr;
       }
 
       const message = redactLLMFailureMessage(lastErr);

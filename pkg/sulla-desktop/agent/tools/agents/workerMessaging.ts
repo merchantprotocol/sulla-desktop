@@ -7,6 +7,7 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 
 const CHECKIN_GUIDANCE = `[Worker check-ins]
 Call report_progress at each meaningful milestone and at least every ~5 minutes while working. Include blockers immediately. Check every new turn for blocks labelled "Message from orchestrator" and treat them as new direction for the current task.`;
+const REVIEW_GUIDANCE = `Tracked review items arrive with ids. Acknowledge each in your next check-in; close each with fixed plus a commit sha, or wont_fix plus a reason. return_result is refused while any remain open or acknowledged.`;
 
 /** Builds the short operational contract injected into every delegated turn. */
 export class WorkerPromptBuilder {
@@ -38,14 +39,14 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
   if (!state?.metadata?.isSubAgent) return basePrompt;
   const workerGuidance = new WorkerPromptBuilder().build(state.metadata);
   const threadId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : '';
-  if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
+  if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ REVIEW_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
 
   let pending: Awaited<ReturnType<typeof AgentJobMessagingModel.pendingMessagesForThread>>;
   try {
     pending = await AgentJobMessagingModel.pendingMessagesForThread(threadId);
   } catch (err) {
     console.warn('[workerMessaging] queued-message read failed; continuing worker turn:', (err as Error).message);
-    return `${ CHECKIN_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
+    return `${ CHECKIN_GUIDANCE }\n\n${ REVIEW_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
   }
   const represented = representedMessageIds(state);
   const fresh = pending.filter(message => !represented.has(message.id));
@@ -62,7 +63,7 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
     `[Message from orchestrator]\n${ message.message }`,
   ).join('\n\n');
 
-  return [CHECKIN_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
+  return [CHECKIN_GUIDANCE, REVIEW_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
 }
 
 export { CHECKIN_GUIDANCE };

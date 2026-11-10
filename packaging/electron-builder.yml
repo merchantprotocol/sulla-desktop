@@ -20,6 +20,10 @@ asarUnpack:
   # build/Release/better_sqlite3.node. The sidecar's ENTIRE runtime dep tree
   # stays on real disk so it boots even without asar-aware resolution.
   - 'node_modules/better-sqlite3/**'
+  - 'node_modules/onnxruntime-node/**'
+  - 'node_modules/onnxruntime-common/**'
+  - 'node_modules/adm-zip/**'
+  - 'node_modules/global-agent/**'
   - 'node_modules/bindings/**'
   - 'node_modules/file-uri-to-path/**'
   - 'node_modules/fast-glob/**'
@@ -106,6 +110,7 @@ mac:
   artifactName: Sulla-Desktop-${version}-${arch}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
+    NSAudioCaptureUsageDescription: "Sulla Desktop needs system audio access when you choose to record speaker audio in Capture Studio."
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
     NSCameraUseContinuityCameraDeviceType: true
     NSScreenCaptureUsageDescription: "Sulla Desktop needs screen recording access for the capture studio to record your screen."

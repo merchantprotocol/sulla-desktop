@@ -18,7 +18,7 @@ import { applyThreadAgentRoute, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } f
 import { GraphRegistry } from './GraphRegistry';
 import { getWebSocketClientService } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
-import { getJob } from '../tools/agents/jobRegistry';
+import { getJob, type AgentJob } from '../tools/agents/jobRegistry';
 
 import { getWindow } from '@pkg/window';
 
@@ -170,20 +170,31 @@ export async function promoteJobTaskToTab(input: {
   parentThreadId: string;
 }): Promise<boolean> {
   const job = await getJob(input.jobId);
-  const task = job?.tasks[input.taskIndex];
-  if (!job || !task?.threadId || job.parentThreadId !== input.parentThreadId) return false;
+  if (!job || job.parentThreadId !== input.parentThreadId) return false;
+  return openHiddenTaskTab(job, input.taskIndex, true);
+}
+
+/**
+ * Show an already-running task's own thread in a visible tab. No restart and no
+ * new brief: the tab binds to the existing threadId, so its history is the
+ * task's history. The renderer reuses one tab per contractId, so reopening is
+ * idempotent. Returns false when the task has no thread or the renderer is gone.
+ */
+export function openHiddenTaskTab(job: AgentJob, taskIndex: number, focus: boolean): boolean {
+  const task = job.tasks[taskIndex];
+  if (!task?.threadId) return false;
   return sendAgentCommand({
     command:         'open-agent-chat-tab',
     threadId:        task.threadId,
     agentId:         task.agentId,
     agentName:       task.label || task.agentId,
     title:           task.label || task.agentId,
-    parentThreadId:  input.parentThreadId,
+    parentThreadId:  job.parentThreadId ?? '',
     parentAgentId:   job.parentAgentId || job.parentChannel || '',
     parentAgentName: job.parentAgentId || job.parentChannel || 'parent agent',
-    contractId:      job.visibility === 'tab' ? job.jobId : `${ job.jobId }#${ input.taskIndex }`,
+    contractId:      job.visibility === 'tab' ? job.jobId : `${ job.jobId }#${ taskIndex }`,
     depth:           Number(task.depth) || 1,
-    focus:           true,
+    focus,
   });
 }
 

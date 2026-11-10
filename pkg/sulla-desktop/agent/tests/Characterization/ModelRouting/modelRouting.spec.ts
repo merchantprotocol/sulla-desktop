@@ -86,7 +86,7 @@ describe('BL-044 provider health is a temporary routing hint', () => {
     expect(await subject.resolve('agents')).toEqual([{ provider: 'openai', model: 'top' }, { provider: 'anthropic', model: 'next' }]);
   });
 
-  it('a pinned request resolves exactly that model without fallback and does not alter unpinned routing', async () => {
+  it('an explicit request is a hard pin with no alternate-provider candidates', async () => {
     const subject = router();
     expect(await subject.resolve('agents', { mode: 'pin', provider: 'anthropic', model: 'fixed' })).toEqual([{ provider: 'anthropic', model: 'fixed' }]);
     expect((await subject.resolve('agents'))[0]?.provider).toBe('openai');
@@ -104,5 +104,17 @@ describe('BL-044 provider health is a temporary routing hint', () => {
         expect(await subject.isUnavailable('openai')).toBe(unavailableUntil > now);
       }
     }), { numRuns: Number.parseInt(process.env.FC_NUM_RUNS ?? '50', 10) });
+  });
+});
+
+// Connection metadata is a routing hint, never an authentication grant.
+describe('vault discovery outages', () => {
+  it('tries configured unknown-status providers through their normal authenticated execution path', async () => {
+    const subject = new ModelRouter(() => ({
+      getAvailableProviders: async () => [{ id: 'openai', connected: false, connectionStatus: 'unknown' }, { id: 'anthropic', connected: false }],
+      getModelsForProvider: async () => [],
+    }));
+    expect(await subject.resolve('agents')).toEqual([{ provider: 'openai', model: 'top' }]);
+    expect((await subject.providerInfo()).find(provider => provider.id === 'openai')).toMatchObject({ connected: false, status: 'error' });
   });
 });

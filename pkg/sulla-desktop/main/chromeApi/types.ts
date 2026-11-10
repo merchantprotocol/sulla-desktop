@@ -48,6 +48,10 @@ export interface TabCreateProperties {
   active?: boolean;
   /** Create the WebContentsView without attaching it to any parent window. */
   hidden?: boolean;
+  /** Internal request-layer guard installed before the first hidden-tab load. */
+  requestGuard?: (url: string) => Promise<void>;
+  /** Deny renderer-created windows for capability-owned tabs. */
+  denyPopups?: boolean;
 }
 
 export interface TabUpdateProperties {

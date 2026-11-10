@@ -67,15 +67,24 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
 
   /** Selects eligible tasks and persists their messages while the custody lock is held. */
   async queueMessagesWithClient(client: CustodyTransactionClient, jobId: string, requestedTaskIndex: number|undefined, message: string): Promise<Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>> {
+    return this.queueForTargetsWithClient(client, jobId, await this.openTargetsWithClient(client, jobId, requestedTaskIndex), () => message);
+  }
+
+  /** Open (queued/running/parked) task targets, read inside the caller's custody transaction. */
+  async openTargetsWithClient(client: CustodyTransactionClient, jobId: string, requestedTaskIndex: number|undefined): Promise<AgentJobTaskTarget[]> {
     const selected = await client.query<any>(`SELECT j.job_id,j.status AS job_status,j.parent_channel,j.parent_thread_id,
       task.ordinality-1 AS task_index,task.value->>'status' AS task_status,task.value->>'threadId' AS thread_id,task.value->>'label' AS label
       FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
       WHERE j.job_id=$1 AND ($2::int IS NULL OR task.ordinality-1=$2) AND task.value->>'status' IN ('queued','running','parked')
       ORDER BY task.ordinality`,[jobId,requestedTaskIndex??null]);
+    return selected.rows.map(row => this.rowToTarget(row));
+  }
+
+  async queueForTargetsWithClient(client: CustodyTransactionClient, jobId: string, targets: AgentJobTaskTarget[], messageFor: (target: AgentJobTaskTarget) => string): Promise<Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>> {
     const queued:Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>=[];
-    for(const row of selected.rows){
-      const target=this.rowToTarget(row); const id=crypto.randomUUID();
-      const inserted=await client.query<any>(`INSERT INTO agent_job_messages(id,job_id,task_index,message) VALUES($1,$2,$3,$4) RETURNING *`,[id,jobId,target.taskIndex,message]);
+    for(const target of targets){
+      const id=crypto.randomUUID();
+      const inserted=await client.query<any>(`INSERT INTO agent_job_messages(id,job_id,task_index,message) VALUES($1,$2,$3,$4) RETURNING *`,[id,jobId,target.taskIndex,messageFor(target)]);
       queued.push({target,record:this.rowToMessage(inserted.rows[0])});
     }
     return queued;
@@ -161,9 +170,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobId],
       ),
       this.connection.select<any>(
-        `SELECT task_index, count(*)::int AS count
+        `SELECT task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = $1 AND delivered_at IS NULL
+          WHERE job_id = $1
           GROUP BY task_index`,
         [jobId],
       ),
@@ -173,6 +184,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       latestCheckin: null,
       checkins: [],
       undeliveredMessages: 0,
+      lastMessageDeliveredAt: null,
     };
 
     for (const row of checkinRows ?? []) {
@@ -181,7 +193,9 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       entry.latestCheckin ??= this.rowToCheckin(row);
     }
     for (const row of messageRows ?? []) {
-      ensure(Number(row.task_index)).undeliveredMessages = Number(row.count);
+      const entry = ensure(Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
     }
 
     return telemetry;
@@ -199,9 +213,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobIds as unknown as string],
       ),
       this.connection.select<any>(
-        `SELECT job_id, task_index, count(*)::int AS count
+        `SELECT job_id, task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = ANY($1::text[]) AND delivered_at IS NULL
+          WHERE job_id = ANY($1::text[])
           GROUP BY job_id, task_index`,
         [jobIds as unknown as string],
       ),
@@ -209,10 +225,14 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     const result: Record<string, Record<number, AgentJobTaskTelemetry>> = {};
     const ensure = (jobId: string, index: number) => {
       result[jobId] ??= {};
-      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0 };
+      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0, lastMessageDeliveredAt: null };
     };
     for (const row of checkinRows ?? []) ensure(row.job_id, Number(row.task_index)).latestCheckin = this.rowToCheckin(row);
-    for (const row of messageRows ?? []) ensure(row.job_id, Number(row.task_index)).undeliveredMessages = Number(row.count);
+    for (const row of messageRows ?? []) {
+      const entry = ensure(row.job_id, Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
+    }
     return result;
   }
 }

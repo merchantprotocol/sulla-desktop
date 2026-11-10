@@ -104,7 +104,7 @@ export class JobWrapUpService extends Service {
         :{...request,claimToken:'process-local',claimVersion:1,claimExpiresAt:new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000)};
       if(!claim){this.retry(request,new Date(Date.now()+JobWrapUpService.executionLeaseSeconds*1_000));return;}
       if(!this.persistence){await this.stops.stopTask(claim.jobId,claim.taskIndex,claim.principal,claim.reason);return;}
-      if(!await this.persistence.beginTeardown(claim)){this.retry(request,claim.claimExpiresAt);return;}
+      if(!await this.stops.applyDurableStop(claim.jobId,()=>this.persistence!.beginTeardown(claim))){this.retry(request,claim.claimExpiresAt);return;}
       // Only this reservation's immutable generation may cross the external
       // boundary. AbortController loss is a hint, never an exit receipt.
       const teardown=await this.stops.teardownTask(claim.jobId,claim.taskIndex,claim.executionGeneration);

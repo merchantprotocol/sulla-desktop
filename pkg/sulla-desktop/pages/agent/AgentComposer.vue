@@ -199,6 +199,19 @@
                 </button>
               </div>
 
+              <button
+                type="button"
+                class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-content hover:bg-surface-hover"
+                @click="modelSelector.selectDefault()"
+              >
+                <span>
+                  <span class="block font-medium">Default</span>
+                  <span class="block text-xs text-content-muted">Follow Preferences → New chats</span>
+                </span>
+                <span v-if="modelSelector.isDefaultValue" class="text-xs font-semibold text-content-secondary">Active</span>
+              </button>
+              <div class="border-t border-edge" />
+
               <template v-if="modelSelector.agentOptionsValue.length">
                 <div class="px-3 py-2 text-xs font-semibold tracking-wide text-content-secondary">
                   Agents

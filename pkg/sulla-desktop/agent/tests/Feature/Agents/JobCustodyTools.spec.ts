@@ -258,13 +258,13 @@ dbDescribe('registered custody transfer tools',()=>{
     const pendingBeforeRestart=await freshPendingCompletions();
     const pendingTask=pendingBeforeRestart.find(item=>item.jobId===job.jobId)?.tasks[0];
     expect(pendingTask?.completionDeliveredAt).toBeFalsy();expect(pendingTask?.result).toEqual({status:'completed',summary:'done before restart',output:{ok:true}});expect(pendingTask?.completion?.result).toEqual({status:'completed',summary:'done before restart',output:{ok:true}});
-    const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),fresh.custody);
+    const fresh=new AgentJobServiceProvider();const inbox=new CompletionInboxStore();inbox.registerIdleDispatcher(()=>{});const recovery=new AgentCompletionRecoveryService(fresh.jobs,inbox,new CompletionDeliveryPolicy(),Date.now,undefined,fresh.custody);
     await recovery.recover();await recovery.recover();
     expect(await fresh.custody.resolveOwner(job.jobId)).toMatchObject({threadId:next,agentId:next});expect(await fresh.custody.history(job.jobId)).toHaveLength(1);
     expect(inbox.take(next,next).filter(entry=>entry.jobId===job.jobId)).toHaveLength(1);expect(inbox.take(old,old)).toHaveLength(0);
     await fresh.jobs.markTaskCompletionDelivered(job.jobId,0,Date.now());
     const acknowledgedInbox=new CompletionInboxStore();acknowledgedInbox.registerIdleDispatcher(()=>{});
-    await new AgentCompletionRecoveryService(fresh.jobs,acknowledgedInbox,new CompletionDeliveryPolicy(),fresh.custody).recover();
+    await new AgentCompletionRecoveryService(fresh.jobs,acknowledgedInbox,new CompletionDeliveryPolicy(),Date.now,undefined,fresh.custody).recover();
     expect(acknowledgedInbox.take(next,next)).toHaveLength(0);expect(acknowledgedInbox.take(old,old)).toHaveLength(0);
     const notices=await database.query<any>(`SELECT message_id,receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE $1 ORDER BY message_id`,[`custody:${job.jobId}:job:1:%`]);expect(notices).toHaveLength(2);expect(new Set(notices.map(row=>row.receiver_thread_id))).toEqual(new Set([old,next]));
     async function freshPendingCompletions(){const provider=new AgentJobServiceProvider();return provider.jobs.pendingCompletions();}

@@ -1,0 +1,94 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import type { FleetJobView, FleetTaskView } from '../Services/AgentFleetTypes';
+import { PullRequestReferenceExtractor } from './PullRequestReferenceExtractor';
+
+export interface FleetTreeLine {
+  ref: string;
+  parent: string | null;
+  depth: number;
+  state: string;
+  activityAge: string;
+  step?: string;
+  blockers: number;
+  returned: boolean;
+  pr?: string;
+  label?: string;
+  truncated?: true;
+}
+
+/** Formats a fleet projection as bounded, structurally nested task lines. */
+export class AgentFleetTreeFormatter {
+  constructor(private readonly prs: PullRequestReferenceExtractor, private readonly now: () => number = Date.now) {}
+
+  format(jobs: FleetJobView[]): { count: number; tasks: FleetTreeLine[] } {
+    const ordered = [...jobs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.jobId.localeCompare(b.jobId));
+    const byId = new Map(ordered.map(job => [job.jobId, job]));
+    const children = new Map<string, FleetJobView[]>();
+    for (const job of ordered) {
+      if (!job.parentJobId || job.parentTaskIndex === null || !byId.has(job.parentJobId)) continue;
+      const key = `${ job.parentJobId }#${ job.parentTaskIndex }`;
+      children.set(key, [...(children.get(key) ?? []), job]);
+    }
+    const tasks: FleetTreeLine[] = [];
+    const emitted = new Set<string>();
+    const active = new Set<string>();
+    const visit = (job: FleetJobView, depth: number): void => {
+      if (emitted.has(job.jobId) || active.has(job.jobId)) return;
+      active.add(job.jobId);
+      for (const task of [...job.tasks].sort((a, b) => a.taskIndex - b.taskIndex)) {
+        tasks.push(this.line(job, task, depth));
+        for (const child of children.get(`${ job.jobId }#${ task.taskIndex }`) ?? []) visit(child, depth + 1);
+      }
+      active.delete(job.jobId);
+      emitted.add(job.jobId);
+    };
+    for (const root of ordered.filter(job => !job.parentJobId || !byId.has(job.parentJobId))) visit(root, 0);
+    // Cycles have no root. Emit each remaining component once, at root depth.
+    for (const orphanOrCycle of ordered) visit(orphanOrCycle, 0);
+    return { count: tasks.length, tasks };
+  }
+
+  private line(job: FleetJobView, task: FleetTaskView, depth: number): FleetTreeLine {
+    const blockers = task.latestCheckin?.blockers.length ?? 0;
+    const line: FleetTreeLine = {
+      ref: `${ job.jobId }#${ task.taskIndex }`,
+      parent: job.parentJobId === null ? null : `${ job.parentJobId }#${ job.parentTaskIndex }`,
+      depth,
+      state: task.stranded ? 'stranded' : task.state,
+      activityAge: this.age(task.lastActivityAt),
+      step: task.latestCheckin?.step || undefined,
+      blockers,
+      returned: task.returned,
+      pr: this.prs.extract(task) || undefined,
+      label: task.label || task.agentId,
+    };
+    return this.bound(line);
+  }
+
+  private age(iso: string): string { return `${ Math.max(0, Math.floor((this.now() - Date.parse(iso)) / 1000)) }s`; }
+
+  private bound(line: FleetTreeLine): FleetTreeLine {
+    if (this.bytes(line) <= 400) return line;
+    const bounded: FleetTreeLine = { ...line, truncated: true };
+    for (const key of ['label', 'step', 'pr', 'parent', 'ref', 'activityAge', 'state'] as const) {
+      if (this.bytes(bounded) <= 400) break;
+      const value = bounded[key];
+      if (typeof value !== 'string') continue;
+      const symbols = [...value];
+      let low = 0; let high = symbols.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        bounded[key] = symbols.slice(0, middle).join('');
+        if (this.bytes(bounded) <= 400) low = middle; else high = middle - 1;
+      }
+      bounded[key] = symbols.slice(0, low).join('');
+      if (!bounded[key] && ['label', 'step', 'pr'].includes(key)) delete bounded[key];
+    }
+    return bounded;
+  }
+
+  private bytes(line: FleetTreeLine): number { return Buffer.byteLength(JSON.stringify(line), 'utf8'); }
+}

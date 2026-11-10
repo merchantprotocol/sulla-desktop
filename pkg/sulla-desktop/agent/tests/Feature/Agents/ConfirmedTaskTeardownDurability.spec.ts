@@ -37,6 +37,7 @@ class DiscoveryBoundary implements TaskExecutionDiscoveryTransport {
 class ConfirmedStopBoundary {
   constructor(private readonly teardown:ConfirmedTaskTeardownService){}
   teardownTask(jobId:string,taskIndex:number,generation:string){return this.teardown.teardown(jobId,taskIndex,generation);}
+  applyDurableStop(_jobId:string,write:()=>Promise<boolean>){return write();}
 }
 class ManualTimer implements JobWrapUpTimer {
   readonly callbacks:Array<()=>void>=[];

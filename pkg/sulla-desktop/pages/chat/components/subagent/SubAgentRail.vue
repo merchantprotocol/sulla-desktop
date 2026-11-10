@@ -6,212 +6,147 @@
 -->
 <template>
   <aside
-      v-if="cards.length && !collapsed"
-      class="sd-agent-rail"
-      aria-label="Sub-agents launched by this chat"
-    >
+    v-if="rows.length && !collapsed"
+    class="sd-agent-rail"
+    aria-label="Sub-agents launched by this chat"
+  >
     <header class="sd-agent-heading">
-    <h2>Sub-agents</h2>
-    <span>{{ runningCount ? `${ runningCount } running` : `${ cards.length } total` }}</span>
-    <button
-      class="sd-icon-button"
-      type="button"
-      title="Hide sub-agents"
-      aria-label="Hide sub-agents"
-      @click="emit('toggle-collapse')"
-    >
-    <svg viewBox="0 0 24 24">
-    <rect
-      x="3.5"
-      y="4.5"
-      width="17"
-      height="15"
-      rx="3"
-    />
-    <path d="M9.5 4.5v15"/>
-    </svg>
-    </button>
+      <h2>Sub-agents</h2><span>{{ liveCount ? `${liveCount} live` : `${rows.length} total` }}</span><button
+        class="sd-icon-button"
+        type="button"
+        title="Hide sub-agents"
+        aria-label="Hide sub-agents"
+        @click="emit('toggle-collapse')"
+      >
+        <svg viewBox="0 0 24 24"><rect
+          x="3.5"
+          y="4.5"
+          width="17"
+          height="15"
+          rx="3"
+        /><path d="M9.5 4.5v15" /></svg>
+      </button>
     </header>
     <div
       class="sd-agent-filters"
       role="tablist"
       aria-label="Filter sub-agents"
     >
-    <span
-      class="sd-filter-indicator"
-      :style="{ transform: `translateX(${ filterIndex * 100 }%)` }"
-    />
-    <button
-      v-for="item in filters"
-      :key="item.value"
-      role="tab"
-      :aria-selected="filter === item.value"
-      @click="filter = item.value"
-    >{{ item.label }}</button>
+      <span
+        class="sd-filter-indicator"
+        :style="{ transform: `translateX(${filterIndex * 100}%)` }"
+      /><button
+        v-for="item in filters"
+        :key="item.value"
+        role="tab"
+        :aria-selected="filter === item.value"
+        @click="filter = item.value"
+      >
+        {{ item.label }}
+      </button>
     </div>
     <div class="sd-agent-list">
-      <template v-if="visibleRunning.length">
-    <div class="sd-agent-group">
-    <span>Active</span>
-    <span>{{ visibleRunning.length }}</span>
-    </div>
-    <button
-      v-for="card in visibleRunning"
-      :key="cardKey(card)"
-      type="button"
-      class="sd-agent-row"
-      :class="`is-${ card.status }`"
-      :aria-current="selectedKey === cardKey(card) || undefined"
-      @click="emit('select', card)"
-    >
-    <i class="sd-status-dot"/>
-    <strong>{{ card.label }}</strong>
-    <time>{{ elapsed(card) }}</time>
-    <span>
-    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template><template v-if="card.stopAttribution"><br>{{ card.stopAttribution }}</template>
-    </span>
-    </button>
-    </template>
+      <button
+        v-for="node in visibleRows"
+        :key="node.row.key"
+        type="button"
+        class="sd-agent-row"
+        :class="[`is-${node.row.state}`, { 'is-done': node.row.state === 'done' }]"
+        :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
+        :aria-current="selectedKey === legacyKey(node.row) || undefined"
+        @click="emit('select', legacyCard(node.row))"
+      >
+        <i class="sd-status-dot" /><strong>{{ node.row.label }}</strong><time>{{ elapsed(node.row) }}</time>
+        <span><b>{{ agentName(node.row.agentId) }}</b> · {{ node.row.lastCheckinSummary || node.row.stateReason || stateLabel(node.row) }}<template v-if="contractLabel(node.row)"> · {{ contractLabel(node.row) }}</template><template v-if="stopAttribution(node.row)"><br>{{ stopAttribution(node.row) }}</template></span>
+        <em
+          class="sd-state-chip"
+          :title="node.row.stateReason || undefined"
+        >{{ stateLabel(node.row) }}</em>
+      </button>
       <p
-      v-else-if="filter === 'running'"
-      class="sd-agent-empty"
-    >Nothing running right now.</p>
-      <template v-if="visibleFinished.length">
-    <div class="sd-agent-group">
-    <span>Finished</span>
-    <span>{{ visibleFinished.length }}</span>
-    </div>
-    <button
-      v-for="card in visibleFinished"
-      :key="cardKey(card)"
-      type="button"
-      class="sd-agent-row"
-      :class="[`is-${ card.status }`, { 'is-dismissing': dismissingKey === cardKey(card) }]"
-      :aria-current="selectedKey === cardKey(card) || undefined"
-      @click="emit('select', card)"
-    >
-    <i class="sd-status-dot"/>
-    <strong>{{ card.label }}</strong>
-    <time>{{ elapsed(card) }}</time>
-    <span>
-    <b>{{ agentName(card.agentId) }}</b> · {{ card.lastActivity || card.status }}<template v-if="card.contract && card.contract !== 'result'"> · {{ card.contract }}</template><template v-if="card.stopAttribution"><br>{{ card.stopAttribution }}</template>
-    </span>
-    </button>
-    </template>
-      <p
-      v-else-if="filter === 'finished'"
-      class="sd-agent-empty"
-    >No finished agents yet.</p>
+        v-if="!visibleRows.length"
+        class="sd-agent-empty"
+      >
+        No agents in this filter.
+      </p>
     </div>
   </aside>
   <button
-      v-else-if="cards.length"
-      type="button"
-      class="sd-agent-rail-tab"
-      :class="{ running: runningCount }"
-      title="Show sub-agents"
-      aria-label="Show sub-agents panel"
-      @click="emit('toggle-collapse')"
-    >
+    v-else-if="rows.length"
+    type="button"
+    class="sd-agent-rail-tab"
+    :class="{ running: liveCount }"
+    title="Show sub-agents"
+    aria-label="Show sub-agents panel"
+    @click="emit('toggle-collapse')"
+  >
     <svg
       viewBox="0 0 24 24"
       aria-hidden="true"
-    >
-    <rect
+    ><rect
       x="3.5"
       y="4.5"
       width="17"
       height="15"
       rx="3"
-    />
-    <path d="M9.5 4.5v15"/>
-    </svg>
-    <b>Sub-agents · {{ runningCount ? `${ runningCount } running` : cards.length }}</b>
-    </button>
+    /><path d="M9.5 4.5v15" /></svg><b>Sub-agents · {{ liveCount ? `${liveCount} live` : rows.length }}</b>
+  </button>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
+import { StopAttributionFormatter } from '@pkg/agent/app/Formatters/StopAttributionFormatter';
+import { AgentStateRowPresenter } from '@pkg/services/agentState/AgentStateRowPresenter';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
+import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ parentThreadId?: string; collapsed?: boolean; selectedKey?: string }>();
-const emit = defineEmits<{
-  select: [card: ThreadAgentCard];
-  visibility: [visible: boolean];
-  'toggle-collapse': [];
-}>();
-const cards = ref<ThreadAgentCard[]>([]);
+const emit = defineEmits<{ select: [card: ThreadAgentCard]; visibility: [visible: boolean]; 'toggle-collapse': [] }>();
+const client = inject(AGENT_STATE_CLIENT_KEY);
+if (!client) throw new Error('AgentStateClient is not provided');
 const now = ref(Date.now());
+const rowPresenter = new AgentStateRowPresenter(new StopAttributionFormatter());
+const dismissed = ref(new Set<string>());
+const legacyCards = ref(new Map<string, ThreadAgentCard>());
 const filter = ref<'all' | 'running' | 'finished'>('all');
-const dismissingKey = ref('');
-const filters = [
-  { value: 'all', label: 'All' },
-  { value: 'running', label: 'Running' },
-  { value: 'finished', label: 'Finished' },
-] as const;
+const filters = [{ value: 'all', label: 'All' }, { value: 'running', label: 'Live' }, { value: 'finished', label: 'Finished' }] as const;
+const liveStates = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const tree = computed(() => props.parentThreadId ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(props.parentThreadId) : []);
+const rows = computed(() => new AgentTreeBuilder(client.snapshot.value.rows).flatten(tree.value).filter(node => !dismissed.value.has(node.row.key)));
+const visibleRows = computed(() => rows.value.filter(node => filter.value === 'all' || (filter.value === 'running') === liveStates.has(node.row.state)));
+const liveCount = computed(() => rows.value.filter(node => liveStates.has(node.row.state)).length);
 const filterIndex = computed(() => filters.findIndex(item => item.value === filter.value));
-const runningCount = computed(() => cards.value.filter(card => card.status === 'running' || card.status === 'parked').length);
-const visibleRunning = computed(() => filter.value === 'finished' ? [] : cards.value.filter(card => card.status === 'running' || card.status === 'parked'));
-const visibleFinished = computed(() => filter.value === 'running' ? [] : cards.value.filter(card => card.status !== 'running' && card.status !== 'parked'));
 let timer: ReturnType<typeof setInterval> | null = null;
-let request = 0;
-let tick = 0;
+let metadataTick = 0;
 
-const cardKey = (card: ThreadAgentCard) => `${card.kind}:${card.jobId}:${card.taskIndex}`;
-
-function elapsed(card: ThreadAgentCard): string {
-  const seconds = Math.max(0, Math.floor(((card.finishedAt ?? now.value) - card.createdAt) / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes ? `${minutes}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`;
-}
-
-function agentName(id: string): string {
-  return id.split('-').map(part => ({ codex: 'Codex', sol: 'Sol', luna: 'Luna' })[part] || part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
-}
-
-async function refresh(): Promise<void> {
-  const id = props.parentThreadId;
-  const current = ++request;
-  now.value = Date.now();
-  if (!id) {
-    cards.value = [];
-    return;
-  }
+function stateLabel(row: AgentStateRow): string { const label = rowPresenter.statusLabel(row); if (label === 'Killed by human') return label; if (row.state === 'parked') return `parked · waiting on ${ row.waitingOnChildren }`; if (row.state === 'quiet' && row.lastCheckinAt) return `quiet · ${ age(row.lastCheckinAt) }`; return row.state }
+function age(value: string): string { const seconds = Math.max(0, Math.floor((now.value - Date.parse(value)) / 1000)); return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m` }
+function elapsed(row: AgentStateRow): string { const start = row.startedAt ? Date.parse(row.startedAt) : now.value; const end = row.endedAt ? Date.parse(row.endedAt) : now.value; const seconds = Math.max(0, Math.floor((end - start) / 1000)); return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m` }
+function agentName(id: string | null): string { return (id || 'Agent').split('-').map(part => ({ codex: 'Codex', sol: 'Sol', luna: 'Luna' }[part] || part.charAt(0).toUpperCase() + part.slice(1))).join(' ') }
+function contractLabel(row: AgentStateRow): string { const contract = legacyCards.value.get(row.key)?.contract; return contract && contract !== 'result' ? contract : '' }
+function stopAttribution(row: AgentStateRow): string { return rowPresenter.stopAttribution(row) }
+function legacyKey(row: AgentStateRow): string { return `${ row.visibility === 'tab' ? 'tab' : 'job' }:${ row.jobId }:${ row.taskIndex }` }
+function legacyCard(row: AgentStateRow): ThreadAgentCard { const existing = legacyCards.value.get(row.key); const status: ThreadAgentCard['status'] = ['working', 'queued', 'quiet', 'blocked'].includes(row.state) ? 'running' : row.state === 'lost' ? 'failed' : row.state; return { jobId: row.jobId, taskIndex: row.taskIndex, agentId: row.agentId || 'agent', label: row.label, status, createdAt: row.startedAt ? Date.parse(row.startedAt) : now.value, finishedAt: row.endedAt ? Date.parse(row.endedAt) : null, conversationId: row.threadId || undefined, lastActivity: row.lastCheckinSummary || row.stateReason || row.state, lastActivityAt: Date.parse(row.lastActivityAt), kind: row.visibility === 'tab' ? 'tab' : 'job', contract: existing?.contract || 'result', agentTab: row.visibility === 'tab' && row.threadId ? { contractId: row.key, threadId: row.threadId, agentName: row.label, parentAgentId: 'orchestrator', depth: row.depth } : undefined } }
+async function refreshMetadata(): Promise<void> {
+  if (!props.parentThreadId) { legacyCards.value = new Map(); return }
   try {
-    const next = await ipcRenderer.invoke('agents:thread-jobs' as any, id) as ThreadAgentCard[];
-    if (current === request) {
-      cards.value = Array.isArray(next) ? next : [];
-      const selected = cards.value.find(card => cardKey(card) === props.selectedKey);
-      if (selected) emit('select', selected);
-    }
-  } catch {
-    if (current === request) cards.value = [];
-  }
+    const cards = await ipcRenderer.invoke('agents:thread-jobs' as any, props.parentThreadId) as ThreadAgentCard[];
+    legacyCards.value = new Map(cards.map(card => [`${ card.jobId }:${ card.taskIndex }`, card]));
+  } catch { /* Snapshot rows remain authoritative when optional display metadata is unavailable. */ }
 }
-
 async function dismiss(card: ThreadAgentCard): Promise<void> {
   if (!props.parentThreadId) return;
-  dismissingKey.value = cardKey(card);
-  const ok = await ipcRenderer.invoke('agents:dismiss-thread-job' as any, card.jobId, props.parentThreadId, card.taskIndex);
-  setTimeout(() => {
-    if (ok) cards.value = cards.value.filter(item => cardKey(item) !== cardKey(card));
-    dismissingKey.value = '';
-  }, 240);
+  const hidden = new Set(dismissed.value); hidden.add(`${ card.jobId }:${ card.taskIndex }`); dismissed.value = hidden;
+  try { await ipcRenderer.invoke('agents:dismiss-thread-job' as any, card.jobId, props.parentThreadId, card.taskIndex) } catch { /* Local dismissal still preserves the approved interaction. */ }
 }
-
 defineExpose({ dismiss });
-watch(() => props.parentThreadId, refresh, { immediate: true });
-watch(() => cards.value.length > 0, value => emit('visibility', value), { immediate: true });
-onMounted(() => {
-  timer = setInterval(() => {
-    now.value = Date.now();
-    tick += 1;
-    if (tick % 3 === 0) void refresh();
-  }, 1000);
-});
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
-});
+watch(() => rows.value.length > 0, visible => emit('visibility', visible), { immediate: true });
+watch(() => props.parentThreadId, () => { dismissed.value = new Set(); void refreshMetadata() }, { immediate: true });
+onMounted(() => { timer = setInterval(() => { now.value = Date.now(); metadataTick += 1; if (metadataTick % 3 === 0) void refreshMetadata() }, 1000) });
+onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 <style scoped>
 .sd-agent-rail {
@@ -429,4 +364,5 @@ onBeforeUnmount(() => {
   .sd-filter-indicator,.sd-agent-row{transition-duration:1ms !important;
 }
 }
+.sd-agent-row{position:relative}.sd-agent-row.is-done{opacity:.72}.sd-state-chip{grid-column:2/4;width:max-content;margin-top:3px;padding:1px 6px;border-radius:999px;background:var(--bg-surface-alt);color:var(--text-muted);font:10px var(--font-mono);font-style:normal}.is-blocked .sd-status-dot,.is-failed .sd-status-dot,.is-lost .sd-status-dot{background:var(--status-error)}.is-quiet .sd-status-dot,.is-parked .sd-status-dot{background:var(--status-warning)}
 </style>

@@ -32,6 +32,7 @@ class AttributedFakeStops {
   readonly stopped: Array<{jobId:string;taskIndex:number;generation:string}> = [];
   outcome:'confirmed'|'still-running'|'unavailable'='confirmed';
   async teardownTask(jobId:string,taskIndex:number,generation:string):Promise<'confirmed'|'still-running'|'unavailable'>{this.stopped.push({jobId,taskIndex,generation});return this.outcome;}
+  applyDurableStop(_jobId:string,write:()=>Promise<boolean>):Promise<boolean>{return write();}
 }
 
 class FakePersistence {

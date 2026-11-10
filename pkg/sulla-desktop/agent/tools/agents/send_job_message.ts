@@ -4,10 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import { PendingReturnedTaskMessage } from '../../app/Services/PendingReturnedTaskMessage';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
 import { getJob } from './jobRegistry';
-import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 /**
  * Persist a message for one or all open tasks of a job and deliver it.
@@ -15,7 +16,7 @@ import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
  * child is a desktop chat: the message steers its live turn, or starts a turn
  * when it is idle, through the same inject path the old message_tab used.
  */
-export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string }, metadata?: Record<string,any>): Promise<ToolResponse> {
+export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string; reviewItems?: string[]; closeReviewItems?: Array<{ id: string; status: 'wont_fix'; reason: string }> }, metadata?: Record<string,any>): Promise<ToolResponse> {
   const { jobId, taskIndex, message } = input;
   if (!jobId || !message) {
     return { successBoolean: false, responseString: 'jobId and a non-empty message are required.' };
@@ -23,7 +24,13 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   if (taskIndex !== undefined && (!Number.isInteger(taskIndex) || taskIndex < 0)) {
     return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
   }
+  if ((input.closeReviewItems ?? []).some(close => !close.id || !close.reason?.trim())) {
+    return { successBoolean: false, responseString: 'Manager wont_fix closure requires an item id and non-empty reason.' };
+  }
 
+  // Owner-only authority: the caller must be the current custody owner, or an
+  // ancestor proven against the exact owner version still held under the lock.
+  // Review-item writes and message rows commit in the same custody transaction.
   const caller=metadata?await agentJobProvider.custodyCallerVerifier.verify(metadata):undefined;
   const snapshot=caller?await agentJobProvider.custody.resolveOwner(jobId,taskIndex):undefined;
   const snapshotAncestor=caller&&snapshot&&caller.threadId!==snapshot.threadId?await agentJobProvider.custodyLineage.isAncestor(caller.threadId,snapshot.threadId):false;
@@ -33,12 +40,50 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       const unchanged=snapshot?.threadId===owner.threadId&&snapshot.version===owner.version;
       if(!same&&!(unchanged&&snapshotAncestor))return {kind:'forbidden',owner} as const;
     }
-    return {kind:'queued',queued:await agentJobProvider.messaging.queueMessagesWithClient(client,jobId,taskIndex,message)} as const;
+    const targets=await agentJobProvider.messaging.openTargetsWithClient(client,jobId,taskIndex);
+    if(targets.length===0)return {kind:'no-targets'} as const;
+    if(targets.some(target=>!['running','parked'].includes(target.jobStatus)))return {kind:'not-running'} as const;
+    const reviews=agentJobProvider.reviewItems.withClient(client);
+    const reviewIds: string[] = [];
+    const reviewIdsByTask: Record<number, string[]> = {};
+    const closedReviewIds = new Set<string>();
+    const reviewMessageByTask = new Map<number, string>();
+    for (const target of targets) {
+      for (const close of input.closeReviewItems ?? []) {
+        const open = await reviews.itemsForTask(jobId, target.taskIndex, true);
+        if (open.some(item => item.id === close.id)) {
+          await reviews.close(jobId, target.taskIndex, close.id, 'wont_fix', undefined, close.reason.trim(), 'manager');
+          closedReviewIds.add(close.id);
+        }
+      }
+      const texts = input.reviewItems ?? [];
+      if (texts.length) {
+        const ids = await reviews.createForTask(jobId, target.taskIndex, texts);
+        reviewIds.push(...ids);
+        reviewIdsByTask[target.taskIndex] = ids;
+        const reviewText = ids.map((id, index) => `${id}: ${texts[index]}`).join('\n');
+        reviewMessageByTask.set(target.taskIndex, `${message}\n\nTracked review items (close each one):\n${reviewText}\nAcknowledge each in your next report_progress; close with fixed + commit sha or wont_fix + reason.`);
+      }
+    }
+    const unknownClose = (input.closeReviewItems ?? []).find(item => !closedReviewIds.has(item.id));
+    if (unknownClose) {
+      const validIds = (await Promise.all(targets.map(target => reviews.itemsForTask(jobId, target.taskIndex, true)))).flat().map(item => item.id).join(', ') || '(none)';
+      return {kind:'unknown-review-item',id:unknownClose.id,validIds} as const;
+    }
+    const queued=await agentJobProvider.messaging.queueForTargetsWithClient(client,jobId,targets,target=>reviewMessageByTask.get(target.taskIndex)??message);
+    return {kind:'queued',queued,reviewIds,reviewIdsByTask} as const;
   });
   if(!locked)return {successBoolean:false,responseString:`Job "${jobId}" not found.`};
   if(locked.kind==='forbidden')return {successBoolean:false,responseString:`Cannot message job "${jobId}": current owner is ${locked.owner.agentId} (${locked.owner.channel}/${locked.owner.threadId}).`};
-  const queued=locked.queued;
-  if (queued.length === 0) {
+  if(locked.kind==='not-running')return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
+  if(locked.kind==='unknown-review-item')return { successBoolean: false, responseString: `Unknown review item "${locked.id}". Valid open ids: ${locked.validIds}.` };
+  if(locked.kind==='no-targets'){
+    const returnedJob = await agentJobProvider.jobs.job(jobId);
+    const pendingTaskMessage = new PendingReturnedTaskMessage();
+    const pendingReturnedTask = returnedJob?.tasks.find((task, index) =>
+      (taskIndex === undefined || taskIndex === index) && pendingTaskMessage.forTask(task));
+    const pendingMessage = pendingReturnedTask && pendingTaskMessage.forTask(pendingReturnedTask);
+    if (pendingMessage) return { successBoolean: false, responseString: pendingMessage };
     return {
       successBoolean: false,
       responseString: taskIndex === undefined
@@ -46,9 +91,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         : `Job "${ jobId }" has no task at index ${ taskIndex } (or it has already finished).`,
     };
   }
-  if (queued.some(({target}) => !['running', 'parked'].includes(target.jobStatus))) {
-    return { successBoolean: false, responseString: `Job "${ jobId }" is no longer running.` };
-  }
+  const { queued, reviewIds, reviewIdsByTask } = locked;
 
   const job = await getJob(jobId);
   let deliveredLive = 0;
@@ -129,6 +172,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       targetedTasks: queued.map(({ target }) => target.taskIndex),
       deliveredLive,
       queuedForNextBoundary: queued.length - deliveredLive,
+      ...(reviewIds.length ? { reviewItemIds: reviewIds, reviewItemIdsByTask: reviewIdsByTask } : {}),
       ...(notWoken.length ? {
         notWoken: notWoken.map(entry => ({
           taskIndex: entry.taskIndex,
@@ -148,6 +192,8 @@ export class SendJobMessageWorker extends BaseTool {
       jobId:     String(input.jobId ?? '').trim(),
       message:   String(input.message ?? '').trim(),
       taskIndex: input.taskIndex === undefined ? undefined : Number(input.taskIndex),
+      reviewItems: Array.isArray(input.reviewItems) ? input.reviewItems.map(String) : undefined,
+      closeReviewItems: Array.isArray(input.closeReviewItems) ? input.closeReviewItems : undefined,
     }, (this.state as any)?.metadata);
   }
 }

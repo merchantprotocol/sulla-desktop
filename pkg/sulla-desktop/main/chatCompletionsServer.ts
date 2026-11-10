@@ -26,6 +26,8 @@ import paths from '@pkg/utils/paths';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import { describePortOwner } from '@pkg/utils/portOwner';
+import { ToolRequestArguments } from '@pkg/runtime/toolRequestArguments';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -115,6 +117,7 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
 };
 
 export class ChatCompletionsServer {
+  private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
@@ -410,10 +413,18 @@ export class ChatCompletionsServer {
       const requested = String(req.params.tool);
       const args = req.body?.args ?? {};
       const ctx = req.body?.ctx;
-      const deadlineMs = Math.max(1, Math.min(Number(req.body?.deadlineMs ?? 30_000), 60_000));
+      const deadlineMs = this.toolDeadlinePolicy.requestedDeadlineMs(req.body?.deadlineMs);
+      const startedAt = Date.now();
+      let toolName = `${ category }/${ requested }`;
+      let operationTypes: readonly string[] = [];
       try {
         const { toolRegistry } = await import('@pkg/agent/tools/registry');
         const worker = await toolRegistry.createToolForCategory(category, requested);
+        const registeredName = toolRegistry.resolveRegisteredName(category, requested);
+        if (registeredName) {
+          toolName = registeredName;
+          operationTypes = toolRegistry.getOperationTypes(registeredName);
+        }
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
@@ -427,7 +438,15 @@ export class ChatCompletionsServer {
         ]);
         return res.json({ success: true, result });
       } catch (error) {
-        return res.status(500).json({ success: false, error: { code: 'desktop_execution_failed', message: error instanceof Error ? error.message : String(error) } });
+        const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
+        return res.status(timedOut ? 504 : 500).json({
+          success: false,
+          error: {
+            code: timedOut ? 'deadline_exceeded' : 'desktop_execution_failed',
+            message: error instanceof Error ? error.message : String(error),
+            ...(timedOut ? { details: this.toolDeadlinePolicy.timeoutDetails(toolName, deadlineMs, Date.now() - startedAt, operationTypes) } : {}),
+          },
+        });
       }
     });
 
@@ -1212,7 +1231,7 @@ export class ChatCompletionsServer {
         }
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};
-        const params = body.params && typeof body.params === 'object' ? body.params : body;
+        const params = ToolRequestArguments.normalize(body);
         const toolName = String((tool)?.name || endpoint || '').trim();
         const canonicalCategory = String(tool.metadata?.category ?? '').trim();
         const isGitHubTool = canonicalCategory === 'github';
@@ -1323,7 +1342,7 @@ export class ChatCompletionsServer {
         if (canonicalCategory === 'vault' && ['request', 'list_api_keys'].includes(endpoint)) {
           if (!executionContext) return res.status(403).json({ success: false, error: 'Vault item tools require a verified execution context' });
           if (endpoint === 'request') {
-            try { executionContext = await scopeItemExecutionContext(executionContext, params.item); }
+            try { executionContext = await scopeItemExecutionContext(executionContext, params.item as string); }
             catch (error) { return res.status(403).json({ success: false, error: (error as Error).message }); }
           }
         }

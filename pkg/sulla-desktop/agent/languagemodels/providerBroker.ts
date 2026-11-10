@@ -73,6 +73,8 @@ export async function issueServiceProviderExecutionContext(
 
 interface ProviderFetchOptions {
   streaming:     boolean;
+  /** Let adapters inspect HTTP bodies for protocol fallback and credential renewal. */
+  preserveHttpErrors?: boolean;
   injections?:   BrokerInjection[];
   operation?:    'provider.inference' | 'provider.discovery' | 'provider.audio';
   responseType?: 'json' | 'stream' | 'binary-stream' | 'base64';
@@ -86,7 +88,7 @@ export async function providerFetch(
   options: ProviderFetchOptions,
 ): Promise<Response> {
   const checked = (response: Response): Response => {
-    if (!response.ok) throw providerFailureFromHttp(providerId, response.status);
+    if (!response.ok && !options.preserveHttpErrors) throw providerFailureFromHttp(providerId, response.status);
     return response;
   };
   if (['lm-studio', 'local-server'].includes(providerId)) {
