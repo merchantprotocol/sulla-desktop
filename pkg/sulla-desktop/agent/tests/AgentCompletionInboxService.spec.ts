@@ -61,4 +61,15 @@ describe('AgentCompletionInboxService', () => {
     first.inbox.dispose();
     expect(first.inbox.pendingCount()).toBe(0);
   });
+
+  it('does not accept a completion again after its parent input was acknowledged', () => {
+    // risk: duplicate completion events must not wake a parent twice in one runtime.
+    const { inbox } = createInbox();
+    const notice = completion('job-acknowledged', 0);
+    expect(inbox.enqueue('parent', 'thread', notice)).toBe(true);
+    inbox.take('parent', 'thread');
+    inbox.acknowledge(notice);
+    expect(inbox.enqueue('parent', 'thread', notice)).toBe(false);
+    expect(inbox.pendingCount()).toBe(0);
+  });
 });
