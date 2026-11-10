@@ -8,7 +8,7 @@ import type { ConversationTitleRepository } from '../Repositories/ConversationTi
 import type { AgentStateService } from './AgentStateService';
 import { AgentLineageIndex } from './AgentLineageIndex';
 import type { FleetJobView, FleetTaskView } from './AgentFleetTypes';
-import { AgentTaskActivityProjector, OPEN_TASK_STATES } from './AgentTaskActivityProjector';
+import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 import { DescendantWaitCounter } from './DescendantWaitCounter';
 
 export interface AgentFleetTelemetryReader {
@@ -143,7 +143,7 @@ export class AgentFleetProjectionService {
       ...(detailed ? { error: job.error, results: job.results, orphanedChildNotices: job.orphanedChildNotices ?? [] } : {}),
       tasks: job.tasks
         .map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, context, telemetry[taskIndex]))
-        .filter(task => !context.openTasksOnly || OPEN_TASK_STATES.has(task.state)),
+        .filter(task => !context.openTasksOnly || AgentTaskActivityProjector.isOpen(task.state)),
     };
   }
 

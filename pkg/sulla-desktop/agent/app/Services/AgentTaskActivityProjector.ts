@@ -10,9 +10,6 @@ export interface AgentTaskActivityReader { lastActivityAt(key: string): number |
 export interface AgentTaskActivityCheckin { createdAt: number; blockers?: string[] }
 export interface AgentTaskActivityProjection { lastActivityAt: number; state: string }
 
-/** Presentation states that still represent work in progress. Everything else is terminal. */
-export const OPEN_TASK_STATES: ReadonlySet<string> = new Set(['queued', 'working', 'quiet', 'parked', 'blocked']);
-
 /** One task-scoped activity and presentation-state policy shared by every fleet surface. */
 export class AgentTaskActivityProjector {
   constructor(
@@ -22,6 +19,11 @@ export class AgentTaskActivityProjector {
     private readonly liveness: LiveTaskStatusProjector = new LiveTaskStatusProjector(),
     private readonly blockers: UnresolvedBlockerPolicy = new UnresolvedBlockerPolicy(liveness),
   ) {}
+
+  /** Presentation states that still represent work in progress. Everything else is terminal. */
+  static isOpen(state: string): boolean {
+    return ['queued', 'working', 'quiet', 'parked', 'blocked'].includes(state);
+  }
 
   /** `answeredAt` is the latest orchestrator-message delivery to this task, used to resolve its blocker. */
   project(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null): AgentTaskActivityProjection {
