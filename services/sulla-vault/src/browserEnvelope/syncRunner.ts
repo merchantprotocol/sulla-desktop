@@ -351,6 +351,7 @@ export class CloudVaultSyncRunner {
       return { conflictCopy: false };
     }
 
+    if (!record.item) throw new EnvelopeError('malformed_record', 'Cloud record is missing its item body');
     const plaintext = parseRemoteItem(envelope.decryptItem(record.item, userKey, userId, record.id));
     if (local && !local.deleted_at && localChanged) {
       // Both sides changed with no human present: keep both. Cloud keeps the id; the local version becomes a copy.
