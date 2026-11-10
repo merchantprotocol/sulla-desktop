@@ -13,6 +13,7 @@
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { enqueueAgentCompletion, type AgentTerminalNotice } from '../../services/AgentCompletionInbox';
 import { OrphanedChildResultService, type OrphanedChildJobStore } from '../../services/OrphanedChildResultService';
+import { OrphanedChildRerouter } from '../../services/OrphanedChildRerouter';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
 
 import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
@@ -158,9 +159,11 @@ export async function emitProactiveCompletion(
 /** The single classifier/emitter used by live settlement and recovery. */
 export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
+  private readonly orphanedChildRerouter: OrphanedChildRerouter;
 
   constructor(jobs: OrphanedChildJobStore) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
+    this.orphanedChildRerouter = new OrphanedChildRerouter();
   }
 
   private terminalNotice(job: AgentJob, taskIndex: number, failureReason?: string): AgentTerminalNotice | undefined {
@@ -183,10 +186,7 @@ export class JobCompletionDelivery {
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
-      const managerTask = orphan.manager.tasks[orphan.managerTaskIndex];
-      const lastCheckIn = managerTask?.waitReason ? `; last check-in: ${ managerTask.waitReason }` : '';
-      const orphanHeader = `orphaned from failed manager ${ orphan.manager.jobId }#${ orphan.managerTaskIndex }: ${ managerTask?.completion?.output ?? orphan.manager.error ?? orphan.manager.stopReason ?? orphan.notice.managerStatus }${ lastCheckIn}`;
-      const orphanResults = results.map(result => ({ ...result, output: `[${ orphanHeader }]\n\n${ result.output }` }));
+      const orphanResults = this.orphanedChildRerouter.results(orphan, results);
       return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, undefined, taskIndex, terminal);
     }
     const channel = job.parentChannel || 'sulla-desktop';
