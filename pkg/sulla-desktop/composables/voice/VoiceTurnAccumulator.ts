@@ -17,6 +17,8 @@ export interface VoiceTurnAccumulatorConfig {
   wordsStableMs?: number;
   endOfTurnDetector?: EndOfTurnDetector;
   noiseFilter?: TranscriptNoiseFilter;
+  /** Returns true when a transcript is Sulla's own voice picked up by the mic. */
+  isEcho?: (text: string) => boolean;
   now?: () => number;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -126,6 +128,7 @@ export class VoiceTurnAccumulatorService implements VoiceTurnAccumulator {
     if (!msg?.text || this.config.isTTSPlaying()) return;
     const transcript = String(msg.text).trim();
     if (this.noise.isNoise(transcript)) return;
+    if (this.config.isEcho?.(transcript)) return;
     if (msg.event_type === 'transcript_partial') {
       // Partials arrive as incremental chunks; keep every one. An exact repeat of the last
       // chunk is a stuck recogniser on noise, so it must not count as new words.
