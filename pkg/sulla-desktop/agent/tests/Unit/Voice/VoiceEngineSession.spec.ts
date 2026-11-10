@@ -6,13 +6,16 @@ import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ utilityProcess: { fork: vi.fn() } }));
 
 import { HeuristicEndOfTurnDetector } from '@pkg/composables/voice/ConversationTurnPolicy';
 import { VoiceEngineSession } from '@pkg/main/voice/engine/VoiceEngineSession';
 import { SemanticEndOfTurnAdapter } from '@pkg/main/voice/engine/SemanticEndOfTurnAdapter';
 import { ModelRepository } from '@pkg/main/voice/engine/ModelRepository';
+import { OrtInferenceClient } from '@pkg/main/voice/inference/OrtInferenceClient';
+import { WhisperLogMelExtractor } from '@pkg/main/voice/inference/WhisperLogMelExtractor';
 import {
   FakeSemanticEndOfTurn,
   FakeSpeechToText,
@@ -147,5 +150,30 @@ describe('ModelRepository integrity', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('local ONNX turn inference safety', () => {
+  it('rejects pending calls on utility exit and respawns for the next call', async () => { // risk: stale/hung inference after crash
+    class FakeChild {
+      handlers: Record<string, (value: any) => void> = {};
+      on(event: string, callback: (value: any) => void): void { this.handlers[event] = callback; }
+      postMessage(): void {}
+      exit(): void { this.handlers.exit(1); }
+    }
+    const children: FakeChild[] = [];
+    const client = new OrtInferenceClient('unused', 1000, 3, 1, () => { const child = new FakeChild(); children.push(child); return child; });
+    const pending = client.infer({ operation: 'vad', modelPath: 'silero', audio: new Float32Array(512) });
+    children[0].exit();
+    await expect(pending).rejects.toThrow(/exited/);
+    const next = client.infer({ operation: 'vad', modelPath: 'silero', audio: new Float32Array(512) });
+    expect(children).toHaveLength(2);
+    children[1].handlers.message({ id: 2, ok: true, probability: 0.1, state: new Float32Array(256) });
+    await expect(next).resolves.toMatchObject({ ok: true, probability: 0.1 });
+  });
+  it.each([0, 16_001, 160_000])('creates the fixed 800-frame Smart Turn window for %s samples', samples => { // risk: malformed model input from padding/cropping
+    const features = new WhisperLogMelExtractor().extract(new Float32Array(samples));
+    expect(features).toHaveLength(800 * 80);
+    expect([...features].every(Number.isFinite)).toBe(true);
   });
 });
