@@ -9,6 +9,10 @@ export interface FrameSurface {
   schedule(callback: (timestamp: number) => void): number;
   cancel(handle: number): void;
   drawRaw(): void;
+  /** Monotonic clock on the same timebase as scheduled frame timestamps. */
+  now(): number;
+  /** Push the canvas's current content to the output track now, without waiting for a repaint. */
+  emitFrame(): void;
   close(): void;
 }
 
@@ -35,16 +39,30 @@ export class BrowserFrameSurface implements FrameSurface {
     const scale = Math.min(1, 1280 / this.video.videoWidth, 720 / this.video.videoHeight);
     this.canvas.width = Math.max(1, Math.floor(this.video.videoWidth * scale));
     this.canvas.height = Math.max(1, Math.floor(this.video.videoHeight * scale));
-    this.drawRaw();
+    // No seed frame: the session draws one fully processed frame before any consumer gets this track.
     this.output = this.canvas.captureStream(30);
     return this.output;
   }
 
-  schedule(callback: (timestamp: number) => void): number {
-    return this.window.requestAnimationFrame(callback);
+  now(): number { return this.window.performance.now(); }
+
+  emitFrame(): void {
+    // Chromium's CanvasCaptureMediaStreamTrack; absent elsewhere, where the 30fps capture still runs.
+    const track = this.output?.getVideoTracks()[0] as (MediaStreamTrack & { requestFrame?: () => void }) | undefined;
+    track?.requestFrame?.();
   }
 
-  cancel(handle: number): void { this.window.cancelAnimationFrame(handle); }
+  /**
+   * Timer-driven, not requestAnimationFrame: rAF stops when the window produces no frames
+   * (hidden, minimized or occluded while recording), which froze the effect canvas so the
+   * recorder only ever saw the track's earliest frame. Capture Studio disables background
+   * throttling, so timers keep the camera's ~30fps cadence; inference is throttled separately.
+   */
+  schedule(callback: (timestamp: number) => void): number {
+    return this.window.setTimeout(() => callback(this.now()), 1000 / 30);
+  }
+
+  cancel(handle: number): void { this.window.clearTimeout(handle); }
 
   drawRaw(): void {
     const context = this.canvas.getContext('2d');
@@ -108,10 +126,14 @@ export class CameraEffectSession {
       const output = await this.surface.open(this.raw);
       if (this.closed) return;
       await this.inference.initialize();
-      if (!this.closed) {
-        this.currentOutput = output;
-        this.schedule();
-      }
+      if (this.closed) return;
+      // Consumers (preview + recorder) must never see an unprocessed frame. Publish the track only
+      // after one full effect pass is on the canvas; a failure here falls back to the raw stream below.
+      await this.render(this.surface.now());
+      if (this.closed) return;
+      this.surface.emitFrame();
+      this.currentOutput = output;
+      this.schedule();
     } catch (error) {
       this.failed = true;
       this.currentOutput = undefined;
@@ -177,10 +199,7 @@ export class CameraEffectSession {
       if (!this.enabled() || this.failed) {
         this.surface.drawRaw();
       } else if (this.surface.video.currentTime !== this.lastFrame && timestamp - this.lastInference >= 66) {
-        this.lastFrame = this.surface.video.currentTime;
-        this.lastInference = timestamp;
-        const mask = await this.inference.infer(this.surface.video, timestamp);
-        if (!this.closed) this.compositor.draw(this.surface.video, this.surface.canvas, mask, this.options, timestamp);
+        await this.render(timestamp);
       }
     } catch (error) {
       this.failed = true;
@@ -190,6 +209,14 @@ export class CameraEffectSession {
     } finally {
       if (!this.closed) this.schedule();
     }
+  }
+
+  /** One effect pass: infer the person mask for the current video frame and composite it. */
+  private async render(timestamp: number): Promise<void> {
+    this.lastFrame = this.surface.video.currentTime;
+    this.lastInference = timestamp;
+    const mask = await this.inference.infer(this.surface.video, timestamp);
+    if (!this.closed) this.compositor.draw(this.surface.video, this.surface.canvas, mask, this.options, timestamp);
   }
 
   private stopOutput(): void {

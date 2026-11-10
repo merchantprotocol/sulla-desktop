@@ -124,6 +124,9 @@ class CameraEffectsSmoke {
       for (const name of ['FrameCompositor', 'PersonInference', 'VideoEffectService', 'CameraEffectsComposition', 'CameraStreamService', 'CaptureSessionLifecycle', 'CameraEffectsMenu']) {
         let source = fs.readFileSync(path.resolve('pkg/sulla-desktop/pages/capture-studio/effects', name + '.ts'), 'utf8');
         if (name === 'FrameCompositor' && process.env.CE1_REGRESSION_MUTANT === '1') {
+          source = source.replace('scene.drawImage(this.padded, -48, -48);', 'scene.drawImage(video, -24, -24, width + 48, height + 48);');
+        }
+        if (name === 'FrameCompositor' && process.env.CE1_CROP_MUTANT === '1') {
           source = source.replace(
             'context.drawImage(this.scene, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);',
             'context.drawImage(this.scene, crop.x + 20, crop.y + 20, crop.width - 40, crop.height - 40, 0, 0, width, height);',
@@ -150,6 +153,7 @@ class CameraEffectsSmoke {
       fs.writeFileSync(path.join(this.directory, 'index.html'), html.replace('</body>', '<script src="renderer.js"></script></body>'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-renderer.cjs'), path.join(this.directory, 'renderer.cjs'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-menu.cjs'), path.join(this.directory, 'menu-smoke.js'));
+      fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-pixels.cjs'), path.join(this.directory, 'pixel-smoke.js'));
       fs.copyFileSync(path.resolve('scripts/camera-effects-smoke-preview.cjs'), path.join(this.directory, 'preview-smoke.js'));
       // Bundle the real production classes with the app's electron-renderer target.
       await new Promise((resolve, reject) => webpack({
@@ -172,7 +176,7 @@ class CameraEffectsSmoke {
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       this.window = new BrowserWindow({ show: false, webPreferences: {
         nodeIntegration: true, contextIsolation: false, webSecurity: false, backgroundThrottling: false,
-        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_RECORDING_MUTANT === '1' ? ['--ce1-recording-mutant'] : []), ...(process.env.CE1_REGRESSION_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
+        additionalArguments: ['--ce1-resources=' + this.resources, ...(process.env.CE1_RECORDING_MUTANT === '1' ? ['--ce1-recording-mutant'] : []), ...(process.env.CE1_REGRESSION_MUTANT === '1' || process.env.CE1_CROP_MUTANT === '1' ? ['--ce1-pixels-only'] : [])],
       } });
       this.window.webContents.on('console-message', (_event, _level, message) => console.log(message));
       this.window.webContents.on('render-process-gone', (_event, details) => { console.error(details); app.exit(1); });

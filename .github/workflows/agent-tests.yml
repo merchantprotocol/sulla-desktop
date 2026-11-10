@@ -241,7 +241,19 @@ jobs:
             exit 1
           fi
           cat /tmp/ce1-mutant.log
-          grep -q 'Scene coordinates changed' /tmp/ce1-mutant.log
+          # Either the blur edge/opacity guards or the coordinate sentinel may reject it.
+          grep -Eq 'Scene coordinates changed|Transparent blur edge|High contrast background moved' /tmp/ce1-mutant.log
+      - name: Prove CE-1 pixel regression rejects a shifted auto-frame crop
+        if: steps.ce1.outputs.run == 'true'
+        timeout-minutes: 1
+        run: |
+          if CE1_CROP_MUTANT=1 xvfb-run -a node_modules/.bin/electron --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader scripts/camera-effects-smoke.cjs > /tmp/ce1-crop-mutant.log 2>&1; then
+            cat /tmp/ce1-crop-mutant.log
+            echo 'Regression did not reject shifted crop'
+            exit 1
+          fi
+          cat /tmp/ce1-crop-mutant.log
+          grep -Eq 'Framed foreground/background coordinates changed|Crop/source coordinate mismatch' /tmp/ce1-crop-mutant.log
       - name: Real offline CE-1 renderer inference and pixel regression
         if: steps.ce1.outputs.run == 'true'
         timeout-minutes: 2
