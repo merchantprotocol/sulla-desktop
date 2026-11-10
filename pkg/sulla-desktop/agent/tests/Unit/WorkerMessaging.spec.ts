@@ -20,5 +20,7 @@ describe('WorkerPromptBuilder', () => {
     expect(prompt).toContain('report_progress blockers');
     expect(prompt).toContain("sulla agents/report_progress - <<'JSON'");
     expect(prompt).not.toContain('Promise');
+    expect(prompt).toContain('Tracked review items arrive with ids');
+    expect(prompt).toContain('return_result is refused');
   });
 });
