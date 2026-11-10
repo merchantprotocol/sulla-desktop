@@ -21,11 +21,10 @@ export class DomainVaultSyncCodec {
   private readonly crypto: CryptoPrimitives;
   private readonly random: RandomSource;
 
-  constructor(crypto: CryptoPrimitives, random: RandomSource, ownerId: string) {
+  constructor(crypto: CryptoPrimitives, random: RandomSource) {
     this.codec = new VaultSyncCodec(crypto, new KeyWrap(crypto, random));
     this.crypto = crypto;
     this.random = random;
-    this.owner = ownerId;
   }
 
   deriveMacKey(scopeKey: Uint8Array): Uint8Array {
@@ -42,6 +41,11 @@ export class DomainVaultSyncCodec {
   verifyBundle(bundle: unknown, userKey: Uint8Array): void {
     checkBundleShape(bundle);
     this.codec.verifyBundle(bundle as VaultBundle, userKey);
+  }
+
+  unlockBundle(bundle: unknown, password: string): Uint8Array {
+    checkBundleShape(bundle);
+    return this.codec.unlockBundle(bundle as VaultBundle, password);
   }
 
   buildRecord(fields: RecordFields, scopeKey: Uint8Array): SyncRecord {
@@ -82,12 +86,13 @@ export class DomainVaultSyncCodec {
   }
 
   encryptItem(plaintextJson: string, ownerKey: Uint8Array, ownerId: string, itemId: string): SyncItem {
-    if (ownerId !== this.owner) throw new Error('owner id mismatch');
     const records = new DefaultVaultRecordCodec(this.codec, this.crypto, this.random, ownerKey, ownerId);
     return records.encryptItem(JSON.parse(plaintextJson), itemId);
   }
 
-  private readonly owner: string;
+  decryptItem(item: SyncItem, ownerKey: Uint8Array, ownerId: string, itemId: string): string {
+    return this.codec.decryptItem(item, ownerKey, ownerId, itemId);
+  }
 
   itemAad(purpose: 'key' | 'ciphertext', ownerId: string, itemId: string): string {
     return `sulla:item:${purpose}:v1:${JSON.stringify([ownerId, itemId])}`;

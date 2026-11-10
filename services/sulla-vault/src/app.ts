@@ -33,6 +33,7 @@ import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } f
 import { bootstrapFirstOwner } from './serverBootstrap.js';
 import { registerCloudSyncRoutes } from './browserEnvelope/routes.js';
 import { CloudVaultSyncRunner } from './browserEnvelope/syncRunner.js';
+import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import {
   createBrowserSyncRouter,
   createServerProvidersRouter,
@@ -234,7 +235,9 @@ async function authorizeItemFolder(
 
 export function createApp(db: Database, config: VaultConfig, options: { localAuthority?: LocalVaultAuthority } = {}) {
   const app = express();
+  const domainSyncCodec = new DomainVaultSyncCodecProvider();
   const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
+  localAuthority?.useDomainSyncCodecProvider(domainSyncCodec);
   const filesKeyBundleAuthority = localAuthority ? new VaultFilesKeyBundleAuthority(db, localAuthority) : null;
   const filesAudit = new FilesAuditEmitter(config);
   app.disable('x-powered-by');
@@ -559,7 +562,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
         config.approvalServiceId ?? '', config.approvalServiceToken, input,
       ),
-    }, filesAudit);
+    }, filesAudit, domainSyncCodec);
     app.put('/v1/broker/sulla-cloud/session', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.adoptSullaCloudSession(identity.serviceId, identity.token, request.body));
@@ -600,7 +603,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
         config.approvalServiceId ?? '', config.approvalServiceToken, input,
       ),
-    }), request => {
+    }, undefined, domainSyncCodec), request => {
       const identity = serviceIdentity(request);
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     });
