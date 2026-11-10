@@ -9,14 +9,15 @@
     class="card"
     tabindex="0"
     @click="$emit('open', row)"
-    @keydown.enter="$emit('open', row)"
+    @keydown.enter.self="$emit('open', row)"
   >
     <div class="media">
       <img
-        v-if="image"
+        v-if="image && !imageFailed"
         :src="image"
         alt=""
         loading="lazy"
+        @error="imageFailed = true"
       ><UseCaseIcon
         v-else
         :name="iconName"
@@ -29,7 +30,7 @@
         class="duration"
       >{{ presentation.duration }}</span>
       <span
-        v-if="!presentation.image"
+        v-if="!image || imageFailed"
         class="media-title"
       >{{ row.name }} · {{ presentation.topic }}</span>
     </div>
@@ -62,7 +63,7 @@
   </article>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import UseCaseIcon from './UseCaseIcon.vue';
 
@@ -73,6 +74,8 @@ const props = defineProps<{ row: MarketplaceBrowseRow; installStatus?: string }>
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
 defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow] }>();
 const image = computed(() => presentation.value.image);
+const imageFailed = ref(false);
+watch(image, () => { imageFailed.value = false });
 const iconName = computed(() => ['agent', 'workflow', 'skill', 'function', 'integration', 'recipe'].includes(props.row.kind) ? props.row.kind : 'box');
 </script>
 <style scoped>

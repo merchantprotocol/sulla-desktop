@@ -9,17 +9,18 @@
     class="result-row"
     tabindex="0"
     @click="$emit('open', row)"
-    @keydown.enter="$emit('open', row)"
+    @keydown.enter.self="$emit('open', row)"
   >
     <div
       class="media"
       aria-hidden="true"
     >
       <img
-        v-if="image"
+        v-if="image && !imageFailed"
         :src="image"
         alt=""
         loading="lazy"
+        @error="imageFailed = true"
       >
       <UseCaseIcon
         v-else
@@ -34,7 +35,7 @@
         class="duration"
       >{{ presentation.duration }}</span>
       <span
-        v-if="!presentation.image"
+        v-if="!image || imageFailed"
         class="media-title"
       >{{ row.name }} · {{ presentation.topic }}</span>
     </div>
@@ -80,7 +81,7 @@
   </article>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import UseCaseIcon from './UseCaseIcon.vue';
 
@@ -91,6 +92,8 @@ const props = defineProps<{ row: MarketplaceBrowseRow; installStatus?: string }>
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
 defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow] }>();
 const image = computed(() => presentation.value.image);
+const imageFailed = ref(false);
+watch(image, () => { imageFailed.value = false });
 const isVideo = computed(() => presentation.value.video);
 const iconName = computed(() => ['agent', 'workflow', 'skill', 'function', 'integration', 'recipe'].includes(props.row.kind) ? props.row.kind : 'box');
 const installLabel = computed(() => props.installStatus === 'installed' ? 'Added to Sulla' : props.installStatus === 'installing' ? 'Adding…' : 'Add to Sulla');
