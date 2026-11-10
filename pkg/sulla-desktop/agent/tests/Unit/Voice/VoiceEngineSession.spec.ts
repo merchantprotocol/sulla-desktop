@@ -167,7 +167,7 @@ describe('local ONNX turn inference safety', () => {
     }
     const child = new FakeChild();
     const client = new OrtInferenceClient('unused', 1000, 3, 1, () => child);
-    const vad = new OrtSileroVad(client, 'silero', 0.5, 0.35, 300, { now: () => 1_234 });
+    const vad = new OrtSileroVad(client, 'silero', { now: () => 1_234 });
     const first = Float32Array.from({ length: 512 }, (_, index) => index);
     const firstEvents = vad.process(first, 1, new AbortController().signal);
     expect(child.requests[0].audio).toHaveLength(576);
@@ -176,7 +176,7 @@ describe('local ONNX turn inference safety', () => {
     await expect(firstEvents).resolves.toEqual([{ kind: 'speech-start', sequenceId: 1, timestampMs: 1_234 }]);
 
     const second = new Float32Array(512).fill(900);
-    const secondEvents = vad.process(second, 2, new AbortController().signal);
+    const secondEvents = vad.process(second, 1, new AbortController().signal);
     expect([...child.requests[1].audio.slice(0, 64)]).toEqual(Array.from({ length: 64 }, (_, index) => index + 448));
     child.respond(1);
     await expect(secondEvents).resolves.toEqual([]);
