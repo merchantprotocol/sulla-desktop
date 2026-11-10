@@ -57,7 +57,9 @@ export function buildWakeContent(
   if (terminal?.status === 'failed') failureReason = terminal.reason;
   if (failureReason) {
     return `[sub-agent job ${ jobId } FAILED] ${ failureReason }\n\n` +
-      'Your background sub-agent(s) errored before returning results. Decide how to proceed (retry, adjust, or report back).';
+      (failureReason.startsWith('orphaned child result:') && results.length
+        ? 'The manager failed, but these child results were recovered and routed to you:\n\n' + results.map(formatJobResult).join('\n\n---\n\n')
+        : 'Your background sub-agent(s) errored before returning results. Decide how to proceed (retry, adjust, or report back).');
   }
 
   const formatted = results.map(formatJobResult).join('\n\n---\n\n');
@@ -187,7 +189,8 @@ export class JobCompletionDelivery {
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
       const orphanResults = this.orphanedChildRerouter.results(orphan, results);
-      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, undefined, taskIndex, terminal);
+      const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
+      return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, orphanReason, taskIndex, terminal);
     }
     const channel = job.parentChannel || 'sulla-desktop';
     await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal);
