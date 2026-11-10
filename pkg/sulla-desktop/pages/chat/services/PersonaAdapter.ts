@@ -269,7 +269,7 @@ export class PersonaAdapter {
         answers:    ev.answers,
       }).then(receipt => {
         if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
-        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined } as any);
+        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined, resolutionNote: receipt.late ? receipt.reason : undefined } as any);
         this.controller.transitionRun({ type: 'approvalResolved' });
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });
