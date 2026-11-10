@@ -56,10 +56,14 @@ describe('DelegatedTurnSettlementPolicy', () => {
     expect(cause).not.toContain('private recalled context');
     expect(cause).toHaveLength(2_000);
   });
+  it('treats an ordinary final answer as terminal after children settle', () => {
+    // risk: a manager with settled children is left parked despite returning a final answer
+    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false, finalText: 'finished early' })).toBe('terminal');
+  });
   it('reminds exactly once, then reports a typed failure carrying the real last output', () => {
     // risk: agent death is misreported as fabricated provider failure
     expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: false })).toBe('remind');
-    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true })).toBe('fail');
+    expect(policy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true, schemaContract: true })).toBe('fail');
     const cause = policy.failureCause({ messages: [{ role: 'assistant', content: 'real last text' }, { role: 'user', content: 'reminder' }] });
     const error = new MissingContractAfterReminderError(cause);
     expect(error.code).toBe('missing_contract_after_reminder');

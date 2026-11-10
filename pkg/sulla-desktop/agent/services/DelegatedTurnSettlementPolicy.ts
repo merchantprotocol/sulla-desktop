@@ -21,7 +21,12 @@ export class DelegatedTurnSettlementPolicy {
     if (input.pendingWait) return 'wait_park';
     const classification = this.classifier.classify(input.finalText ?? '');
     if (classification === 'completed' || classification === 'blocked') return 'terminal';
-    if (input.schemaContract && !input.finalText?.match(/<AGENT_CONTINUE>|\bPARKED\b|<AGENT_BLOCKED>/)) return input.reminderSent ? 'fail' : 'remind';
+    const hasNotDoneMarker = /<AGENT_CONTINUE>|\bPARKED\b/.test(input.finalText ?? '');
+    if (input.schemaContract && !hasNotDoneMarker) return input.reminderSent ? 'fail' : 'remind';
+    // A manager's ordinary final answer is terminal once its children and waits
+    // have settled. Auto-parking is for an explicit not-done marker or a turn
+    // that produced no answer at all, not any arbitrary unmarked prose.
+    if (!hasNotDoneMarker && Boolean(input.finalText?.trim())) return 'terminal';
     if (!input.reminderSent) return 'remind';
     return (input.autoParkCount ?? 0) >= 3 ? 'fail' : 'auto_park';
   }
