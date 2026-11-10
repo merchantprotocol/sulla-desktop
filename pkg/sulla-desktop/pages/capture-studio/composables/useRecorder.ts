@@ -94,7 +94,14 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
+export function useRecorder(
+  optionsOrIntegrity: { manageUnmount?: boolean } | SpeakerCaptureIntegrity = {},
+  injectedIntegrity?: SpeakerCaptureIntegrity,
+) {
+  const options = optionsOrIntegrity instanceof SpeakerCaptureIntegrity ? {} : optionsOrIntegrity;
+  const integrity = optionsOrIntegrity instanceof SpeakerCaptureIntegrity
+    ? optionsOrIntegrity
+    : injectedIntegrity ?? new SpeakerCaptureIntegrity();
   const isRecording = ref(false);
   const sessionId = ref('');
   const elapsedSeconds = ref(0);
@@ -104,6 +111,7 @@ export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
+  let stopping: Promise<string> | undefined;
   let externalEntries: ExternalStreamEntry[] = [];
   let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -119,7 +127,7 @@ export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
     stream:   MediaStream;
     quality?: QualityPreset;
   }[]): string {
-    if (isRecording.value) {
+    if (isRecording.value || stopping) {
       error.value = 'A recording session is already active';
       return '';
     }
@@ -283,8 +291,16 @@ export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
   /**
    * Stop all recorders, wait for final chunks, then write manifest.
    */
-  async function stopSession(): Promise<string> {
-    if (!isRecording.value) return '';
+  function stopSession(): Promise<string> {
+    if (stopping) return stopping;
+    if (!isRecording.value) return Promise.resolve('');
+    const operation = flushSession();
+    stopping = operation;
+    void operation.finally(() => { if (stopping === operation) stopping = undefined; }).catch(() => undefined);
+    return operation;
+  }
+
+  async function flushSession(): Promise<string> {
 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null }
     isRecording.value = false;
@@ -416,7 +432,8 @@ export function useRecorder(integrity = new SpeakerCaptureIntegrity()) {
   }
 
   onUnmounted(() => {
-    if (isRecording.value) stopSession();
+    // Capture Studio owns ordered recorder flush -> effect/raw disposal.
+    if (options.manageUnmount !== false && isRecording.value) stopSession();
   });
 
   return {

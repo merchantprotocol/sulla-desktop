@@ -88,9 +88,23 @@ function computePcmRms(pcm: Buffer): number {
 }
 
 export function useSpeakerCapture(
-  integrity = new SpeakerCaptureIntegrity(),
-  nativeCustody = new NativeCaptureCustody(integrity),
+  optionsOrIntegrity: { manageUnmount?: boolean } | SpeakerCaptureIntegrity = {},
+  injectedIntegrityOrCustody?: SpeakerCaptureIntegrity | NativeCaptureCustody,
+  injectedCustody?: NativeCaptureCustody,
 ) {
+  const options = optionsOrIntegrity instanceof SpeakerCaptureIntegrity ? {} : optionsOrIntegrity;
+  const integrity = optionsOrIntegrity instanceof SpeakerCaptureIntegrity
+    ? optionsOrIntegrity
+    : injectedIntegrityOrCustody instanceof SpeakerCaptureIntegrity
+      ? injectedIntegrityOrCustody
+      : new SpeakerCaptureIntegrity();
+  const nativeCustody = optionsOrIntegrity instanceof SpeakerCaptureIntegrity
+    ? injectedIntegrityOrCustody instanceof NativeCaptureCustody
+      ? injectedIntegrityOrCustody
+      : injectedCustody ?? new NativeCaptureCustody(integrity)
+    : injectedIntegrityOrCustody instanceof NativeCaptureCustody
+      ? injectedIntegrityOrCustody
+      : injectedCustody ?? new NativeCaptureCustody(integrity);
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -136,7 +150,7 @@ export function useSpeakerCapture(
   }
 
   /** Acquire Electron/ScreenCaptureKit system audio without BlackHole. */
-  async function acquireNative(): Promise<MediaStream | null> {
+  async function acquireNative(isCancelled: () => boolean = () => false): Promise<MediaStream | null> {
     releaseNative();
     const requestGeneration = nativeCustody.begin();
     let displayStream: MediaStream | null = null;
@@ -150,6 +164,10 @@ export function useSpeakerCapture(
         video: true,
       });
       if (!nativeCustody.accept(requestGeneration, displayStream)) return null;
+      if (isCancelled()) {
+        nativeCustody.reject(displayStream);
+        return null;
+      }
       const audioTracks = displayStream.getAudioTracks();
       displayStream.getVideoTracks().forEach(track => track.stop());
       const usableTracks = integrity.usableTracks(audioTracks);
@@ -338,7 +356,8 @@ export function useSpeakerCapture(
   }
 
   onUnmounted(() => {
-    if (active.value) stop().catch(() => {});
+    // Capture Studio opts out to flush its MediaRecorders before releasing native tracks.
+    if (options.manageUnmount !== false && active.value) stop().catch(() => {});
   });
 
   return {
