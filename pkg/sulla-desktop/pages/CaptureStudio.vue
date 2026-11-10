@@ -97,9 +97,9 @@
         <div class="info-badge">
           <div
             class="dot"
-            :class="audioDriver.speakerRunning.value ? 'green' : 'off'"
+            :class="systemAudioMode !== 'none' ? 'green' : 'off'"
           />
-          Audio driver
+          System audio{{ systemAudioMode === 'native' ? ' (native)' : systemAudioMode === 'blackhole' ? ' (BlackHole)' : '' }}
         </div>
         <div
           v-if="recording"
@@ -761,6 +761,16 @@ function autoAssign() {
     if (vids.length >= 2) currentLayout.value = 'pip';
   }
 }
+
+// The badge used to track only the BlackHole fallback, so it read "off" whenever native
+// loopback was the one capturing system audio.
+const systemAudioMode = computed<'native' | 'blackhole' | 'none'>(() => {
+  const stream = speakerCapture.nativeStream.value;
+
+  if (stream && stream.active && stream.getAudioTracks().some(track => track.readyState === 'live')) return 'native';
+
+  return audioDriver.speakerRunning.value ? 'blackhole' : 'none';
+});
 
 function hasNativeSystemAudio(): boolean {
   const stream = speakerCapture.nativeStream.value;
