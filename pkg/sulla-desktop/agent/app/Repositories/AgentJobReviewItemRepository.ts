@@ -16,6 +16,22 @@ export class AgentJobReviewItemRepository {
 
   async createForTask(jobId: string, taskIndex: number, texts: string[]): Promise<string[]> {
     if (!texts.length) return [];
+    try {
+      return await this.insertForTask(jobId, taskIndex, texts);
+    } catch (err) {
+      // Two sends racing on one task can read the same MAX id and collide on the
+      // primary key. The statement is atomic, so the retry re-reads the committed MAX.
+      if (!this.isUniqueViolation(err)) throw err;
+      return this.insertForTask(jobId, taskIndex, texts);
+    }
+  }
+
+  private isUniqueViolation(err: unknown): boolean {
+    const candidate = err as { code?: unknown; message?: unknown } | null;
+    return candidate?.code === '23505' || (typeof candidate?.message === 'string' && candidate.message.includes('duplicate key value'));
+  }
+
+  private async insertForTask(jobId: string, taskIndex: number, texts: string[]): Promise<string[]> {
     const rows = await this.connection.select<any>(
       `WITH last_id AS (
          SELECT COALESCE(MAX(NULLIF(regexp_replace(item_id, '^R', ''), '')::int), 0) AS n

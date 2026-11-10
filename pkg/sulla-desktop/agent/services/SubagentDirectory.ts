@@ -53,6 +53,7 @@ export class SubagentDirectoryBuilder {
     if (task.state === 'blocked' && task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
     if (open && descendants > 0) parts.push(task.state === 'parked' ? `${ descendantLabel } beneath them` : descendantLabel);
     if (team) parts.push(this.team(team));
+    if (task.openReviewItems?.length) parts.push(`review open: ${ task.openReviewItems.map(item => item.id).join(', ') }`);
     if (task.stranded) parts.push(`⚠ stranded: ${ this.quote(task.stranded.reason) }`);
     if (stalled) parts.push(`⚠ stalled (${ task.state } ${ this.span(this.now() - lastActivity) })`);
     parts.push(`job ${ job.tasks.length > 1 ? `${ job.jobId }#${ task.taskIndex }` : job.jobId }`);
