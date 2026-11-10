@@ -51,7 +51,7 @@ dbDescribe('custody-aware completion redelivery (B regression gaps)',()=>{
   });
 
   const quietInbox=async()=>{const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});return completionInboxStore;};
-  const resultsFor=(entries:Array<{jobId:string;results:unknown[]}>,jobId:string)=>entries.filter(entry=>entry.jobId===jobId&&entry.results.length>0);
+  const resultsFor=<T extends {jobId:string;results:unknown[]}>(entries:T[],jobId:string):T[]=>entries.filter(entry=>entry.jobId===jobId&&entry.results.length>0);
 
   it('H4 same-instant return_result and reassign_job (no barrier) land the result once, at the final owner',async()=>{
     // risk: lost or duplicated contract when a worker returns in the same instant its manager hands it off

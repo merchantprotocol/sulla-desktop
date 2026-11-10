@@ -84,7 +84,7 @@ export class AgentJobServiceProvider {
     const strandedEpisodes = new StrandedEpisodeRepository(connection);
     this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes, this.activity, this.reviewItems);
     const wrapUpRepository = new JobWrapUpRepository(postgresClient);
-    this.executionIdentities = new TaskExecutionIdentityRepository(connection);
+    this.executionIdentities = new TaskExecutionIdentityRepository(postgresClient);
     const executionTransport = new PlatformTaskExecutionTerminationTransport();
     const taskTeardown = new ConfirmedTaskTeardownService(this.executionIdentities, executionTransport);
     const taskLocatorRecovery = new JobRecoveryService(this.jobs);

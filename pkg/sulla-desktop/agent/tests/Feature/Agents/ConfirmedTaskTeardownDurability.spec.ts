@@ -162,7 +162,7 @@ suite('confirmed task teardown durability with real Postgres repositories',()=>{
 
   it('reconciles a crash after the durable discovery handle but before identity activation',async()=>{
     // risk: orphan process — boot recovery must bind the exact discoverable execution to its reserved generation.
-    const jobId='post-handle-crash';await seedJob(jobId);let handle!:TaskExecutionDiscoveryHandle;
+    const jobId='post-handle-crash';await seedJob(jobId);let handle!:Extract<TaskExecutionDiscoveryHandle,{kind:'container'}>;
     const launch=await identities.reserveLaunch(jobId,0,generation=>handle={kind:'container',containerName:'sulla-agent-post-handle-crash-0',labels:{'com.sulla.job-id':jobId,'com.sulla.task-index':'0','com.sulla.generation':generation}});
     const discovered:TaskExecutionIdentityInput={kind:'container',containerId:'container-post-handle',containerName:handle.containerName,labels:handle.labels};
     const runtime=new ContainerBoundary({Id:discovered.containerId,Config:{Labels:discovered.labels}});

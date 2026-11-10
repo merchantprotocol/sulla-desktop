@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { PostgresConnection, type PostgresClient } from '@sulla/foundation/postgres';
+import { PostgresConnection, type PostgresClient, type PostgresQueryResult } from '@sulla/foundation/postgres';
 
 export type ReviewItemStatus = 'open' | 'acknowledged' | 'closed';
 export interface AgentJobReviewItem {
@@ -19,8 +19,8 @@ export class AgentJobReviewItemRepository {
    * held by send_job_message). Review rows reference agent_jobs, so writing them
    * on another connection while that transaction holds the job row would block.
    */
-  withClient(client: PostgresClient): AgentJobReviewItemRepository {
-    return new AgentJobReviewItemRepository(new PostgresConnection(client));
+  withClient(client: TransactionQueryClient): AgentJobReviewItemRepository {
+    return new AgentJobReviewItemRepository(new PostgresConnection(new TransactionClientAdapter(client)));
   }
 
   async createForTask(jobId: string, taskIndex: number, texts: string[]): Promise<string[]> {
@@ -78,5 +78,16 @@ export class AgentJobReviewItemRepository {
 
   async close(jobId: string, taskIndex: number, id: string, kind: 'fixed' | 'wont_fix', commit: string | undefined, reason: string | undefined, closedBy: 'worker' | 'manager'): Promise<void> {
     await this.connection.run("UPDATE agent_job_review_items SET status = 'closed', closure_kind = $4, commit_sha = $5, reason = $6, closed_by = $7, updated_at = now() WHERE job_id = $1 AND task_index = $2 AND item_id = $3 AND status <> 'closed'", [jobId, taskIndex, id, kind, commit ?? null, reason ?? null, closedBy]);
+  }
+}
+
+/** The query surface of a custody transaction client. */
+export interface TransactionQueryClient { query<T = any>(sql: string, values?: unknown[]): Promise<{ rows: T[] }> }
+
+/** Presents a custody transaction client as the foundation's pg-compatible client. */
+class TransactionClientAdapter implements PostgresClient {
+  constructor(private readonly client: TransactionQueryClient) {}
+  async query<T>(text: string, values?: readonly unknown[]): Promise<PostgresQueryResult<T>> {
+    return this.client.query<T>(text, values ? [...values] : undefined);
   }
 }
