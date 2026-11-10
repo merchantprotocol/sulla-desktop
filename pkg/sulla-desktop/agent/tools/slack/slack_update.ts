@@ -15,7 +15,7 @@ export class SlackUpdateWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, ts, text } = input;
+    const { channel, ts, text, account } = input;
 
     try {
       const slack = await registry.get<SlackClient>('slack');
@@ -25,7 +25,7 @@ export class SlackUpdateWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const res = await slack.updateMessage(channel, ts, text, undefined, this.executionContext);
+      const res = await slack.updateMessage(channel, ts, text, undefined, this.executionContext, account);
       if (res.ok) {
         return {
           successBoolean: true,

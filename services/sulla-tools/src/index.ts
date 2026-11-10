@@ -80,6 +80,8 @@ app.get('/v1/tools/help/:category', (request, response) => {
   response.type('text/plain').send(help(category));
 });
 
+app.post('/v1/proxy/:accountId/:slug', (request, response) => response.status(501).json({ success: false, error: { code: 'proxy_unavailable', message: 'Generic integration proxy is unavailable from this tool endpoint; use sulla slack/* for Slack Web API calls.' }, request_id: String(request.header('X-Request-Id') ?? crypto.randomUUID()) }));
+
 app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => {
   const requestId = String(request.header('X-Request-Id') ?? crypto.randomUUID());
   response.setHeader('X-Request-Id', requestId);
@@ -169,6 +171,8 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
     await requests.audit({ requestId, jti: ctx.jti, subject: ctx.sub, category, tool: tool.name, target: tool.executionTarget, status }).catch(error => console.error('[sulla-tools] audit failed', error));
   }
 });
+
+app.use((_request: express.Request, response: express.Response) => response.status(404).json({ success: false, error: { code: 'not_found', message: 'Endpoint not found' } }));
 
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   response.status(error?.type === 'entity.parse.failed' ? 400 : 500).json({ success: false, error: { code: 'bad_request', message: error instanceof Error ? error.message : String(error) } });
