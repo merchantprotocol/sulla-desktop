@@ -69,11 +69,6 @@ export interface VoiceSessionAdapterOptions {
   isActive?: () => boolean;
 }
 
-// Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
-// `utterance_end` event (VAD silence + drained pipeline); this is only a safety net
-// for when that signal never arrives. Long on purpose — the old 2000ms collided with
-// whisper's 2000ms chunk cadence and split utterances into separate agent turns.
-const UTTERANCE_FALLBACK_MS = 8000;
 
 // Hold-to-talk shorter than this after activation is a slip, not a message
 // (Sulla Mobile's MIN_RECORDING_MS).
@@ -132,7 +127,6 @@ export class VoiceSessionAdapter {
     onInterim:    text => this.updateInterim(text),
     onCommit:     text => this.commitTurn(text),
     isTTSPlaying: () => this.tts.isPlaying,
-    fallbackMs:   UTTERANCE_FALLBACK_MS,
   });
 
   // TTS transcript bubble — one active at a time.

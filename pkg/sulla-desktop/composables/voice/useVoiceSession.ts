@@ -73,12 +73,6 @@ function formatDuration(seconds: number): string {
   return `${ m }:${ s.toString().padStart(2, '0') }`;
 }
 
-// Fallback commit delay (ms). The PRIMARY end-of-turn trigger is the main-process
-// `utterance_end` event (VAD silence + drained pipeline); this timer only fires if
-// that signal never arrives (e.g. VAD wedged open by background noise). It is
-// deliberately long so it never pre-empts a real utterance mid-thought — the old
-// 2000ms value collided with whisper's 2000ms chunk cadence and split utterances.
-const UTTERANCE_FALLBACK_MS = 8000;
 
 // ─── Composable ─────────────────────────────────────────────────
 
@@ -200,7 +194,6 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       }
     },
     isTTSPlaying: () => isTTSPlaying.value,
-    fallbackMs:   UTTERANCE_FALLBACK_MS,
   });
 
   const onTranscript = (_event: any, msg: any) => {
