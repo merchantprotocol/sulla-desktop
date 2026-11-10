@@ -33,6 +33,9 @@ import { MemorySyncV1 } from './memorySyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
+import { ServerFrameRouter } from '@pkg/agent/channels/ServerFrameRouter';
+import { SlackCloudClient } from './slack/SlackCloudClient';
+import { SlackInboundRuntime } from './slack/SlackInboundRuntime';
 import { CloudRuntimeProjectionSync, syncRuntimeProjections } from './runtimeProjection/sync';
 import { dispatchCloudAgentCommand } from '@pkg/agent/tools/agents/cloudProjection';
 
@@ -97,9 +100,11 @@ function getChannel(): SecureDesktopChannel {
   if (!channel) {
     const dispatch = (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => getDesktopRelayClient().handleRemoteCommand(body as any, reply, respond);
     ConversationSyncService.setDispatcher(dispatch);
+    const slackInbound = new SlackInboundRuntime(new SlackCloudClient());
+    const frameRouter = new ServerFrameRouter(slackInbound, frame => ConversationSyncService.handleServerFrame(frame));
     channel = new SecureDesktopChannel({
       prompt:   promptPairing,
-      serverDispatch: frame => ConversationSyncService.handleServerFrame(frame),
+      serverDispatch: frame => frameRouter.dispatch(frame),
       dispatch: async(body, reply, respond) => {
         if (body.type === 'conversation_key') {
           // A paired browser asks for a linked conversation's key, wrapped to its RSA-OAEP public key.
@@ -117,7 +122,10 @@ function getChannel(): SecureDesktopChannel {
       },
       audit:    (event, detail) => console.log(`[SecureChannel] ${ event } ${ JSON.stringify(detail) }`),
     });
-    channel.onStatus(() => broadcast());
+    channel.onStatus(status => {
+      broadcast();
+      if (status.state === 'connected') slackInbound.drain().catch(err => console.warn('[CloudLifecycle] Slack inbound drain failed:', err));
+    });
   }
   return channel;
 }
