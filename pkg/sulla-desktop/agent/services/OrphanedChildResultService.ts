@@ -11,6 +11,8 @@ export interface OrphanedChildJobStore {
 
 export interface OrphanedChildCapture {
   notice: OrphanedChildNotice;
+  manager: AgentJob;
+  managerTaskIndex: number;
   route?: { channel: string; threadId: string };
   duplicate?: boolean;
 }
@@ -37,6 +39,8 @@ export class OrphanedChildResultService {
 
     return {
       notice,
+      manager: owner,
+      managerTaskIndex: ownership!.taskIndex,
       ...(!recorded ? { duplicate: true } : {}),
       ...(owner.parentThreadId ? {
         route: { channel: owner.parentChannel || 'sulla-desktop', threadId: owner.parentThreadId },

@@ -83,3 +83,34 @@ describe('AgentFleetProjectionService', () => {
     ]);
   });
 });
+
+describe('AgentFleetProjectionService open review items', () => {
+  it('lists open and acknowledged items only on the task that owns them, never closed ones', async() => {
+    // risk: manager sees another worker's obligations or a closed item and closes or routes work to the wrong task
+    const values = [job('review-job', 'root', [task('t0'), task('t1')], 1)];
+    const reviews = {
+      async openReviewItemsForTasks(ids: string[]) {
+        expect(ids).toEqual(['review-job']);
+        return { 'review-job': [
+          { jobId: 'review-job', taskIndex: 1, id: 'R1', text: 'fix nil check', status: 'open' },
+          { jobId: 'review-job', taskIndex: 0, id: 'R2', text: 'add test', status: 'acknowledged' },
+          { jobId: 'review-job', taskIndex: 0, id: 'R3', text: 'already fixed', status: 'closed' },
+        ] };
+      },
+    };
+    const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, new FleetTelemetryReader(), new FleetTitleReader() as any, () => 10_000, undefined, undefined, reviews as any);
+
+    const [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect((projected.tasks[0] as any).openReviewItems).toEqual([{ id: 'R2', text: 'add test', status: 'acknowledged' }]);
+    expect((projected.tasks[1] as any).openReviewItems).toEqual([{ id: 'R1', text: 'fix nil check', status: 'open' }]);
+  });
+
+  it('gives every task an empty open-items list when the reader has no rows', async() => {
+    // risk: a missing key makes consumers treat unknown state as "nothing owed" by accident
+    const values = [job('clean-job', 'root', [task('t0')], 1)];
+    const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, new FleetTelemetryReader(), new FleetTitleReader() as any, () => 10_000, undefined, undefined, { openReviewItemsForTasks: async() => ({}) } as any);
+
+    const [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect((projected.tasks[0] as any).openReviewItems).toEqual([]);
+  });
+});

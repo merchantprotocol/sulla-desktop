@@ -10,6 +10,7 @@ import { emitSubAgentExchange } from './jobExchange';
 import { completeJob, findTaskByThread, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { ReviewItemClosureValidator } from '../../app/Services/ReviewItemClosureValidator';
 
 import type { AgentJob } from './jobRegistry';
 
@@ -42,6 +43,17 @@ export class ReturnResultWorker extends BaseTool {
     const task = job.tasks[taskIndex];
     if (task.returnedAt) return { successBoolean: false, responseString: `Job ${ job.jobId } already returned its contract.` };
     if (!['running', 'parked'].includes(job.status)) return { successBoolean: false, responseString: `Job ${ job.jobId } is ${ job.status }; it no longer accepts a return.` };
+
+    const reviewUpdates = Array.isArray(input.reviewUpdates) ? input.reviewUpdates : [];
+    const openReviewItems = await agentJobProvider.reviewItems.itemsForTask(job.jobId, taskIndex, true);
+    const reviewError = new ReviewItemClosureValidator().validate(reviewUpdates, openReviewItems.map(item => item.id));
+    if (reviewError) return { successBoolean: false, responseString: reviewError };
+    for (const update of reviewUpdates) {
+      if (update.status === 'acknowledged') await agentJobProvider.reviewItems.acknowledge(job.jobId, taskIndex, update.id);
+      else await agentJobProvider.reviewItems.close(job.jobId, taskIndex, update.id, update.status, update.commit, update.reason, 'worker');
+    }
+    const obligation = await agentJobProvider.reviewGate.refusal(job.jobId, taskIndex);
+    if (obligation) return { successBoolean: false, responseString: obligation };
 
     // A manager owns its children until they settle or are explicitly stopped.
     // Returning here would make its thread terminal and strand every later
