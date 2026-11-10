@@ -44,7 +44,22 @@ export class TranscriptNoiseFilter {
     if (!clean) return true;
     if (this.tagOnly.test(clean)) return true;
     if (!/[a-z0-9]/i.test(clean)) return true;
-    return this.hallucinations.has(clean.toLowerCase().replace(/[.,!?]+$/g, '').trim());
+    const normalized = clean.toLowerCase().replace(/[.,!?]+$/g, '').trim();
+    if (this.hallucinations.has(normalized)) return true;
+
+    const words = normalized.match(/[a-z0-9']+/g) ?? [];
+    if (words.length < 3) return false;
+    // Reject obvious repeated-word loops without suppressing meaningful short
+    // emphasis such as "no no no stop".
+    const distinctRatio = new Set(words).size / words.length;
+    if (distinctRatio <= 0.34 && words.length >= 5) return true;
+    for (let n = 1; n <= 3; n++) {
+      if (words.length < n * 3 || words.length % n !== 0) continue;
+      const unit = words.slice(0, n).join(' ');
+      if (words.every((word, index) => word === words[index % n]) && words.length / n >= 3) return true;
+      if (unit && words.every((word, index) => word === words[index % n])) return true;
+    }
+    return false;
   }
 }
 

@@ -136,7 +136,11 @@ export default {
         __dirname:  false,
         __filename: false,
       },
-      entry:       { background: path.resolve(this.rootDir, 'bootstrapEntry') },
+      entry:       {
+        background:            path.resolve(this.rootDir, 'bootstrapEntry'),
+        // Electron utilityProcess for on-device voice inference (Silero, Smart Turn, Whisper).
+        voiceInferenceProcess: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'voice', 'inference', 'voiceInferenceProcess.ts'),
+      },
       experiments: { outputModule: true },
       externals:   [
         // The MCP SDK needs its own nested Ajv 8 (+ ajv-formats). Externalizing

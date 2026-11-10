@@ -32,8 +32,9 @@
  * ```
  */
 
-import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
+import { app, ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import crypto from 'crypto';
+import path from 'path';
 
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
@@ -47,6 +48,10 @@ import * as micPcmSocket from './service/mic-pcm-socket';
 import * as micSocket from './service/mic-socket';
 import * as speakerSocket from './service/speaker-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
+import { OrtInferenceClient } from '../voice/inference/OrtInferenceClient';
+import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
+import { ModelRepository } from '../voice/engine/ModelRepository';
+import voiceModelManifest from '../voice/models/voice-model-manifest.json';
 
 const rendererLog = createLogger('renderer');
 
@@ -587,6 +592,24 @@ function registerIpcHandlers(): void {
       } catch { /* unauthenticated/local installs use the model default */ }
     }
 
+    // Resolve Silero through the checksum-pinned repository. Download stays in the
+    // background; until it completes the gate deliberately passes audio through.
+    // The main bundle is ESM (no __dirname). webpack emits the ORT utility process as its own
+    // entry next to background.js in dist/app (see scripts/lib/build-utils.ts).
+    const ortEntry = path.join(app.getAppPath(), 'dist', 'app', 'voiceInferenceProcess.js');
+    const sileroGate = new SpeechChunkGate(
+      new OrtInferenceClient(ortEntry), null,
+      undefined,
+      message => log.warn('WhisperTranscribe', message),
+    );
+    whisperTranscribe.configureSpeechChunkGate(sileroGate);
+    void Promise.resolve(new ModelRepository(
+      () => app.getPath('userData'),
+      voiceModelManifest as any,
+      { fetch: (url, options) => fetch(url, options) },
+    )).then(models => models.resolve('vad-silero-onnx'))
+      .then(modelPath => sileroGate.setModelPath(modelPath))
+      .catch(error => log.warn('WhisperTranscribe', 'Silero model unavailable; passing audio through until next session', { error: String(error) }));
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,

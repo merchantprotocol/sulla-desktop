@@ -5,6 +5,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SelfEchoFilter } from './SelfEchoFilter';
 import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
+import { TranscriptNoiseFilter } from './VoiceTurnAccumulator';
+
+describe('TranscriptNoiseFilter repetition handling', () => {
+  const filter = new TranscriptNoiseFilter();
+  it('drops repeated short n-grams and low-diversity noise', () => {
+    expect(filter.isNoise('come on come on come on')).toBe(true);
+    expect(filter.isNoise('the the the the the')).toBe(true);
+  });
+  it('keeps meaningful repeated speech with a distinct word', () => {
+    expect(filter.isNoise('no no no stop')).toBe(false);
+  });
+});
 
 describe('SelfEchoFilter', () => {
   it("treats Sulla's own recently spoken words as echo and the user's words as speech", () => {

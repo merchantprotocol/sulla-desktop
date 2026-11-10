@@ -7,7 +7,7 @@ import { utilityProcess } from 'electron';
 
 export interface OrtRequest {
   id: number;
-  operation: 'vad' | 'smart-turn' | 'stt' | 'cancel';
+  operation: 'vad' | 'vad-chunk' | 'smart-turn' | 'stt' | 'cancel';
   modelPath: string;
   decoderPath?: string;
   tokenizerPath?: string;
@@ -22,6 +22,7 @@ export interface OrtResponse {
   id: number;
   ok: boolean;
   probability?: number;
+  probabilities?: number[];
   state?: Float32Array;
   error?: string;
   text?: string;
