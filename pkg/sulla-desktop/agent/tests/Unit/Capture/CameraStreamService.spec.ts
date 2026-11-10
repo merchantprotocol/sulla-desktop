@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CameraStreamService } from '../../../../pages/capture-studio/effects/CameraStreamService';
 import { VideoEffectService, type FrameSurface } from '../../../../pages/capture-studio/effects/VideoEffectService';
-import type { PersonInference } from '../../../../pages/capture-studio/effects/PersonInference';
+import type { PersonInference, PersonMask } from '../../../../pages/capture-studio/effects/PersonInference';
 
 /** Synchronize on the injected acquisition boundary, never an assumed microtask count. */
 class DeferredAcquisition {
@@ -23,17 +23,37 @@ class CameraFixture {
 class EffectFixture implements PersonInference {
   initialized = 0;
   async initialize(): Promise<void> { this.initialized++; }
-  async infer(): Promise<never> { throw new Error('not scheduled'); }
+  /** Startup effect pass: an empty (no-person) mask, so the session publishes its processed track. */
+  async infer(): Promise<PersonMask> { return { width: 1, height: 1, categories: new Uint8Array(1) }; }
   close(): void {}
 }
+/** No-op 2D context: compositing runs through the real FrameCompositor without rasterizing. */
+class ContextFixture {
+  filter = 'none'; globalAlpha = 1; globalCompositeOperation = 'source-over';
+  clearRect(): void {}
+  drawImage(): void {}
+  resetTransform(): void {}
+  putImageData(): void {}
+  createImageData(width: number, height: number): ImageData {
+    return { width, height, data: new Uint8ClampedArray(width * height * 4) } as ImageData;
+  }
+}
+class CanvasFixture {
+  width = 16; height = 9;
+  private readonly context = new ContextFixture();
+  getContext(): ContextFixture { return this.context; }
+  asCanvas(): HTMLCanvasElement { return this as unknown as HTMLCanvasElement; }
+}
 class SurfaceFixture implements FrameSurface {
-  readonly video = {} as HTMLVideoElement;
-  readonly canvas = {} as HTMLCanvasElement;
+  readonly video = { currentTime: 0 } as HTMLVideoElement;
+  readonly canvas = new CanvasFixture().asCanvas();
   readonly output = new CameraFixture();
   async open(): Promise<MediaStream> { return this.output.asStream(); }
   schedule(): number { return 1; }
   cancel(): void {}
   drawRaw(): void {}
+  now(): number { return 0; }
+  emitFrame(): void {}
   close(): void { this.output.getTracks()[0].stop(); }
 }
 class CompositionFixture {
@@ -42,7 +62,7 @@ class CompositionFixture {
   published: MediaStream | null = null;
   readonly effects = new VideoEffectService(() => this.inference, () => {
     const surface = new SurfaceFixture(); this.surfaces.push(surface); return surface;
-  }, () => ({} as HTMLCanvasElement), () => undefined);
+  }, () => new CanvasFixture().asCanvas(), () => undefined);
   service(acquire: () => Promise<MediaStream>): CameraStreamService {
     return new CameraStreamService(this.effects, acquire, value => { this.published = value; }, () => undefined);
   }

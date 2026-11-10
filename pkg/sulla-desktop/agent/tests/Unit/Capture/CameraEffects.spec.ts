@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FrameCompositor, PersonFraming, PersonMaskRasterizer } from '../../../../pages/capture-studio/effects/FrameCompositor';
 import type { PersonInference, PersonMask } from '../../../../pages/capture-studio/effects/PersonInference';
@@ -21,20 +21,36 @@ class SurfaceFixture implements FrameSurface {
   readonly output = new StreamFixture();
   private callback?: (timestamp: number) => void;
   rawFrames = 0;
+  emitted = 0;
   delayOpen?: Promise<void>;
+  constructor(private readonly events: string[]) {}
   async open(): Promise<MediaStream> { await this.delayOpen; return this.output.asStream(); }
   schedule(callback: (timestamp: number) => void): number { this.callback = callback; return 1; }
   cancel(): void { this.callback = undefined; }
-  drawRaw(): void { this.rawFrames++; }
+  drawRaw(): void { this.rawFrames++; this.events.push('raw'); }
+  now(): number { return 0; }
+  emitFrame(): void { this.emitted++; this.events.push('emit'); }
   close(): void { this.output.track.stop(); this.callback = undefined; }
   tick(timestamp: number): void {
+    // Each animation frame presents a new camera frame.
+    this.video.currentTime = timestamp;
     const callback = this.callback;
     this.callback = undefined;
     callback?.(timestamp);
   }
 }
+/** Records composites instead of rasterizing; pixel output is covered by the renderer smoke. */
+class CompositorFixture extends FrameCompositor {
+  draws = 0;
+  constructor(private readonly events: string[]) { super(new PersonFraming(), () => ({} as HTMLCanvasElement)); }
+  override draw(): void { this.draws++; this.events.push('draw'); }
+  override close(): void {}
+}
 class InferenceFixture implements PersonInference {
+  static readonly emptyMask: PersonMask = { width: 1, height: 1, categories: new Uint8Array(1) };
   calls = 0;
+  /** The startup effect pass (first infer call); later calls stay in flight until rejected. */
+  firstFrame: Promise<PersonMask> = Promise.resolve(InferenceFixture.emptyMask);
   closed = false;
   failInit = false;
   delayInit?: Promise<void>;
@@ -43,6 +59,7 @@ class InferenceFixture implements PersonInference {
   async initialize(): Promise<void> { await this.delayInit; if (this.failInit) throw new Error('Local assets unavailable'); }
   infer(): Promise<PersonMask> {
     this.calls++;
+    if (this.calls === 1) return this.firstFrame;
     return new Promise((_resolve, reject) => { this.rejectFrame = reject; });
   }
   close(): void { this.closed = true; if (this.throwClose) throw new Error('Model close failed'); }
@@ -52,16 +69,24 @@ class DeferredStartup {
   resolve!: () => void;
   constructor() { this.promise = new Promise(resolve => { this.resolve = resolve; }); }
 }
+class DeferredMask {
+  readonly promise: Promise<PersonMask>;
+  resolve!: (mask: PersonMask) => void;
+  reject!: (error: Error) => void;
+  constructor() { this.promise = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
+}
 class SessionFixture {
+  readonly events: string[] = [];
   readonly raw = new StreamFixture();
-  readonly surface = new SurfaceFixture();
+  readonly surface = new SurfaceFixture(this.events);
   readonly inference = new InferenceFixture();
+  readonly compositor = new CompositorFixture(this.events);
   readonly errors: unknown[] = [];
   readonly session: CameraEffectSession;
   constructor(enabled = true) {
     this.session = new CameraEffectSession(
       this.raw.asStream(), { autoFrame: enabled, soften: 0, backgroundBlur: 0 },
-      this.inference, new FrameCompositor(new PersonFraming(), () => ({} as HTMLCanvasElement)),
+      this.inference, this.compositor,
       this.surface, error => this.errors.push(error),
     );
   }
@@ -168,9 +193,10 @@ describe('camera processing ownership and person-follow', () => {
   it('allows one inference in flight and waits for it before cleanup', async() => {
     const fixture = new SessionFixture();
     await fixture.session.start();
+    // Call 1 is the startup pass; call 2 is the first scheduled frame, still in flight.
     fixture.surface.tick(100);
     fixture.surface.tick(200);
-    expect(fixture.inference.calls).toBe(1);
+    expect(fixture.inference.calls).toBe(2);
     const closing = fixture.session.close();
     expect(fixture.inference.closed).toBe(false);
     fixture.inference.rejectFrame!(new Error('Stopped inference'));
@@ -179,7 +205,7 @@ describe('camera processing ownership and person-follow', () => {
     expect(fixture.surface.output.track.readyState).toBe('ended');
     expect(fixture.raw.track.readyState).toBe('live');
     fixture.surface.tick(300);
-    expect(fixture.inference.calls).toBe(1);
+    expect(fixture.inference.calls).toBe(2);
   });
 
   // risk: data-integrity — a recorder must not lose its shared track after model failure.
@@ -197,7 +223,62 @@ describe('camera processing ownership and person-follow', () => {
     expect(fixture.surface.rawFrames).toBe(1);
     fixture.surface.tick(200);
     expect(fixture.surface.rawFrames).toBe(2);
-    expect(fixture.inference.calls).toBe(1);
+    expect(fixture.inference.calls).toBe(2);
     await fixture.session.close();
+  });
+
+  // risk: privacy — preview and recorder must never receive an unprocessed camera frame
+  // (the raw edges auto-framing crops away). The track is published only after one effect pass.
+  it('publishes the effect track only after the first processed frame is on the canvas', async() => {
+    const fixture = new SessionFixture();
+    const first = new DeferredMask();
+    fixture.inference.firstFrame = first.promise;
+    const starting = fixture.session.start();
+    await vi.waitFor(() => expect(fixture.inference.calls).toBe(1));
+    expect(fixture.session.stream).toBe(fixture.raw);
+    expect(fixture.surface.emitted).toBe(0);
+    first.resolve(InferenceFixture.emptyMask);
+    await starting;
+    expect(fixture.session.stream).toBe(fixture.surface.output);
+    expect(fixture.events).toEqual(['draw', 'emit']);
+    expect(fixture.surface.rawFrames).toBe(0);
+    await fixture.session.close();
+  });
+
+  // risk: privacy — a failed first pass uses the documented raw-camera fallback; the canvas
+  // track is released unpublished and never carries a raw frame.
+  it('falls back to the raw camera and releases the unpublished track when the first pass fails', async() => {
+    const fixture = new SessionFixture();
+    const first = new DeferredMask();
+    fixture.inference.firstFrame = first.promise;
+    const starting = fixture.session.start();
+    await vi.waitFor(() => expect(fixture.inference.calls).toBe(1));
+    first.reject(new Error('First inference failed'));
+    await starting;
+    expect(fixture.session.stream).toBe(fixture.raw);
+    expect(fixture.events).toEqual([]);
+    expect(fixture.surface.output.track.readyState).toBe('ended');
+    expect(fixture.raw.track.readyState).toBe('live');
+    expect(fixture.inference.closed).toBe(true);
+    expect(fixture.errors).toHaveLength(1);
+    fixture.surface.tick(100);
+    expect(fixture.inference.calls).toBe(1);
+  });
+
+  // risk: data-integrity — closing during the first pass waits for it and never publishes.
+  it('never publishes when closed during the first effect pass', async() => {
+    const fixture = new SessionFixture();
+    const first = new DeferredMask();
+    fixture.inference.firstFrame = first.promise;
+    const starting = fixture.session.start();
+    await vi.waitFor(() => expect(fixture.inference.calls).toBe(1));
+    const closing = fixture.session.close();
+    expect(fixture.inference.closed).toBe(false);
+    first.resolve(InferenceFixture.emptyMask);
+    await starting; await closing;
+    expect(fixture.session.stream).toBe(fixture.raw);
+    expect(fixture.events).toEqual([]);
+    expect(fixture.inference.closed).toBe(true);
+    expect(fixture.surface.output.track.readyState).toBe('ended');
   });
 });
