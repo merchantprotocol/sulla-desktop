@@ -170,7 +170,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
   });
 
-  it('does not resurrect an aborted parent and leaves its stranded notice pending for an explicit retry', async() => {
+  it('does not resurrect an aborted parent and keeps the injected stranded notice consumed', async() => {
     // risk: user stop -- aborting a parent must not auto-launch another turn merely because its durable alert is retryable
     vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager-sol', run_location: 'vm' } as any);
     const managerJobId = `stranded-abort-${ Date.now() }`; const parentThread = `${ managerJobId }-parent`;
@@ -203,17 +203,14 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
       undefined, 'coding-manager-sol', 'system', { source: 'sub_agent_completion', completionEntries: [claimed] });
     expect(graph.execute).toHaveBeenCalledTimes(1);
     const [pending] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
-    expect(pending.status).toBe('pending');
-    const [retry] = inbox.takeAgentCompletions('coding-manager-sol', parentThread);
-    expect(retry.dedupeKey).toBe(stateKey);
-    await (service as any).dispatchToAgent('coding-manager-sol', 'sulla-desktop', retry.notice, parentThread,
-      undefined, 'coding-manager-sol', 'system', { source: 'sub_agent_completion', completionEntries: [retry] });
-    expect(graph.execute).toHaveBeenCalledTimes(2);
+    expect(pending.status).toBe('delivered');
+    expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
+    expect(graph.execute).toHaveBeenCalledTimes(1);
     const [delivered] = await database.query<{ status: string }>('SELECT status FROM agent_stranded_episodes WHERE state_key = $1', [stateKey]);
     expect(delivered.status).toBe('delivered');
     expect(inbox.takeAgentCompletions('coding-manager-sol', parentThread)).toEqual([]);
-    expect(actionableCounts).toEqual([1, 1]);
-    expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(2);
+    expect(actionableCounts).toEqual([1]);
+    expect(state.messages.filter((message: any) => message.metadata?.source === 'sub_agent_completion')).toHaveLength(1);
   });
 
   it('wakes the manager as itself exactly once, completes its own job, delivers exactly one completion to its parent, and leaves no waiter or Promise behind', async() => {

@@ -46,16 +46,17 @@ export class AgentCompletionRecoveryService extends Service {
   start(intervalMs = 120_000, minimumAgeMs = 120_000): void {
     if (this.sweepTimer) return;
     this.sweepAgeMs = minimumAgeMs;
-    this.sweepTimer = this.timer.every(() => { void this.recover().catch(error => console.warn('[AgentCompletionRecovery] sweep failed:', error)); }, intervalMs);
+    this.sweepTimer = this.timer.every(() => { void this.recover(this.sweepAgeMs).catch(error => console.warn('[AgentCompletionRecovery] sweep failed:', error)); }, intervalMs);
     (this.sweepTimer as any).unref?.();
   }
 
   private sweepTimer?: ReturnType<typeof setInterval>;
   private sweepAgeMs = 0;
 
-  recover(): Promise<void> {
+  /** Startup/explicit recovery is immediate; the background sweep supplies its age threshold. */
+  recover(minimumAgeMs = 0): Promise<void> {
     if (!this.recoveryPromise) {
-      this.recoveryPromise = this.recoverPending().finally(() => {
+      this.recoveryPromise = this.recoverPending(minimumAgeMs).finally(() => {
         this.recoveryPromise = null;
       });
     }
@@ -73,26 +74,26 @@ export class AgentCompletionRecoveryService extends Service {
     return this.inFlight.size;
   }
 
-  private async recoverPending(): Promise<void> {
+  private async recoverPending(minimumAgeMs: number): Promise<void> {
     const jobs = this.source.getPendingCompletions
       ? await this.source.getPendingCompletions()
       : await this.source.pendingCompletions?.() ?? [];
-    for (const job of jobs) await this.recoverJob(job);
+    for (const job of jobs) await this.recoverJob(job, minimumAgeMs);
   }
 
-  private async recoverJob(job: AgentJob): Promise<void> {
+  private async recoverJob(job: AgentJob, minimumAgeMs: number): Promise<void> {
     if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) return;
     this.inFlight.add(job.jobId);
     try {
       job.tasks.forEach((task, taskIndex) => {
         const result = task.completion ?? job.results[taskIndex];
         const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt;
-        if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= this.sweepAgeMs) {
+        if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= minimumAgeMs) {
           this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, {
             jobId: job.jobId,
             taskIndex,
             results: [result],
-            notice: task.completionFirstDeliveredAt && this.sweepAgeMs > 0
+            notice: task.completionFirstDeliveredAt
               ? `[re-delivery: first delivered at ${new Date(task.completionFirstDeliveredAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}`
               : undefined,
           });
