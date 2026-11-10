@@ -8,13 +8,12 @@ import {
   KeyWrap,
   VaultSyncCodec,
   type CryptoPrimitives,
+  type RandomSource,
   type VaultBundle,
   type VaultHead,
   type VaultRecord,
 } from '@sulla/domain';
-import type { RandomSource } from '@sulla/foundation';
-
-import { checkBundleShape, checkHeadShape, checkRecordShape, type BundleFields, type RecordFields, type SyncBundle, type SyncHead, type SyncRecord } from './envelope.js';
+import { checkBundleShape, checkHeadShape, checkRecordShape, type BundleFields, type RecordFields, type SyncBundle, type SyncHead, type SyncItem, type SyncRecord } from './envelope.js';
 
 /** Desktop runtime adapter for the shared vault-sync-v3 domain codec. */
 export class DomainVaultSyncCodec {
