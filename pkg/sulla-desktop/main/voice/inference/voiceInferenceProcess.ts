@@ -36,6 +36,8 @@ export class VoiceInferenceProcess {
       const response =
         request.operation === 'vad'
           ? await this.runVad(session, request)
+          : request.operation === 'vad-chunk'
+            ? await this.runVadChunk(session, request)
           : request.operation === 'smart-turn'
             ? await this.runSmartTurn(session, request)
             : await this.runWhisper(session, request);
@@ -107,6 +109,30 @@ export class VoiceInferenceProcess {
     const next = output.stateN?.data as Float32Array;
     if (!Number.isFinite(probability) || !next) throw new Error('Unexpected Silero output signature');
     return { probability, state: new Float32Array(next) };
+  }
+
+  private async runVadChunk(session: ort.InferenceSession, request: OrtRequest): Promise<Pick<OrtResponse, 'probabilities' | 'state'>> {
+    if (request.audio.length < 576 || (request.audio.length - 64) % 512 !== 0) throw new Error('Silero chunk must contain context and complete 512-sample frames');
+    let state = new Float32Array(request.state ?? new Float32Array(256));
+    let context = new Float32Array(request.audio.subarray(0, 64));
+    const probabilities: number[] = [];
+    for (let offset = 64; offset < request.audio.length; offset += 512) {
+      const input = new Float32Array(576);
+      input.set(context);
+      input.set(request.audio.subarray(offset, offset + 512), 64);
+      const output = await session.run({
+        input: new this.runtime.Tensor('float32', input, [1, 576]),
+        state: new this.runtime.Tensor('float32', state, [2, 1, 128]),
+        sr: new this.runtime.Tensor('int64', BigInt64Array.from([16_000n]), [1]),
+      });
+      const probability = Number((output.output?.data as Float32Array)?.[0]);
+      const next = output.stateN?.data as Float32Array;
+      if (!Number.isFinite(probability) || !next) throw new Error('Unexpected Silero output signature');
+      probabilities.push(probability);
+      state = new Float32Array(next);
+      context.set(input.subarray(512));
+    }
+    return { probabilities, state };
   }
 
   private async runSmartTurn(

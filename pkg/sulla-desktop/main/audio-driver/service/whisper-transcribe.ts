@@ -392,12 +392,14 @@ function flush(): void {
 
     const processMic = (allowed: boolean) => {
       if (allowed) {
+        const preroll = provider === 'whisper' ? speechChunkGate?.takePreroll() : null;
+        const admittedPcm = preroll ? Buffer.concat([preroll, pcm]) : pcm;
         if (mode === 'conversation') {
           // Only admitted speech enters the authoritative end-of-turn buffer.
-          utterancePcm.push(pcm);
-          utterancePcmBytes += pcm.length;
-          transcribeChunk(pcm, 0, 'You', { partial: true });
-        } else transcribeChunk(pcm, 0, 'Mic');
+          utterancePcm.push(admittedPcm);
+          utterancePcmBytes += admittedPcm.length;
+          transcribeChunk(admittedPcm, 0, 'You', { partial: true });
+        } else transcribeChunk(admittedPcm, 0, 'Mic');
       }
       if (micBytes > 0) flush();
     };

@@ -50,6 +50,7 @@ import * as speakerSocket from './service/speaker-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
 import { OrtInferenceClient } from '../voice/inference/OrtInferenceClient';
 import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
+import { ModelRepository } from '../voice/engine/ModelRepository';
 
 const rendererLog = createLogger('renderer');
 
@@ -590,15 +591,22 @@ function registerIpcHandlers(): void {
       } catch { /* unauthenticated/local installs use the model default */ }
     }
 
-    // Silero is optional and lazy: missing weights/ORT fail open in SpeechChunkGate.
-    // The model path matches ModelRepository's installed `voice-models` artifact.
+    // Resolve Silero through the checksum-pinned repository. Download stays in the
+    // background; until it completes the gate deliberately passes audio through.
     const ortEntry = path.join(__dirname, '../voice/inference/voiceInferenceProcess.js');
-    const sileroPath = path.join(app.getPath('userData'), 'voice-models', 'vad-silero-onnx.model');
-    whisperTranscribe.configureSpeechChunkGate(new SpeechChunkGate(
-      new OrtInferenceClient(ortEntry), sileroPath,
+    const sileroGate = new SpeechChunkGate(
+      new OrtInferenceClient(ortEntry), null,
       undefined,
       message => log.warn('WhisperTranscribe', message),
-    ));
+    );
+    whisperTranscribe.configureSpeechChunkGate(sileroGate);
+    void ModelRepository.fromManifest(
+      path.join(__dirname, '../voice/models/voice-model-manifest.json'),
+      () => app.getPath('userData'),
+      { fetch: (url, options) => fetch(url, options) },
+    ).then(models => models.resolve('vad-silero-onnx'))
+      .then(modelPath => sileroGate.setModelPath(modelPath))
+      .catch(error => log.warn('WhisperTranscribe', 'Silero model unavailable; passing audio through until next session', { error: String(error) }));
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,
