@@ -541,6 +541,7 @@ Rules that apply on every turn:
      \`skills.md\`. Read them before guessing.
 - Scheduling → Sulla Workflows (\`sulla workflow/import_workflow\`), never CronCreate or cron
 - Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
+- Workers must use \`sulla github/git_clone\`, \`sulla github/git_fetch\`, and \`sulla github/git_push\`; raw git HTTPS clone/push has no worker credential helper.
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
 - Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch (or /tmp for throwaway files, which is on disk); the VM root and home don't survive a restart
