@@ -5,7 +5,10 @@
 import type { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
 import type { PendingCompletion } from '../../services/AgentCompletionInbox';
 
-export interface TaskCompletionAcknowledger { markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void> }
+export interface TaskCompletionAcknowledger {
+  markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<void>;
+  releaseTaskCompletion(jobId: string, taskIndex: number): Promise<void>;
+}
 export interface CompletionClaimStore { acknowledge(entry: PendingCompletion): void }
 
 /** Commits durable delivery only after the parent turn consumes an inbox entry. */
@@ -17,5 +20,10 @@ export class CompletionAcknowledgementService {
     if (entry.dedupeKey?.startsWith('stranded:')) await this.episodes.markDelivered(entry.dedupeKey);
     else await this.tasks.markTaskCompletionDelivered(entry.jobId, entry.taskIndex);
     this.claims.acknowledge(entry);
+  }
+
+  async release(entry: PendingCompletion): Promise<void> {
+    if (entry.dedupeKey?.startsWith('stranded:')) await this.episodes.reopen(entry.dedupeKey);
+    else await this.tasks.releaseTaskCompletion(entry.jobId, entry.taskIndex);
   }
 }
