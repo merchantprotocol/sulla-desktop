@@ -32,7 +32,13 @@ export class DebugErrorService {
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack ?? '' : '';
     this.dependencies.warn(source, error);
-    if (!await this.dependencies.enabled()) return;
+    let debugEnabled = false;
+    try {
+      debugEnabled = await this.dependencies.enabled();
+    } catch (settingsError) {
+      this.dependencies.warn('debug:error-settings', settingsError);
+    }
+    if (!debugEnabled) return;
 
     const record: DebugError = {
       timestamp: this.dependencies.now().toISOString(),
@@ -50,7 +56,8 @@ export class DebugErrorService {
 export const debugErrorService = new DebugErrorService({
   enabled: async() => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    return (await SullaSettingsModel.get('application.debug', false)) === true;
+    const enabled = await SullaSettingsModel.get('application.debug', false);
+    return enabled === true || enabled === 'true';
   },
   append: async(file, content) => {
     await mkdir(path.dirname(file), { recursive: true });
@@ -66,3 +73,14 @@ export const debugErrorService = new DebugErrorService({
   now: () => new Date(),
   processName: process.type ?? 'main',
 });
+
+export function initDebugErrorReporting(): void {
+  process.on('uncaughtException', error => { void debugErrorService.reportError('main:uncaughtException', error) });
+  process.on('unhandledRejection', reason => { void debugErrorService.reportError('main:unhandledRejection', reason) });
+  const { ipcMain } = require('electron') as typeof import('electron');
+  ipcMain.on('debug:report', (_event, source: string, error: { message?: string; stack?: string }) => {
+    const reported = new Error(error?.message || 'Renderer error');
+    reported.stack = error?.stack || reported.stack;
+    void debugErrorService.reportError(`renderer:${ source }`, reported);
+  });
+}

@@ -25,6 +25,7 @@
       <RouterView />
     </main>
     <status-bar class="status-bar" />
+    <DebugErrorOverlay />
     <!-- The ActionMenu is used by SortableTable for per-row actions. -->
     <ActionMenu data-testid="actionmenu" />
   </div>
@@ -40,6 +41,7 @@ import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import SupportConnectedBanner from '@pkg/components/SupportConnectedBanner.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
+import DebugErrorOverlay from '@pkg/components/DebugErrorOverlay.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -51,6 +53,7 @@ export default {
     TheTitle,
     NoAiConnectedBanner,
     SupportConnectedBanner,
+    DebugErrorOverlay,
   },
 
   setup() {
