@@ -30,8 +30,10 @@ interface CompletionInbox {
 
 /** Owns the per-thread, per-task completion queue with no fixed delivery delay. */
 export class AgentCompletionInboxService extends Service {
+  private static readonly ACKNOWLEDGED_KEY_LIMIT = 2048;
   private readonly inboxes = new Map<string, CompletionInbox>();
   private readonly claimedKeys = new Set<string>();
+  private readonly acknowledgedKeys = new Set<string>();
 
   constructor(
     private readonly idleDispatcher: CompletionIdleDispatcher,
@@ -48,7 +50,7 @@ export class AgentCompletionInboxService extends Service {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
     const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
-    const duplicate = this.claimedKeys.has(entryKey) || inbox.entries.some(entry =>
+    const duplicate = this.claimedKeys.has(entryKey) || this.acknowledgedKeys.has(entryKey) || inbox.entries.some(entry =>
       (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
@@ -78,11 +80,21 @@ export class AgentCompletionInboxService extends Service {
   }
 
   acknowledge(entry: PendingCompletion): void {
-    this.claimedKeys.delete(this.entryKey(entry));
+    const key = this.entryKey(entry);
+    this.claimedKeys.delete(key);
+    this.acknowledgedKeys.delete(key);
+    this.acknowledgedKeys.add(key);
+    while (this.acknowledgedKeys.size > AgentCompletionInboxService.ACKNOWLEDGED_KEY_LIMIT) {
+      const oldest = this.acknowledgedKeys.values().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.acknowledgedKeys.delete(oldest);
+    }
   }
 
   requeue(channel: string, threadId: string, entry: PendingCompletion): boolean {
-    this.acknowledge(entry);
+    const key = this.entryKey(entry);
+    this.claimedKeys.delete(key);
+    this.acknowledgedKeys.delete(key);
     return this.enqueue(channel, threadId, entry);
   }
 
@@ -97,6 +109,7 @@ export class AgentCompletionInboxService extends Service {
   clear(): void {
     this.inboxes.clear();
     this.claimedKeys.clear();
+    this.acknowledgedKeys.clear();
     this.idleDispatcher.clear();
   }
 
@@ -104,6 +117,7 @@ export class AgentCompletionInboxService extends Service {
     this.stop();
     this.inboxes.clear();
     this.claimedKeys.clear();
+    this.acknowledgedKeys.clear();
     this.idleDispatcher.clear();
   }
 

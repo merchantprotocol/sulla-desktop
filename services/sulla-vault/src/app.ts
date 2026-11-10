@@ -237,7 +237,6 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   const app = express();
   const domainSyncCodec = new DomainVaultSyncCodecProvider();
   const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
-  localAuthority?.useDomainSyncCodecProvider(domainSyncCodec);
   const filesKeyBundleAuthority = localAuthority ? new VaultFilesKeyBundleAuthority(db, localAuthority) : null;
   const filesAudit = new FilesAuditEmitter(config);
   app.disable('x-powered-by');

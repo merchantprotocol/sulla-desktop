@@ -20,8 +20,12 @@ import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relay
 import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
 import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { ToolRequestArguments } from '../../../packages/runtime-protocol/src/toolRequestArguments.js';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+import { LateToolResultStore } from '../../../pkg/sulla-desktop/runtime/LateToolResultStore.js';
 
 validateConfig();
+const toolDeadlines = new ToolDeadlinePolicy();
+const lateToolResults = new LateToolResultStore();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
 process.env.SULLA_REDIS_URL = config.redisUrl;
 
@@ -111,13 +115,38 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   }
 
   let status = 200;
+  const deadlineMs = toolDeadlines.deadlineMs(tool.name, tool.operationTypes);
+  const startedAt = Date.now();
   try {
     const result = tool.executionTarget === 'catalog'
-      ? await Promise.race([
-        executeCatalogTool(ctx, tool, args),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Tool deadline exceeded')), config.requestTimeoutMs)),
-      ])
-      : await desktop.execute(ctx, category, requested, args, { deadlineMs: config.requestTimeoutMs });
+      ? await (async() => {
+        let timedOut = false;
+        const execution = executeCatalogTool(ctx, tool, args);
+        execution.then(value => {
+          if (!timedOut) return;
+          const late = lateToolResults.record(requestId, { success: true, result: value });
+          console.warn(`[sulla-tools] Late tool result for ${ requestId }: ${ late.outcome }`);
+        }, error => {
+          if (!timedOut) return;
+          const late = lateToolResults.record(requestId, undefined, error);
+          console.warn(`[sulla-tools] Late tool result for ${ requestId }: ${ late.outcome }`);
+        });
+        let timer!: ReturnType<typeof setTimeout>;
+        try {
+          return await Promise.race([
+            execution,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                timedOut = true;
+                reject(new Error('Tool deadline exceeded'));
+              }, deadlineMs);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      })()
+      : await desktop.execute(ctx, category, requested, args, { deadlineMs, operationTypes: tool.operationTypes });
     if (tool.executionTarget !== 'catalog') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
       if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
@@ -125,8 +154,17 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
     }
     response.json({ success: true, result, request_id: requestId });
   } catch (error) {
-    status = 500;
-    response.status(status).json({ success: false, error: { code: 'tool_execution_failed', message: error instanceof Error ? error.message : String(error) }, request_id: requestId });
+    const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
+    status = timedOut ? 504 : 500;
+    response.status(status).json({
+      success: false,
+      error: {
+        code: timedOut ? 'deadline_exceeded' : 'tool_execution_failed',
+        message: error instanceof Error ? error.message : String(error),
+        ...(timedOut ? { details: toolDeadlines.timeoutDetails(tool.name, deadlineMs, Date.now() - startedAt, tool.operationTypes) } : {}),
+      },
+      request_id: requestId,
+    });
   } finally {
     await requests.audit({ requestId, jti: ctx.jti, subject: ctx.sub, category, tool: tool.name, target: tool.executionTarget, status }).catch(error => console.error('[sulla-tools] audit failed', error));
   }

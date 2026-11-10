@@ -39,6 +39,8 @@ export interface RelayError {
   code:       'DEVICE_OFFLINE' | 'DEADLINE_EXCEEDED' | 'BACKPRESSURE' | 'FORBIDDEN' | 'BAD_REQUEST' | 'INTERNAL';
   message:    string;
   retryable?: boolean;
+  /** Structured context, e.g. ToolDeadlineDetails on DEADLINE_EXCEEDED. */
+  details?:   unknown;
 }
 
 interface RelayEnvelopeBase {
@@ -55,6 +57,7 @@ export interface RelayToolCallEnvelope extends RelayEnvelopeBase {
   tool?:            string;
   args?:            unknown;
   deadlineAt?:      number;
+  operationTypes?:  string[];
 }
 
 export interface RelayToolResultEnvelope extends RelayEnvelopeBase {

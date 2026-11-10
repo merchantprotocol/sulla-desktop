@@ -108,6 +108,7 @@ import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHi
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
+import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 
 const CHALLENGE_TTL_MS = 30_000;
 const CACHE_UPDATE_TTL_MS = 60_000;
@@ -605,7 +606,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly filesAudit: FilesAuditEmitter;
   private codecProvider = new DomainVaultSyncCodecProvider();
 
-  useDomainSyncCodecProvider(provider: DomainVaultSyncCodecProvider): void { this.codecProvider = provider; }
+  private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
 
   constructor(
     private readonly db: Database,
@@ -2372,7 +2373,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
-        brokerTransferLimits(input.operation).response,
+        brokerTransferLimits(input.operation).response, input.operation, input.ref.integrationId,
       );
       if (prepared.item) await this.audit(input, prepared.item, false, null);
       return result;
@@ -3262,6 +3263,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             return;
           }
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
+            const location = response.headers.location;
+            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
+              operation: input.operation, integrationId: input.ref.integrationId, requestUrl: prepared.target,
+              status: response.statusCode, location,
+            })) {
+              response.resume();
+              started = true;
+              sink.start(302, { location });
+              this.inFlight.delete(request);
+              sink.end();
+              resolve();
+              return;
+            }
             response.resume();
             request.destroy(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
             return;
@@ -3326,6 +3340,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     redactResponseBody = true,
     maxRequestBytes = MAX_RESPONSE_BYTES,
     maxResponseBytes = MAX_RESPONSE_BYTES,
+    operation = 'broker.request',
+    integrationId?: string,
   ): Promise<BrokerExecuteResponse> {
     const method = methodInput.toUpperCase();
     if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -3366,6 +3382,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             return;
           }
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
+            const location = response.headers.location;
+            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
+              operation, integrationId, requestUrl: url,
+              status: response.statusCode, location,
+            })) {
+              response.resume();
+              this.inFlight.delete(request);
+              resolve({ status: 302, headers: { location }, body: '' });
+              return;
+            }
             response.resume();
             reject(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
             return;

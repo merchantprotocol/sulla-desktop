@@ -4,11 +4,10 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import paths from '@pkg/utils/paths';
-import { requestedInstance } from '@pkg/utils/instance';
+import { InstanceEnvironmentConfigurator } from '@pkg/utils/instance';
 
 export interface SullaRuntimeArtifacts {
   /** The signed host binary (`sulla-runtime`). */
@@ -25,7 +24,7 @@ export interface SullaRuntimeArtifacts {
  */
 export function sullaRuntimeDirectory(): string {
   return process.env.SULLA_RUNTIME_DIR ||
-    path.join(os.homedir(), 'Library', 'Application Support', requestedInstance() ? `Sulla-${ requestedInstance() }` : 'Sulla', 'runtime');
+    new InstanceEnvironmentConfigurator().runtimeDirectory();
 }
 
 export const sullaRuntimeSockets = {

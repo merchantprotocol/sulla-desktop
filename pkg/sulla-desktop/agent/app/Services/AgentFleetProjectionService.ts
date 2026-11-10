@@ -178,6 +178,7 @@ export class AgentFleetProjectionService {
       state: activity.state,
       visibility: task.visibility ?? job.visibility ?? 'hidden',
       promotedToTab: task.promotedToTab === true,
+      ...(task.requestedVisibility ? { requestedVisibility: task.requestedVisibility, downgradeReason: task.downgradeReason } : {}),
       contract: task.contract?.name ?? 'result',
       returned: !!task.returnedAt,
       startedAt: new Date(startedAt).toISOString(),

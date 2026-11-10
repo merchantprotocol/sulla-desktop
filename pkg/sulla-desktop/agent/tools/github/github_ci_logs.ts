@@ -23,7 +23,7 @@ export function trimJobLog(log: string, maxLines: number): string {
   if (lines.length <= maxLines) return lines.join('\n').trim();
   let failure = -1;
   for (let index = lines.length - 1; index >= 0; index--) {
-    if (/##\[error\]|Process completed with exit code|Error:|FAILED|failure/i.test(lines[index])) {
+    if (/##\[error\]|Process completed with exit code|Error:|FAIL(?:ED)?\b|failure|✕/i.test(lines[index])) {
       failure = index;
       break;
     }

@@ -161,6 +161,15 @@ async markTaskCompletionDelivered(jobId: string, taskIndex: number): Promise<voi
   });
 
 }
+
+/** Reopens a completion claim when the receiving turn aborts before its first model response. */
+async releaseTaskCompletion(jobId: string, taskIndex: number): Promise<void> {
+  await this.states.update(jobId, job => {
+    if (!job.tasks[taskIndex]?.completionDeliveredAt) return job;
+    job.tasks[taskIndex] = { ...job.tasks[taskIndex], completionDeliveredAt: undefined };
+    return { ...job, completionDeliveredAt: undefined };
+  });
+}
 /** Mark a persisted completion delivered only after the graph wake was sent. */
 async markCompletionDelivered(jobId: string): Promise<void> {
   await this.states.update(jobId, source => source.completionDeliveredAt ? source : { ...source, completionDeliveredAt: this.clock.now().getTime() });
