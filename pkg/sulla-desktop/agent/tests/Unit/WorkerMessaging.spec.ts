@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { WorkerPromptBuilder } from '../../tools/agents/workerMessaging';
+import { prepareWorkerTurnPrompt, WorkerPromptBuilder } from '../../tools/agents/workerMessaging';
 
 describe('WorkerPromptBuilder', () => {
   it('injects the delegated job identity and Sulla-only waiting rules', () => {
@@ -20,6 +20,11 @@ describe('WorkerPromptBuilder', () => {
     expect(prompt).toContain('report_progress blockers');
     expect(prompt).toContain("sulla agents/report_progress - <<'JSON'");
     expect(prompt).not.toContain('Promise');
+  });
+
+  it('includes tracked review-item obligations in the delegated worker prompt', async() => {
+    // risk: a worker could return without acknowledging or closing manager review findings
+    const prompt = await prepareWorkerTurnPrompt({ metadata: { isSubAgent: true } }, 'base prompt');
     expect(prompt).toContain('Tracked review items arrive with ids');
     expect(prompt).toContain('return_result is refused');
   });
