@@ -25,7 +25,7 @@ export class RelayDesktopExecutor {
     category: string,
     tool: string,
     args: unknown,
-    opts: { deadlineMs: number },
+    opts: { deadlineMs: number; operationTypes?: readonly string[] },
   ): Promise<ToolResult> {
     const controller = new AbortController();
     const deadlineMs = Math.max(1, opts.deadlineMs);
@@ -43,7 +43,7 @@ export class RelayDesktopExecutor {
             Authorization:  `Bearer ${ this.options.serviceToken }`,
             'Content-Type': 'application/json',
           },
-          body:   JSON.stringify({ ctx, args, deadlineMs }),
+          body:   JSON.stringify({ ctx, args, deadlineMs, operationTypes: opts.operationTypes }),
           signal: controller.signal,
         },
       );
@@ -52,14 +52,25 @@ export class RelayDesktopExecutor {
         const error = body.error ?? { code: 'INTERNAL' as const, message: `Relay returned HTTP ${ response.status }` };
         return {
           success: false,
-          error:   { code: error.code.toLowerCase(), message: error.message, details: { retryable: error.retryable === true } },
+          error:   { code: error.code.toLowerCase(), message: error.message, details: { ...(error.details && typeof error.details === 'object' ? error.details as object : {}), retryable: error.retryable === true } },
         };
       }
       if (!body.result) return { success: false, error: { code: 'invalid_response', message: 'Relay returned no tool result' } };
       return body.result;
     } catch (error) {
       if (controller.signal.aborted) {
-        return { success: false, error: { code: 'deadline_exceeded', message: 'Desktop tool call deadline exceeded' } };
+        const sideEffectUnknown = (opts.operationTypes ?? []).some(type => ['create', 'update', 'delete', 'execute'].includes(type));
+        return {
+          success: false,
+          error: {
+            code: 'deadline_exceeded', message: 'Desktop tool call deadline exceeded',
+            details: {
+              tool, deadlineMs, elapsedMs: deadlineMs,
+              ...(sideEffectUnknown ? { sideEffectUnknown: true } : {}),
+              hint: sideEffectUnknown ? `check state before retrying, e.g. github/list_prs for ${ tool }` : 'safe to retry once',
+            },
+          },
+        };
       }
       return {
         success: false,

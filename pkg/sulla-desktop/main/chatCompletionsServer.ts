@@ -27,6 +27,7 @@ import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import { describePortOwner } from '@pkg/utils/portOwner';
 import { ToolRequestArguments } from '@pkg/runtime/toolRequestArguments';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -116,6 +117,7 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
 };
 
 export class ChatCompletionsServer {
+  private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
@@ -412,9 +414,17 @@ export class ChatCompletionsServer {
       const args = req.body?.args ?? {};
       const ctx = req.body?.ctx;
       const deadlineMs = Math.max(1, Math.min(Number(req.body?.deadlineMs ?? 30_000), 60_000));
+      const startedAt = Date.now();
+      let toolName = `${ category }/${ requested }`;
+      let operationTypes: readonly string[] = [];
       try {
         const { toolRegistry } = await import('@pkg/agent/tools/registry');
         const worker = await toolRegistry.createToolForCategory(category, requested);
+        const registeredName = toolRegistry.resolveRegisteredName(category, requested);
+        if (registeredName) {
+          toolName = registeredName;
+          operationTypes = toolRegistry.getOperationTypes(registeredName);
+        }
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
@@ -428,7 +438,15 @@ export class ChatCompletionsServer {
         ]);
         return res.json({ success: true, result });
       } catch (error) {
-        return res.status(500).json({ success: false, error: { code: 'desktop_execution_failed', message: error instanceof Error ? error.message : String(error) } });
+        const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
+        return res.status(timedOut ? 504 : 500).json({
+          success: false,
+          error: {
+            code: timedOut ? 'deadline_exceeded' : 'desktop_execution_failed',
+            message: error instanceof Error ? error.message : String(error),
+            ...(timedOut ? { details: this.toolDeadlinePolicy.timeoutDetails(toolName, deadlineMs, Date.now() - startedAt, operationTypes) } : {}),
+          },
+        });
       }
     });
 

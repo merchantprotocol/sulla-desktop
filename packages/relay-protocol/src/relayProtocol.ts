@@ -55,6 +55,7 @@ export interface RelayToolCallEnvelope extends RelayEnvelopeBase {
   tool?:            string;
   args?:            unknown;
   deadlineAt?:      number;
+  operationTypes?:  string[];
 }
 
 export interface RelayToolResultEnvelope extends RelayEnvelopeBase {
