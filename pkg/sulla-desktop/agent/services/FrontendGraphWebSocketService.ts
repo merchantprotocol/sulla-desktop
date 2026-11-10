@@ -155,12 +155,12 @@ export class FrontendGraphWebSocketService {
       (state.metadata as any).supportSessionId = supportSessionId;
       const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
       (state.metadata as any).allowedToolNames = supportTabTools;
-      (state.metadata as any).conversationContext = typeof metadata?.conversationContext === 'string' ? metadata.conversationContext : '';
+      (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
       (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
     } else if ((state.metadata as any).supportSessionId) {
       delete (state.metadata as any).supportSessionId;
       delete (state.metadata as any).allowedToolNames;
-      delete (state.metadata as any).conversationContext;
+      delete (state.metadata as any).supportContext;
       delete (state as any).llmTools;
     }
 

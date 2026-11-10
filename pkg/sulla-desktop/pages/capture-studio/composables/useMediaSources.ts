@@ -13,7 +13,10 @@
  * Supports source switching via right-click context menus.
  */
 
-import { ref, onUnmounted, type Ref } from 'vue';
+import { ref, inject, type Ref } from 'vue';
+
+import { cameraEffectsKey } from '../effects/CameraEffectsComposition';
+import { CameraStreamService } from '../effects/CameraStreamService';
 
 const { ipcRenderer } = require('electron');
 
@@ -50,6 +53,21 @@ export function useMediaSources() {
   const activeCameraDeviceId = ref('');
   const screenQuality: Ref<QualityPreset> = ref('auto');
   const cameraQuality: Ref<QualityPreset> = ref('720p');
+  const effects = inject(cameraEffectsKey);
+  if (!effects) throw new Error('Capture Studio camera effects composition is missing');
+  const cameraEffectError = ref('');
+  const cameraEffectsRevision = ref(0);
+  const camera = new CameraStreamService(effects, constraints => navigator.mediaDevices.getUserMedia(constraints), stream => {
+    cameraStream.value = stream;
+    if (!stream) { activeCameraName.value = ''; activeCameraDeviceId.value = ''; }
+  }, error => {
+    cameraEffectError.value = 'Camera effects unavailable. Original camera video is being used.';
+    console.warn('[CameraEffects]', error);
+  }, () => {
+    const options = camera.effectOptions;
+    if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
+    cameraEffectsRevision.value++;
+  });
   let rawScreenStream: MediaStream | null = null;
   let cropTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -160,7 +178,7 @@ export function useMediaSources() {
    * Acquire camera capture.
    */
   async function acquireCamera(deviceId?: string): Promise<MediaStream> {
-    releaseCamera();
+    camera.assertMutable();
 
     const videoConstraint: MediaTrackConstraints | boolean =
       deviceId ? { deviceId: { exact: deviceId } } : {};
@@ -180,7 +198,7 @@ export function useMediaSources() {
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await camera.acquire(constraints);
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         throw new Error('Camera permission denied. Please enable camera access in System Preferences.');
@@ -193,21 +211,13 @@ export function useMediaSources() {
       throw new Error('Camera capture returned no video tracks');
     }
 
-    cameraStream.value = stream;
-
-    const track = stream.getVideoTracks()[0];
-    const settings = track?.getSettings();
-    activeCameraDeviceId.value = settings?.deviceId || deviceId || '';
-
-    const devices = await navigator.mediaDevices.enumerateDevices();
+    const raw = camera.rawStream;
+    const track = raw?.getVideoTracks()[0];
+    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    if (camera.rawStream !== raw) return stream;
+    activeCameraDeviceId.value = track?.getSettings().deviceId || deviceId || '';
     const device = devices.find(d => d.deviceId === activeCameraDeviceId.value);
     activeCameraName.value = device?.label || track?.label || 'Camera';
-
-    track?.addEventListener('ended', () => {
-      cameraStream.value = null;
-      activeCameraName.value = '';
-      activeCameraDeviceId.value = '';
-    });
 
     return stream;
   }
@@ -219,14 +229,7 @@ export function useMediaSources() {
     return acquireCamera(deviceId);
   }
 
-  function releaseCamera() {
-    if (cameraStream.value) {
-      cameraStream.value.getTracks().forEach(t => t.stop());
-      cameraStream.value = null;
-      activeCameraName.value = '';
-      activeCameraDeviceId.value = '';
-    }
-  }
+  function releaseCamera(): Promise<void> { return camera.release(); }
 
   /**
    * Change screen quality preset.
@@ -243,10 +246,11 @@ export function useMediaSources() {
    * applyConstraints isn't supported or fails.
    */
   async function setCameraQuality(preset: QualityPreset): Promise<void> {
+    camera.assertMutable();
     cameraQuality.value = preset;
     if (!cameraStream.value) return;
 
-    const track = cameraStream.value.getVideoTracks()[0];
+    const track = camera.rawStream?.getVideoTracks()[0];
     if (!track) return;
 
     if (preset === 'auto') {
@@ -303,12 +307,11 @@ export function useMediaSources() {
       .map(d => ({ deviceId: d.deviceId, label: d.label || `Camera (${ d.deviceId.slice(0, 8) })` }));
   }
 
-  onUnmounted(() => {
-    releaseScreen();
-    releaseCamera();
-  });
+  // Parent owns ordered recorder flush -> screen/camera release on teardown.
 
   return {
+    cameraEffectError, cameraEffectsRevision,
+    camera,
     screenStream,
     cameraStream,
     activeScreenName,

@@ -13,6 +13,7 @@ export interface AgentJobTaskTarget {
   threadId?:      string;
   parentChannel?:  string;
   parentThreadId?: string;
+  label?:          string;
 }
 
 export interface AgentJobMessage {
@@ -33,10 +34,18 @@ export interface AgentJobCheckin {
   createdAt:    number;
 }
 
+export interface AgentJobCheckinReceipt {
+  target:          AgentJobTaskTarget;
+  checkin:         AgentJobCheckin;
+  blockersChanged: boolean;
+}
+
 export interface AgentJobTaskTelemetry {
   latestCheckin: AgentJobCheckin | null;
   checkins:      AgentJobCheckin[];
   undeliveredMessages: number;
+  /** Latest delivery time of any orchestrator message to this task; resolves an earlier blocker. */
+  lastMessageDeliveredAt?: number | null;
 }
 
 export class AgentJobMessagingModel {

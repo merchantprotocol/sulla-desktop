@@ -211,7 +211,9 @@ export class CodexService extends BaseLanguageModel {
       `mkdir -p "$M" "$HOME/.codex"; ` +
       `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
       `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ bridgeEnvExport }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const pluginPolicySetup = `export CODEX_HOME="$HOME/.codex"${ bridgeEnvExport }${ mcpTokenExport }; ` +
+      `codex features disable plugins >/dev/null && codex features disable remote_plugin >/dev/null; `;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }${ pluginPolicySetup }echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
@@ -233,6 +235,23 @@ export class CodexService extends BaseLanguageModel {
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
+  }
+
+  private cleanupGuestCodexPluginTemp(): void {
+    const cleanup = [
+      'if pgrep -x codex >/dev/null 2>&1; then exit 0; fi',
+      'd="$HOME/.codex/.tmp"',
+      '[ ! -d "$d" ] || find "$d" -mindepth 1 -maxdepth 1 \\(',
+      "  -name 'plugins-clone-*' -o -name plugins -o -name 'git-*'",
+      '\\) -exec rm -rf -- {} +',
+    ].join('\n');
+    const janitor = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', cleanup], {
+      env:      { ...process.env, TERM: 'dumb' },
+      stdio:    'ignore',
+      detached: true,
+    });
+    janitor.on('error', error => log.warn(`[CodexService] Codex temp cleanup failed: ${ error.message }`));
+    janitor.unref();
   }
 
   override getContextWindow(): number {
@@ -768,6 +787,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           : {}),
       });
       proc.once('exit', () => instructionsFile.dispose());
+      if (transportContext.runtime === 'guest') {
+        proc.once('close', () => this.cleanupGuestCodexPluginTemp());
+      }
 
       // Feed the prompt through stdin instead of the command line. Guard
       // against EPIPE in case codex exits before we finish.

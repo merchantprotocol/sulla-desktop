@@ -3,133 +3,119 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * The per-turn <subagent_directory> block: every child this thread launched,
- * hidden or tab, with its progress. SubconsciousMiddleware builds it before
- * each turn (a human message or a result wake) for any agent with children.
- *
- * Mechanical read, no LLM call: the job rows for this parent thread, their
- * latest check-ins and the run-activity clock. One line per child, then any
- * result that has not reached the parent yet, then a nudge when an open child
- * has gone quiet.
- */
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import type { AgentFleetProjectionService } from '../app/Services/AgentFleetProjectionService';
+import type { FleetJobView, FleetTaskView } from '../app/Services/AgentFleetTypes';
+import { AgentTeamRollupProjector, type AgentTeamRollup } from '../app/Services/AgentTeamRollupProjector';
 
-import { AgentJobMessagingModel, type AgentJobTaskTelemetry } from '../database/models/AgentJobMessagingModel';
-import { getJobsForParentThread, type AgentJob, type AgentJobTask } from '../tools/agents/jobRegistry';
-import { RunActivity } from './RunActivity';
-
-/** An open child silent this long is flagged as stalled. */
 export const SUBAGENT_STALL_MS = 15 * 60_000;
-/** A delivered, finished child stays listed this long, then drops off. */
 export const SUBAGENT_DONE_TTL_MS = 60 * 60_000;
 export const SUBAGENT_DIRECTORY_MAX_CHARS = 3000;
 
-function ago(ms: number): string {
-  const minutes = Math.max(0, Math.floor(ms / 60_000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${ minutes }m ago`;
-  const hours = Math.floor(minutes / 60);
-  return `${ hours }h ${ minutes % 60 }m ago`;
-}
+interface ChildRow { line: string; stalled: boolean; undelivered: boolean; label: string; output: string; }
 
-function span(ms: number): string {
-  const minutes = Math.max(0, Math.floor(ms / 60_000));
-  if (minutes < 60) return `${ minutes }m`;
-  return `${ Math.floor(minutes / 60) }h ${ minutes % 60 }m`;
-}
+/** Builds the bounded per-turn direct-child directory from one authoritative fleet read. */
+export class SubagentDirectoryBuilder {
+  constructor(
+    private readonly fleet: AgentFleetProjectionService,
+    private readonly rollups: AgentTeamRollupProjector,
+    private readonly now: () => number = Date.now,
+  ) {}
 
-function quote(text: string, max = 80): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return `"${ flat.length > max ? `${ flat.slice(0, max) }…` : flat }"`;
-}
-
-function isOpen(job: AgentJob, task: AgentJobTask): boolean {
-  return (job.status === 'running' || job.status === 'parked') && ['running', 'queued', 'parked'].includes(task.status);
-}
-
-interface ChildRow {
-  line:        string;
-  stalled:     boolean;
-  undelivered: boolean;
-}
-
-function describe(job: AgentJob, task: AgentJobTask, taskIndex: number, telemetry: AgentJobTaskTelemetry | undefined, now: number): ChildRow | null {
-  if (task.dismissed) return null;
-  const finishedAt = task.finishedAt ?? job.finishedAt ?? undefined;
-  const open = isOpen(job, task);
-  // Delivered and finished an hour ago: the parent already has it.
-  if (!open && job.completionDeliveredAt && finishedAt && now - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
-
-  const visibility = task.visibility ?? job.visibility ?? 'hidden';
-  const startedAt = task.startedAt ?? job.createdAt;
-  const checkin = telemetry?.latestCheckin ?? null;
-  const lastActivity = Math.max(
-    RunActivity.lastActivityAt(job.jobId) ?? 0,
-    checkin?.createdAt ?? 0,
-    startedAt,
-  );
-  const stalled = open && now - lastActivity >= SUBAGENT_STALL_MS;
-  const ref = job.tasks.length > 1 ? `${ job.jobId }#${ taskIndex }` : job.jobId;
-
-  const parts = [
-    task.agentId,
-    task.promotedToTab ? 'hidden→tab' : visibility,
-    open
-      ? `${ task.status === 'queued' ? 'queued' : task.status === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : 'running' } ${ span(now - startedAt) }`
-      : `${ task.returnedAt ? 'returned' : task.status } ${ finishedAt ? ago(now - finishedAt) : '' }`.trim(),
-    `contract ${ task.contract?.name ?? 'result' }`,
-  ];
-  if (checkin) {
-    parts.push(`last check-in ${ ago(now - checkin.createdAt) }${ checkin.percent === undefined ? '' : ` ${ checkin.percent }%` } ${ quote(checkin.summary) }`);
-  } else if (open) {
-    parts.push('no check-in yet');
+  async build(parentThreadId: string | undefined): Promise<string> {
+    if (!parentThreadId) return '';
+    const jobs = await this.fleet.list({ scope: 'mine', callerThreadId: parentThreadId, limit: 100, includeFinished: true });
+    if (jobs.length === 0) return '';
+    const teams = this.rollups.project(jobs);
+    const rows = jobs.filter(job => job.parentJobId === null).flatMap(job => job.tasks.map(task => this.describe(job, task, teams.get(this.rollups.key(job.jobId, task.taskIndex)))).filter((row): row is ChildRow => !!row));
+    if (rows.length === 0) return '';
+    const out = ['## Your subagents', 'Direct children launched from this conversation (hidden and tab), with descendant teams rolled up. Control them with agents/check_agent_jobs, agents/send_job_message, agents/stop_agent_job.'];
+    this.appendBounded(out, rows.map(row => row.line), count => `- … ${ count } more: \`sulla agents/check_agent_jobs\``);
+    const pending = rows.filter(row => row.undelivered).map(row => `- ${ row.label }: ${ this.quote(String(row.output ?? ''), 160) }`);
+    if (pending.length) this.appendSection(out, ['### Results not yet processed', 'These returned but have not reached you as a wake yet. Use them now:'], pending, count => `- … ${ count } more unprocessed result${ count === 1 ? '' : 's' }`);
+    const stalled = rows.filter(row => row.stalled).length;
+    if (stalled) this.appendSection(out, [], [`⚠ ${ stalled } open child${ stalled === 1 ? ' looks' : 'ren look' } stalled (no activity for 15+ min). Check it, message it, or stop and relaunch it this turn.`]);
+    return out.join('\n');
   }
-  if (checkin?.blockers.length) parts.push(`blockers: ${ quote(checkin.blockers.join('; ')) }`);
-  if (stalled) parts.push(`⚠ stalled (quiet ${ span(now - lastActivity) })`);
-  parts.push(`job ${ ref }`);
 
-  const undelivered = !open && job.status === 'completed' && !job.completionDeliveredAt;
-  return { line: `- ${ parts.join(' · ') }`, stalled, undelivered };
-}
-
-/** The block body for a parent thread, or '' when it has no listed children. */
-export async function buildSubagentDirectoryContext(parentThreadId: string | undefined, now = Date.now()): Promise<string> {
-  if (!parentThreadId) return '';
-  const jobs = await getJobsForParentThread(parentThreadId);
-  if (jobs.length === 0) return '';
-
-  const rows: ChildRow[] = [];
-  const pending: string[] = [];
-  for (const job of jobs) {
-    const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId).catch(() => ({} as Record<number, AgentJobTaskTelemetry>));
-    job.tasks.forEach((task, index) => {
-      const row = describe(job, task, index, telemetry[index], now);
-      if (!row) return;
-      rows.push(row);
-      if (row.undelivered) pending.push(`- ${ task.label || task.agentId } (job ${ job.jobId }): ${ quote(job.results[index]?.output ?? task.summary ?? '', 160) }`);
-    });
+  private describe(job: FleetJobView, task: FleetTaskView, team?: AgentTeamRollup): ChildRow | null {
+    const finishedAt = task.finishedAt ? Date.parse(task.finishedAt) : job.finishedAt ? Date.parse(job.finishedAt) : undefined;
+    const open = ['working', 'quiet', 'queued', 'parked', 'blocked'].includes(task.state);
+    if (!open && task.completionDeliveredAt && finishedAt && this.now() - finishedAt > SUBAGENT_DONE_TTL_MS) return null;
+    const lastActivity = Date.parse(task.lastActivityAt); const stalled = open && this.now() - lastActivity >= SUBAGENT_STALL_MS;
+    const visibility = task.promotedToTab ? 'hidden→tab' : String(task.visibility ?? 'hidden');
+    const descendants = task.descendantsRunning ?? 0;
+    const descendantLabel = `${ descendants } running descendant${ descendants === 1 ? '' : 's' }`;
+    const openState = task.state === 'parked' ? `parked, waiting on ${ job.waitingOnChildren ?? 0 } children` : task.state;
+    const parts = [task.agentId, visibility, open ? `${ openState } ${ this.span(this.now() - Date.parse(task.startedAt)) }` : `${ task.returned ? 'returned' : task.status }`, `contract ${ String(task.contract ?? 'result') }`];
+    if (task.latestCheckin) parts.push(`last check-in ${ this.ago(this.now() - Date.parse(task.latestCheckin.time)) } ${ this.quote(task.latestCheckin.summary) }`);
+    else if (open) parts.push('no check-in yet');
+    if (task.state === 'blocked' && task.latestCheckin?.blockers.length) parts.push(`blockers: ${ this.quote(task.latestCheckin.blockers.join('; ')) }`);
+    if (open && descendants > 0) parts.push(task.state === 'parked' ? `${ descendantLabel } beneath them` : descendantLabel);
+    if (team) parts.push(this.team(team));
+    if (task.openReviewItems?.length) parts.push(`review open: ${ task.openReviewItems.map(item => item.id).join(', ') }`);
+    if (task.stranded) parts.push(`⚠ stranded: ${ this.quote(task.stranded.reason) }`);
+    if (stalled) parts.push(`⚠ stalled (${ task.state } ${ this.span(this.now() - lastActivity) })`);
+    parts.push(`job ${ job.tasks.length > 1 ? `${ job.jobId }#${ task.taskIndex }` : job.jobId }`);
+    return { line: `- ${ parts.join(' · ') }`, stalled, undelivered: !open && (task.returned || !!task.completion) && !task.completionDeliveredAt, label: task.label || task.agentId, output: this.resultText(task.completion ?? task.result) };
   }
-  if (rows.length === 0) return '';
 
-  const out = [
-    '## Your subagents',
-    'Children launched from this conversation (hidden and tab). Control them with agents/check_agent_jobs, agents/send_job_message, agents/stop_agent_job.',
-  ];
-  let size = out.join('\n').length;
-  for (const [index, row] of rows.entries()) {
-    if (size + row.line.length + 1 > SUBAGENT_DIRECTORY_MAX_CHARS) {
-      out.push(`- …${ rows.length - index } more: \`sulla agents/check_agent_jobs\``);
+  private resultText(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value && typeof value === 'object') {
+      const completion = value as { output?: unknown; result?: unknown; summary?: unknown };
+      for (const candidate of [completion.output, completion.result, completion.summary]) {
+        if (typeof candidate === 'string') return candidate;
+        if (candidate !== undefined) return this.stringify(candidate);
+      }
+    }
+    return this.stringify(value);
+  }
+
+  private stringify(value: unknown): string {
+    if (value === undefined || value === null) return '';
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+
+  private appendSection(out: string[], heading: string[], lines: string[], omitted?: (count: number) => string): void {
+    const prefix = ['', ...heading];
+    const firstContent = lines[0];
+    const fallback = omitted?.(lines.length);
+    if (this.length(out, [...prefix, ...(firstContent ? [firstContent] : []), ...(lines.length > 1 && fallback ? [fallback] : [])]) > SUBAGENT_DIRECTORY_MAX_CHARS &&
+        (!fallback || this.length(out, [...prefix, fallback]) > SUBAGENT_DIRECTORY_MAX_CHARS)) return;
+    out.push(...prefix);
+    this.appendBounded(out, lines, omitted);
+  }
+
+  private appendBounded(out: string[], lines: string[], omitted?: (count: number) => string): void {
+    for (let index = 0; index < lines.length; index++) {
+      const remaining = lines.length - index - 1;
+      const marker = remaining > 0 && omitted ? omitted(remaining) : undefined;
+      if (this.length(out, [lines[index], ...(marker ? [marker] : [])]) <= SUBAGENT_DIRECTORY_MAX_CHARS) {
+        out.push(lines[index]);
+        continue;
+      }
+      const allRemaining = lines.length - index;
+      const finalMarker = omitted?.(allRemaining);
+      if (finalMarker && this.length(out, [finalMarker]) <= SUBAGENT_DIRECTORY_MAX_CHARS) out.push(finalMarker);
       break;
     }
-    out.push(row.line);
-    size += row.line.length + 1;
   }
-  if (pending.length) {
-    out.push('', '### Results not yet processed', 'These returned but have not reached you as a wake yet. Use them now:', ...pending);
+
+  private length(out: string[], extra: string[]): number { return [...out, ...extra].join('\n').length; }
+
+  private team(team: AgentTeamRollup): string {
+    const states = Object.entries(team.states).sort(([a], [b]) => a.localeCompare(b)).map(([state, count]) => `${ state }=${ count }`).join(' ');
+    const quiet = team.oldestQuietAgeMs === null ? '' : ` · oldest quiet ${ this.span(team.oldestQuietAgeMs) }`;
+    return `team workers ${ states }${ quiet } · blockers ${ team.openBlockers } · unprocessed ${ team.unprocessedResults }`;
   }
-  const stalled = rows.filter(row => row.stalled).length;
-  if (stalled) {
-    out.push('', `⚠ ${ stalled } open child${ stalled === 1 ? ' looks' : 'ren look' } stalled (no activity for 15+ min). Check it, message it, or stop and relaunch it this turn.`);
-  }
-  return out.join('\n');
+
+  private ago(ms: number): string { return ms < 60_000 ? 'just now' : `${ this.span(ms) } ago`; }
+  private span(ms: number): string { const minutes = Math.max(0, Math.floor(ms / 60_000)); return minutes < 60 ? `${ minutes }m` : `${ Math.floor(minutes / 60) }h ${ minutes % 60 }m`; }
+  private quote(text: string, max = 80): string { const flat = text.replace(/\s+/g, ' ').trim(); return `"${ flat.length > max ? `${ flat.slice(0, max) }…` : flat }"`; }
+}
+
+/** Compatibility entry point used by SubconsciousMiddleware. */
+export async function buildSubagentDirectoryContext(parentThreadId: string | undefined, now = Date.now()): Promise<string> {
+  return new SubagentDirectoryBuilder(agentJobProvider.fleet, new AgentTeamRollupProjector(() => now), () => now).build(parentThreadId);
 }

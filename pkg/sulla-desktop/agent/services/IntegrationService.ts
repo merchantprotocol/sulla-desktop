@@ -473,7 +473,10 @@ export class IntegrationService {
   /** Check if ANY account for this integration is connected */
   async isAnyAccountConnected(integrationId: string): Promise<boolean> {
     if (usesContainerVaultAuthority()) {
-      return (await this.getAccounts(integrationId)).some(account => account.connected);
+      // Execution must distinguish an unavailable vault from a disconnected account.
+      // getAccounts() is a settings helper that deliberately swallows metadata errors.
+      const metadata = await this.getLocalMetadata(integrationId);
+      return metadata.accounts.some(account => account.connected);
     }
     return IntegrationValueModel.existsWithPropertyValue(integrationId, 'connection_status', 'true');
   }

@@ -54,6 +54,7 @@ export interface ProviderInfo {
   id:        string;
   name:      string;
   connected: boolean;
+  connectionStatus?: 'unknown';
 }
 
 export interface ProviderModelInfo {
@@ -193,9 +194,11 @@ class ModelProviderService {
     // Vault-metadata lookups run in parallel so opening the window is fast.
     const results = await Promise.allSettled(candidates.map(async(integration) => {
       let connected = false;
+      let connectionStatus: 'unknown' | undefined;
       try {
         connected = hasPendingCredential(integration.id) || await integrationService.isAnyAccountConnected(integration.id);
       } catch (err) {
+        connectionStatus = 'unknown';
         console.warn(`[ModelProviderService] connection check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
       }
       // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
@@ -208,7 +211,7 @@ class ModelProviderService {
         }
       }
 
-      return { id: integration.id, name: integration.name, connected } as ProviderInfo;
+      return { id: integration.id, name: integration.name, connected, ...(connectionStatus ? { connectionStatus } : {}) } as ProviderInfo;
     }));
     results.forEach((r, i) => {
       providers.push(r.status === 'fulfilled' ? r.value : { id: candidates[i].id, name: candidates[i].name, connected: false });

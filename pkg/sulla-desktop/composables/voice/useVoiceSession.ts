@@ -211,13 +211,11 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   // ── VAD event handler (audio level meter + barge-in) ──
 
   const bargeInDetector = createVoiceBargeInDetector();
-
   const onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!isRecording.value) return;
+    if (data.speaking) turnAccumulator.speechStarted();
     audioLevel.value = Math.round(Math.min(100, data.level * 100));
 
-    // Barge-in: sustained user speech while Sulla is speaking stops TTS.
-    // The grace period keeps brief noises from interrupting playback.
     if (bargeInDetector.update(data.speaking, isTTSPlaying.value)) {
       logBargeIn();
       ttsPlayer.stop();

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { workflowTerminalResult } from '../services/WorkflowTerminalResult';
+import { AgentJobLivenessPolicy } from '../services/AgentJobLivenessPolicy';
 /**
  * PlaybookController — workflow/playbook orchestration extracted from Graph.ts.
  *
@@ -234,7 +235,7 @@ export class PlaybookController<TState = any> {
     return active?.status === 'running' && active.executionId === executionId;
   }
 
-  constructor(graph: PlaybookGraphInterface<TState>) {
+  constructor(graph: PlaybookGraphInterface<TState>, private readonly agentJobLivenessPolicy = new AgentJobLivenessPolicy()) {
     this.graph = graph;
   }
 
@@ -1523,6 +1524,7 @@ export class PlaybookController<TState = any> {
           // at all — only references (integrationId, accountId, property).
           // The runtime fetches plaintexts just-in-time via /secrets/fetch.
           let mintedToken: string | null = null;
+          let browserInvocation: import('@pkg/agent/services/FunctionBrowserInvocation').FunctionBrowserInvocation | null = null;
           let materializedFunctionDir: string | null = null;
           let materializedRuntimePath: string | null = null;
           let functionRuntimeBaseUrl: string | null = null;
@@ -1710,6 +1712,10 @@ export class PlaybookController<TState = any> {
             }
 
             const timeoutMs = parseTimeoutMs(step.timeoutOverride);
+            const { FunctionBrowserInvocation } = await import('@pkg/agent/services/FunctionBrowserInvocation');
+            const { functionBrowserCompositionRoot } = await import('@pkg/agent/services/FunctionBrowserCompositionRoot');
+            browserInvocation = new FunctionBrowserInvocation(invocationId, manifest, timeoutMs, functionBrowserCompositionRoot.capabilities);
+            const browserEnv = await browserInvocation.environment();
             const ac = new AbortController();
             const timer = setTimeout(() => ac.abort(), timeoutMs);
 
@@ -1745,6 +1751,7 @@ export class PlaybookController<TState = any> {
                   inputs:         step.inputs,
                   secretsToken,
                   secretsHostUrl,
+                  ...(Object.keys(browserEnv).length > 0 ? { env: browserEnv } : {}),
                 }),
                 signal: ac.signal,
               });
@@ -1816,6 +1823,10 @@ export class PlaybookController<TState = any> {
             this.injectWorkflowMessage(state, errorMsg);
             state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
           } finally {
+            if (browserInvocation) {
+              try { await browserInvocation.close() } catch { /* expiry sweep is the fallback */ }
+              browserInvocation = null;
+            }
             // Always invalidate the capability token — whether invoke
             // succeeded, failed, or threw — so it can't be replayed.
             if (mintedToken) {
@@ -2508,6 +2519,15 @@ export class PlaybookController<TState = any> {
           // Bump budget exhausted — the agent had multiple chances to
           // respond and didn't. Now it's a real stall, fail the sub.
           if (unansweredBumps >= SUB_AGENT_MAX_BUMPS) {
+            const createdAt = Number(subState.metadata.agentJobCreatedAt) || startedAt;
+            if (!this.agentJobLivenessPolicy.isStalled({
+              createdAt,
+              startedAt: createdAt,
+              lastActivityAt: lastActivity,
+              hasCheckin: Boolean(subState.metadata.lastCheckinAt),
+              now,
+              stallMs: SUB_AGENT_INACTIVITY_MS * (SUB_AGENT_MAX_BUMPS + 1),
+            })) return;
             reject(new Error(
               `"${ label }" ignored ${ SUB_AGENT_MAX_BUMPS } activity bumps — truly stalled`,
             ));

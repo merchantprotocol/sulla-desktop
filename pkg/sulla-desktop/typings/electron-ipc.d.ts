@@ -43,6 +43,16 @@ export interface MarketplaceBrowseRow {
   kind_label?:          string;
   desktop_only?:        boolean;
   summary?:             Record<string, unknown> | null;
+  // Optional listing facets from the browse API. Missing = no data; never invented.
+  price_cents?:             number | null;
+  currency?:                string | null;
+  video_url?:               string | null;
+  video_duration_seconds?:  number | null;
+  poster_url?:              string | null;
+  photos?:                  string[];
+  requires_apps?:           string[];
+  approval_mode?:           'drafts_only' | 'acts' | null;
+  topic?:                   string | null;
 }
 
 export interface SullaFileReference {
@@ -431,13 +441,13 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
   'sulla-cloud-chat:unlink': (linkId: string, deleteCloudCopy: boolean) => void;
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
-  'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
+  'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
   'sulla-cloud-memory:list-pending':          () => Array<{ id: string; generation: number | string; record: Record<string, unknown>; source_device_id: string }>;
   'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
-  'sulla-cloud-connection:sync-now':          (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
-  'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
+  'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
+  'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -498,6 +508,7 @@ export interface IpcMainInvokeEvents {
   'audio-driver:stop-mic':                 (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
   'audio-driver:start-speaker':            (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
   'audio-driver:stop-speaker':             (serviceId?: string) => { ok: boolean; micRunning: boolean; speakerRunning: boolean; running: boolean };
+  'audio-driver:get-speaker-socket-path':  () => string | null;
   'audio-driver:transcribe-start':         (opts: { mode: 'conversation' | 'secretary'; language?: string; model?: string; profileId?: string; sessionId?: string; manualTurn?: boolean }) => { ok: boolean; provider: 'whisper' | 'grok' };
   'audio-driver:transcribe-stop':          () => { ok: boolean };
   'secretary-mode:save-notes':             (payload: { fileName: string; markdown: string; path?: string | null }) => { ok: boolean; path?: string; error?: string };
@@ -647,8 +658,9 @@ export interface IpcMainInvokeEvents {
   'git-show-staged':               (dirPath: string, file: string) => string;
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
-  'agents:message-job':            (jobId: string, taskIndex: number, message: string) => { ok: boolean; error?: string };
-  'agents:stop-job':               (jobId: string) => { ok: boolean; error?: string };
+  'agents:state-snapshot':         () => import('@pkg/shared/agentState/AgentStateSnapshot').AgentStateSnapshot;
+  'agents:message-job':            (jobId: string, taskIndex: number, message: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
+  'agents:stop-job':               (jobId: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];

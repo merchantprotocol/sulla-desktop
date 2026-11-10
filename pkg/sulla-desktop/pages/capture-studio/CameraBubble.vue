@@ -16,7 +16,7 @@
       :class="{ recording, hidden: cameraShape === 'hidden' }"
       :style="{ borderRadius: bubbleRadius }"
       @dblclick="$emit('swap')"
-      @contextmenu.prevent="$emit('show-camera-menu', $event)"
+      @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
     >
       <video
         ref="camVideoEl"
@@ -72,6 +72,7 @@ defineEmits<{
   (e: 'update:cameraShape', shape: string): void;
   (e: 'swap'): void;
   (e: 'show-camera-menu', event: MouseEvent): void;
+  (e: 'show-screen-menu', event: MouseEvent): void;
 }>();
 
 const shapes = [

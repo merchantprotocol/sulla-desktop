@@ -6,11 +6,11 @@ import * as crypto from 'crypto';
 import { Repository } from '@sulla/foundation';
 
 import { AgentJobMessage as AgentJobMessageModel } from '../Models/AgentJobMessage';
-import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
+import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
-  private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined }; }
+  private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined }; }
   private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
   private rowToCheckin(row: any): AgentJobCheckin { return { step: row.step, summary: row.summary, filesTouched: Array.isArray(row.files_touched) ? row.files_touched : [], blockers: Array.isArray(row.blockers) ? row.blockers : [], percent: row.percent == null ? undefined : Number(row.percent), createdAt: new Date(row.created_at).getTime() }; }
 
@@ -19,7 +19,8 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id,
               task.ordinality - 1 AS task_index,
               task.value->>'status' AS task_status,
-              task.value->>'threadId' AS thread_id
+              task.value->>'threadId' AS thread_id,
+              task.value->>'label' AS label
          FROM agent_jobs j
          CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
         WHERE task.value->>'threadId' = $1
@@ -35,7 +36,8 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id,
               task.ordinality - 1 AS task_index,
               task.value->>'status' AS task_status,
-              task.value->>'threadId' AS thread_id
+              task.value->>'threadId' AS thread_id,
+              task.value->>'label' AS label
          FROM agent_jobs j
          CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
         WHERE j.job_id = $1
@@ -94,7 +96,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     filesTouched?: string[];
     blockers?: string[];
     percent?: number;
-  }): Promise<{ target: AgentJobTaskTarget; checkin: AgentJobCheckin } | null> {
+  }): Promise<AgentJobCheckinReceipt | null> {
     const target = await this.taskForThread(threadId);
     // A parked manager's job row only flips back to 'running' when its own
     // run settles (completeJob) — it never un-parks mid-wake. Rejecting
@@ -104,10 +106,21 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     if (!target || !['running', 'parked'].includes(target.jobStatus) || !['queued', 'running', 'parked'].includes(target.taskStatus)) return null;
 
     const rows = await this.connection.select<any>(
-      `INSERT INTO agent_job_checkins
+      `WITH previous AS (
+         SELECT blockers
+           FROM agent_job_checkins
+          WHERE job_id = $1 AND task_index = $2
+          ORDER BY created_at DESC
+          LIMIT 1
+       ), inserted AS (
+         INSERT INTO agent_job_checkins
          (job_id, task_index, step, summary, files_touched, blockers, percent)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
-       RETURNING *`,
+       RETURNING *
+       )
+       SELECT inserted.*,
+              NOT EXISTS (SELECT 1 FROM previous WHERE previous.blockers = inserted.blockers) AS blockers_changed
+         FROM inserted`,
       [
         target.jobId,
         target.taskIndex,
@@ -119,7 +132,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       ],
     );
 
-    return { target, checkin: this.rowToCheckin(rows[0]) };
+    return { target, checkin: this.rowToCheckin(rows[0]), blockersChanged: Boolean(rows[0].blockers_changed) };
   }
 
   async telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>> {
@@ -131,9 +144,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobId],
       ),
       this.connection.select<any>(
-        `SELECT task_index, count(*)::int AS count
+        `SELECT task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = $1 AND delivered_at IS NULL
+          WHERE job_id = $1
           GROUP BY task_index`,
         [jobId],
       ),
@@ -143,6 +158,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       latestCheckin: null,
       checkins: [],
       undeliveredMessages: 0,
+      lastMessageDeliveredAt: null,
     };
 
     for (const row of checkinRows ?? []) {
@@ -151,7 +167,9 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       entry.latestCheckin ??= this.rowToCheckin(row);
     }
     for (const row of messageRows ?? []) {
-      ensure(Number(row.task_index)).undeliveredMessages = Number(row.count);
+      const entry = ensure(Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
     }
 
     return telemetry;
@@ -169,9 +187,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         [jobIds as unknown as string],
       ),
       this.connection.select<any>(
-        `SELECT job_id, task_index, count(*)::int AS count
+        `SELECT job_id, task_index,
+                count(*) FILTER (WHERE delivered_at IS NULL)::int AS count,
+                max(delivered_at) AS last_delivered_at
            FROM agent_job_messages
-          WHERE job_id = ANY($1::text[]) AND delivered_at IS NULL
+          WHERE job_id = ANY($1::text[])
           GROUP BY job_id, task_index`,
         [jobIds as unknown as string],
       ),
@@ -179,10 +199,14 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     const result: Record<string, Record<number, AgentJobTaskTelemetry>> = {};
     const ensure = (jobId: string, index: number) => {
       result[jobId] ??= {};
-      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0 };
+      return result[jobId][index] ??= { latestCheckin: null, checkins: [], undeliveredMessages: 0, lastMessageDeliveredAt: null };
     };
     for (const row of checkinRows ?? []) ensure(row.job_id, Number(row.task_index)).latestCheckin = this.rowToCheckin(row);
-    for (const row of messageRows ?? []) ensure(row.job_id, Number(row.task_index)).undeliveredMessages = Number(row.count);
+    for (const row of messageRows ?? []) {
+      const entry = ensure(row.job_id, Number(row.task_index));
+      entry.undeliveredMessages = Number(row.count);
+      entry.lastMessageDeliveredAt = row.last_delivered_at ? new Date(row.last_delivered_at).getTime() : null;
+    }
     return result;
   }
 }

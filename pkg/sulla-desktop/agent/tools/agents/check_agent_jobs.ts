@@ -3,143 +3,49 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AgentJobMessagingModel, type AgentJobCheckin, type AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import { BaseTool, ToolResponse } from '../base';
-import { getJob, getJobsForList } from './jobRegistry';
-
-import type { AgentJob } from './jobRegistry';
-
-function elapsedSince(startedAt: number | undefined, fallback: number, finishedAt?: number): string {
-  const start = startedAt ?? fallback;
-  const end = finishedAt ?? Date.now();
-
-  return `${ Math.max(0, Math.round((end - start) / 1000)) }s`;
-}
-
-function serializeCheckin(checkin: AgentJobCheckin | null): Record<string, unknown> | null {
-  if (!checkin) return null;
-
-  return {
-    step:         checkin.step,
-    summary:      checkin.summary,
-    files:        checkin.filesTouched,
-    blockers:     checkin.blockers,
-    percent:      checkin.percent,
-    time:         new Date(checkin.createdAt).toISOString(),
-  };
-}
-
-export function jobTaskViews(job: AgentJob, telemetry: Record<number, AgentJobTaskTelemetry>): Array<Record<string, unknown>> {
-  return job.tasks.map((task, taskIndex) => {
-    const activity = telemetry[taskIndex] ?? {
-      latestCheckin: null,
-      checkins: [],
-      undeliveredMessages: 0,
-    };
-
-    return {
-      taskIndex,
-      agentId: task.agentId,
-      label: task.label,
-      taskId: task.taskId,
-      status: task.status,
-      visibility: task.visibility ?? job.visibility ?? 'hidden',
-      contract: task.contract?.name ?? 'result',
-      returned: !!task.returnedAt,
-      elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
-      threadId: task.threadId,
-      latestCheckin: serializeCheckin(activity.latestCheckin),
-      undeliveredOrchestratorMessages: activity.undeliveredMessages,
-      checkins: activity.checkins.map(serializeCheckin),
-    };
-  });
-}
-
-async function serializeJob(job: AgentJob): Promise<Record<string, unknown>> {
-  const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
-
-  return {
-    jobId: job.jobId,
-    status: job.status,
-    waitingOnChildren: job.waitingOnChildren ?? 0,
-    taskCount: job.taskCount,
-    elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
-    error: job.error,
-    tasks: jobTaskViews(job, telemetry),
-    results: job.results,
-  };
-}
-
-function compactCheckin(checkin: AgentJobCheckin | null): Record<string, unknown> | null {
-  if (!checkin) return null;
-  return {
-    step: checkin.step,
-    summary: checkin.summary.slice(0, 240),
-    time: new Date(checkin.createdAt).toISOString(),
-  };
-}
-
-function serializeJobListItem(job: AgentJob, telemetry: Record<number, AgentJobTaskTelemetry>): Record<string, unknown> {
-  return {
-    jobId: job.jobId,
-    status: job.status,
-    waitingOnChildren: job.waitingOnChildren ?? 0,
-    taskCount: job.taskCount,
-    elapsed: elapsedSince(job.createdAt, job.createdAt, job.finishedAt ?? undefined),
-    tasks: job.tasks.map((task, taskIndex) => ({
-      taskIndex,
-      agentId: task.agentId,
-      label: task.label,
-      taskId: task.taskId,
-      status: task.status,
-      visibility: task.visibility ?? job.visibility ?? 'hidden',
-      contract: task.contract?.name ?? 'result',
-      returned: !!task.returnedAt,
-      elapsed: elapsedSince(task.startedAt, job.createdAt, task.finishedAt),
-      latestCheckin: compactCheckin(telemetry[taskIndex]?.latestCheckin ?? null),
-      undeliveredOrchestratorMessages: telemetry[taskIndex]?.undeliveredMessages ?? 0,
-    })),
-  };
-}
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import type { AgentFleetProjectionService } from '../../app/Services/AgentFleetProjectionService';
+import { AgentFleetTreeFormatter } from '../../app/Formatters/AgentFleetTreeFormatter';
+import { PullRequestReferenceExtractor } from '../../app/Formatters/PullRequestReferenceExtractor';
 
 export class CheckAgentJobsWorker extends BaseTool {
   name = '';
   description = '';
 
-  protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { jobId, includeFinished = true } = input;
-    const limit = Math.min(100, Math.max(1, Math.trunc(Number(input.limit)) || 25));
+  constructor(
+    private readonly fleet: AgentFleetProjectionService = agentJobProvider.fleet,
+    private readonly tree = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor()),
+  ) { super(); }
 
+  protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const jobId = String(input.jobId ?? '').trim();
     if (jobId) {
-      const job = await getJob(jobId);
+      // Explicit history lookup remains global for backwards compatibility.
+      const job = await this.fleet.job(jobId);
       if (!job) {
         return {
           successBoolean: false,
           responseString: `Job "${ jobId }" not found. It may not exist or may have been explicitly pruned after the retention period.`,
         };
       }
-
-      const result = await serializeJob(job);
+      const results = Array.isArray(job.results) ? job.results as Array<{ status?: string }> : [];
       return {
-        successBoolean: job.status === 'running' || (job.status === 'completed' && job.results.every(result => result.status === 'completed')),
-        responseString: JSON.stringify(result, null, 2),
+        successBoolean: ['running', 'parked'].includes(String(job.status)) || (job.status === 'completed' && results.every(result => result.status === 'completed')),
+        responseString: JSON.stringify(job, null, 2),
       };
     }
 
-    const allJobs = await getJobsForList(limit, includeFinished !== false);
-    if (allJobs.length === 0) {
-      return {
-        successBoolean: true,
-        responseString: 'No active or recent async agent jobs.',
-      };
-    }
-
-    const telemetry = await AgentJobMessagingModel.latestTelemetryForJobs(allJobs.map(job => job.jobId));
-    const jobs = allJobs.map(job => serializeJobListItem(job, telemetry[job.jobId] ?? {}));
-
-    return {
-      successBoolean: true,
-      responseString: JSON.stringify({ count: jobs.length, jobs }, null, 2),
-    };
+    const scope = input.scope === 'all' ? 'all' : 'mine';
+    const callerThreadId = String((this.state as any)?.metadata?.threadId ?? '').trim() || undefined;
+    const jobs = await this.fleet.list({
+      scope,
+      callerThreadId,
+      limit: Math.min(100, Math.max(1, Math.trunc(Number(input.limit)) || 25)),
+      includeFinished: input.includeFinished !== false,
+    });
+    if (jobs.length === 0) return { successBoolean: true, responseString: 'No active or recent async agent jobs.' };
+    if (input.view === 'tree') return { successBoolean: true, responseString: JSON.stringify(this.tree.format(jobs), null, 2) };
+    return { successBoolean: true, responseString: JSON.stringify({ count: jobs.length, jobs }, null, 2) };
   }
 }

@@ -33,13 +33,13 @@ permissions:
   packages: write
 jobs:
   image:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -58,13 +58,15 @@ jobs:
         with:
           context: .
           file: services/sulla-tools/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: Write immutable base image metadata
+        if: github.event_name != 'pull_request'
         run: node scripts/contracts/write-base-image-metadata.mjs ghcr.io/merchantprotocol/sulla-tools ${{ steps.build.outputs.digest }} ${{ github.sha }} sulla-tools-base-image.json
       - name: Upload immutable base image metadata
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: sulla-tools-base-image-${{ github.sha }}

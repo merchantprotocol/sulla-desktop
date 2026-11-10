@@ -33,6 +33,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
 import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
+import { MarketplaceBrowseRowMapper, type MarketplaceListingFacets } from '@pkg/main/marketplace/MarketplaceBrowseRowMapper';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 import Logging from '@pkg/utils/logging';
 import type { MarketplaceKind } from '@pkg/composables/marketplaceKinds';
@@ -69,6 +70,15 @@ export interface MarketplaceTemplateDetail {
   created_at:           string;
   updated_at:           string;
   manifest:             Record<string, unknown>;
+  price_cents?:            number | null;
+  currency?:               string | null;
+  video_url?:              string | null;
+  video_duration_seconds?: number | null;
+  poster_url?:             string | null;
+  photos?:                 string[];
+  requires_apps?:          string[];
+  approval_mode?:          'drafts_only' | 'acts' | null;
+  topic?:                  string | null;
 }
 
 export interface SubmitManifestResult {
@@ -202,7 +212,7 @@ export interface BrowseOptions {
   limit?:    number;
 }
 
-export interface BrowseRow extends Omit<MarketplaceTemplateDetail, 'manifest'> {
+export interface BrowseRow extends Omit<MarketplaceTemplateDetail, 'manifest'>, MarketplaceListingFacets {
   tagline?:    string | null;
   category?:   string | null;
   featured?:   boolean;
@@ -244,7 +254,10 @@ export async function publicFetch(pathAndQuery: string): Promise<Response> {
   return fetch(`${ API_BASE }${ pathAndQuery }`, { headers: await optionalAuthHeaders() });
 }
 
-export async function browseTemplates(opts: BrowseOptions = {}): Promise<BrowsePage> {
+export async function browseTemplates(
+  opts: BrowseOptions = {},
+  mapper: MarketplaceBrowseRowMapper = new MarketplaceBrowseRowMapper(),
+): Promise<BrowsePage> {
   const qs = new URLSearchParams();
   if (opts.kind) qs.set('kind', opts.kind);
   if (opts.kinds?.length) qs.set('kinds', opts.kinds.join(','));
@@ -256,7 +269,9 @@ export async function browseTemplates(opts: BrowseOptions = {}): Promise<BrowseP
   const query = qs.toString();
   const res = await publicFetch(`/marketplace/browse${ query ? `?${ query }` : '' }`);
 
-  return readJsonOrThrow<BrowsePage>(res, 'browseTemplates');
+  const page = await readJsonOrThrow<BrowsePage>(res, 'browseTemplates');
+
+  return { ...page, templates: page.templates.map(row => mapper.map(row)) };
 }
 
 export async function fetchMarketplaceTopics(): Promise<MarketplaceTopic[]> {
@@ -270,7 +285,7 @@ export async function fetchPublicTemplate(templateId: string): Promise<Marketpla
   const res = await publicFetch(`/marketplace/templates/${ encodeURIComponent(templateId) }`);
   const body = await readJsonOrThrow<{ template: MarketplaceTemplateDetail }>(res, 'fetchPublicTemplate');
 
-  return body.template;
+  return new MarketplaceBrowseRowMapper().map(body.template) as MarketplaceTemplateDetail;
 }
 
 /**
@@ -303,7 +318,7 @@ export async function fetchTemplateDetail(
     'fetchTemplateDetail',
   );
 
-  return body.template;
+  return new MarketplaceBrowseRowMapper().map(body.template) as MarketplaceTemplateDetail;
 }
 
 /**

@@ -33,9 +33,12 @@ import type { AgentContractSpec } from './contract';
 
 export type AgentJobVisibility = 'hidden' | 'tab';
 
+export const AGENT_JOB_TASK_STATUSES = ['queued', 'running', 'parked', 'lost', 'completed', 'blocked', 'error', 'stopped'] as const;
+export type AgentJobTaskStatus = typeof AGENT_JOB_TASK_STATUSES[number];
+
 export interface AgentJobResult {
   label:    string;
-  status:   'completed' | 'blocked' | 'error';
+  status:   'completed' | 'blocked' | 'error' | 'stopped';
   output:   string;
   threadId: string;
   /** Contract name and the structured value the child returned, if it did. */
@@ -58,11 +61,12 @@ export interface AgentJobTask {
   provider?: string;
   model?: string;
   runLocation?: 'vm' | 'container';
+  workspacePath?: string;
   /** Restart recovery attempts already consumed. */
   restartResumeCount?: number;
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
-  status:     'queued' | 'running' | 'parked' | 'completed' | 'blocked' | 'error' | 'stopped';
+  status:     AgentJobTaskStatus;
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;
@@ -81,6 +85,32 @@ export interface AgentJobTask {
   completionDeliveredAt?: number;
   /** A hidden child the human opened as a chat tab mid-run. */
   promotedToTab?: boolean;
+  /** The visibility the caller asked for when it was downgraded (never silent). */
+  requestedVisibility?: 'tab';
+  /** Why a requested tab ran hidden instead (see TabVisibilityResolver). */
+  downgradeReason?: string;
+  stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+  stopReason?: string;
+  /** Durable leaf-worker wait details while status is parked. */
+  waitReason?: string;
+  /** Consecutive delegated wake turns that produced no assistant output. */
+  emptyWakeCount?: number;
+  wakeAt?: number;
+  /** Monotonic execution generation; legacy tasks are generation 1. */
+  generation?: number;
+  /** Number of manager-requested reopen claims. */
+  reopenCount?: number;
+  /** Opaque ownership token while a reopened generation is active. */
+  reopenLeaseId?: string;
+}
+
+export interface OrphanedChildNotice {
+  childJobId: string;
+  taskIndex: number;
+  managerThreadId: string;
+  managerStatus: 'completed' | 'failed' | 'stopped';
+  results: AgentJobResult[];
+  recordedAt: number;
 }
 
 export interface AgentJob {
@@ -101,11 +131,18 @@ export interface AgentJob {
   waitingOnChildren?: number;
   restartResumeCount?: number;
   dismissedAt?: number | null;
+  stoppedBy?: { agentId: string; threadId: string } | { system: string } | 'human';
+  stopReason?: string;
+  orphanedChildNotices?: OrphanedChildNotice[];
+  /** Set only on the in-memory response when a spawn retry reused a recent job. */
+  deduplicated?: boolean;
 }
 
 export interface CreateJobOptions {
   visibility?:    AgentJobVisibility;
   parentAgentId?: string;
+  /** Explicit label used to make a spawn retry idempotent; absent means no dedupe. */
+  dedupeLabel?: string;
 }
 
 export const MAX_SUBAGENT_DEPTH = 3;
@@ -116,8 +153,11 @@ export const getJobsForParentThread = (...args: Parameters<typeof agentJobProvid
 export const dismissJobTask = (...args: Parameters<typeof agentJobProvider.service.dismissJobTask>) => agentJobProvider.service.dismissJobTask(...args);
 export const registerJobWatcher = (...args: Parameters<typeof agentJobProvider.service.registerJobWatcher>) => agentJobProvider.service.registerJobWatcher(...args);
 export const releaseJobWatcher = (...args: Parameters<typeof agentJobProvider.service.releaseJobWatcher>) => agentJobProvider.service.releaseJobWatcher(...args);
-export const getJobAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getJobAbortSignal>) => agentJobProvider.service.getJobAbortSignal(...args);
+export const getTaskAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getTaskAbortSignal>) => agentJobProvider.service.getTaskAbortSignal(...args);
 export const abortJob = (...args: Parameters<typeof agentJobProvider.service.abortJob>) => agentJobProvider.service.abortJob(...args);
+export const stopJobTask = (...args: Parameters<typeof agentJobProvider.service.stopJobTask>) => agentJobProvider.service.stopJobTask(...args);
+export const stoppedTaskResult = (...args: Parameters<typeof agentJobProvider.service.stoppedTaskResult>) => agentJobProvider.service.stoppedTaskResult(...args);
+export const authorizeJobStop = (...args: Parameters<typeof agentJobProvider.service.authorizeJobStop>) => agentJobProvider.service.authorizeJobStop(...args);
 export const stopJobCascade = (...args: Parameters<typeof agentJobProvider.service.stopJobCascade>) => agentJobProvider.service.stopJobCascade(...args);
 export const getJob = (...args: Parameters<typeof agentJobProvider.service.getJob>) => agentJobProvider.service.getJob(...args);
 export const getAllJobs = (...args: Parameters<typeof agentJobProvider.service.getAllJobs>) => agentJobProvider.service.getAllJobs(...args);

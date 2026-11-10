@@ -22,7 +22,7 @@ export interface AgentContractSpec {
   schema?:      Record<string, unknown>;
 }
 
-export type ContractReturnStatus = 'completed' | 'blocked' | 'failed';
+export type ContractReturnStatus = 'completed' | 'blocked' | 'failed' | 'stopped';
 
 export const DEFAULT_CONTRACT_NAME = 'result';
 
@@ -157,7 +157,7 @@ export function validateContractResult(contract: AgentContractSpec, candidate: u
 export function contractReturnStatus(contract: AgentContractSpec, result: unknown): ContractReturnStatus {
   if (contract.schema) return 'completed';
   const status = (result as any)?.status;
-  return status === 'blocked' || status === 'failed' ? status : 'completed';
+  return status === 'blocked' || status === 'failed' || status === 'stopped' ? status : 'completed';
 }
 
 /** Human/orchestrator-readable rendering of a returned contract. */

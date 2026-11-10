@@ -36,6 +36,7 @@
   TtsMessage + sets voice.phase='playing', queueEmpty clears it.
 */
 
+import { watch } from 'vue';
 import { newMessageId, type MessageId } from '../types/chat';
 
 import {
@@ -43,6 +44,7 @@ import {
   createVoiceBargeInDetector,
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
+import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
 import { newVoiceTurnId, voiceTrace } from '@pkg/composables/voice/VoiceTrace';
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -121,8 +123,8 @@ export class VoiceSessionAdapter {
   private voiceTurnId = '';
   private vadSpeaking = false;
   private speakSegment = 0;
-
   private readonly bargeIn = createVoiceBargeInDetector();
+  private readonly pendingTurn = new PendingVoiceTurn();
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
@@ -157,6 +159,7 @@ export class VoiceSessionAdapter {
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!this.capturing) return;
+    if (data.speaking) this.turn.speechStarted();
     this.lastLevel = Math.max(0, Math.min(1, data.level));
     this.lastSpeaking = !!data.speaking;
     if (this.lastSpeaking !== this.vadSpeaking) {
@@ -167,7 +170,7 @@ export class VoiceSessionAdapter {
       });
     }
 
-    // Hands-free barge-in: sustained speech while Sulla talks stops her.
+    // Sustained speech filters coughs/clicks before cutting off playback.
     // (Hold-to-talk stops TTS outright on activation.)
     if (this.mode === 'handsfree' && this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
       logBargeIn();
@@ -194,6 +197,8 @@ export class VoiceSessionAdapter {
     });
 
     this.unsubs.push(
+      watch(controller.runState, state => { if (state.phase === 'idle') this.pendingTurn.clear(); }),
+      this.tts.on('audioStarted', () => this.pendingTurn.markAudioStarted()),
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
       controller.on('voiceCommand', e => this.handleCommand(e.command)),
@@ -395,8 +400,8 @@ export class VoiceSessionAdapter {
     this.finishing = false;
     this.active = false;
     this.startPromise = null;
-    this.bargeIn.reset();
     this.turn.reset();
+    this.bargeIn.reset();
 
     ipcRenderer.removeListener('gateway-transcript', this.onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', this.onMicVad);
@@ -503,7 +508,18 @@ export class VoiceSessionAdapter {
     this.controller.stopVoice(true);
 
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (transcript && speakable) this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+    if (transcript && speakable) {
+      const merged = this.pendingTurn.mergeWithNext(transcript, this.controller.runState.value.phase !== 'idle');
+      if (merged) {
+        this.controller.stop();
+        this.tts.stop();
+        this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+        this.pendingTurn.submitted(merged);
+      } else {
+        this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+        this.pendingTurn.submitted(transcript);
+      }
+    }
     else voiceTrace(this.voiceTurnId, 'turn_skipped', { reason: transcript ? 'non_speech_only' : 'empty_transcript' });
 
     // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
@@ -552,7 +568,6 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsStart(): void {
-    this.bargeIn.reset();
     // If we already have a TTS bubble in the transcript we leave it alone —
     // TTSPlayerService fires playbackStart for every sentence in the queue.
     if (!this.activeTtsMessageId) {
@@ -576,7 +591,6 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsEnd(): void {
-    this.bargeIn.reset();
     const id = this.activeTtsMessageId;
     this.activeTtsMessageId = null;
     if (id) this.controller.removeMessage(id);

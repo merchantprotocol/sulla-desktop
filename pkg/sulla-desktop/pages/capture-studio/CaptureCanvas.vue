@@ -8,7 +8,7 @@
   <!-- Screen preview -->
   <div
     class="screen-preview"
-    @contextmenu.prevent="$emit('show-screen-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'camera' ? 'show-camera-menu' : 'show-screen-menu', $event)"
   >
     <video
       ref="screenVideoEl"
@@ -52,7 +52,7 @@
   <!-- Side-by-side camera (shown in sidebyside layout) -->
   <div
     class="sbs-camera"
-    @contextmenu.prevent="$emit('show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
   >
     <video
       ref="sbsCameraVideoEl"
@@ -84,17 +84,17 @@
   <!-- Full-screen camera (shown in camonly layout) -->
   <div
     class="fullscreen-camera"
-    @contextmenu.prevent="$emit('show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
   >
     <video
       ref="fullCameraVideoEl"
       autoplay
       muted
       playsinline
-      :style="{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px', display: cameraStream ? 'block' : 'none' }"
+      :style="{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px', display: screenStream ? 'block' : 'none' }"
     />
     <div
-      v-if="!cameraStream"
+      v-if="!screenStream"
       class="placeholder"
     >
       <svg
@@ -173,6 +173,9 @@ watch(() => props.screenStream, (stream) => {
     if (!el) return;
     try {
       el.srcObject = stream || null;
+      // Fullscreen displays the primary assignment, not the secondary/PiP slot.
+      const fullEl = fullCameraVideoEl.value;
+      if (fullEl) fullEl.srcObject = stream || null;
       console.log('[CaptureCanvas] srcObject set successfully, active:', stream?.active, 'videoTracks:', stream?.getVideoTracks().length);
     } catch (e: any) {
       console.warn('[CaptureCanvas] Failed to set screen srcObject:', e.message);
@@ -189,13 +192,6 @@ watch(() => props.cameraStream, (stream) => {
     if (sbsEl) {
       try { sbsEl.srcObject = stream || null } catch (e: any) {
         console.warn('[CaptureCanvas] Failed to set sbs camera srcObject:', e.message);
-      }
-    }
-
-    const fullEl = fullCameraVideoEl.value;
-    if (fullEl) {
-      try { fullEl.srcObject = stream || null } catch (e: any) {
-        console.warn('[CaptureCanvas] Failed to set full camera srcObject:', e.message);
       }
     }
   });

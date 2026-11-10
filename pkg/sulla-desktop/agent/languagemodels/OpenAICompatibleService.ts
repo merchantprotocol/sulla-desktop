@@ -91,11 +91,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
         const timeoutMs = options?.timeoutSeconds ? options.timeoutSeconds * 1000 : this.defaultTimeoutMs;
         const signal = this.combinedSignal(options?.signal, timeoutMs);
-        const payload = this.buildFetchOptions(body, signal);
-
         await this.beforeProviderRequest();
+        const payload = this.buildFetchOptions(body, signal);
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  false,
+          preserveHttpErrors: true,
           injections: this.brokerInjections(),
         });
 
@@ -201,10 +201,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           ? options.timeoutSeconds * 1000
           : this.defaultTimeoutMs;
         const signal = this.combinedSignal(options?.signal, timeoutMs);
-        const payload = this.buildFetchOptions(body, signal);
         await this.beforeProviderRequest();
+        const payload = this.buildFetchOptions(body, signal);
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  true,
+          preserveHttpErrors: true,
           injections: this.brokerInjections(),
         });
 
@@ -228,9 +229,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       } catch (err) {
         lastError = err;
 
-        if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
-          break;
+        if (err instanceof Error && err.message.startsWith('HTTP 401:') && attempt === 0) {
+          if (await this.refreshCredentials()) continue;
         }
+        if (err instanceof Error && /HTTP 4\d\d:/.test(err.message) && !err.message.startsWith('HTTP 429:')) {
+          // Preserve the HTTP body for Grok's unsupported-native-tools fallback.
+          throw err;
+        }
+        if (options?.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
       }
     }
 
@@ -926,30 +932,31 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
     }
 
-    // Safety net: ensure strict tool_calls / tool-response adjacency.
-    // If an assistant message has tool_calls but the next message(s) are not
-    // role:"tool" responses for every call, strip the tool_calls to prevent
-    // the API from rejecting the request (e.g. after a timeout mid-stream).
+    // Keep only complete call/result pairs. A partial parallel turn must not
+    // leave orphan outputs (Responses rejects them on the next graph loop).
     const sanitized: any[] = [];
     for (let i = 0; i < result.length; i++) {
       const msg = result[i];
-      if (msg.role === 'assistant' && msg.tool_calls?.length) {
-        // Collect all immediately-following tool responses
-        const followingToolIds = new Set<string>();
-        for (let j = i + 1; j < result.length && result[j].role === 'tool'; j++) {
-          if (result[j].tool_call_id) followingToolIds.add(result[j].tool_call_id);
-        }
-        const allAnswered = msg.tool_calls.every((tc: any) => followingToolIds.has(tc.id));
-        if (!allAnswered) {
-          // Strip tool_calls but keep the message itself — even if content is empty.
-          // An assistant message with tool_calls must not be dropped, as that leaves
-          // orphaned tool messages without a preceding assistant message.
-          const { tool_calls: _dropped, ...rest } = msg;
-          sanitized.push(rest);
-          continue;
-        }
+      if (msg.role === 'tool') continue; // orphan output
+      if (msg.role !== 'assistant' || !msg.tool_calls?.length) {
+        sanitized.push(msg);
+        continue;
       }
-      sanitized.push(msg);
+      const outputs = new Map<string, any>();
+      let end = i + 1;
+      while (end < result.length && result[end].role === 'tool') {
+        const output = result[end++];
+        if (output.tool_call_id) outputs.set(output.tool_call_id, output);
+      }
+      const answered = msg.tool_calls.filter((call: any) => outputs.has(call.id));
+      if (answered.length) {
+        sanitized.push({ ...msg, tool_calls: answered });
+        for (const call of answered) sanitized.push(outputs.get(call.id));
+      } else if (msg.content) {
+        const { tool_calls: _dropped, ...text } = msg;
+        sanitized.push(text);
+      }
+      i = end - 1;
     }
 
     return sanitized;

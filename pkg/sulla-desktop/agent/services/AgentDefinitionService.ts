@@ -31,6 +31,7 @@ export interface AgentMarketplaceManifest {
     /** @deprecated Read for compatibility only; new manifests write modelSlot. */
     model?:      string;
     modelSlot?:  AgentModelSlot;
+    modelChoice?: import('../languagemodels/modelRoutingTypes').AgentModelChoice;
     prompt:      string;
     soul?:       string;
     goals?:      string;
@@ -153,7 +154,7 @@ export class AgentDefinitionService {
       spec: {
         ...(agent.provider ? { provider: agent.provider } : {}),
         ...(agent.model ? { model: agent.model } : {}),
-        ...(agent.model_slot ? { modelSlot: agent.model_slot } : {}),
+        ...(agent.model_choice ? { modelChoice: agent.model_choice } : {}),
         prompt:      agent.prompt_content,
         soul:        agent.soul_content,
         goals:       agent.goals_content,
@@ -201,6 +202,7 @@ export class AgentDefinitionService {
       allowedTools:          spec.tools ?? [],
       skillRefs:             spec.skills ?? [],
       provider:              spec.provider ?? null,
+      modelChoice:           spec.modelChoice,
       model:                 spec.model ?? null,
       modelSlot:             spec.modelSlot ?? legacyModelSlot(spec.model),
       config:                spec.config ?? {},

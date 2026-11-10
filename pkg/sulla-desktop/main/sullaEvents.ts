@@ -861,8 +861,8 @@ export function initSullaEvents(): void {
 
   const { powerMonitor, BrowserWindow, app } = require('electron') as typeof import('electron');
   app.once('will-quit', () => {
-    const { releaseAllChatActivity } = require('@pkg/main/SleepPreventionService');
-    releaseAllChatActivity();
+    const { releaseAllSleepPrevention } = require('@pkg/main/SleepPreventionService');
+    releaseAllSleepPrevention();
   });
 
   powerMonitor.on('suspend', () => {

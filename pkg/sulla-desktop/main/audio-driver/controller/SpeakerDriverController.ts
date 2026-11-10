@@ -32,6 +32,16 @@ import * as lifecycle from './lifecycle';
 import * as audio from '../model/audio';
 import { log } from '../model/logger';
 
+export interface SpeakerLifecycle {
+  activate: typeof lifecycle.activate;
+  deactivate: typeof lifecycle.deactivate;
+  speakerVolumeUp: typeof lifecycle.speakerVolumeUp;
+  speakerVolumeDown: typeof lifecycle.speakerVolumeDown;
+  speakerMuteToggle: typeof lifecycle.speakerMuteToggle;
+  speakerVolumeGet: typeof lifecycle.speakerVolumeGet;
+  setOnVolumeChanged: typeof lifecycle.setOnVolumeChanged;
+}
+
 // ── Singleton ───────────────────────────────────────────────────
 
 let instance: SpeakerDriverController | null = null;
@@ -43,6 +53,7 @@ export class SpeakerDriverController {
 
   private _running = false;
   private _speakerName = '';
+  private _operation: Promise<void> = Promise.resolve();
 
   // ── Reference set ─────────────────────────────────────────────
 
@@ -59,8 +70,8 @@ export class SpeakerDriverController {
 
   // ── Constructor ───────────────────────────────────────────────
 
-  private constructor() {
-    log.info(SpeakerDriverController.TAG, 'Initializing singleton');
+  constructor(private readonly _lifecycle: SpeakerLifecycle = lifecycle) {
+    log.info(SpeakerDriverController.TAG, 'Initializing controller');
   }
 
   static getInstance(): SpeakerDriverController {
@@ -95,6 +106,10 @@ export class SpeakerDriverController {
    * @param sender - The WebContents of the requesting window (for targeted sends)
    */
   async start(serviceId: string, sender?: WebContents): Promise<void> {
+    return this._serialize(() => this._start(serviceId, sender));
+  }
+
+  private async _start(serviceId: string, sender?: WebContents): Promise<void> {
     log.info(SpeakerDriverController.TAG, 'start()', { serviceId, currentHolders: [...this._holders.keys()], running: this._running });
 
     // Remove any previous destroy listener for this serviceId (re-registration)
@@ -122,15 +137,27 @@ export class SpeakerDriverController {
     if (!this._running) {
       log.info(SpeakerDriverController.TAG, 'First holder — activating lifecycle (BlackHole + CoreAudio)');
       try {
-        await lifecycle.activate({
+        const activation = await this._lifecycle.activate({
           onLevel:   this._onLevel || (() => {}),
           onRebuild: this._onRebuild || (() => {}),
         });
+        if (!activation.ok || !activation.mirrorActive) {
+          throw new Error('Speaker capture lifecycle did not activate its audio mirror');
+        }
         this._running = true;
         this._persist();
         log.info(SpeakerDriverController.TAG, 'Speaker pipeline started', { holders: [...this._holders.keys()] });
       } catch (e: any) {
         log.error(SpeakerDriverController.TAG, 'lifecycle.activate() failed', { error: e.message });
+        this._removeDestroyListener(serviceId);
+        this._holders.delete(serviceId);
+        this._running = false;
+        try {
+          await this._lifecycle.deactivate({ removeDriver: false });
+        } catch (cleanupError: any) {
+          log.error(SpeakerDriverController.TAG, 'Failed to clean partial speaker activation', { error: cleanupError.message });
+        }
+        this._persist();
         throw e;
       }
     } else {
@@ -143,6 +170,10 @@ export class SpeakerDriverController {
    * deactivates BlackHole mirror + CoreAudio pipeline.
    */
   async stop(serviceId: string): Promise<void> {
+    return this._serialize(() => this._stop(serviceId));
+  }
+
+  private async _stop(serviceId: string): Promise<void> {
     log.info(SpeakerDriverController.TAG, 'stop()', { serviceId, currentHolders: [...this._holders.keys()], running: this._running });
 
     const wasHolder = this._holders.has(serviceId);
@@ -152,10 +183,14 @@ export class SpeakerDriverController {
 
     if (this._running && this._holders.size === 0) {
       log.info(SpeakerDriverController.TAG, 'Last holder released — deactivating lifecycle');
-      await lifecycle.deactivate({ removeDriver: false });
-
-      this._running = false;
-      this._persist();
+      try {
+        await this._lifecycle.deactivate({ removeDriver: false });
+      } finally {
+        // The holder is gone even when hardware teardown reports a failure.
+        // Keep logical custody honest so the next start retries activation.
+        this._running = false;
+        this._persist();
+      }
       log.info(SpeakerDriverController.TAG, 'Speaker pipeline stopped');
     } else if (this._holders.size > 0) {
       log.info(SpeakerDriverController.TAG, 'Speaker still held by other services', { remaining: [...this._holders.keys()] });
@@ -176,28 +211,38 @@ export class SpeakerDriverController {
 
   // ── Volume control (delegates to lifecycle) ───────────────────
 
-  async volumeUp() { return lifecycle.speakerVolumeUp() }
-  async volumeDown() { return lifecycle.speakerVolumeDown() }
-  async muteToggle() { return lifecycle.speakerMuteToggle() }
-  async volumeGet() { return lifecycle.speakerVolumeGet() }
+  async volumeUp() { return this._lifecycle.speakerVolumeUp() }
+  async volumeDown() { return this._lifecycle.speakerVolumeDown() }
+  async muteToggle() { return this._lifecycle.speakerMuteToggle() }
+  async volumeGet() { return this._lifecycle.speakerVolumeGet() }
 
   setOnVolumeChanged(cb: (state: any) => void): void {
-    lifecycle.setOnVolumeChanged(cb);
+    this._lifecycle.setOnVolumeChanged(cb);
   }
 
   // ── Shutdown ──────────────────────────────────────────────────
 
   async shutdown(): Promise<void> {
+    return this._serialize(() => this._shutdown());
+  }
+
+  private async _shutdown(): Promise<void> {
     log.info(SpeakerDriverController.TAG, 'Shutting down');
-    if (this._running) {
-      await lifecycle.deactivate({ removeDriver: false });
+    try {
+      if (this._running) {
+        await this._lifecycle.deactivate({ removeDriver: false });
+      }
+    } catch (error: any) {
+      log.error(SpeakerDriverController.TAG, 'Shutdown deactivation failed', { error: error.message });
+      throw error;
+    } finally {
+      this._running = false;
+      for (const sid of this._destroyListeners.keys()) {
+        this._removeDestroyListener(sid);
+      }
+      this._holders.clear();
+      if (instance === this) instance = null;
     }
-    this._running = false;
-    for (const sid of this._destroyListeners.keys()) {
-      this._removeDestroyListener(sid);
-    }
-    this._holders.clear();
-    instance = null;
   }
 
   /** Send only to windows that are holding the speaker open. */
@@ -213,6 +258,13 @@ export class SpeakerDriverController {
 
   private _persist(): void {
     audio.savePrefs({ ...audio.loadPrefs(), speakerEnabled: this._running });
+  }
+
+  /** Keep holder mutations and hardware transitions in one ordered critical section. */
+  private _serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this._operation.then(operation, operation);
+    this._operation = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   /** Remove the WebContents 'destroyed' listener for a serviceId, if one exists. */

@@ -63,8 +63,9 @@ export function useAudioDriver() {
 
   // ── Mic commands ──
 
-  async function startMic(formats?: string[]): Promise<any> {
+  async function startMic(formats?: string[], isCancelled: () => boolean = () => false): Promise<any> {
     const result = await ipcRenderer.invoke('audio-driver:start-mic', 'capture-studio', formats || ['webm-opus', 'pcm-s16le']);
+    if (isCancelled()) { await stopMic(); return result; }
     micRunning.value = !!result?.micRunning;
     return result;
   }
