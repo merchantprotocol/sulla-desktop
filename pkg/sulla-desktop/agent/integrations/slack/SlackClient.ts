@@ -12,7 +12,11 @@ import type { ToolExecutionContext } from '../../tools/executionContext';
 export class SlackClient {
   private static instance: SlackClient | null = null;
   private readonly api: SlackWebApiClient;
-  private constructor(api = new SlackWebApiClient(new BrokerSlackApiTransport(), new SlackAccountResolver(getIntegrationService()))) { this.api = api; }
+
+  private constructor(api = new SlackWebApiClient(new BrokerSlackApiTransport(), new SlackAccountResolver(getIntegrationService()))) {
+    this.api = api;
+  }
+
   static getInstance(): SlackClient { return this.instance ??= new SlackClient(); }
   async initialize(): Promise<boolean> { return true; }
   isConnected(): boolean { return true; }
@@ -28,7 +32,8 @@ export class SlackClient {
   async getUserInfo(user: string, context?: ToolExecutionContext, account?: string): Promise<any> { return (await this.api.userInfo(user, context, account)).user; }
   async apiCall(method: string, params: Record<string, any> = {}, context?: ToolExecutionContext, account?: string): Promise<any> { return this.api.call(method, params, context, account); }
   async searchUsers(query: string, limit = 10, context?: ToolExecutionContext, account?: string): Promise<any[]> {
-    const q = String(query || '').trim().toLowerCase(); if (!q) return [];
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
     const response = await this.api.usersList(200, context, account);
     return (response.members ?? []).filter((user: any) => !user?.deleted && !user?.is_bot).filter((user: any) => [user?.name, user?.real_name, user?.profile?.real_name, user?.profile?.display_name, user?.profile?.email].some(value => String(value || '').toLowerCase().includes(q))).slice(0, Math.max(1, limit));
   }

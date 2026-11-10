@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 export class SlackApiError extends Error {
   constructor(readonly method: string, readonly slackError: string, readonly status: number) {
-    super(`Slack API ${method} failed: ${slackError}`); this.name = 'SlackApiError';
+    super(`Slack API ${method} failed: ${slackError}`);
+    this.name = 'SlackApiError';
   }
 }
