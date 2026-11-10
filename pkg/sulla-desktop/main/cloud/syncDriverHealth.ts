@@ -6,6 +6,8 @@ export interface SyncDriverHealthSnapshot {
   running: boolean;
   startedAt: number | null;
   lastAttemptAt: number | null;
+  /** When the driver expects its next tick or reconcile; null until it schedules one. */
+  scheduledNextAt: number | null;
   lastSuccessAt: number | null;
   lastError: { code: string; at: number } | null;
   consecutiveFailures: number;
@@ -17,7 +19,7 @@ export interface SyncDriverClock { now(): number }
 /** Per-driver operational state; contains timestamps and counts only, never synced data. */
 export class SyncDriverHealth {
   private state: SyncDriverHealthSnapshot = {
-    running: false, startedAt: null, lastAttemptAt: null, lastSuccessAt: null,
+    running: false, startedAt: null, lastAttemptAt: null, scheduledNextAt: null, lastSuccessAt: null,
     lastError: null, consecutiveFailures: 0,
   };
 
@@ -25,9 +27,11 @@ export class SyncDriverHealth {
 
   setRunning(running: boolean): void {
     if (running === this.state.running) return;
-    this.state = { ...this.state, running, startedAt: running ? this.clock.now() : null };
+    this.state = { ...this.state, running, startedAt: running ? this.clock.now() : null, scheduledNextAt: null };
   }
   attempted(): void { this.state = { ...this.state, lastAttemptAt: this.clock.now() } }
+  /** Records when the driver will next wake, so quiet backoff or wait periods are not mistaken for a stall. */
+  scheduledIn(delayMs: number): void { this.state = { ...this.state, scheduledNextAt: this.clock.now() + delayMs } }
   succeeded(pendingLocalEdits?: number): void {
     this.state = { ...this.state, lastSuccessAt: this.clock.now(), lastError: null, consecutiveFailures: 0,
       ...(pendingLocalEdits === undefined ? {} : { pendingLocalEdits }) };

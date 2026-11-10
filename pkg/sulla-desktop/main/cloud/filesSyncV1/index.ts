@@ -87,7 +87,7 @@ class FilesSyncV1Impl {
     catch(error) { if(!(error instanceof FilesSyncClientError)||error.code!=='no_cloud_vault')throw error; wrapped=await FilesSyncContainer.vaultRestoreKey(request) }
     return {requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch};
   }
-  private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
+  private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.health.scheduledIn(ms); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
   private async identity():Promise<{userId:string;deviceId:string}|null> {
     if(!await isCloudSignedIn())return null;
     const state=DevicesCloudApi.getState(); if(!state.registered||state.revoked)return null;
@@ -140,6 +140,8 @@ class FilesSyncV1Impl {
       return;
     }
     this.health.attempted();
+    // The attempt is due now; the supervisor's stall grace runs from here, so a slow in-flight sync is not restarted early.
+    this.health.scheduledIn(0);
     try {
       const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.files){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}

@@ -64,7 +64,11 @@ class VaultSyncV3Impl {
   start(): void {
     if (this.reconcileTimer) return;
     this.health.setRunning(true);
-    this.reconcileTimer = setInterval(() => { this.syncIfEnabled().catch(() => undefined) }, RECONCILE_MS);
+    this.health.scheduledIn(RECONCILE_MS);
+    this.reconcileTimer = setInterval(() => {
+      this.health.scheduledIn(RECONCILE_MS);
+      this.syncIfEnabled().catch(() => undefined);
+    }, RECONCILE_MS);
     this.pollTimer = setInterval(() => { this.pushIfDirty().catch(() => undefined) }, POLL_MS);
     this.reconcileTimer.unref?.();
     this.pollTimer.unref?.();

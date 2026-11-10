@@ -55,12 +55,12 @@ function reconcileSyncDrivers():void {
     const active=Boolean(registered&&prefs.enabled);
     const vaultHealth=VaultSyncV3.getStatus()[0].health;
     if(vaultHealth)syncDriverSupervisor.reconcile({
-      running:vaultHealth.running,startedAt:vaultHealth.startedAt,lastAttemptAt:vaultHealth.lastAttemptAt,intervalMs:10*60_000,
+      running:vaultHealth.running,startedAt:vaultHealth.startedAt,lastAttemptAt:vaultHealth.lastAttemptAt,scheduledNextAt:vaultHealth.scheduledNextAt,intervalMs:10*60_000,
       restart:()=>VaultSyncV3.restart(),
     },active&&prefs.vault);
     const filesHealth=FilesSyncV1.driverHealth();
     syncDriverSupervisor.reconcile({
-      running:filesHealth.running,startedAt:filesHealth.startedAt,lastAttemptAt:filesHealth.lastAttemptAt,intervalMs:15_000,
+      running:filesHealth.running,startedAt:filesHealth.startedAt,lastAttemptAt:filesHealth.lastAttemptAt,scheduledNextAt:filesHealth.scheduledNextAt,intervalMs:15_000,
       restart:()=>FilesSyncV1.restart(),
     },active&&prefs.files);
   }).catch(()=>undefined);
