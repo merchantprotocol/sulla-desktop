@@ -33,6 +33,15 @@ describe('tool deadline policy', () => {
     expect(policy.deadlineMs('unknown_tool')).toBe(120_000);
   });
 
+  it('does not clamp a writer request below its 120 s deadline', () => {
+    // risk: Desktop aborted writers at 60 s, so the longer writer deadline never took effect
+    expect(policy.requestedDeadlineMs(120_000)).toBe(120_000);
+    expect(policy.requestedDeadlineMs(999_999)).toBe(120_000);
+    expect(policy.requestedDeadlineMs(undefined)).toBe(30_000);
+    expect(policy.requestedDeadlineMs('not-a-number')).toBe(30_000);
+    expect(policy.requestedDeadlineMs(0)).toBe(1);
+  });
+
   it('records late completion by request id and evicts it after ten minutes', () => {
     // risk: a timed-out write completes later without a trace, making retry unsafe
     let now = 1_000;

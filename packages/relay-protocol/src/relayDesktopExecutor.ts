@@ -3,21 +3,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ToolDeadlinePolicy } from '../../runtime-protocol/src/toolDeadlinePolicy.js';
 import type { RelayError, RelayToolExecutionContext as ToolExecutionContext, RelayToolResult as ToolResult } from './relayProtocol.js';
 
 export interface RelayDesktopExecutorOptions {
-  relayUrl:     string;
-  deviceId?:    string;
-  serviceToken: string;
-  fetchImpl?:   typeof fetch;
+  relayUrl:        string;
+  deviceId?:       string;
+  serviceToken:    string;
+  fetchImpl?:      typeof fetch;
+  deadlinePolicy?: ToolDeadlinePolicy;
 }
 
 /** Server-side transport for forwarding desktop-local tools through the relay. */
 export class RelayDesktopExecutor {
   private readonly fetchImpl: typeof fetch;
+  private readonly deadlinePolicy: ToolDeadlinePolicy;
 
   constructor(private readonly options: RelayDesktopExecutorOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.deadlinePolicy = options.deadlinePolicy ?? new ToolDeadlinePolicy();
   }
 
   async execute(
@@ -27,6 +31,7 @@ export class RelayDesktopExecutor {
     args: unknown,
     opts: { deadlineMs: number; operationTypes?: readonly string[] },
   ): Promise<ToolResult> {
+    const startedAt = Date.now();
     const controller = new AbortController();
     const deadlineMs = Math.max(1, opts.deadlineMs);
     const timer = setTimeout(() => controller.abort(), deadlineMs + 250);
@@ -59,16 +64,11 @@ export class RelayDesktopExecutor {
       return body.result;
     } catch (error) {
       if (controller.signal.aborted) {
-        const sideEffectUnknown = (opts.operationTypes ?? []).some(type => ['create', 'update', 'delete', 'execute'].includes(type));
         return {
           success: false,
           error: {
             code: 'deadline_exceeded', message: 'Desktop tool call deadline exceeded',
-            details: {
-              tool, deadlineMs, elapsedMs: deadlineMs,
-              ...(sideEffectUnknown ? { sideEffectUnknown: true } : {}),
-              hint: sideEffectUnknown ? `check state before retrying, e.g. github/list_prs for ${ tool }` : 'safe to retry once',
-            },
+            details: this.deadlinePolicy.timeoutDetails(tool, deadlineMs, Date.now() - startedAt, opts.operationTypes),
           },
         };
       }

@@ -413,7 +413,7 @@ export class ChatCompletionsServer {
       const requested = String(req.params.tool);
       const args = req.body?.args ?? {};
       const ctx = req.body?.ctx;
-      const deadlineMs = Math.max(1, Math.min(Number(req.body?.deadlineMs ?? 30_000), 60_000));
+      const deadlineMs = this.toolDeadlinePolicy.requestedDeadlineMs(req.body?.deadlineMs);
       const startedAt = Date.now();
       let toolName = `${ category }/${ requested }`;
       let operationTypes: readonly string[] = [];
