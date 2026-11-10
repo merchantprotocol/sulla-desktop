@@ -20,7 +20,9 @@ import {
   type AgentPolicy, type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type SyncEnvelope, type SyncHead, type SyncRecord } from './envelope.js';
+import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from './envelope.js';
+import type { DomainVaultSyncCodec } from './DomainVaultSyncCodec.js';
+import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js';
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
 
@@ -118,7 +120,7 @@ function responseBody(body: unknown): any {
 }
 
 export class CloudVaultSyncRunner {
-  private envelope: SyncEnvelope | null = null;
+  private envelope: DomainVaultSyncCodec | null = null;
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -127,10 +129,11 @@ export class CloudVaultSyncRunner {
     private readonly db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
+    private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
   ) {}
 
-  private async env(): Promise<SyncEnvelope> {
-    this.envelope ??= createSyncEnvelope(await loadSodium());
+  private async env() {
+    this.envelope ??= await this.codecProvider.get();
     return this.envelope;
   }
 

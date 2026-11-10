@@ -7,8 +7,8 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import { DomainVaultSyncCodec } from '../../../../../../services/sulla-vault/src/browserEnvelope/DomainVaultSyncCodec';
+import { SodiumCryptoPrimitives } from '../../../../../../services/sulla-vault/src/browserEnvelope/SodiumCryptoPrimitives';
 import { checkRecordShape, createSyncEnvelope, loadSodium, type SyncBundle, type SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
-import type { CryptoPrimitives } from '@sulla/domain';
 
 interface KatSide {
   bundle: SyncBundle;
@@ -21,18 +21,7 @@ async function fixture(): Promise<KatFixture> {
   return JSON.parse(await readFile(new URL('../../../../../../fixtures/crypto/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as KatFixture;
 }
 
-class SodiumPrimitives {
-  constructor(private readonly sodium: any) {}
-  blake2b(message: Uint8Array, length: number, key?: Uint8Array): Uint8Array { return this.sodium.crypto_generichash(length, message, key); }
-  blake2bKdf(key: Uint8Array, subkeyId: number, context: string, length = 32): Uint8Array { return this.sodium.crypto_kdf_derive_from_key(length, subkeyId, context, key); }
-  sha256(message: Uint8Array): Uint8Array { return this.sodium.crypto_hash_sha256(message); }
-  xchachaSeal(key: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array, aad = new Uint8Array()): Uint8Array { return this.sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, aad, null, nonce, key); }
-  xchachaOpen(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, aad = new Uint8Array()): Uint8Array { return this.sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, aad, nonce, key); }
-}
-
 class FixedRandomSource { bytes(length: number): Uint8Array { return new Uint8Array(length).fill(7); } }
-
-const primitiveContract = (value: SodiumPrimitives): CryptoPrimitives => value as unknown as CryptoPrimitives;
 
 function bundleFields(bundle: SyncBundle) {
   const { format: _format, v: _version, mac: _mac, ...fields } = bundle;
@@ -46,12 +35,12 @@ describe('Domain vault-sync-v3 codec parity', () => {
     const kat = await fixture();
     const sodium = await loadSodium();
     const old = createSyncEnvelope(sodium);
-    const crypto = primitiveContract(new SodiumPrimitives(sodium));
+    const crypto = new SodiumCryptoPrimitives(sodium);
 
     for (const side of [kat.desktop, kat.browser]) {
       const userKey = old.unlockBundle(side.bundle, 'correct horse battery staple · sync v3');
       try {
-        const domain = new DomainVaultSyncCodec(crypto, new FixedRandomSource(), side.bundle.vaultUserId);
+        const domain = new DomainVaultSyncCodec(crypto, new FixedRandomSource());
         const oldBundle = old.buildBundle(bundleFields(side.bundle), userKey);
         const domainBundle = domain.buildBundle(bundleFields(side.bundle), userKey);
         expect(domainBundle).toEqual(oldBundle);
@@ -81,7 +70,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     // risk: crypto/data integrity — malformed sync input must fail closed with a stable caller-visible code.
     const sodium = await loadSodium();
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(primitiveContract(new SodiumPrimitives(sodium)), new FixedRandomSource(), 'owner');
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
     const malformed = { ...((await fixture()).desktop.records[0]), generation: 0 };
     const errorCode = (run: () => void): string => {
       try { run(); } catch (error) { return (error as { code: string }).code; }
@@ -95,7 +84,7 @@ describe('Domain vault-sync-v3 codec parity', () => {
     // risk: crypto/authentication — mismatched AAD prevents legitimate item and folder decryption.
     const sodium = await loadSodium();
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(primitiveContract(new SodiumPrimitives(sodium)), new FixedRandomSource(), 'owner');
+    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium), new FixedRandomSource());
     const old = createSyncEnvelope(sodium);
     const originalRandom = sodium.randombytes_buf;
     sodium.randombytes_buf = (length: number) => new Uint8Array(length).fill(7);
