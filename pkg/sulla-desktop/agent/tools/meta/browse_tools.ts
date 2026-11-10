@@ -5,6 +5,9 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { toolRegistry } from '../registry';
+import { IntegrationCredentialStatus, LazyIntegrationIdSource } from './IntegrationCredentialStatus';
+import { ToolCatalogIndex } from './ToolCatalogIndex';
+import { ToolSearchRanker } from './ToolSearchRanker';
 
 /**
  * BrowseToolsWorker — read-only tool discovery.
@@ -15,15 +18,10 @@ import { toolRegistry } from '../registry';
  * surfaces (e.g. this Claude Code MCP bridge) that don't carry a
  * Sulla-branded exec — models routinely forget this and dead-end in a "how
  * do I call this" loop.
+ *
+ * Never blocks on credentials: query mode never looks them up, and the other
+ * modes wait at most the credential status timeout.
  */
-
-/** Tools excluded from the listing — internal plumbing the agent already has */
-const EXCLUDED_TOOLS = new Set([
-  'file_search',
-  'read_file',
-  'write_file',
-  'browse_tools',
-]);
 
 const CATEGORY_TO_INTEGRATION: Record<string, string> = {
   slack:    'slack',
@@ -59,83 +57,25 @@ const INVOCATION_PREAMBLE = [
   'command string. Required params appear inline with `<placeholder>` values.',
 ].join('\n');
 
+export interface BrowseToolsDependencies {
+  catalog?:     ToolCatalogIndex;
+  credentials?: IntegrationCredentialStatus;
+  ranker?:      ToolSearchRanker;
+}
+
 export class BrowseToolsWorker extends BaseTool {
   name = '';
   description = '';
 
-  // ────────────────────────────────────────────────────────────────
-  // Formatting helpers
-  // ────────────────────────────────────────────────────────────────
+  private readonly catalog: ToolCatalogIndex;
+  private readonly credentials: IntegrationCredentialStatus;
+  private readonly ranker: ToolSearchRanker;
 
-  private toCliName(toolName: string, category: string): string {
-    const endpoint = toolName.startsWith(`${ category }_`)
-      ? toolName.slice(category.length + 1)
-      : toolName;
-    return `${ category }/${ endpoint }`;
-  }
-
-  /** Build a JSON payload showing only required fields with `<paramname>` placeholders. */
-  private buildArgsJson(schemaDef: Record<string, any> | undefined): string {
-    if (!schemaDef) return '{}';
-    const required = Object.entries(schemaDef).filter(([, spec]) => !spec.optional);
-    if (required.length === 0) return '{}';
-    const parts = required.map(([key]) => `"${ key }":"<${ key }>"`);
-    return `{${ parts.join(',') }}`;
-  }
-
-  private formatParams(schemaDef: Record<string, any>): string {
-    const parts: string[] = [];
-    for (const [key, spec] of Object.entries(schemaDef)) {
-      const req = spec.optional ? 'optional' : 'required';
-      const type = spec.type === 'enum'
-        ? `enum: ${ (spec.enum || []).join('|') }`
-        : spec.type;
-      parts.push(`${ key } (${ req }, ${ type })`);
-    }
-    return parts.join(', ');
-  }
-
-  private formatToolLine(toolName: string, category: string): string {
-    const description = toolRegistry.getToolDescription(toolName);
-    const schemaDef = toolRegistry.getSchemaDef(toolName);
-    const cliName = this.toCliName(toolName, category);
-    const argsJson = this.buildArgsJson(schemaDef);
-    const lines: string[] = [];
-
-    lines.push(`  sulla ${ cliName } '${ argsJson }'`);
-    if (description) {
-      lines.push(`    ${ description }`);
-    }
-    if (schemaDef && Object.keys(schemaDef).length > 0) {
-      lines.push(`    Params: ${ this.formatParams(schemaDef) }`);
-    }
-    // Meta tools (exec, etc.) are what the example *uses* to wrap other calls.
-    // Showing a nested `sulla meta/exec` example for exec itself would recurse
-    // pointlessly — skip the Example line for meta category.
-    if (category !== 'meta') {
-      const innerCmd = `sulla ${ cliName } '${ argsJson }'`;
-      const examplePayload = JSON.stringify({ command: innerCmd });
-      lines.push(`    Example: sulla meta/exec ${ examplePayload }`);
-    }
-    return lines.join('\n');
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Credential status
-  // ────────────────────────────────────────────────────────────────
-
-  private async getConnectedIntegrations(): Promise<Set<string>> {
-    // Lazy import — IntegrationService pulls in Postgres which needs
-    // TextEncoder polyfilled in jsdom. Loading it only on demand keeps the
-    // module importable from unit tests without that polyfill.
-    try {
-      const { getIntegrationService } = await import('../../services/IntegrationService');
-      const svc = getIntegrationService();
-      const enabled = await svc.getEnabledIntegrations();
-      return new Set(enabled.map(e => e.integrationId));
-    } catch {
-      return new Set();
-    }
+  constructor(deps: BrowseToolsDependencies = {}) {
+    super();
+    this.catalog = deps.catalog ?? new ToolCatalogIndex(toolRegistry);
+    this.credentials = deps.credentials ?? new IntegrationCredentialStatus(new LazyIntegrationIdSource());
+    this.ranker = deps.ranker ?? new ToolSearchRanker();
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -145,93 +85,83 @@ export class BrowseToolsWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { category, query } = input;
 
-    const allCategories = toolRegistry.getCategories();
-    const connectedIntegrations = await this.getConnectedIntegrations();
+    if (query) return this.searchTools(query as string);
+    if (category) return this.describeCategory(category as string);
+    return this.listCategories();
+  }
 
-    // ── Query mode: filter tools by keyword ──
-    if (query) {
-      const q = (query as string).toLowerCase();
-      const matchedLines: string[] = [];
-      let matchCount = 0;
-      for (const cat of allCategories) {
-        const names = toolRegistry.getToolNamesForCategory(cat)
-          .filter(n => !EXCLUDED_TOOLS.has(n));
-        const matches = names.filter((name) => {
-          if (name.toLowerCase().includes(q)) return true;
-          const desc = toolRegistry.getToolDescription(name);
-          return desc?.toLowerCase().includes(q);
-        });
-        if (matches.length > 0) {
-          matchedLines.push('');
-          matchedLines.push(`## ${ cat }`);
-          for (const name of matches) {
-            matchedLines.push(this.formatToolLine(name, cat));
-          }
-          matchCount += matches.length;
-        }
-      }
-      if (matchCount === 0) {
-        const available = allCategories.join(', ');
-        return {
-          successBoolean: false,
-          responseString: `No tools found matching "${ query }". Available categories: ${ available }`,
-        };
-      }
+  /** Query mode: ranked keyword search. No credential lookup. */
+  private searchTools(query: string): ToolResponse {
+    const allCategories = this.catalog.categories();
+    const matches = this.ranker.rank(this.catalog.allEntries(), query);
+    if (matches.length === 0) {
       return {
-        successBoolean: true,
-        responseString: `${ INVOCATION_PREAMBLE }\n\nFound ${ matchCount } tools matching "${ query }":\n${ matchedLines.join('\n') }`,
+        successBoolean: false,
+        responseString: `No tools found matching "${ query }". Available categories: ${ allCategories.join(', ') }`,
       };
     }
 
-    // ── Category mode: show one category in detail ──
-    if (category) {
-      if (!allCategories.includes(category)) {
-        return {
-          successBoolean: false,
-          responseString: `Invalid category "${ category }". Available categories: ${ allCategories.join(', ') }`,
-        };
+    const matchedLines: string[] = [];
+    let currentCategory = '';
+    for (const match of matches) {
+      if (match.category !== currentCategory) {
+        currentCategory = match.category;
+        matchedLines.push('', `## ${ currentCategory }`);
       }
-      const names = toolRegistry.getToolNamesForCategory(category)
-        .filter(n => !EXCLUDED_TOOLS.has(n));
-      const catDescs = toolRegistry.getCategoriesWithDescriptions();
-      const catDesc = catDescs.find(c => c.category === category)?.description || '';
-      const integSlug = CATEGORY_TO_INTEGRATION[category];
-      const connected = integSlug && connectedIntegrations.has(integSlug);
+      matchedLines.push(match.line);
+    }
+    return {
+      successBoolean: true,
+      responseString: `${ INVOCATION_PREAMBLE }\n\nFound ${ matches.length } tools matching "${ query }":\n${ matchedLines.join('\n') }`,
+    };
+  }
 
-      const lines: string[] = [];
-      // For the meta category we must NOT emit the word "Example:" anywhere —
-      // that's what marks meta tools as "callable directly, no wrapping needed".
-      // The preamble is fine (no "Example:" token) but we still include it for
-      // consistency since `exec` itself is the exec tool the preamble names.
-      if (category !== 'meta') {
-        lines.push(INVOCATION_PREAMBLE);
-        lines.push('');
-      }
-      lines.push(`## ${ category }${ connected ? ' ✓ credentials connected' : '' }`);
-      if (catDesc) lines.push(catDesc);
-      lines.push('');
-      for (const name of names) {
-        lines.push(this.formatToolLine(name, category));
-      }
-      return { successBoolean: true, responseString: lines.join('\n').trim() };
+  /** Category mode: one category in detail. */
+  private async describeCategory(category: string): Promise<ToolResponse> {
+    const allCategories = this.catalog.categories();
+    if (!allCategories.includes(category)) {
+      return {
+        successBoolean: false,
+        responseString: `Invalid category "${ category }". Available categories: ${ allCategories.join(', ') }`,
+      };
     }
 
-    // ── Default: list available categories only (no per-tool dump) ──
+    const catDesc = toolRegistry.getCategoriesWithDescriptions().find(c => c.category === category)?.description || '';
+    const integSlug = CATEGORY_TO_INTEGRATION[category];
+    const connected = integSlug ? (await this.credentials.stateFor(integSlug)) === 'connected' : false;
+
+    const lines: string[] = [];
+    // The meta category must NOT emit the word "Example:" — that marks meta tools
+    // as directly callable. The preamble is omitted for meta for the same reason.
+    if (category !== 'meta') {
+      lines.push(INVOCATION_PREAMBLE);
+      lines.push('');
+    }
+    lines.push(`## ${ category }${ connected ? ' ✓ credentials connected' : '' }`);
+    if (catDesc) lines.push(catDesc);
+    lines.push('');
+    for (const entry of this.catalog.entriesFor(category)) {
+      lines.push(entry.line);
+    }
+    return { successBoolean: true, responseString: lines.join('\n').trim() };
+  }
+
+  /** Default mode: category list only. */
+  private async listCategories(): Promise<ToolResponse> {
+    const connectedIntegrations = await this.credentials.connectedIntegrations();
     const catDescs = toolRegistry.getCategoriesWithDescriptions();
     const lines: string[] = [];
     lines.push(INVOCATION_PREAMBLE);
     lines.push('');
     lines.push('## Available Tool Categories');
     lines.push('');
-    for (const cat of allCategories) {
-      const names = toolRegistry.getToolNamesForCategory(cat)
-        .filter(n => !EXCLUDED_TOOLS.has(n));
-      if (names.length === 0) continue;
+    for (const cat of this.catalog.categories()) {
+      const count = this.catalog.entriesFor(cat).length;
       const catDesc = catDescs.find(c => c.category === cat)?.description || '';
       const integSlug = CATEGORY_TO_INTEGRATION[cat];
-      const connected = integSlug && connectedIntegrations.has(integSlug);
+      const connected = Boolean(integSlug && connectedIntegrations?.has(integSlug));
       const badge = connected ? ' ✓ credentials connected' : '';
-      lines.push(`- ${ cat } (${ names.length } tools)${ badge } — ${ catDesc }`);
+      lines.push(`- ${ cat } (${ count } tools)${ badge } — ${ catDesc }`);
     }
     lines.push('');
     lines.push('Call browse_tools with a category or query to see individual tools and their exec invocations.');
