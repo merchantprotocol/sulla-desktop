@@ -77,6 +77,7 @@ describe('AgentCompletionRecoveryService', () => {
     const [injected] = firstInbox.take('parent', 'thread');
     const acknowledgements = new CompletionAcknowledgementService({
       markTaskCompletionDelivered: async() => { task.completionDeliveredAt = 100; },
+      releaseTaskCompletion: async() => { task.completionDeliveredAt = undefined; },
     }, { markDelivered: async() => {} } as any, firstInbox);
     await acknowledgements.acknowledge(injected);
 
