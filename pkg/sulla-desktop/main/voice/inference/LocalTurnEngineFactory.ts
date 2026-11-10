@@ -9,6 +9,7 @@ import { OrtInferenceClient } from './OrtInferenceClient';
 import { OrtSileroVad, OrtSmartTurn, type VoiceClock } from './OrtVoiceEngines';
 import type { KokoroSynthesizer } from '../tts/KokoroSynthesizer';
 import { KokoroTextToSpeech } from '../tts/KokoroTextToSpeech';
+import { WhisperOrtSpeechToText } from './WhisperOrtSpeechToText';
 
 /** Constructs local engines only when explicitly enabled; never participates in the live renderer path by default. */
 export class LocalTurnEngineFactory {
@@ -21,7 +22,7 @@ export class LocalTurnEngineFactory {
     private readonly kokoro: KokoroSynthesizer | null = null,
   ) {}
 
-  async create(): Promise<{ vad: OrtSileroVad; semantic: OrtSmartTurn; tts: KokoroTextToSpeech | null } | null> {
+  async create(): Promise<{ vad: OrtSileroVad; semantic: OrtSmartTurn; stt: WhisperOrtSpeechToText; tts: KokoroTextToSpeech | null } | null> {
     if (!this.enabled) return null;
     try {
       const [vad, smart] = await Promise.all([
@@ -31,6 +32,7 @@ export class LocalTurnEngineFactory {
       return {
         vad: new OrtSileroVad(this.client, vad, this.clock),
         semantic: new OrtSmartTurn(this.client, smart, this.logger),
+        stt: new WhisperOrtSpeechToText(this.models, this.client, this.logger),
         tts: this.kokoro ? new KokoroTextToSpeech(this.kokoro, this.logger) : null,
       };
     } catch (error) {
