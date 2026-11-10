@@ -6,6 +6,7 @@
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { BaseTool, ToolResponse } from '../base';
+import { ReviewItemClosureValidator } from '../../app/Services/ReviewItemClosureValidator';
 
 export class ReportProgressWorker extends BaseTool {
   name = '';
@@ -31,6 +32,17 @@ export class ReportProgressWorker extends BaseTool {
       return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
     }
 
+    const target = await AgentJobMessagingModel.taskForThread(threadId);
+    if (target && Array.isArray(input.reviewUpdates) && input.reviewUpdates.length) {
+      const open = await agentJobProvider.reviewItems.itemsForTask(target.jobId, target.taskIndex, true);
+      const updates = input.reviewUpdates;
+      const error = new ReviewItemClosureValidator().validate(updates, open.map(item => item.id));
+      if (error) return { successBoolean: false, responseString: error };
+      for (const update of updates) {
+        if (update.status === 'acknowledged') await agentJobProvider.reviewItems.acknowledge(target.jobId, target.taskIndex, update.id);
+        else await agentJobProvider.reviewItems.close(target.jobId, target.taskIndex, update.id, update.status, update.commit, update.reason, 'worker');
+      }
+    }
     const result = await AgentJobMessagingModel.appendCheckin(threadId, {
       step,
       summary,

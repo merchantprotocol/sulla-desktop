@@ -5,14 +5,21 @@
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentJobCheckin, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 import type { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
+import type { AgentJobReviewItem } from '../Repositories/AgentJobReviewItemRepository';
 import type { AgentStateService } from './AgentStateService';
 import { AgentLineageIndex } from './AgentLineageIndex';
-import type { FleetJobView, FleetTaskView } from './AgentFleetTypes';
+import type { FleetJobView, FleetReviewItemView, FleetTaskView } from './AgentFleetTypes';
 import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
+import { DescendantWaitCounter } from './DescendantWaitCounter';
 
 export interface AgentFleetTelemetryReader {
   telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>>;
   latestTelemetryForJobs(jobIds: string[]): Promise<Record<string, Record<number, AgentJobTaskTelemetry>>>;
+}
+
+/** Reads open tracked review items; closed items are excluded by the reader. */
+export interface AgentFleetReviewReader {
+  openReviewItemsForTasks(jobIds: string[]): Promise<Record<string, AgentJobReviewItem[]>>;
 }
 
 export interface AgentFleetRequest {
@@ -24,6 +31,17 @@ export interface AgentFleetRequest {
 
 type FleetObject = Record<string, unknown>;
 
+/** Per-read state shared by every job and task view built from one lineage snapshot. */
+interface FleetReadContext {
+  index: AgentLineageIndex;
+  waits: DescendantWaitCounter;
+  titles: Record<string, string | null>;
+  detailed: boolean;
+  stranded: Map<string, { stateKey: string; reason: string }>;
+  openTasksOnly: boolean;
+  reviews: Record<string, AgentJobReviewItem[]>;
+}
+
 /** Authoritative, lineage-enriched fleet read model consumed by agent supervision tools. */
 export class AgentFleetProjectionService {
   constructor(
@@ -33,6 +51,7 @@ export class AgentFleetProjectionService {
     private readonly now: () => number = Date.now,
     private readonly stranded?: { deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> },
     private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, now),
+    private readonly reviews?: AgentFleetReviewReader,
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
@@ -42,8 +61,8 @@ export class AgentFleetProjectionService {
       ? index.descendants(this.requiredCaller(request.callerThreadId))
       : all;
     const selected = this.bound(scoped, request.limit, request.includeFinished);
-    const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
-    return this.project(selected, all, telemetry, false, stranded);
+    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews(selected)]);
+    return this.project(selected, all, telemetry, false, stranded, request.includeFinished === false, reviews);
   }
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
@@ -61,15 +80,15 @@ export class AgentFleetProjectionService {
         selected.push(child); selectedIds.add(child.jobId);
       }
     }
-    const [telemetry, stranded] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
-    return this.project(selected, all, telemetry, false, stranded);
+    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews(selected)]);
+    return this.project(selected, all, telemetry, false, stranded, false, reviews);
   }
 
   async job(jobId: string): Promise<FleetJobView | undefined> {
     const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobs()]);
     if (!job) return undefined;
-    const [telemetry, stranded] = await Promise.all([this.telemetry.telemetryForJob(jobId), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map())]);
-    return (await this.project([job], all, { [jobId]: telemetry }, true, stranded))[0];
+    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.telemetryForJob(jobId), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews([job])]);
+    return (await this.project([job], all, { [jobId]: telemetry }, true, stranded, false, reviews))[0];
   }
 
   private bound(jobs: AgentJob[], limit = 25, includeFinished = true): AgentJob[] {
@@ -80,6 +99,12 @@ export class AgentFleetProjectionService {
     const terminal = visible.filter(job => !['running', 'parked'].includes(job.status))
       .sort((left, right) => right.createdAt - left.createdAt).slice(0, boundedLimit);
     return [...active, ...terminal].sort((left, right) => right.createdAt - left.createdAt);
+  }
+
+  /** Skips the read entirely when there is nothing to list; one indexed query otherwise. */
+  private async openReviews(jobs: AgentJob[]): Promise<Record<string, AgentJobReviewItem[]>> {
+    if (!this.reviews || jobs.length === 0) return {};
+    return this.reviews.openReviewItemsForTasks(jobs.map(job => job.jobId));
   }
 
   private requiredCaller(callerThreadId?: string): string {
@@ -94,21 +119,20 @@ export class AgentFleetProjectionService {
     telemetry: Record<string, Record<number, AgentJobTaskTelemetry>>,
     detailed: boolean,
     stranded: Map<string, { stateKey: string; reason: string }>,
+    openTasksOnly = false,
+    reviews: Record<string, AgentJobReviewItem[]> = {},
   ): Promise<FleetJobView[]> {
     const index = new AgentLineageIndex(all);
     const roots = [...new Set(selected.map(job => index.lineage(job).rootThreadId).filter((value): value is string => !!value))];
     const titles = await this.titles.titlesForThreadIds(roots);
-    return selected.map(job => this.jobView(job, index, titles, telemetry[job.jobId] ?? {}, detailed, stranded));
+    const view: FleetReadContext = { index, waits: new DescendantWaitCounter(index), titles, detailed, stranded, openTasksOnly, reviews };
+    return selected
+      .map(job => this.jobView(job, view, telemetry[job.jobId] ?? {}))
+      .filter(job => !openTasksOnly || job.tasks.length > 0);
   }
 
-  private jobView(
-    job: AgentJob,
-    index: AgentLineageIndex,
-    titles: Record<string, string | null>,
-    telemetry: Record<number, AgentJobTaskTelemetry>,
-    detailed: boolean,
-    stranded: Map<string, { stateKey: string; reason: string }>,
-  ): FleetJobView {
+  private jobView(job: AgentJob, context: FleetReadContext, telemetry: Record<number, AgentJobTaskTelemetry>): FleetJobView {
+    const { index, titles, detailed } = context;
     const lineage = index.lineage(job);
     const fields = {
       parentThreadId: job.parentThreadId ?? null,
@@ -132,14 +156,18 @@ export class AgentFleetProjectionService {
       stoppedBy: job.stoppedBy,
       stopReason: job.stopReason,
       ...(detailed ? { error: job.error, results: job.results, orphanedChildNotices: job.orphanedChildNotices ?? [] } : {}),
-      tasks: job.tasks.map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, telemetry[taskIndex], detailed, stranded.get(`${ job.jobId }#${ taskIndex }`))),
+      tasks: job.tasks
+        .map((task, taskIndex) => this.taskView(job, task, taskIndex, fields, context, telemetry[taskIndex]))
+        .filter(task => !context.openTasksOnly || AgentTaskActivityProjector.isOpen(task.state)),
     };
   }
 
-  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, telemetry?: AgentJobTaskTelemetry, detailed = false, stranded?: { stateKey: string; reason: string }): FleetTaskView {
+  private taskView(job: AgentJob, task: AgentJobTask, taskIndex: number, fields: FleetObject, context: FleetReadContext, telemetry?: AgentJobTaskTelemetry): FleetTaskView {
+    const { detailed, stranded: strandedMap } = context;
+    const stranded = strandedMap.get(`${ job.jobId }#${ taskIndex }`);
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
-    const activity = this.activity.project(job, task, taskIndex, latestCheckin);
+    const activity = this.activity.project(job, task, taskIndex, latestCheckin, telemetry?.lastMessageDeliveredAt ?? null);
     return {
       taskIndex,
       agentId: task.agentId,
@@ -164,13 +192,21 @@ export class AgentFleetProjectionService {
       rootThreadId: fields.rootThreadId as string | null,
       ...fields,
       latestCheckin: this.checkin(latestCheckin, !detailed),
+      descendantsRunning: context.waits.runningDescendantsOf(task),
       wakeAt: task.wakeAt ? new Date(task.wakeAt).toISOString() : null,
       stranded: stranded ? { ...stranded, detectedAt: 0, alertedAt: 0 } : null,
       result: task.result,
       completion: task.completion,
       undeliveredOrchestratorMessages: telemetry?.undeliveredMessages ?? 0,
+      openReviewItems: this.openReviewItemsFor(context.reviews[job.jobId] ?? [], taskIndex),
       ...(detailed ? { checkins: (telemetry?.checkins ?? []).map(item => this.checkin(item, false)) } : {}),
     };
+  }
+
+  private openReviewItemsFor(items: AgentJobReviewItem[], taskIndex: number): FleetReviewItemView[] {
+    return items
+      .filter(item => item.taskIndex === taskIndex && item.status !== 'closed')
+      .map(item => ({ id: item.id, text: item.text, status: item.status }));
   }
 
   private checkin(checkin: AgentJobCheckin | null, compact: boolean) {

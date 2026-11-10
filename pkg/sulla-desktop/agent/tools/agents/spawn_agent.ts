@@ -14,6 +14,7 @@ import {
   type AgentContractSpec,
 } from './contract';
 import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
+import { FailedManagerCompletionRerouter } from '../../services/FailedManagerCompletionRerouter';
 import { emitSubAgentExchange } from './jobExchange';
 import { threadSlug } from './threadSlug';
 import {
@@ -35,7 +36,9 @@ import {
 } from './jobRegistry';
 import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { agentWaitProvider } from '../../services/AgentWaitServices';
+import { AgentWaitRequest } from '../../services/AgentWaitRequest';
 import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
+import { DelegatedWakeSettlementPolicy } from '../../services/DelegatedWakeSettlementPolicy';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
@@ -614,6 +617,8 @@ export class SpawnAgentWorker extends BaseTool {
             String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
           )));
         };
+        const wakeSettlementPolicy = new DelegatedWakeSettlementPolicy();
+        const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
         const runFreshTurn = async(currentState: any) => {
           const wakeInput = subState.messages[subState.messages.length - 1];
           const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
@@ -625,12 +630,34 @@ export class SpawnAgentWorker extends BaseTool {
             currentState = await executeGraph();
             returnedAfterTurn = await returnedTask();
             if (!returnedAfterTurn && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
-              const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
-              const completionIds = Array.isArray(wakeInput?.metadata?.completionEntries)
-                ? wakeInput.metadata.completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',')
-                : 'none';
-              throw new Error(`Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`);
+              const job = activityJobId ? await getJob(activityJobId) : undefined;
+              const liveChildren = activityJobId ? await agentJobLifecycle.openChildren(threadId) : 0;
+              const pendingWait = activityJobId ? await agentWaitProvider.repository.pending(activityJobId, index) : undefined;
+              const emptyWakeCount = (job?.tasks[index]?.emptyWakeCount ?? 0) + 1;
+              if (activityJobId && wakeSettlementPolicy.shouldPark({ liveChildren, pendingWait: Boolean(pendingWait), consecutiveEmptyWakes: emptyWakeCount })) {
+                await updateJobTask(activityJobId, index, { emptyWakeCount, waitReason: wakeSettlementPolicy.reason(liveChildren) });
+                await agentJobLifecycle.endWakeTurn(activityJobId, index);
+                await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
+                if (taskAbortSignal?.aborted) return { finalState: currentState, returned: undefined };
+                await agentJobLifecycle.resume(activityJobId, index);
+                return await runFreshTurn(currentState);
+              } else {
+                const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
+                const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
+                const completionIds = completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',') || 'none';
+                const failureReason = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
+                if (activityJobId && completionEntries.length) {
+                  const failedManager = await getJob(activityJobId);
+                  if (failedManager) await failedManagerCompletionRerouter.route(failedManager, index, failureReason, completionEntries);
+                }
+                throw new Error(failureReason);
+              }
             }
+          }
+          if (activityJobId && (returnedAfterTurn || subState.messages.filter((message: any) => message?.role === 'assistant').length > assistantCount)) {
+            const currentTask = (await getJob(activityJobId))?.tasks[index];
+            const completionUpdate = currentTask && wakeSettlementPolicy.completionUpdate(currentTask);
+            if (completionUpdate) await updateJobTask(activityJobId, index, completionUpdate);
           }
           await acknowledgeCompletionInput(wakeInput);
           return { finalState: currentState, returned: returnedAfterTurn };
@@ -639,6 +666,7 @@ export class SpawnAgentWorker extends BaseTool {
         let finalState = await executeGraph();
         let returned = await returnedTask();
         let reminderSent = false;
+        let autoParkCount = 0;
         const settlementPolicy = new DelegatedTurnSettlementPolicy();
         while (activityJobId && taskAbortSignal?.aborted !== true) {
           const openChildren = await agentJobLifecycle.openChildren(threadId);
@@ -648,14 +676,39 @@ export class SpawnAgentWorker extends BaseTool {
           // that race, so consume the queued wake instead of fabricating a
           // missing-contract failure.
           const taskStillParked = (await getJob(activityJobId))?.tasks[index]?.status === 'parked';
+          const turnOutcome = extractAgentTurnOutcome(finalState, task.prompt);
           const settlement = settlementPolicy.decide({
             returned: Boolean(returned), openChildren, pendingWait: Boolean(pendingWait) || taskStillParked, reminderSent,
+            autoParkCount, finalText: turnOutcome.text, schemaContract: Boolean(contract.schema),
           });
           if (settlement === 'terminal' || settlement === 'fail') break;
 
           if (settlement === 'remind') {
             subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
             reminderSent = true;
+            const turn = await runFreshTurn(finalState);
+            finalState = turn.finalState;
+            returned = turn.returned;
+            continue;
+          }
+
+          if (settlement === 'auto_park') {
+            autoParkCount += 1;
+            const reason = 'ended turn without returning; auto-parked';
+            await agentWaitProvider.parking.park(activityJobId, index, AgentWaitRequest.create(300, reason));
+            subState.metadata.delegatedRunActive = false;
+            await containerLifecycle?.park();
+            await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
+            if (taskAbortSignal?.aborted) break;
+            await agentJobLifecycle.resume(activityJobId, index);
+            await agentWaitProvider.cancel(activityJobId, index);
+            if (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true, autoParkCount, finalText: turnOutcome.text, schemaContract: Boolean(contract.schema) }) === 'fail') {
+              finalState = { ...finalState, messages: [...(finalState.messages ?? []), { role: 'assistant', content: 'ended turn 3 times without returning' }] };
+              break;
+            }
+            await containerLifecycle?.resume();
+            subState.metadata.delegatedRunActive = true;
+            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.' });
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
             returned = turn.returned;
@@ -694,7 +747,7 @@ export class SpawnAgentWorker extends BaseTool {
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
-          taskResult = contract.schema && status !== 'blocked'
+          taskResult = (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent, autoParkCount, finalText: text, schemaContract: Boolean(contract.schema) }) === 'fail') && status !== 'blocked'
             ? { label, status: 'error', output: `failed: ${ new MissingContractAfterReminderError(settlementPolicy.failureCause(finalState)).message }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }

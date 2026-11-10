@@ -44,45 +44,6 @@
             stroke-width="1.5"
           ><polyline points="1,1 5,5 1,9" /></svg>
         </button>
-
-        <!-- Flyout submenu -->
-        <div
-          v-if="openSubId === item.id"
-          ref="subEl"
-          class="ctx-menu ctx-menu-flyout"
-          :style="subStyle"
-          @mouseenter="cancelCloseSub"
-          @mouseleave="startCloseSub"
-        >
-          <template
-            v-for="child in item.children"
-            :key="child.id"
-          >
-            <div
-              v-if="child.divider"
-              class="ctx-menu-divider"
-            />
-            <button
-              v-else
-              class="ctx-menu-item"
-              :class="{ active: child.active }"
-              :disabled="child.disabled"
-              :data-menu-id="child.id"
-              @click="child.action(); $emit('close')"
-            >
-              <img
-                v-if="child.thumbnail"
-                :src="child.thumbnail"
-                class="ctx-menu-thumb"
-              >
-              {{ child.label }}
-              <span
-                v-if="child.badge"
-                class="ctx-menu-badge"
-              >{{ child.badge }}</span>
-            </button>
-          </template>
-        </div>
       </div>
 
       <!-- Regular item -->
@@ -118,6 +79,50 @@
       </div>
     </template>
   </div>
+  <!-- Flyouts render outside the root menu: its overflow/backdrop-filter clips and re-anchors fixed children -->
+  <template
+    v-for="item in items"
+    :key="'fly-' + item.id"
+  >
+    <!-- Flyout submenu -->
+    <div
+      v-if="visible && item.children && openSubId === item.id"
+      ref="subEl"
+      class="ctx-menu ctx-menu-flyout"
+      :style="subStyle"
+      @mouseenter="cancelCloseSub"
+      @mouseleave="startCloseSub"
+    >
+      <template
+        v-for="child in item.children"
+        :key="child.id"
+      >
+        <div
+          v-if="child.divider"
+          class="ctx-menu-divider"
+        />
+        <button
+          v-else
+          class="ctx-menu-item"
+          :class="{ active: child.active }"
+          :disabled="child.disabled"
+          :data-menu-id="child.id"
+          @click="child.action(); $emit('close')"
+        >
+          <img
+            v-if="child.thumbnail"
+            :src="child.thumbnail"
+            class="ctx-menu-thumb"
+          >
+          {{ child.label }}
+          <span
+            v-if="child.badge"
+            class="ctx-menu-badge"
+          >{{ child.badge }}</span>
+        </button>
+      </template>
+    </div>
+  </template>
 </template>
 
 <script setup lang="ts">

@@ -35,12 +35,13 @@ describe('SubagentDirectoryBuilder', () => {
     const completedTask = { ...task(0, 'finished-worker'), status: 'completed', state: 'done', returned: true, finishedAt: new Date(now - 1_000).toISOString(), completion: { status: 'completed', summary: 'done', output: 'PR #2030 is ready' } };
     const completed: FleetJobView = { ...direct, jobId: 'completed', status: 'completed', finishedAt: completedTask.finishedAt, tasks: [completedTask] };
     const parkedTask = { ...task(0, 'manager'), status: 'parked', state: 'parked', promotedToTab: true };
-    const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 2, tasks: [parkedTask] };
+    const parked: FleetJobView = { ...direct, jobId: 'parked', status: 'parked', waitingOnChildren: 0, tasks: [{ ...parkedTask, descendantsRunning: 2 }] };
     const output = await new SubagentDirectoryBuilder(new FleetReader([completed, parked]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
     expect(output).toContain('finished-worker: "PR #2030 is ready"');
     expect(output).not.toContain('[object Object]');
     expect(output).toContain('hidden→tab');
-    expect(output).toContain('parked, waiting on 2 children');
+    expect(output).toContain('parked, waiting on 0 children');
+    expect(output).toContain('2 running descendants beneath them');
   });
 
   it('budgets whole lines and reports omitted rows without slicing tokens', async() => {
@@ -50,5 +51,18 @@ describe('SubagentDirectoryBuilder', () => {
     expect(output.length).toBeLessThanOrEqual(SUBAGENT_DIRECTORY_MAX_CHARS);
     expect(output).toMatch(/… \d+ more:/);
     expect(output.split('\n').every(line => line === '' || line.startsWith('#') || line.startsWith('-') || line.startsWith('Direct') || line.startsWith('These') || line.startsWith('⚠'))).toBe(true);
+  });
+});
+
+describe('SubagentDirectoryBuilder open review items', () => {
+  it('appends short review ids to the owning child row only', async() => {
+    // risk: manager returns or stops a worker without seeing it still owes fixes
+    const owing: FleetJobView = { jobId: 'reviewed', status: 'running', createdAt: new Date(now - 60_000).toISOString(), finishedAt: null, parentThreadId: 'root', parentJobId: null, parentTaskIndex: null, rootThreadId: 'root', tasks: [
+      { ...task(0, 'fixer'), openReviewItems: [{ id: 'R2', text: 'a', status: 'open' }, { id: 'R3', text: 'b', status: 'acknowledged' }] },
+      { ...task(1, 'clean'), openReviewItems: [] },
+    ] };
+    const output = await new SubagentDirectoryBuilder(new FleetReader([owing]) as any, new AgentTeamRollupProjector(() => now), () => now).build('root');
+    expect(output).toContain('review open: R2, R3');
+    expect(output.split('\n').filter(line => line.includes('clean')).join('\n')).not.toContain('review open');
   });
 });

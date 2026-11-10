@@ -44,6 +44,8 @@ export interface AgentJobTaskTelemetry {
   latestCheckin: AgentJobCheckin | null;
   checkins:      AgentJobCheckin[];
   undeliveredMessages: number;
+  /** Latest delivery time of any orchestrator message to this task; resolves an earlier blocker. */
+  lastMessageDeliveredAt?: number | null;
 }
 
 export class AgentJobMessagingModel {

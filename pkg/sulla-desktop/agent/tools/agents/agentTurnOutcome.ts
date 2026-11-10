@@ -57,5 +57,6 @@ export function extractAgentTurnOutcome(finalState: any, brief?: string): AgentT
   if (text.trimStart().startsWith(AGENT_ERROR_MESSAGE_PREFIX)) {
     return { status: 'error', text };
   }
+  if (/<AGENT_BLOCKED>|\[BLOCKED\]/.test(text)) return { status: 'blocked', text };
   return { status: 'completed', text };
 }
