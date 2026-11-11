@@ -6,6 +6,7 @@
 import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getDesktopVaultClient } from '../../services/DesktopVaultClient';
 import { getIntegrationService } from '../../services/IntegrationService';
+import { AgentCredentialAccess } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
 import { isBridgeResolved, resolveBridge } from '../browser/resolve_bridge';
 
@@ -119,6 +120,7 @@ export function buildAutofillScript(username: string, password: string): string 
 export class VaultAutofillWorker extends BaseTool {
   name = '';
   description = '';
+  private readonly credentialAccess = new AgentCredentialAccess();
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     if (usesContainerVaultAuthority()) {
       return {
@@ -173,8 +175,9 @@ export class VaultAutofillWorker extends BaseTool {
         };
       }
 
+      const agentId = this.credentialAccess.agentIdFrom((this.state as any)?.metadata);
       const llmAccessValue = await service.getIntegrationValue('website', 'llm_access', targetAccountId);
-      const llmAccess = llmAccessValue?.value || 'autofill';
+      const llmAccess = this.credentialAccess.levelFor({ storedLevel: llmAccessValue?.value, agentId });
 
       if (!getDesktopVaultClient().isUnlocked() && (llmAccess === 'none' || llmAccess === 'metadata')) {
         return {
@@ -215,7 +218,6 @@ export class VaultAutofillWorker extends BaseTool {
       }
 
       const targetHost = new URL(targetUrl).hostname;
-      const agentId = String((this.state)?.metadata?.routedAgentId || (this.state)?.metadata?.wsChannel || 'sulla');
       let username = '';
       let password = '';
       const vault = getDesktopVaultClient();
