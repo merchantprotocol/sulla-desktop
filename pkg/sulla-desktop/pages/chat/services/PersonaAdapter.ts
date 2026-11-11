@@ -20,6 +20,7 @@
 */
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
+import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
 import { VoiceAgentRouting } from './VoiceAgentRouting';
@@ -116,7 +117,7 @@ export class PersonaAdapter {
     this.hasSentMessage = this.ci.hasMessages;
 
     // Tell the controller to delegate send/stop/continue to us.
-    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId));
+    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId, opts?.useCaseIntent, opts?.agentId));
     this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
     this.controller.setRunHandlers({
       onStop:     () => this.ci.stop(),
@@ -333,7 +334,7 @@ export class PersonaAdapter {
     } : {};
   }
 
-  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
+  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string): Promise<void> {
     const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
     if (!aiStatus.loading && !aiStatus.connected) {
@@ -361,13 +362,15 @@ export class PersonaAdapter {
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    const agentId = this.voiceAgentRouting.resolve(inputSource, this.controller.thread.value.agentId);
+    // An "Ask <agent>" chip routes this one turn through the existing explicit agentId override.
+    const agentId = intentAgentId || this.voiceAgentRouting.resolve(inputSource, this.controller.thread.value.agentId);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
     const selection = {
       ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
       ...(inputSource ? { inputSource } : {}),
       ...(voiceTurnId ? { voiceTurnId } : {}),
       ...(agentId ? { agentId } : {}),
+      ...(useCaseIntent ? { useCaseIntent } : {}),
       modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),

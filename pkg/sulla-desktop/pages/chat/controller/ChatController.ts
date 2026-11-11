@@ -20,6 +20,7 @@
 */
 
 import { reactive, ref, computed, type Ref, type ComputedRef } from 'vue';
+import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
 import { nextRunState, type RunEvent } from './runStateMachine';
@@ -78,6 +79,10 @@ export interface SendOptions {
   inputSource?: 'voice';
   /** Content-free correlation id used only for voice lifecycle diagnostics. */
   voiceTurnId?: string;
+  /** Use case the user picked in the composer for this message. */
+  useCaseIntent?: UseCaseIntentMetadata;
+  /** Route this one message to an agent (an "Ask <agent>" chip). */
+  agentId?: string;
 }
 
 export type SendHandler = (
@@ -265,6 +270,8 @@ export class ChatController {
       attachments: [...attachments],
       queuedAt:    Date.now(),
       ...(opts.inputSource ? { inputSource: opts.inputSource } : {}),
+      ...(opts.useCaseIntent ? { useCaseIntent: opts.useCaseIntent } : {}),
+      ...(opts.agentId ? { agentId: opts.agentId } : {}),
     };
     this.queue.value = [...this.queue.value, q];
     this.persist();
@@ -273,6 +280,12 @@ export class ChatController {
   injectQueuedMessage(id: QueuedId): void {
     const q = this.queue.value.find(m => m.id === id);
     if (!q) return;
+
+    // The in-flight injection channel carries only text and attachments. A
+    // structured use-case intent or agent route must wait for a fresh send,
+    // otherwise those options are silently lost by injectHandler.
+    if (isRunning(this.runState.value) && (q.useCaseIntent || q.agentId)) return;
+
     this.queue.value = this.queue.value.filter(m => m.id !== id);
     this.persist();
 
@@ -288,7 +301,7 @@ export class ChatController {
       this.injectHandler(q.text, [...q.attachments]);
       return;
     }
-    this.send(q.text, [...q.attachments], { inputSource: q.inputSource });
+    this.send(q.text, [...q.attachments], { inputSource: q.inputSource, useCaseIntent: q.useCaseIntent, agentId: q.agentId });
   }
 
   removeQueuedMessage(id: QueuedId): void {
@@ -330,7 +343,11 @@ export class ChatController {
     const [first, ...rest] = this.queue.value;
     if (!first) return;
     this.queue.value = rest;
-    this.send(first.text, [...first.attachments], { inputSource: first.inputSource });
+    this.send(first.text, [...first.attachments], {
+      inputSource: first.inputSource,
+      ...(first.useCaseIntent ? { useCaseIntent: first.useCaseIntent } : {}),
+      ...(first.agentId ? { agentId: first.agentId } : {}),
+    });
   }
 
   // ─── Run control ────────────────────────────────────────────────
