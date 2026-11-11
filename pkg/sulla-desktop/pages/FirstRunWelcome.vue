@@ -81,6 +81,7 @@
 import { ipcRenderer } from 'electron';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
+import { AuthInputValidator } from '@pkg/composables/auth/AuthInputValidator';
 import { firstRunAccountSignedIn, traceFirstRun } from './firstRunWizard';
 
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
@@ -119,8 +120,7 @@ const syncCategories = ref([
   { key: 'vault', label: 'Password vault', description: 'store an encrypted backup', enabled: true },
   { key: 'usage', label: 'Usage', description: 'sync usage history', enabled: true },
 ]);
-// One @, a dotted domain, no empty labels (no trailing or doubled dots).
-const emailRegex = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+const authInputs = AuthInputValidator.withDomainRules();
 let testAutopilot = '';
 
 const cloudHeading = computed(() => {
@@ -145,12 +145,14 @@ const cloudSubmitLabel = computed(() => {
 
 function validateEmail() {
   // Emails are case-insensitive; show and send the same normalized form.
-  const email = sullaEmail.value.trim().toLowerCase();
-  sullaEmail.value = email;
-  emailError.value = !email ? 'Email is required.'
-    : email.length > 254 ? 'That email address is too long.'
-      : !emailRegex.test(email) ? 'Please enter a valid email address.' : '';
-  return !emailError.value;
+  const result = authInputs.email(sullaEmail.value);
+  if (!result.ok) {
+    emailError.value = result.error;
+    return false;
+  }
+  sullaEmail.value = result.value;
+  emailError.value = '';
+  return true;
 }
 
 onMounted(async() => {
@@ -281,7 +283,8 @@ async function afterSignIn() {
 
 async function handleCloudSubmit() {
   if (cloudBusy.value) return;
-  if (!cloudPassword.value) { cloudError.value = 'Enter a password.'; return; }
+  const password = authInputs.password(cloudPassword.value);
+  if (!password.ok) { cloudError.value = password.error; return; }
   const attempt = ++cloudAttempt;
   cloudSubmitting.value = true; cloudError.value = '';
   traceFirstRun('account', 'password submitted', { signInAgain: signInAgain.value, afterEmailCode: passwordForVault.value });
@@ -333,7 +336,8 @@ async function sendRecoveryCode() {
 
 async function verifyRecoveryCode() {
   if (cloudSubmitting.value) return;
-  if (!/^\d{6}$/.test(cloudCode.value.trim())) { cloudError.value = 'Enter the 6-digit code from the email.'; return; }
+  const code = authInputs.emailCode(cloudCode.value);
+  if (!code.ok) { cloudError.value = code.error; return; }
   cloudPassword.value = '';
   resetStage.value = 'password';
   cloudCodeSent.value = true;
