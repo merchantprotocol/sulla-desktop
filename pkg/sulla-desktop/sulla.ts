@@ -553,10 +553,16 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 export async function onMainProxyLoad(ipcMainProxy: any) {
   // Assume main process
   const { registerAgentUseCaseRecallQuery } = await import('@pkg/main/AgentUseCaseRecallQuery');
+  const { registerUseCaseSuggestionQuery } = await import('@pkg/main/UseCaseSuggestionQuery');
   const { queryUseCaseSuggestions } = await import('@pkg/main/sullaFilesWatcher');
+  // The composer and agent recall use separate IPC contracts. Both query the
+  // same published index; each boundary enforces its own types and allowlist.
+  registerUseCaseSuggestionQuery((channel, handler) => ipcMainProxy.handle(channel, handler), {
+    suggest: async(text, options) => queryUseCaseSuggestions(text, options as any),
+  });
   registerAgentUseCaseRecallQuery((channel, handler) => ipcMainProxy.handle(channel, handler), {
-    suggest: async(text, options) => (await queryUseCaseSuggestions(text, options as any))
-      .filter(row => row.type === 'skill' || row.type === 'agent') as any,
+    suggest: async(text, options) => queryUseCaseSuggestions(text, options as any),
+  });
   });
 
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
