@@ -4,11 +4,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { SkillRecallService } from '../../../services/SkillRecall';
+import type { UseCaseSuggestionQuery } from '../../../services/UseCaseSuggestionQueryClient';
 
 describe('SkillRecallService', () => {
   it('queries only published indexed skills and formats the existing context block', async() => {
     // risk: published-only skill recall and preserving the skill ID used by the loader
-    const query = vi.fn(async(_text: string, _options: { types: string[]; limit: number }) => [
+    const query = vi.fn<UseCaseSuggestionQuery['query']>(async(_text, _options) => [
       { type: 'skill' as const, slug: 'summarize-document', title: 'Summarize document', description: 'Summarize a long document.', score: 0.03, reason: 'semantic match' },
     ]);
     const service = new SkillRecallService({ query });
