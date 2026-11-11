@@ -162,6 +162,21 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows.map(row => this.map(row));
   }
 
+  /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
+  async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
+    const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
+      SELECT * FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+      UNION ALL
+      SELECT child.* FROM agent_jobs child
+      JOIN lineage parent ON child.parent_thread_id IN
+        (SELECT value->>'threadId' FROM jsonb_array_elements(parent.tasks) value)
+      WHERE child.dismissed_at IS NULL
+    ), selected AS (
+      SELECT * FROM lineage ORDER BY created_at DESC LIMIT $2
+    ) SELECT * FROM selected ORDER BY created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+    return rows.map(row => this.map(row));
+  }
+
   async dismissTasks(jobId: string, parentThreadId: string, tasks: AgentJobTask[], allDismissed: boolean): Promise<void> {
     await this.connection.run(`UPDATE agent_jobs SET tasks = $3::jsonb, dismissed_at = CASE WHEN $4 THEN now() ELSE dismissed_at END WHERE job_id = $1 AND parent_thread_id = $2`, [jobId, parentThreadId, JSON.stringify(tasks), allDismissed]);
   }

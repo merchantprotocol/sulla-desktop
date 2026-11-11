@@ -33,6 +33,23 @@ export const TEAM_DIRECTORY_MAX_CHARS = 3500;
 const FIT_MARK = '**fits right now** · ';
 const CALLING_YOUR_TEAM_HEADING = /^#{1,6}\s*Calling your team\b/im;
 
+/** Short-lived process cache for the two directory reads used on every lead turn. */
+class TeamRecallDirectoryCache {
+  private readonly values = new Map<string, { loadedAt: number; value: unknown }>();
+  constructor(private readonly ttlMs = 60_000, private readonly now: () => number = Date.now) {}
+  async get<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const cached = this.values.get(key);
+    if (cached && this.now() - cached.loadedAt < this.ttlMs) return cached.value as T;
+    const value = await load();
+    this.values.set(key, { loadedAt: this.now(), value });
+    return value;
+  }
+  invalidate(): void { this.values.clear(); }
+}
+
+const directoryCache = new TeamRecallDirectoryCache();
+export function invalidateTeamRecallDirectoryCache(): void { directoryCache.invalidate(); }
+
 /** True when the agent's stored prompt already includes the shared section. */
 export function promptHasCallingYourTeam(agent: AgentDefinition): boolean {
   return [agent.system_prompt, agent.prompt_content, ...Object.values(agent.prompt_files ?? {})]
@@ -64,10 +81,10 @@ export function depthBudgetLine(depth: number): string {
 export async function buildTeamRecallContext(opts: TeamRecallOptions): Promise<string> {
   const slug = opts.agentSlug.trim();
   if (!slug) return '';
-  const self = await agentDefinitionService.findBySlug(slug);
+  const self = await directoryCache.get(`agent:${ slug }`, () => agentDefinitionService.findBySlug(slug));
   if (!self || self.can_call.length === 0) return '';
 
-  const cards = (await listAgentDirectory({ slugs: self.can_call })).filter(card => card.slug !== slug);
+  const cards = (await directoryCache.get(`directory:${ self.can_call.join('\0') }`, () => listAgentDirectory({ slugs: self.can_call }))).filter(card => card.slug !== slug);
   if (cards.length === 0) return '';
 
   // Keep the lead's own can_call order as the tie-break: it is the author's

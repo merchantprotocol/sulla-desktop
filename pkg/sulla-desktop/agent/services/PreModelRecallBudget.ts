@@ -18,4 +18,21 @@ export class PreModelRecallBudget {
       if (timer) clearTimeout(timer);
     }
   }
+
+  async runEach<T>(tasks: Array<{ name: string; work: Promise<T>; apply: (value: T) => void }>, budgetMs: number): Promise<{ dropped: string[]; failures: unknown[] }> {
+    const deadline = Date.now() + Math.max(0, budgetMs);
+    const completed = new Set<string>();
+    const settled = tasks.map(task => task.work.then(value => {
+      completed.add(task.name);
+      if (Date.now() > deadline) return { name: task.name, dropped: true };
+      task.apply(value);
+      return { name: task.name, dropped: false };
+    }, error => ({ name: task.name, error })));
+    const completion = await this.run(Promise.all(settled), budgetMs);
+    if (completion.status === 'timeout') return { dropped: tasks.filter(task => !completed.has(task.name)).map(task => task.name), failures: [] };
+    return {
+      dropped: completion.value.filter((result: any) => result.dropped).map((result: any) => result.name),
+      failures: completion.value.filter((result: any) => 'error' in result).map((result: any) => result.error),
+    };
+  }
 }
