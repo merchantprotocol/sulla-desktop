@@ -23,7 +23,7 @@ describe('AgentStateProjector concurrent reads', () => {
   it('shares one pending history read across windows and starts a fresh read after success', async() => {
     const pending = deferred<AgentJob[]>();
     const jobs = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue([]);
-    const states = { jobs, version: 1 } as unknown as AgentStateService;
+    const states = { jobsForProjection: jobs, version: 1 } as unknown as AgentStateService;
     const projector = new AgentStateProjector(states, { latest: async() => null });
 
     const first = projector.snapshot();
@@ -40,7 +40,7 @@ describe('AgentStateProjector concurrent reads', () => {
   it('releases a failed snapshot so the next poll can recover', async() => {
     const pending = deferred<AgentJob[]>();
     const jobs = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue([]);
-    const states = { jobs, version: 1 } as unknown as AgentStateService;
+    const states = { jobsForProjection: jobs, version: 1 } as unknown as AgentStateService;
     const projector = new AgentStateProjector(states, { latest: async() => null });
     const first = projector.snapshot();
     const second = projector.snapshot();
@@ -55,7 +55,7 @@ describe('AgentStateProjector concurrent reads', () => {
   it('keeps an older snapshot version while telemetry waits so a trailing update remains usable', async() => {
     const pendingTelemetry = deferred<null>();
     const latest = vi.fn().mockReturnValueOnce(pendingTelemetry.promise).mockResolvedValue(null);
-    const states = { jobs: vi.fn().mockResolvedValue([activeJob]), version: 1, isLive: () => true };
+    const states = { jobsForProjection: vi.fn().mockResolvedValue([activeJob]), version: 1, isLive: () => true };
     const projector = new AgentStateProjector(states as unknown as AgentStateService, { latest });
     const first = projector.snapshot();
     await vi.waitFor(() => expect(latest).toHaveBeenCalledTimes(1));
