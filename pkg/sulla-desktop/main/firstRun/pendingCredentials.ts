@@ -10,6 +10,8 @@ import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycle
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
+import { PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
+import { FetchCloudRefreshHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
@@ -118,6 +120,14 @@ function scheduleDurableSync(delayMs = 0): void {
 
 class PendingSessionExpiredError extends Error {}
 
+const pendingSessionRefresher = new PendingCloudSessionRefresher(
+  new FetchCloudRefreshHttp(refreshToken => fetch('https://sulla-workers.merchantprotocol.workers.dev/auth/refresh', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
+  })),
+  () => new PendingSessionExpiredError('Cloud session expired'),
+);
+
 function returnToCloudSignIn(): void {
   const state = getFirstRunState();
   updateFirstRunState({
@@ -224,28 +234,9 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
     return;
   }
   if (usesContainerVaultAuthority() && entry.integrationId === 'sulla-cloud') {
-    let accessToken = entry.values.access_token;
-    let refreshToken = entry.values.refresh_token;
-    try {
-      const payload = JSON.parse(Buffer.from(accessToken.split('.')[1] || '', 'base64url').toString('utf8')) as { exp?: number };
-      if (!payload.exp || payload.exp <= Math.floor(Date.now() / 1_000) + 120) {
-        const response = await fetch('https://sulla-workers.merchantprotocol.workers.dev/auth/refresh', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
-        });
-        if (response.status === 401 || response.status === 403) throw new PendingSessionExpiredError('Cloud session expired');
-        if (!response.ok) throw new Error(`Cloud session refresh returned ${ response.status }`);
-        const tokens = await response.json() as { accessToken?: string; refreshToken?: string };
-        if (!tokens.accessToken) throw new Error('Cloud session refresh returned no access token');
-        accessToken = tokens.accessToken;
-        refreshToken = tokens.refreshToken || refreshToken;
-        entry.values.access_token = accessToken;
-        entry.values.refresh_token = refreshToken;
-      }
-    } catch (error) {
-      if (error instanceof PendingSessionExpiredError) throw error;
-      throw new Error(`Pending Cloud session needs refresh: ${ error instanceof Error ? error.message : String(error) }`);
-    }
+    await pendingSessionRefresher.refreshIfExpiring(entry);
+    const accessToken = entry.values.access_token;
+    const refreshToken = entry.values.refresh_token;
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.adoptSullaCloudSession({
