@@ -205,9 +205,9 @@ function pickSuggestion(item: SuggestedUseCase): void { intent.value = item; sel
 function onSuggestionInput(text: string): void {
   selectedSuggestion.value = -1;
   if (suggestionTimer) clearTimeout(suggestionTimer);
+  const request = ++suggestionRequest;
   const query = text.trim();
   if (query.length < 3) { suggestions.value = []; return; }
-  const request = ++suggestionRequest;
   suggestionTimer = setTimeout(() => {
     void ipcRenderer.invoke('use-case-suggest:query' as any, query, { limit: 5 }).then((result: { items?: SuggestedUseCase[] }) => {
       if (request === suggestionRequest && Array.isArray(result?.items)) suggestions.value = result.items.filter(item => ['skill', 'agent', 'workflow', 'recipe'].includes(item.type)).slice(0, 5);
@@ -864,6 +864,53 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   letter-spacing: 0;
   text-transform: none;
 }
+.usecase-suggestions {
+  position: absolute;
+  z-index: 20;
+  right: 16px;
+  bottom: calc(100% + 8px);
+  left: 16px;
+  display: grid;
+  gap: 2px;
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-page);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+.usecase-suggestions > button {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 9px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.usecase-suggestions > button:hover,
+.usecase-suggestions > button.selected { background: color-mix(in srgb, var(--accent) 12%, var(--bg-page)); }
+.suggestion-kind { color: var(--accent); font: 10px var(--font-mono); text-transform: uppercase; }
+.usecase-suggestions small { grid-column: 2; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.usecase-suggestions kbd { grid-column: 3; grid-row: 1 / span 2; color: var(--text-dim); font: 10px var(--font-mono); }
+.usecase-intent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-default));
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-page));
+  font-size: 12px;
+}
+.usecase-intent button { color: inherit; font-size: 16px; }
 .classic-guide { display: none; }
 .noir-guide { display: flex; gap: 4px; }
 .noir-guide span::before { display: none; }
