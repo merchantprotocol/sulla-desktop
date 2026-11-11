@@ -10,8 +10,14 @@ interface TimedVoiceAssignment extends VoiceIdentityMetadata { assignedAt: numbe
 /** Bounded, non-blocking handoff from background voice scoring to transcript commit. */
 export class VoiceAssignmentCache {
   private readonly assignments = new Map<string, TimedVoiceAssignment>();
-  constructor(private readonly now: () => number = Date.now, private readonly ttlMs = 60_000, private readonly maxEntries = 50) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly ttlMs = 60_000,
+    private readonly maxEntries = 50,
+    private readonly acceptsAssignment: () => boolean = () => true,
+  ) {}
   put(turnId: string, assignment: VoiceIdentityMetadata): void {
+    if (!this.acceptsAssignment()) return;
     const cutoff = this.now() - this.ttlMs;
     for (const [id, value] of this.assignments) if (value.assignedAt < cutoff) this.assignments.delete(id);
     this.assignments.set(turnId, { ...assignment, assignedAt: this.now() });

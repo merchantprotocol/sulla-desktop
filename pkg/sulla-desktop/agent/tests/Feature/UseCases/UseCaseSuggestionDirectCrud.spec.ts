@@ -20,6 +20,10 @@ import type { UseCaseChangeEvent } from '../../../useCases/UseCaseSuggestionInde
 
 const boundary = vi.hoisted(() => ({ db: undefined as any, redis: undefined as any }));
 
+const SKILL_CONTENT = {
+  tags: [], triggers: [], body: '', frontmatter: {}, frontmatter_text: '', files: {}, version: null,
+};
+
 vi.mock('../../../database/PostgresClient', () => ({
   postgresClient: {
     query:    (sql: string, params?: unknown[]) => boundary.db.query(sql, params),
@@ -158,7 +162,7 @@ describe('direct definition CRUD invalidates suggestions through the change bus'
     await h.start();
     const reads = { fingerprints: h.source.fingerprints, lists: h.source.lists };
 
-    const created = await SkillDefinitionModel.create({ slug: 'ledger-close-helper', title: 'Ledger close helper', description: 'month end ledger close checklist' });
+    const created = await SkillDefinitionModel.create({ ...SKILL_CONTENT, slug: 'ledger-close-helper', title: 'Ledger close helper', description: 'month end ledger close checklist' });
     await vi.waitFor(async() => expect(await h.slugs('month end ledger close')).toContain('skill:ledger-close-helper'));
 
     await SkillDefinitionModel.update(created.id, { description: 'quarterly tax filing checklist' });
@@ -181,7 +185,7 @@ describe('direct definition CRUD invalidates suggestions through the change bus'
     // risk: data accuracy — Jonathon's rule: drafts must never reach agent context.
     const h = new Harness();
     await h.start();
-    const draft = await SkillDefinitionModel.create({ slug: `draft-${ randomUUID().slice(0, 8) }`, title: 'Draft payroll runner', description: 'unpublished payroll runner draft' });
+    const draft = await SkillDefinitionModel.create({ ...SKILL_CONTENT, slug: `draft-${ randomUUID().slice(0, 8) }`, title: 'Draft payroll runner', description: 'unpublished payroll runner draft' });
     await SkillDefinitionModel.update(draft.id, { description: 'unpublished payroll runner draft edited' });
     await new Promise(resolve => setTimeout(resolve, 20));
     expect((await h.slugs('unpublished payroll runner draft')).filter(slug => slug.includes(draft.slug))).toEqual([]);
@@ -240,7 +244,7 @@ describe('post-commit safety', () => {
     // risk: irreversible side effects — a broadcast failure must never fail or roll back a committed write.
     const h = new Harness(15_000);
     await h.start();
-    const created = await SkillDefinitionModel.create({ slug: 'payroll-helper', title: 'Payroll helper', description: 'biweekly payroll export' });
+    const created = await SkillDefinitionModel.create({ ...SKILL_CONTENT, slug: 'payroll-helper', title: 'Payroll helper', description: 'biweekly payroll export' });
     await vi.waitFor(async() => expect(await h.slugs('biweekly payroll export')).toContain('skill:payroll-helper'));
 
     hub.status = 'connecting';
@@ -356,7 +360,7 @@ describe('per-operation publisher injection', () => {
     // risk: data accuracy — writers own their publisher per call; no hidden model-level service.
     const heard: UseCaseChangeEvent[] = [];
     const publisher = { announce: (event: UseCaseChangeEvent) => { heard.push(event) } };
-    const skill = await SkillDefinitionModel.create({ slug: `inj-${ randomUUID().slice(0, 8) }`, title: 'Injected', description: 'x' }, publisher);
+    const skill = await SkillDefinitionModel.create({ ...SKILL_CONTENT, slug: `inj-${ randomUUID().slice(0, 8) }`, title: 'Injected', description: 'x' }, publisher);
     await SkillDefinitionModel.update(skill.id, { enabled: false }, undefined, publisher);
     const agent = await AgentDefinitionModel.create({ slug: `inj-agent-${ randomUUID().slice(0, 8) }`, name: 'Injected agent', status: 'production' }, publisher);
     await AgentDefinitionModel.setStatus(agent.id, 'draft', publisher);
@@ -415,7 +419,7 @@ describe('transport and start-order failures', () => {
     root.start();
     await vi.waitFor(() => expect(root.index.isReady).toBe(true));
 
-    const skill = await SkillDefinitionModel.create({ slug: 'gate-skill', title: 'Gate skill', description: 'vendor onboarding packet' });
+    const skill = await SkillDefinitionModel.create({ ...SKILL_CONTENT, slug: 'gate-skill', title: 'Gate skill', description: 'vendor onboarding packet' });
     await new Promise(resolve => setTimeout(resolve, 20));
     expect((await root.index.suggest('vendor onboarding packet')).map(row => row.slug)).not.toContain('gate-skill');
 

@@ -24,6 +24,7 @@ import { gdriveToolManifests } from './gdrive/manifests';
 import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
+import { mailToolManifests } from './mail/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
 import { memoryPackToolManifests } from './memorypacks/manifests';
 import { metaToolManifests } from './meta/manifests';
@@ -62,6 +63,7 @@ export const allToolManifests: ToolManifest[] = [
   ...gdriveToolManifests,
   ...githubToolManifests,
   ...integrationsToolManifests,
+  ...mailToolManifests,
   ...marketplaceToolManifests,
   ...memoryPackToolManifests,
   ...metaToolManifests,
