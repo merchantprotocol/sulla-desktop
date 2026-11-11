@@ -35,6 +35,7 @@ describe('SpeakerScorer', () => {
     const logger = { warn, info: vi.fn(), debug: vi.fn(), error: vi.fn(), getLogDir: () => '', getLogPath: () => '' };
     const verifier = new SpeakerVerifier(models as any, runner as any, '/tmp/speaker-test', logger as any);
     const pcm = Buffer.alloc(16_000 * 2 * 2);
+    for (let offset = 0; offset < pcm.length; offset += 2) pcm.writeInt16LE(1_000, offset);
     await verifier.scoreTurn(pcm, false);
     await verifier.scoreTurn(pcm, false);
     expect(warn).toHaveBeenCalledTimes(1);
