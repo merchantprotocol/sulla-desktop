@@ -17,8 +17,12 @@ import { FilesSyncCloudApi } from './cloudApi.js';
 import { configureCryptoModule, type CryptoModuleStatus } from './cryptoModule.js';
 import { sealCollectionInfo, sealEscrowWithKey, signHead, stateHash, verifyHead, type SyncHead, type TransportEnvelope } from './envelope.js';
 import { EscrowTransportRequests } from './escrowTransport.js';
+import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageRepository.js';
+import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
+import { CloudFolderCoverage } from './folderCoverage.js';
 import { CloudRootKeyStore } from './keyStore.js';
 import { CloudPuller } from './pull.js';
+import { CloudPushOrdering } from './pushOrdering.js';
 import { buildCommitBatch, CloudPusher, sha256Text, type RecursiveDeleteMetadata } from './push.js';
 import { CloudRemoteContent } from './remoteContent.js';
 import { PgCloudSyncRepository, type QueuedOperation, type SyncRow, type UploadSession } from './repository.js';
@@ -115,6 +119,7 @@ export class CloudSyncService {
   private readonly puller:CloudPuller;
   private readonly pusher:CloudPusher;
   private readonly restorer:CloudRestore;
+  private readonly coverage:CloudFolderCoverage;
   private readonly locks = new Map<string, Promise<unknown>>();
   private readonly lastPullAt = new Map<string, number>();
   private loop?:Promise<void>;
@@ -136,12 +141,18 @@ export class CloudSyncService {
     this.repository = new PgCloudSyncRepository(db, actor);
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repository, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
-    this.pusher = new CloudPusher(this.repository, store, keyring, this.staging);
+    const candidates = new PgCloudPushCandidateRepository(db);
+    this.pusher = new CloudPusher(this.repository, store, keyring, this.staging, new CloudPushOrdering(candidates));
     this.restorer = new CloudRestore(this.transport, this.api, new PgRestoreTarget(db, config, keyring, this.roots));
+    this.coverage = new CloudFolderCoverage(new PgCloudFolderCoverageStore(db, candidates), line => console.log(line));
   }
 
   start():void {
     this.stopped = false;
+    // Read-only counts first (owner-visible preview), then queue only folders Cloud never received.
+    void this.coverage.previewAndBackfill()
+      .then(() => this.nudge())
+      .catch(error => console.warn(`[SullaFiles] cloud folder coverage check failed: ${ safeError(error) }`));
     this.schedule(LOOP_MS);
   }
 
@@ -184,6 +195,7 @@ export class CloudSyncService {
         wrapped = created.wrapped;
       }
       await this.repository.setEnabled(collectionId, enabled, wrapped);
+      if (enabled) await this.coverage.previewAndBackfill([collectionId]);
       if (enabled) this.nudge();
       return { enabled };
     });

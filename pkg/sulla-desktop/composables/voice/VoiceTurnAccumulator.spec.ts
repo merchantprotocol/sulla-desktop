@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LocalAddressedSpeechClassifier } from './AddressedSpeechClassifier';
+import { SelfEchoFilter } from './SelfEchoFilter';
 import { createVoiceTurnAccumulator, TranscriptNoiseFilter } from './VoiceTurnAccumulator';
 
 function setup() {
@@ -95,6 +97,22 @@ describe('VoiceTurnAccumulator default timers', () => {
     } finally {
       vi.unstubAllGlobals(); globalThis.setTimeout = realSet; globalThis.clearTimeout = realClear;
     }
+  });
+});
+
+describe('voice address and echo policies', () => {
+  it('recognizes direct address and immediate conversational continuation, but not room speech', () => {
+    const classifier = new LocalAddressedSpeechClassifier();
+    expect(classifier.isAddressed('Hey Sulla, set a timer')).toBe(true);
+    expect(classifier.isAddressed('Why did that happen?', { sincePlaybackEndMs: 4000 })).toBe(true);
+    expect(classifier.isAddressed('The phone call is over')).toBe(false);
+    expect(classifier.isAddressed('random words', { holdToTalk: true })).toBe(true);
+  });
+
+  it('strips an echoed phrase at the edge while retaining the user words', () => {
+    const filter = new SelfEchoFilter({ now: () => 1000 });
+    filter.recordSpoken('Your call sounded like it wrapped up');
+    expect(filter.stripEchoSpans('Your call sounded like it wrapped up oh yeah totally did')).toBe('oh yeah totally did');
   });
 });
 

@@ -6,6 +6,7 @@
 import type { FilesIdentity } from './auth.js';
 import type pg from 'pg';
 
+import { CloudRenameSuccessor } from './Repositories/CloudRenameSuccessor.js';
 import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
 
 export interface FileOperationItem { fileId?:string; folderPath?:string; targetPath:string }
@@ -67,7 +68,13 @@ export async function applyDatabaseFileOperations(db:pg.Pool, action:'move' | 'c
       else {
         result = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [item.file.id, item.targetPath])).rows[0];
         await client.query('UPDATE watched_folder_state SET path=$2 WHERE file_id=$1', [item.file.id, item.targetPath]);
-        await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [item.file.collection_id, item.file.id, item.file.current_version_id]);
+        // A move that only follows its moved folder keeps its name and parent folder identity in Cloud.
+        const parentFollows = folderMoves.some(folder => item.file.path.startsWith(`${ folder.sourcePath }/`)
+          && item.targetPath === `${ folder.targetPath }${ item.file.path.slice(folder.sourcePath.length) }`);
+        const successor = new CloudRenameSuccessor(actor);
+        const versionId = await successor.versionFor(client, { fileId: item.file.id, currentVersionId: item.file.current_version_id, parentFollows });
+        result = successor.updatedFile ?? result;
+        await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [item.file.collection_id, item.file.id, versionId]);
       }
       results.push(result);
       await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)

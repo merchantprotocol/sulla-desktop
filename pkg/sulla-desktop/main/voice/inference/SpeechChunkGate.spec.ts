@@ -75,4 +75,14 @@ describe('SpeechChunkGate', () => {
     expect(await missing.shouldTranscribe(pcm)).toBe(true);
     expect(missingWarn).toHaveBeenCalledTimes(1);
   });
+
+  it('reports admitted and rejected chunk counters with mean inference duration', async () => {
+    let now = 0;
+    const stats = vi.fn();
+    const gate = new SpeechChunkGate(client(0.1), '/silero.onnx', () => true, () => undefined, () => now, 400, stats);
+    expect(await gate.shouldTranscribe(pcm)).toBe(false);
+    now = 10_001;
+    expect(await gate.shouldTranscribe(pcm)).toBe(false);
+    expect(stats).toHaveBeenCalledWith('Silero gate stats', expect.objectContaining({ seen: 2, rejected: 2, admitted: 0, failedOpen: 0, meanInferenceMs: 0 }));
+  });
 });
