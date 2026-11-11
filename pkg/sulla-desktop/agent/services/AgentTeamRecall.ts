@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { agentDefinitionService } from './AgentDefinitionService';
-import { formatCardLine, listAgentDirectory } from './AgentDirectoryService';
 import { callingYourTeamSection } from '../prompts/callingYourTeam';
 import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
 import type { UseCaseSuggestionQuery } from './UseCaseSuggestionQueryClient';
@@ -34,8 +32,9 @@ export function depthBudgetLine(depth: number): string {
 export class AgentTeamRecallService {
   constructor(
     private readonly suggestions: UseCaseSuggestionQuery,
-    private readonly findAgent: (slug: string) => Promise<AgentDefinition | null> = slug => agentDefinitionService.findBySlug(slug),
-    private readonly listDirectory: (slugs: string[]) => Promise<AgentDirectoryCard[]> = slugs => listAgentDirectory({ slugs }),
+    private readonly findAgent: (slug: string) => Promise<AgentDefinition | null>,
+    private readonly listDirectory: (slugs: string[]) => Promise<AgentDirectoryCard[]>,
+    private readonly formatCard: (card: AgentDirectoryCard) => string,
   ) {}
 
   async buildContext(opts: TeamRecallOptions): Promise<string> {
@@ -43,7 +42,9 @@ export class AgentTeamRecallService {
     if (!slug) return '';
     const self = await this.findAgent(slug);
     if (!self || self.can_call.length === 0) return '';
-    const directoryCards = (await this.listDirectory(self.can_call)).filter(card => card.slug !== slug);
+    const canCall = new Set(self.can_call);
+    const directoryCards = (await this.listDirectory(self.can_call))
+      .filter(card => card.slug !== slug && (canCall.has('*') || canCall.has(card.slug)));
     if (directoryCards.length === 0) return '';
 
     // Query the main-process index; retain the author's allowlist and order as policy/tie-breaks.
@@ -73,7 +74,7 @@ export class AgentTeamRecallService {
     const lines: string[] = [];
     let size = header.length;
     for (const [index, { card }] of ranked.entries()) {
-      const full = formatCardLine(card);
+      const full = this.formatCard(card);
       const line = fits.has(card.slug) ? full.replace(/^- /, `- ${ FIT_MARK }`) : full.split('\n')[0];
       if (size + line.length + 1 > maxChars) { lines.push(`- …${ ranked.length - index } more: \`sulla agents/directory\``); break; }
       lines.push(line); size += line.length + 1;
@@ -85,5 +86,13 @@ export class AgentTeamRecallService {
 
 /** Compatibility entry point used by SubconsciousMiddleware. */
 export async function buildTeamRecallContext(opts: TeamRecallOptions, suggestions: UseCaseSuggestionQuery): Promise<string> {
-  return new AgentTeamRecallService(suggestions).buildContext(opts);
+  const [{ agentDefinitionService }, { listAgentDirectory, formatCardLine }] = await Promise.all([
+    import('./AgentDefinitionService'), import('./AgentDirectoryService'),
+  ]);
+  return new AgentTeamRecallService(
+    suggestions,
+    slug => agentDefinitionService.findBySlug(slug),
+    slugs => listAgentDirectory({ slugs }),
+    formatCardLine,
+  ).buildContext(opts);
 }

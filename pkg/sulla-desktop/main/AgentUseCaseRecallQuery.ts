@@ -5,7 +5,7 @@
 
 export type AgentRecallUseCaseType = 'skill' | 'agent';
 export interface AgentRecallSuggestion { type: AgentRecallUseCaseType; slug: string; title: string; description: string; score: number; reason: string }
-export interface AgentRecallQueryOptions { types: AgentRecallUseCaseType[]; allowedSlugs?: string[]; limit?: number }
+export interface AgentRecallQueryOptions { types: AgentRecallUseCaseType[]; allowedSlugs?: string[]; limit?: number; minScore?: number }
 export interface AgentRecallSuggestionResponse { items: AgentRecallSuggestion[]; ms: number }
 export interface AgentRecallSuggester {
   suggest(text: string, options: AgentRecallQueryOptions): Promise<AgentRecallSuggestion[]>;
@@ -29,7 +29,11 @@ export class AgentUseCaseRecallQuery {
     const limit = typeof options?.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(1, Math.min(MAX_RESULTS, Math.floor(options.limit))) : MAX_RESULTS;
     const started = this.now();
-    const rows = await this.suggester.suggest(normalizedText, { types, ...(allowedSlugs ? { allowedSlugs } : {}), limit });
+    const minScore = typeof options?.minScore === 'number' && Number.isFinite(options.minScore)
+      ? Math.max(0, Math.min(1, options.minScore)) : undefined;
+    const rows = await this.suggester.suggest(normalizedText, {
+      types, ...(allowedSlugs ? { allowedSlugs } : {}), limit, ...(minScore === undefined ? {} : { minScore }),
+    });
     const allow = allowedSlugs ? new Set(allowedSlugs) : undefined;
     return {
       items: rows.filter(row => types.includes(row.type) && (!allow || allow.has(row.slug))).slice(0, limit),

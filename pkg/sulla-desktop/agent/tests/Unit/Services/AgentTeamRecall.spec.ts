@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('../../../tools/agents/jobRegistry', () => ({ MAX_SUBAGENT_DEPTH: 3 }));
 import { AgentTeamRecallService } from '../../../services/AgentTeamRecall';
 import type { AgentDirectoryCard } from '../../../services/AgentDirectoryService';
 
@@ -22,6 +23,7 @@ describe('AgentTeamRecallService', () => {
       { query },
       async() => ({ slug: 'lead', can_call: ['allowed'], prompt_content: '', system_prompt: '', prompt_files: {} } as any),
       async() => [card('allowed'), card('forbidden')],
+      candidate => `- ${candidate.slug}\n  ${candidate.description}`,
     );
     const context = await service.buildContext({ agentSlug: 'lead', text: 'need help', depth: 1 });
     expect(query).toHaveBeenCalledWith('need help', { types: ['agent'], allowedSlugs: ['allowed'], limit: 50 });
@@ -36,6 +38,7 @@ describe('AgentTeamRecallService', () => {
       { query: async() => [] },
       async() => ({ slug: 'lead', can_call: ['draft-agent'], prompt_content: '', system_prompt: '', prompt_files: {} } as any),
       async() => [card('draft-agent')],
+      candidate => `- ${candidate.slug}`,
     );
     expect(await service.buildContext({ agentSlug: 'lead', text: 'anything' })).toBe('');
   });

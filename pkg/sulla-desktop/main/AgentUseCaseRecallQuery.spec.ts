@@ -24,8 +24,8 @@ describe('AgentUseCaseRecallQuery', () => {
     const suggest = vi.fn(async() => []);
     const query = new AgentUseCaseRecallQuery({ suggest });
     const rows = Array.from({ length: 55 }, (_, index) => `agent-${index}`);
-    await query.query('find a team', { types: ['workflow', 'agent'] as any, allowedSlugs: rows, limit: 500 });
-    expect(suggest).toHaveBeenCalledWith('find a team', { types: ['agent'], allowedSlugs: rows.slice(0, 50), limit: 50 });
+    await query.query('find a team', { types: ['workflow', 'agent'] as any, allowedSlugs: rows, limit: 500, minScore: 1.5 });
+    expect(suggest).toHaveBeenCalledWith('find a team', { types: ['agent'], allowedSlugs: rows.slice(0, 50), limit: 50, minScore: 1 });
   });
 
   it('registers a separate recall channel and returns no rows for blank prompts', async() => {

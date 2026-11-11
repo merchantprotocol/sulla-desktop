@@ -5,7 +5,7 @@
 
 import type { AgentRecallQueryOptions, AgentRecallSuggestion } from '../../main/AgentUseCaseRecallQuery';
 
-type QueryOptions = Pick<AgentRecallQueryOptions, 'types' | 'limit' | 'allowedSlugs'>;
+type QueryOptions = Pick<AgentRecallQueryOptions, 'types' | 'limit' | 'allowedSlugs' | 'minScore'>;
 
 export interface UseCaseSuggestionQuery {
   query(text: string, options: QueryOptions): Promise<AgentRecallSuggestion[]>;
