@@ -642,7 +642,7 @@ function registerIpcHandlers(): void {
     void models.resolve('vad-silero-onnx').then(modelPath => {
       log.info('WhisperTranscribe', 'Silero model resolve completed', { modelPath, ms: Date.now() - sileroStartedAt });
       return modelPath;
-    }))
+    })
       // ORT cold start/model session creation can exceed the 400 ms chunk
       // budget. Warm it before exposing the model to live audio; chunks remain
       // fail-open while download and warm-up run in the background.
