@@ -92,16 +92,12 @@ class PerPrTestRunner {
       const proofDelay = Number.parseInt(process.env.TEST_PR_BUDGET_PROOF_DELAY_MS ?? '0', 10);
       if (proofDelay > 0) await this.processRunner.run(process.execPath, ['-e', `setTimeout(() => {}, ${ proofDelay })`], deadline);
       if (files.length > 0) {
-        const diagnostics = process.env.TEST_PR_DURATION_DIAGNOSTICS === 'true';
-        const diagnosticOnlyFiles = new Set(['scripts/test-pr.mjs', 'scripts/test-pr-duration-reporter.mjs', 'pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts']);
-        const selectionFiles = diagnostics ? files.filter(file => !diagnosticOnlyFiles.has(file)) : files;
-        const changedSpecs = selectionFiles.filter(file => file.endsWith('.spec.ts'));
-        const requiresSmoke = this.requiresSmoke(selectionFiles);
-        const selection = requiresSmoke
+        const changedSpecs = files.filter(file => file.endsWith('.spec.ts'));
+        const selection = this.requiresSmoke(files)
           ? ['run', '--config', 'vitest.agent.config.mts', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
-          : ['related', ...selectionFiles, '--run', '--config', 'vitest.agent.config.mts'];
-        this.output.log(requiresSmoke ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
-        await this.processRunner.run('yarn', ['vitest', ...selection, '--reporter=verbose', '--reporter=./scripts/test-pr-duration-reporter.mjs'], deadline);
+          : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts'];
+        this.output.log(this.requiresSmoke(files) ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
+        await this.processRunner.run('yarn', ['vitest', ...selection], deadline);
       }
       this.output.log(`Per-PR tests completed in ${ ((this.clock.now() - started) / 1_000).toFixed(2) }s (budget: 60s).`);
     } catch (error) {

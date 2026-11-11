@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { randomUUID } from 'node:crypto';
-import { performance } from 'node:perf_hooks';
 
 import { Pool, type PoolClient } from 'pg';
 
@@ -17,15 +16,11 @@ class GlobalTestDatabase {
 
   async setup(): Promise<void> {
     if (!this.url) return;
-    const setupStarted = performance.now();
-    process.stdout.write('::warning file=pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts,title=Global database setup::Started Postgres schema and migrations.\n');
     this.schema = `spec_worker_${ randomUUID().replaceAll('-', '') }`;
     this.pool = new Pool({ connectionString: this.url, options: `-csearch_path=${ this.schema },public` });
     await this.pool.query(`CREATE SCHEMA "${ this.schema }"`);
     await this.pool.query('CREATE TABLE sulla_migrations (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE NOT NULL, executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
-    process.stdout.write(`::warning file=pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts,title=Global database setup::Schema and migration table ready after ${(performance.now() - setupStarted).toFixed(0)}ms; applying ${migrationsRegistry.length} migrations.\n`);
     for (const migration of migrationsRegistry) {
-      const migrationStarted = performance.now();
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
@@ -37,10 +32,7 @@ class GlobalTestDatabase {
         await client.query('ROLLBACK');
         throw error;
       } finally { client.release() }
-      const migrationDuration = performance.now() - migrationStarted;
-      if (migrationDuration >= 250) process.stdout.write(`::warning file=pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts,title=Slow Postgres migration::${migration.name} took ${migrationDuration.toFixed(0)}ms.\n`);
     }
-    process.stdout.write(`::warning file=pkg/sulla-desktop/agent/tests/Support/GlobalTestDatabase.ts,title=Global database setup duration::${migrationsRegistry.length} migrations finished in ${(performance.now() - setupStarted).toFixed(0)}ms.\n`);
     process.env.SULLA_TEST_SCHEMA = this.schema;
   }
 
