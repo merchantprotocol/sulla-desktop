@@ -28,12 +28,11 @@ export type ConnectHandler = () => void;
  * All consumers import this function and get the IPC bus transparently.
  */
 export function getWebSocketClientService(): import('./IpcMessageBus').IpcMessageBus | import('./IpcMessageBusRenderer').IpcMessageBusRenderer {
-  const isMain = typeof process !== 'undefined' && (process as any).type === 'browser';
-  if (isMain) {
-    const { IpcMessageBus } = require('./IpcMessageBus');
-    return IpcMessageBus.getInstance();
-  } else {
+  const isRenderer = typeof process !== 'undefined' && (process as any).type === 'renderer';
+  if (isRenderer) {
     const { IpcMessageBusRenderer } = require('./IpcMessageBusRenderer');
     return IpcMessageBusRenderer.getInstance();
   }
+  const { IpcMessageBus } = require('./IpcMessageBus');
+  return IpcMessageBus.getInstance();
 }
