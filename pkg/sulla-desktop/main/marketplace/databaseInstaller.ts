@@ -20,6 +20,13 @@ import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agen
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
+const suggestionTypeFor = (kind: InstallableKind):'skill'|'agent'|'workflow'|'function'|'recipe'|undefined => kind === 'routine' ? 'workflow' : kind === 'integration' ? undefined : kind;
+async function notifySuggestionChanges(items: { kind: InstallableKind; slug: string }[], change:'installed'|'updated'|'deleted'|'published'):Promise<void> {
+  const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+  const watcher = getSullaFilesWatcher();
+  for (const item of items) { const type = suggestionTypeFor(item.kind); if (type) watcher.notifyUseCaseChange(type, item.slug, change); }
+}
+
 export interface PackageContent {
   kind:     InstallableKind;
   slug:     string;
@@ -386,6 +393,7 @@ export async function installStandaloneArtifact(
     templateId: detail.id,
     author:     detail.author_display,
   }, overwrite));
+  if (result.installed) await notifySuggestionChanges([{ kind: detail.kind as InstallableKind, slug: detail.slug }], overwrite ? 'updated' : 'installed');
   if (result.installed && detail.kind === 'skill') {
     try {
       await installMarketplaceMemoryPack(detail.slug, artifact.files, `marketplace:${ detail.id }`);
@@ -496,6 +504,7 @@ export async function installPackageManifest(
     throw new Error(`Marketplace package ${ manifest.slug } was removed because a memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
   }
   await refreshRuntimeCatalogs(result.installed.map(item => item.kind));
+  await notifySuggestionChanges(result.installed, 'installed');
 
   return { ok: true, package: { slug: manifest.slug, version: manifest.version }, ...result };
 }
@@ -568,6 +577,7 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
   for(const pack of memoryPackSkills)if(removedSkills.has(String(pack.slug)))await uninstallPack(String(pack.slug));
   for (const version of result.revokedVersions) await setIntegrationGrant(slug, version, [], false);
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
+  await notifySuggestionChanges(result.removed, 'deleted');
   return { ok: result.ok, removed: result.removed };
 }
 
@@ -607,6 +617,7 @@ export async function setPackageActive(slug: string, active: boolean): Promise<{
     throw error;
   }
   await refreshRuntimeCatalogs(rows.map((row: any) => row.kind as InstallableKind));
+  await notifySuggestionChanges(rows.map((row:any) => ({ kind: row.kind as InstallableKind, slug: String(row.item_slug) })), active ? 'installed' : 'deleted');
   return { ok: true, active, recipes: recipeSlugs };
 }
 

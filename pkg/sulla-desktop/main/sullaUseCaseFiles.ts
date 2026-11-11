@@ -244,10 +244,12 @@ export class SullaUseCaseFiles {
   }
 
   private async disableMissing(active:Set<string>):Promise<void> {
+    const removed = await postgresClient.query<{type:string;slug:string}>(`SELECT 'agent' AS type,slug FROM agent_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($1::text[])) UNION ALL SELECT 'skill',slug FROM skill_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND deleted_at IS NULL AND NOT (slug=ANY($2::text[])) UNION ALL SELECT 'workflow',id FROM workflows WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (id=ANY($3::text[])) UNION ALL SELECT 'function',slug FROM function_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($4::text[])) UNION ALL SELECT 'recipe',slug FROM recipe_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($5::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7)),[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7)),[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10)),[...active].filter(k=>k.startsWith('functions/')).map(k=>k.slice(10)),[...active].filter(k=>k.startsWith('recipes/')).map(k=>k.slice(8))]);
     await postgresClient.query(`UPDATE agent_definitions SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE skill_definitions SET enabled=FALSE,deleted_at=COALESCE(deleted_at,NOW()),updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE workflows SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (id=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10))]);
     for (const [table,type] of [['function_definitions','functions'],['recipe_definitions','recipes']] as const) await postgresClient.query(`UPDATE ${ table } SET enabled=FALSE,use_case_version_id=NULL,updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith(`${type}/`)).map(k=>k.slice(type.length+1))]);
+    for (const row of removed) this.notifier?.emit({ type: row.type as 'agent'|'skill'|'workflow'|'function'|'recipe', slug: row.slug, change: 'deleted' });
   }
 
   async scan():Promise<void> {
