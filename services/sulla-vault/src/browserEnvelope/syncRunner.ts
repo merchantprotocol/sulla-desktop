@@ -20,13 +20,17 @@ import {
   type AgentPolicy, type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
+import { CloudSyncError } from './CloudSyncError.js';
 import { EnvelopeError, type SyncBundle, type SyncHead, type SyncRecord } from './envelope.js';
 import type { DomainVaultSyncCodec } from './DomainVaultSyncCodec.js';
+import { HeldRecordService, type HeldSummary } from './HeldRecordService.js';
+import { PolicyWideningDecision } from './PolicyWideningDecision.js';
+import { RemoteItemParser } from './RemoteItemParser.js';
 import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js';
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
 
-import type { Database } from '../db.js';
+import type { Database, Queryable } from '../db.js';
 import type pg from 'pg';
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
@@ -46,11 +50,7 @@ export interface CloudSyncAuthority {
   }): Promise<{ status: number; headers: Record<string, string>; body: unknown }>;
 }
 
-export class CloudSyncError extends Error {
-  constructor(public readonly code: string, public readonly status: number, message: string) {
-    super(message);
-  }
-}
+export { CloudSyncError };
 
 interface StateRow {
   owner_user_id: string; vault_id: string; epoch: number; bundle_generation: number;
@@ -80,8 +80,6 @@ const MAX_WRITES = 256;
 const MAX_COMMIT_BYTES = 1_900_000;
 // Rollout gate: enable only after Cloud, Web and Mobile all advertise bundle-v2 support.
 const BUNDLE_V2_UPLOAD_ENABLED = process.env.SULLA_CLOUD_BUNDLE_VERSION === '2';
-const POLICY_RANK = { metadata: 0, autofill: 1, full: 2 } as const;
-const ITEM_TYPES = new Set(['login', 'note', 'card', 'identity', 'apiKey']);
 
 /** The server head only authenticates its immediate predecessor link. */
 export class HeadChainLinkPolicy {
@@ -97,29 +95,6 @@ const wrapFingerprint = (account: LocalAccountRow, recovery?: unknown) => sha256
 ])));
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
-/** True when `next` grants agents anything `current` doesn't (§4: remote widening waits for the owner). */
-export function policyWidens(current: AgentPolicy, next: AgentPolicy): boolean {
-  if (next.mode !== 'agents') return false;
-  if (current.mode !== 'agents') return true;
-  if ((POLICY_RANK[next.level] ?? 3) > (POLICY_RANK[current.level] ?? -1)) return true;
-  if (next.allowServerAgents && !current.allowServerAgents) return true;
-  if (current.askFirst && !next.askFirst) return true;
-  if (current.sites.length && (!next.sites.length || next.sites.some(site => !current.sites.includes(site)))) return true;
-  if (current.expiresAt && (!next.expiresAt || Date.parse(next.expiresAt) > Date.parse(current.expiresAt))) return true;
-  return false;
-}
-
-function parseRemoteItem(json: string): VaultItemPlaintext {
-  const item = JSON.parse(json) as VaultItemPlaintext;
-  const policy = item?.agentPolicy as AgentPolicy | undefined;
-  if (!item || typeof item.name !== 'string' || !item.name.trim() || !ITEM_TYPES.has(item.type) || !policy ||
-      !['only_me', 'agents'].includes(policy.mode) || !['metadata', 'autofill', 'full'].includes(policy.level) ||
-      !Array.isArray(policy.sites) || !Array.isArray(policy.agents)) {
-    throw new CloudSyncError('remote_item_invalid', 422, 'A Cloud item failed validation');
-  }
-  return item;
-}
-
 function responseBody(body: unknown): any {
   if (typeof body !== 'string') return body;
   try { return JSON.parse(body) } catch { return body }
@@ -131,6 +106,8 @@ export class CloudVaultSyncRunner {
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly headChainLinkPolicy = new HeadChainLinkPolicy();
+  private readonly widening = new PolicyWideningDecision();
+  private readonly remoteItems = new RemoteItemParser();
 
   constructor(
     private readonly db: Database,
@@ -214,7 +191,7 @@ export class CloudVaultSyncRunner {
       const pending = await this.db.query<{ n: string }>(
         `SELECT COUNT(*) AS n FROM items i
            LEFT JOIN cloud_vault_sync_records r ON r.owner_user_id=i.owner_user_id AND r.scope='personal' AND r.record_id=i.id
-          WHERE i.owner_user_id=$1 AND i.collection_id IS NULL
+          WHERE i.owner_user_id=$1 AND i.collection_id IS NULL AND r.policy_review_pending IS NOT TRUE
             AND ((i.deleted_at IS NULL AND (r.record_id IS NULL OR r.deleted OR r.local_revision IS DISTINCT FROM i.revision))
               OR (i.deleted_at IS NOT NULL AND r.record_id IS NOT NULL AND NOT r.deleted))`, [userId],
       );
@@ -332,12 +309,11 @@ export class CloudVaultSyncRunner {
     const localChanged = Boolean(local && (!prior || num(prior.local_revision) !== num(local.revision)));
     let conflictCopy = false;
     let revision: number | null = local ? num(local.revision) : null;
-    let pendingReview = prior?.policy_review_pending ?? false;
 
     if (record.deleted) {
       if (local && !local.deleted_at && localChanged) {
         // Edited here, deleted there: keep the local edit; the next commit writes it over the tombstone.
-        await this.remember(client, userId, record, prior ? num(prior.local_revision) : null, pendingReview);
+        await this.remember(client, userId, record, prior ? num(prior.local_revision) : null);
         return { conflictCopy: false };
       }
       if (local && !local.deleted_at) {
@@ -347,12 +323,12 @@ export class CloudVaultSyncRunner {
         revision = num(res.rows[0]?.revision);
         await this.audit(client, userId, 'cloud_sync_item_deleted', record.id);
       }
-      await this.remember(client, userId, record, revision, false);
+      await this.remember(client, userId, record, revision);
       return { conflictCopy: false };
     }
 
     if (!record.item) throw new EnvelopeError('malformed_record', 'Cloud record is missing its item body');
-    const plaintext = parseRemoteItem(envelope.decryptItem(record.item, userKey, userId, record.id));
+    const plaintext = this.remoteItems.parse(envelope.decryptItem(record.item, userKey, userId, record.id));
     if (local && !local.deleted_at && localChanged) {
       // Both sides changed with no human present: keep both. Cloud keeps the id; the local version becomes a copy.
       const mine = JSON.parse(await decryptItemText(
@@ -370,16 +346,19 @@ export class CloudVaultSyncRunner {
       conflictCopy = true;
     }
 
-    // Agent access never widens from a remote edit until the owner confirms it here.
+    // Agent access never widens from a remote edit until the owner approves it. A held record
+    // touches nothing local: no ciphertext, no policy column. It waits in held_record.
     const currentPolicy: AgentPolicy = local && !local.deleted_at ? local.agent_policy : { ...DEFAULT_AGENT_POLICY };
-    const widened = policyWidens(currentPolicy, plaintext.agentPolicy);
-    const columnPolicy = widened ? currentPolicy : plaintext.agentPolicy;
-    pendingReview = widened;
+    if (this.widening.widens(currentPolicy, plaintext.agentPolicy)) {
+      await this.remember(client, userId, record, revision, record);
+      await this.audit(client, userId, 'cloud_sync_policy_held', local ? record.id : null);
+      return { conflictCopy };
+    }
     if (local) {
       const res = await client.query<{ revision: string }>(
         `UPDATE items SET item_type=$3,ciphertext=$4,encrypted_item_key=$5,agent_policy=$6,deleted_at=NULL,revision=revision+1,updated_at=now()
           WHERE id=$1 AND owner_user_id=$2 RETURNING revision`,
-        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, columnPolicy],
+        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy],
       );
       revision = num(res.rows[0]?.revision);
       await this.audit(client, userId, 'cloud_sync_item_updated', record.id);
@@ -387,26 +366,61 @@ export class CloudVaultSyncRunner {
       const res = await client.query<{ revision: string }>(
         `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
          VALUES ($1,$2,$3,$4,$5,$6,NULL) RETURNING revision`,
-        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, columnPolicy],
+        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy],
       );
       revision = num(res.rows[0]?.revision);
       await this.audit(client, userId, 'cloud_sync_item_created', record.id);
     }
-    await this.remember(client, userId, record, revision, pendingReview);
+    await this.remember(client, userId, record, revision);
     return { conflictCopy };
   }
 
-  private async remember(client: pg.PoolClient, userId: string, record: Pick<SyncRecord, 'id' | 'generation' | 'deleted' | 'mac'>, localRevision: number | null, pendingReview: boolean) {
+  private async remember(client: pg.PoolClient, userId: string, record: Pick<SyncRecord, 'id' | 'generation' | 'deleted' | 'mac'>, localRevision: number | null, held: SyncRecord | null = null) {
     await client.query(
-      `INSERT INTO cloud_vault_sync_records(owner_user_id,scope,record_id,generation,deleted,record_mac,local_revision,policy_review_pending)
-       VALUES ($1,'personal',$2,$3,$4,$5,$6,$7)
-       ON CONFLICT(owner_user_id,scope,record_id) DO UPDATE SET generation=$3,deleted=$4,record_mac=$5,local_revision=$6,policy_review_pending=$7`,
-      [userId, record.id, record.generation, record.deleted, record.mac, localRevision, pendingReview],
+      `INSERT INTO cloud_vault_sync_records(owner_user_id,scope,record_id,generation,deleted,record_mac,local_revision,policy_review_pending,held_record)
+       VALUES ($1,'personal',$2,$3,$4,$5,$6,$7,$8::jsonb)
+       ON CONFLICT(owner_user_id,scope,record_id) DO UPDATE SET generation=$3,deleted=$4,record_mac=$5,local_revision=$6,policy_review_pending=$7,held_record=$8::jsonb`,
+      [userId, record.id, record.generation, record.deleted, record.mac, localRevision, held !== null, held ? JSON.stringify(held) : null],
     );
   }
 
   private async audit(client: pg.PoolClient, userId: string, action: string, itemId: string | null) {
     await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked) VALUES ($1,$2,$3,'{}'::jsonb,false)`, [userId, itemId, action]);
+  }
+
+  /** Items whose pulled change would widen agent access and is waiting for the owner. */
+  heldList(): Promise<HeldSummary[]> {
+    return this.heldWork((client, held, ctx) => held.list(client, ctx));
+  }
+
+  /** Apply the held Cloud version of one item. */
+  async heldApprove(recordId: string): Promise<{ ok: true }> {
+    await this.heldWork((client, held, ctx) => held.approve(client, ctx, recordId));
+    return { ok: true };
+  }
+
+  /** Discard the held Cloud version of one item; the local version is kept and pushed on the next commit. */
+  async heldReject(recordId: string): Promise<{ ok: true }> {
+    await this.heldWork((client, held, ctx) => held.reject(client, ctx, recordId));
+    return { ok: true };
+  }
+
+  private heldWork<T>(work: (client: Queryable, held: HeldRecordService, ctx: { userId: string; userKey: Uint8Array; vaultId: string }) => Promise<T>): Promise<T> {
+    return this.exclusive(async() => {
+      await ensureSyncSchema(this.db);
+      const envelope = await this.env();
+      return this.authority.withUnlockedUserKey(async({ userId, userKey, assertCurrent }) => {
+        const state = await this.state(userId);
+        if (!state) throw new CloudSyncError('sync_not_configured', 409, 'Cloud sync is not turned on');
+        const result = await this.transaction(async client => {
+          const out = await work(client, new HeldRecordService(envelope), { userId, userKey, vaultId: state.vault_id });
+          assertCurrent();
+          return out;
+        });
+        this.stateVersion += 1;
+        return result;
+      });
+    });
   }
 
   /** Build a body for `op`, keep it here, and return only what main must sign. */
@@ -498,6 +512,8 @@ export class CloudVaultSyncRunner {
     for (const row of rows) {
       if (writes.length >= MAX_WRITES || bytes > MAX_COMMIT_BYTES) break;
       const prior = known.get(row.id);
+      // A held id waits for the owner: neither the local version nor its delete goes up meanwhile.
+      if (prior?.policy_review_pending) continue;
       const base = prior ? num(prior.generation) : 0;
       let record: SyncRecord | null = null;
       if (!row.deleted_at && (!prior || prior.deleted || num(prior.local_revision) !== num(row.revision))) {
@@ -523,7 +539,7 @@ export class CloudVaultSyncRunner {
         `UPDATE cloud_vault_sync_state SET head_seq=$2,head_mac=$3,last_push_at=now(),last_error=NULL,updated_at=now() WHERE owner_user_id=$1`,
         [userId, head.seq, head.mac],
       );
-      for (const write of writes) await this.remember(client, userId, write.record, revisions.get(write.id) ?? null, known.get(write.id)?.policy_review_pending ?? false);
+      for (const write of writes) await this.remember(client, userId, write.record, revisions.get(write.id) ?? null);
     });
   }
 

@@ -10,7 +10,8 @@
 //                           the highest verified head (anti-rollback), status.
 // cloud_vault_sync_records  what Cloud holds for each local item: generation,
 //                           tombstone flag, record MAC (to recompute the head
-//                           over deltas) and the local revision it reflects.
+//                           over deltas), the local revision it reflects and,
+//                           for a held policy widening, the held remote record.
 
 import type { Queryable } from '../db.js';
 
@@ -39,6 +40,8 @@ CREATE TABLE IF NOT EXISTS cloud_vault_sync_records (
   PRIMARY KEY (owner_user_id, scope, record_id)
 );
 ALTER TABLE cloud_vault_sync_state ADD COLUMN IF NOT EXISTS bundle_sha text NOT NULL DEFAULT '';
+-- A pulled record that would widen agent access, verified and waiting for the owner. NULL = nothing held.
+ALTER TABLE cloud_vault_sync_records ADD COLUMN IF NOT EXISTS held_record jsonb;
 `;
 
 let ensured = false;
