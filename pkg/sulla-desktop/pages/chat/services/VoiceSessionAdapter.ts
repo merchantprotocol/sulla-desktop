@@ -43,6 +43,7 @@ import {
   TTSPlayerService,
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
+import { LocalAddressedSpeechClassifier } from '@pkg/composables/voice/AddressedSpeechClassifier';
 import { SelfEchoFilter } from '@pkg/composables/voice/SelfEchoFilter';
 import { TranscriptNoiseFilter } from '@pkg/composables/voice/VoiceTurnAccumulator';
 import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
@@ -121,6 +122,8 @@ export class VoiceSessionAdapter {
   private speakSegment = 0;
   private readonly pendingTurn = new PendingVoiceTurn();
   private replacingPendingTurn = false;
+  private readonly addressedSpeech = new LocalAddressedSpeechClassifier();
+  private playbackEndedAt = 0;
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
@@ -133,6 +136,7 @@ export class VoiceSessionAdapter {
     onCommit:     text => this.commitTurn(text),
     isTTSPlaying: () => this.tts.isPlaying,
     isEcho:       text => this.selfEcho.isEcho(text),
+    stripEcho:    text => this.selfEcho.stripEchoSpans(text),
   });
 
   // TTS transcript bubble — one active at a time.
@@ -520,8 +524,16 @@ export class VoiceSessionAdapter {
     // Mark voice idle — a fresh interim will spawn if the user keeps talking.
     this.controller.stopVoice(true);
 
+    const addressed = this.addressedSpeech.isAddressed(speakable, {
+      holdToTalk: this.mode === 'ptt',
+      sincePlaybackEndMs: Date.now() - this.playbackEndedAt,
+    });
+    if (transcript && speakable && !addressed) {
+      this.controller.appendMessage({ id: newMessageId(), kind: 'notice', text: `Overheard: ${ transcript }`, detail: 'Not sent to Sulla', createdAt: Date.now() });
+    }
+
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (transcript && speakable) {
+    if (transcript && speakable && addressed) {
       const merged = this.pendingTurn.mergeWithNext(transcript, this.controller.runState.value.phase !== 'idle');
       if (merged) {
         this.replacingPendingTurn = true;
@@ -610,6 +622,7 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsEnd(): void {
+    this.playbackEndedAt = Date.now();
     const id = this.activeTtsMessageId;
     this.activeTtsMessageId = null;
     if (id) this.controller.removeMessage(id);

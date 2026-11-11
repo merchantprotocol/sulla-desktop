@@ -26,6 +26,8 @@
 
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
+import { LocalAddressedSpeechClassifier } from './AddressedSpeechClassifier';
+import { SelfEchoFilter } from './SelfEchoFilter';
 import { TTSPlayerService } from './TTSPlayerService';
 import { createVoiceBargeInDetector } from './VoiceBargeInDetector';
 import { logBargeIn } from './VoiceLogger';
@@ -179,6 +181,9 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     interimMessageId = null;
   }
 
+  const addressedSpeech = new LocalAddressedSpeechClassifier();
+  const selfEcho = new SelfEchoFilter();
+
   // ── Whisper transcript handler ──
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end → commit)
   // lives in VoiceTurnAccumulator so both voice surfaces stay in lockstep.
@@ -187,6 +192,10 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     onCommit:  (text) => {
       removeInterimMessage();
       if (text) {
+        if (!addressedSpeech.isAddressed(text)) {
+          options.messages.value.push({ id: `overheard_${Date.now()}`, kind: 'notice', text: `Overheard: ${text}`, detail: 'Not sent to Sulla', createdAt: Date.now() } as any);
+          return;
+        }
         console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
         chatController.query.value = text;
         chatController.send({ inputSource: 'voice', agentId: 'conversationalist' });
@@ -194,6 +203,8 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       }
     },
     isTTSPlaying: () => isTTSPlaying.value,
+    stripEcho: text => selfEcho.stripEchoSpans(text),
+    isEcho: text => selfEcho.isEcho(text),
   });
 
   const onTranscript = (_event: any, msg: any) => {
