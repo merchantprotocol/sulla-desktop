@@ -129,6 +129,8 @@ export interface BuiltPrompt {
    * framing is absent. Undefined for non-heartbeat builds. See heartbeatInvariants.
    */
   heartbeatInvariants?:     HeartbeatInvariantResult;
+  /** Section factory wall time, in registration order, for pre-model diagnostics. */
+  sectionTimings?:          Array<{ id: string; durationMs: number }>;
 }
 
 export interface AnthropicSystemBlock {
@@ -173,6 +175,10 @@ interface RegisteredSection {
 
 class SystemPromptBuilderImpl {
   private sections = new Map<string, RegisteredSection>();
+  // Stable sections can still read state outside ctx (DB agent prompts, tool catalog,
+  // installed skills), so a cached section also expires after a short TTL.
+  private static readonly STABLE_SECTION_TTL_MS = 60_000;
+  private stableSectionCache = new Map<string, { key: string; section: PromptSection | null; at: number }>();
 
   /**
    * Register a section factory.
@@ -182,11 +188,13 @@ class SystemPromptBuilderImpl {
    */
   register(id: string, factory: SectionFactory, modes: string[] = ['full']): void {
     this.sections.set(id, { id, factory, modes: new Set(modes) });
+    this.stableSectionCache.delete(id);
   }
 
   /** Unregister a section by ID. */
   unregister(id: string): void {
     this.sections.delete(id);
+    this.stableSectionCache.delete(id);
   }
 
   /** Get all registered section IDs. */
@@ -210,8 +218,40 @@ class SystemPromptBuilderImpl {
     // Collect sections
     const builtSections: PromptSection[] = [];
     const assistantContextSections: PromptSection[] = [];
+    const sectionTimings: Array<{ id: string; durationMs: number }> = [];
 
-    for (const [id, reg] of this.sections) {
+    // Section factories are independent. Run them concurrently, while consuming
+    // results in registration order below so prompt ordering/content is unchanged.
+    const registrations = [...this.sections.entries()];
+    const factoryResults = await Promise.all(registrations.map(async ([id, reg]) => {
+      if (!reg.modes.has(ctx.mode)) return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
+      const frozenHeartbeat = ctx.isHeartbeat && id === 'heartbeat';
+      if ((ctx.isHeartbeat && id === 'agent_prompt') || (ctx.excludeSections.has(id) && !frozenHeartbeat)) {
+        return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
+      }
+      const cacheKey = JSON.stringify({
+        mode: ctx.mode, agentId: ctx.agentId, agentConfig: ctx.agentConfig,
+        provider: ctx.provider, chatMode: ctx.chatMode, trustLevel: ctx.trustLevel,
+        isSubAgent: ctx.isSubAgent, isHeartbeat: ctx.isHeartbeat, wsChannel: ctx.wsChannel,
+        toolMode: ctx.toolMode, templateVars: ctx.templateVars,
+        overrides: [...ctx.agentSectionOverrides.entries()], excluded: [...ctx.excludeSections].sort(),
+        db: ctx.dbSections ? [...ctx.dbSections.entries()] : [], basePrompt: ctx.basePrompt,
+      });
+      const cached = this.stableSectionCache.get(id);
+      if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilderImpl.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
+      const started = Date.now();
+      try {
+        const section = await reg.factory(ctx);
+        const elapsed = Date.now() - started;
+        if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section, at: Date.now() });
+        return { id, reg, section, elapsed, error: undefined as unknown };
+      } catch (error) {
+        return { id, reg, section: null, elapsed: Date.now() - started, error };
+      }
+    }));
+    const resultById = new Map(factoryResults.map(result => [result.id, result]));
+
+    for (const [id, reg] of registrations) {
       // Skip if mode doesn't match
       if (!reg.modes.has(ctx.mode)) continue;
 
@@ -225,6 +265,8 @@ class SystemPromptBuilderImpl {
 
       // Skip if agent config excludes this section
       if (ctx.excludeSections.has(id) && !isFrozenHeartbeatSection) continue;
+      const result = resultById.get(id)!;
+      sectionTimings.push({ id, durationMs: result.elapsed });
 
       // Check for agent config override
       const override = isFrozenHeartbeatSection
@@ -235,7 +277,7 @@ class SystemPromptBuilderImpl {
         // We still call the factory to get the default metadata (priority, cacheStability)
         // but replace the content with the override
         try {
-          const defaultSection = await reg.factory(ctx);
+          const defaultSection = result.section;
           if (defaultSection) {
             builtSections.push({
               ...defaultSection,
@@ -266,13 +308,11 @@ class SystemPromptBuilderImpl {
       // Call the factory ONCE. It enforces mode/gating (e.g. the heartbeat
       // section returns null unless ctx.isHeartbeat) — a null result means the
       // section is off for this build, and the DB must NOT resurrect it.
-      let section: PromptSection | null = null;
-      try {
-        section = await reg.factory(ctx);
-      } catch (err) {
-        console.error(`[SystemPromptBuilder] Section "${ id }" failed:`, err);
+      if (result.error) {
+        console.error(`[SystemPromptBuilder] Section "${ id }" failed:`, result.error);
         continue;
       }
+      const section = result.section;
       if (!section) continue;
 
       // Layer 2: DB row content replaces the baked factory content, keeping the
@@ -408,7 +448,7 @@ class SystemPromptBuilderImpl {
       }
     }
 
-    return { text, anthropicSystem, includedSections, assistantContextSections, heartbeatInvariants };
+    return { text, anthropicSystem, includedSections, assistantContextSections, heartbeatInvariants, sectionTimings };
   }
 }
 

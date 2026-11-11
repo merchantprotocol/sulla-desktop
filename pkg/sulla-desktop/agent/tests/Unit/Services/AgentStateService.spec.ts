@@ -315,6 +315,23 @@ describe('authoritative live agent state', () => {
     expect(rows.find(row => row.taskIndex === 1)?.state).toBe('blocked');
   });
 
+  it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {
+    // risk: a delivered blocked result re-derives the job as running, so each restart fails it again and wakes the parent with a stale notice
+    const returned = job('returned-blocked', [
+      task({ status: 'blocked', returnedAt: 2_000, finishedAt: 2_000 }),
+      task({ status: 'completed', returnedAt: 2_100, finishedAt: 2_100 }),
+    ], { restartResumeCount: 2 });
+    const open = job('open-blocker', [task({ status: 'blocked' })], { restartResumeCount: 0 });
+    const { store, states } = harness([returned, open]);
+    const claimed = await states.claimInterruptedJobs(2);
+    expect(claimed.exhausted.map(value => value.jobId)).toEqual([]);
+    expect(claimed.resumable.map(value => value.jobId)).toEqual(['open-blocker']);
+    expect(store.durable.get('returned-blocked')?.status).toBe('completed');
+    expect(store.durable.get('returned-blocked')?.error).toBeUndefined();
+    expect((await states.job('returned-blocked'))?.status).toBe('completed');
+    expect((await states.claimInterruptedJobs(2)).exhausted.map(value => value.jobId)).toEqual([]);
+  });
+
   it('never marks an intentionally parked future-wake task lost', async() => {
     // risk: agents/wait is mistaken for a dead worker after its quiet threshold
     const parked = job('future-wake', [task({ status: 'parked', threadId: 'future-wake-thread' })], { status: 'parked' });

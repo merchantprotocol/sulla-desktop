@@ -3,12 +3,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/** Selects the fast built-in voice agent without overriding an explicit chat selection. */
+/**
+ * Voice turns always go to the fast built-in voice agent (Jonathon, 2026-11-10: option A).
+ * The Conversationalist answers quickly, hands real work to workers, and already stays
+ * silent on overheard speech, so it doubles as the "is this for Sulla?" check.
+ * Typed chat keeps the chat's selected agent.
+ */
 export class VoiceAgentRouting {
   constructor(private readonly voiceAgentId = 'conversationalist') {}
 
   resolve(inputSource: 'voice' | undefined, selectedAgentId?: string | null): string | undefined {
-    if (selectedAgentId) return selectedAgentId;
-    return inputSource === 'voice' ? this.voiceAgentId : undefined;
+    if (inputSource === 'voice') return this.voiceAgentId;
+    return selectedAgentId || undefined;
   }
 }
