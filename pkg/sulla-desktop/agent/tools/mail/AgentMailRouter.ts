@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentMailAddress } from './AgentMailAddress';
+import { AgentMailError } from './AgentMailError';
 import { AgentMailLaneSelector } from './AgentMailLaneSelector';
 import { AGENT_MAIL_INTEGRATION_ID } from './AgentMailTransport';
 
@@ -15,7 +16,7 @@ export type AgentMailInput = Record<string, unknown>;
 
 /** What the mail/* tools call. */
 export interface AgentMailService {
-  mailboxes(ctx?: ToolExecutionContext): Promise<Record<string, unknown>>;
+  mailbox(ctx?: ToolExecutionContext): Promise<Record<string, unknown>>;
   list(input: AgentMailInput, ctx?: ToolExecutionContext): Promise<Record<string, unknown>>;
   read(input: AgentMailInput, ctx?: ToolExecutionContext): Promise<Record<string, unknown>>;
   markRead(input: AgentMailInput, ctx?: ToolExecutionContext): Promise<Record<string, unknown>>;
@@ -24,9 +25,10 @@ export interface AgentMailService {
 }
 
 /**
- * Sends each mail call to the right lane: the user's own mailboxes on their
- * Sulla Cloud session, or, for sulla@/qa@/e2e@ only and only when the
- * service token account exists, the internal /agent-mail lane.
+ * Sends each mail call to the right lane. With no `mailbox`, the call uses
+ * the user's one agent email on their Sulla Cloud session. `mailbox` is
+ * accepted only for the internal service mailboxes (sulla@, qa@, e2e@), and
+ * only when the sulla_agent_mail token account exists.
  */
 export class AgentMailRouter implements AgentMailService {
   constructor(
@@ -35,45 +37,50 @@ export class AgentMailRouter implements AgentMailService {
     private readonly lanes: AgentMailLaneSelector = new AgentMailLaneSelector(async() => service !== null),
   ) {}
 
-  async mailboxes(ctx?: ToolExecutionContext) {
-    const result = await this.user.mailboxes(ctx);
+  async mailbox(ctx?: ToolExecutionContext) {
+    const result = await this.user.mailbox(ctx);
     if (!this.service) return result;
     return { ...result, serviceMailboxes: AgentMailLaneSelector.SERVICE_LOCAL_PARTS.map(local => `${ local }@${ AgentMailAddress.DOMAIN }`) };
   }
 
   async list(input: AgentMailInput, ctx?: ToolExecutionContext) {
-    const mailbox = AgentMailLaneSelector.mailboxArg('list', input);
     const { since, limit } = input;
-    return await this.serviceLane('list', input) ? this.service!.list({ to: mailbox, since, limit }, ctx) : this.user.list({ mailbox, since, limit }, ctx);
+    const service = await this.serviceMailbox('list', input);
+    return service ? this.service!.list({ to: service, since, limit }, ctx) : this.user.list({ since, limit }, ctx);
   }
 
   async read(input: AgentMailInput, ctx?: ToolExecutionContext) {
-    return await this.serviceLane('read', input) ? this.service!.read(input.id, ctx) : this.user.read({ mailbox: input.mailbox, id: input.id }, ctx);
+    return await this.serviceMailbox('read', input) ? this.service!.read(input.id, ctx) : this.user.read({ id: input.id }, ctx);
   }
 
   async markRead(input: AgentMailInput, ctx?: ToolExecutionContext) {
-    return await this.serviceLane('mark_read', input) ? this.service!.markRead(input.id, ctx) : this.user.markRead({ mailbox: input.mailbox, id: input.id }, ctx);
+    return await this.serviceMailbox('mark_read', input) ? this.service!.markRead(input.id, ctx) : this.user.markRead({ id: input.id }, ctx);
   }
 
   async waitForCode(input: AgentMailInput, ctx?: ToolExecutionContext) {
-    const mailbox = AgentMailLaneSelector.mailboxArg('wait_for_code', input);
     const { since, timeout } = input;
-    return await this.serviceLane('wait_for_code', input) ? this.service!.waitForCode({ to: mailbox, since, timeout }, ctx) : this.user.waitForCode({ mailbox, since, timeout }, ctx);
+    const service = await this.serviceMailbox('wait_for_code', input);
+    return service ? this.service!.waitForCode({ to: service, since, timeout }, ctx) : this.user.waitForCode({ since, timeout }, ctx);
   }
 
   async send(input: AgentMailInput, ctx?: ToolExecutionContext) {
-    const mailbox = AgentMailLaneSelector.mailboxArg('send', input);
     const message = { to: input.to, subject: input.subject, text: input.text, html: input.html };
-    if (await this.serviceLane('send', input)) {
-      return this.service!.send({
-        from_local: String(mailbox ?? ''), to: String(message.to ?? ''), subject: String(message.subject ?? ''),
-        text: typeof message.text === 'string' ? message.text : undefined, html: typeof message.html === 'string' ? message.html : undefined,
-      }, ctx);
-    }
-    return this.user.send({ mailbox, ...message }, ctx);
+    const service = await this.serviceMailbox('send', input);
+    if (!service) return this.user.send(message, ctx);
+    return this.service!.send({
+      from_local: String(service), to: String(message.to ?? ''), subject: String(message.subject ?? ''),
+      text: typeof message.text === 'string' ? message.text : undefined, html: typeof message.html === 'string' ? message.html : undefined,
+    }, ctx);
   }
 
-  private async serviceLane(endpoint: string, input: AgentMailInput): Promise<boolean> {
-    return this.service !== null && await this.lanes.lane(endpoint, input) === AGENT_MAIL_INTEGRATION_ID;
+  /**
+   * The service mailbox this call names, or undefined for the user's own
+   * mailbox. Any other mailbox value is refused before a network call.
+   */
+  private async serviceMailbox(endpoint: string, input: AgentMailInput): Promise<unknown> {
+    const named = AgentMailLaneSelector.mailboxArg(endpoint, input);
+    if (named === undefined || named === null || named === '') return undefined;
+    if (this.service !== null && await this.lanes.lane(endpoint, input) === AGENT_MAIL_INTEGRATION_ID) return named;
+    throw AgentMailError.serviceMailboxOnly();
   }
 }

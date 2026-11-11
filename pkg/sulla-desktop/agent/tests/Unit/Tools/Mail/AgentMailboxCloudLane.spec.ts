@@ -95,6 +95,7 @@ describe('AgentMailboxCloudLane (vault)', () => {
       ['sulla-cloud.agent-mailboxes.read', 'GET', '/agent-mail'],
       ['sulla-cloud.agent-mailboxes.write', 'POST', '/shares'],
       ['sulla-cloud.agent-mailboxes.write', 'POST', '/agent-mailboxes/mb1/retry'],
+      ['sulla-cloud.agent-mailboxes.write', 'POST', '/agent-mailboxes/mb1/enable'],
       ['sulla-cloud.agent-mailboxes.read', 'GET', '/agent-mailboxes/availability'],
     ];
     for (const [operation, method, path] of denied) {

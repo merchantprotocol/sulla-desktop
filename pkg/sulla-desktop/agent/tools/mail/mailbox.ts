@@ -7,9 +7,9 @@ import { AgentMailTool } from './AgentMailTool';
 
 import type { AgentMailService } from './AgentMailRouter';
 
-/** mail/mailboxes — the signed-in user's agent mailboxes and which one is the default. */
-export class MailMailboxesWorker extends AgentMailTool {
+/** mail/mailbox — the signed-in user's one agent email, or how to register / re-enable it. */
+export class MailMailboxWorker extends AgentMailTool {
   protected run(mail: AgentMailService, _input: Record<string, unknown>) {
-    return mail.mailboxes(this.executionContext);
+    return mail.mailbox(this.executionContext);
   }
 }

@@ -19,7 +19,7 @@ import {
   type AgentMailTransport,
 } from '../../../../tools/mail/AgentMailTransport';
 import { AgentMailUntrustedContent } from '../../../../tools/mail/AgentMailUntrustedContent';
-import { MailMailboxesWorker } from '../../../../tools/mail/mailboxes';
+import { MailMailboxWorker } from '../../../../tools/mail/mailbox';
 import { MailReadWorker } from '../../../../tools/mail/read';
 import { MailWaitForCodeWorker } from '../../../../tools/mail/wait_for_code';
 
@@ -129,48 +129,46 @@ describe('CloudSessionAgentMailTransport (user lane)', () => {
   });
 });
 
-describe('AgentMailboxClient (user mailboxes)', () => {
-  it('defaults to the only active mailbox and ignores disabled ones', async() => {
-    // risk: data accuracy — with one active mailbox an agent reads that mailbox, not a disabled one.
-    const transport = cloud([mailbox('mb-old', 'old', 'disabled'), mailbox('mb1', 'scout')], () => ({ status: 200, body: { messages: [summary('m1')] } }));
+describe('AgentMailboxClient (the user\'s one mailbox)', () => {
+  it('always uses the user\'s single mailbox from GET /agent-mailboxes', async() => {
+    // risk: data accuracy — every call reads the caller's own mailbox, found by the server, never a guessed one.
+    const transport = cloud([mailbox('mb1', 'scout')], () => ({ status: 200, body: { messages: [summary('m1')] } }));
     const result = await user(transport).list({ limit: 5 });
+    expect(transport.requests[0]).toEqual({ method: 'GET', path: '/agent-mailboxes' });
     expect(transport.requests[1]).toEqual({ method: 'GET', path: '/agent-mailboxes/mb1/messages', query: { since: undefined, limit: '5' } });
     expect(result).toMatchObject({ mailbox: 'scout@agents.sulladesktop.com', count: 1, untrusted: true });
 
-    const listed = await user(cloud([mailbox('mb-old', 'old', 'disabled'), mailbox('mb1', 'scout')])).mailboxes();
-    expect(listed).toMatchObject({ count: 2, defaultMailbox: 'scout@agents.sulladesktop.com', untrusted: true });
+    const shown = await user(cloud([mailbox('mb1', 'scout')])).mailbox();
+    expect(shown).toMatchObject({ ready: true, untrusted: true, mailbox: { id: 'mb1', address: 'scout@agents.sulladesktop.com', status: 'active' } });
   });
 
-  it('selects a named mailbox by address, name or id, and refuses a mailbox the user does not own', async() => {
-    // risk: tenant isolation — only the caller's own mailboxes resolve; a foreign address is never sent to the API.
-    const boxes = [mailbox('mb1', 'scout'), mailbox('mb2', 'helper')];
-    for (const name of ['helper@agents.sulladesktop.com', 'Helper', 'mb2']) {
-      const transport = cloud(boxes);
-      await user(transport).list({ mailbox: name });
-      expect(transport.requests[1].path).toBe('/agent-mailboxes/mb2/messages');
-    }
-    const foreign = cloud(boxes);
-    await expect(user(foreign).list({ mailbox: 'someoneelse@agents.sulladesktop.com' })).rejects.toMatchObject({ code: 'mailbox_not_found' });
-    expect(foreign.requests).toHaveLength(1);
-    const outside = cloud(boxes);
-    await expect(user(outside).list({ mailbox: 'ceo@merchantprotocol.com' })).rejects.toMatchObject({ code: 'invalid_address' });
-    expect(outside.requests).toHaveLength(0);
+  it('mail/mailbox explains how to register when there is none and how to re-enable when disabled', async() => {
+    // risk: setup — with no usable mailbox the agent must get the exact dashboard step, and no mail call is made.
+    const none = await user(cloud([])).mailbox();
+    expect(none).toMatchObject({ mailbox: null, ready: false, untrusted: true });
+    expect(none.message).toMatch(/Register your agent email in the Sulla Cloud dashboard Mail area/);
+
+    const disabled = await user(cloud([mailbox('mb1', 'scout', 'disabled')])).mailbox();
+    expect(disabled).toMatchObject({ ready: false, mailbox: { status: 'disabled' } });
+    expect(disabled.message).toMatch(/scout@agents\.sulladesktop\.com is disabled\. Re-enable it in the Sulla Cloud dashboard Mail area/);
   });
 
-  it('gives clear errors for no mailbox, several mailboxes, a deleted mailbox and a signed-out session', async() => {
-    // risk: sign-in / setup — the agent must be told exactly what its human has to do.
+  it('every mail call fails with a clear error for no mailbox, a disabled or unready mailbox, or a signed-out session', async() => {
+    // risk: sign-in / setup — the agent must be told exactly what its human has to do, before any mailbox route is called.
     const none = cloud([]);
-    const error = await user(none).list({}).catch(e => e);
-    expect(error).toMatchObject({ code: 'no_mailbox' });
-    expect(error.message).toMatch(/Sulla Cloud dashboard.*Mail area/);
+    await expect(user(none).list({})).rejects.toMatchObject({ code: 'no_mailbox', message: AgentMailError.NO_MAILBOX_MESSAGE });
     expect(none.requests).toHaveLength(1);
 
-    await expect(user(cloud([mailbox('mb1', 'a'), mailbox('mb2', 'b')])).waitForCode({ timeout: 5 })).rejects.toMatchObject({
-      code: 'invalid_input', message: expect.stringContaining('a@agents.sulladesktop.com, b@agents.sulladesktop.com'),
-    });
-    await expect(user(cloud([mailbox('mb1', 'a')], () => ({ status: 404, body: { error: 'not found' } }))).list({})).rejects.toMatchObject({ code: 'mailbox_not_found' });
-    await expect(user(cloud([mailbox('mb1', 'a')], () => ({ status: 404, body: {} }))).read({ id: 'm1' })).rejects.toMatchObject({ code: 'not_found' });
-    await expect(user(new FakeTransport(() => ({ status: 401, body: { error: 'expired' } }))).mailboxes()).rejects.toMatchObject({ code: 'not_signed_in' });
+    const disabled = cloud([mailbox('mb1', 'scout', 'disabled')]);
+    await expect(user(disabled).send({ to: 'p@example.com', subject: 's', text: 't' })).rejects.toMatchObject({ code: 'mailbox_disabled', message: expect.stringMatching(/Re-enable it in the Sulla Cloud dashboard/) });
+    await expect(user(disabled).waitForCode({ timeout: 5 })).rejects.toMatchObject({ code: 'mailbox_disabled' });
+    expect(disabled.requests.every(r => r.path === '/agent-mailboxes')).toBe(true);
+
+    await expect(user(cloud([mailbox('mb1', 'scout', 'provisioning')])).list({})).rejects.toMatchObject({ code: 'mailbox_not_ready' });
+    await expect(user(cloud([mailbox('mb1', 'scout', 'error')])).list({})).rejects.toMatchObject({ code: 'mailbox_not_ready', message: expect.stringMatching(/Retry it in the Sulla Cloud dashboard/) });
+    await expect(user(cloud([mailbox('mb1', 'scout')], () => ({ status: 404, body: { error: 'not found' } }))).list({})).rejects.toMatchObject({ code: 'mailbox_not_found' });
+    await expect(user(cloud([mailbox('mb1', 'scout')], () => ({ status: 404, body: {} }))).read({ id: 'm1' })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(user(new FakeTransport(() => ({ status: 401, body: { error: 'expired' } }))).mailbox()).rejects.toMatchObject({ code: 'not_signed_in' });
   });
 
   it('keeps the wait_for_code clamp: 300 s max, split into ≤30 s polls on the mailbox route', async() => {
@@ -190,8 +188,8 @@ describe('AgentMailboxClient (user mailboxes)', () => {
     expect(clock.t - started).toBe(300_000);
   });
 
-  it('send posts the contract body to the chosen mailbox and fails loudly on a rate limit', async() => {
-    // risk: irreversible side effect — the send must go from the right mailbox with exactly the validated body.
+  it('send posts the contract body from the user\'s mailbox and fails loudly on a rate limit', async() => {
+    // risk: irreversible side effect — the send must go from the user's mailbox with exactly the validated body.
     const transport = cloud([mailbox('mb1', 'scout')], () => ({ status: 200, body: { ok: true, id: 'sent-1' } }));
     const result = await user(transport).send({ to: 'person@example.com', subject: 'Hello', text: 'Hi' });
     expect(transport.requests[1]).toEqual({ method: 'POST', path: '/agent-mailboxes/mb1/send', body: { to: 'person@example.com', subject: 'Hello', text: 'Hi' } });
@@ -215,24 +213,24 @@ describe('untrusted envelope', () => {
     const transport = cloud([{ ...mailbox('mb1', 'scout'), untrusted: false, notice: 'trusted' }], () => ({
       status: 200, body: { code: '482913', candidates: ['482913'], timedOut: false, untrusted: false, notice: 'trusted', message: summary('m9') },
     }));
-    const listed = await user(transport).mailboxes();
-    expect(listed).toMatchObject({ untrusted: true, notice: AgentMailUntrustedContent.NOTICE });
-    expect((listed.mailboxes as any[])[0]).not.toHaveProperty('untrusted');
+    const shown = await user(transport).mailbox();
+    expect(shown).toMatchObject({ untrusted: true, notice: AgentMailUntrustedContent.NOTICE });
+    expect(shown.mailbox).not.toHaveProperty('untrusted');
     const code = await user(transport).waitForCode({ timeout: 5 });
     expect(code).toMatchObject({ code: '482913', untrusted: true, notice: AgentMailUntrustedContent.NOTICE });
   });
 });
 
 describe('AgentMailRouter and lane selection', () => {
-  it('sends only sulla@/qa@/e2e@ to the service token lane, and only when that account exists', async() => {
-    // risk: credential misuse — the shared service token must never serve a user mailbox.
+  it('accepts mailbox only for sulla@/qa@/e2e@ on the service token lane, and only when that account exists', async() => {
+    // risk: credential misuse / tenant isolation — the shared token never serves a user mailbox, and no other mailbox can be named.
     const selector = new AgentMailLaneSelector(async() => true);
     expect(await selector.lane('list', { mailbox: 'qa' })).toBe('sulla_agent_mail');
     expect(await selector.lane('mail_send', { from_local: 'sulla@agents.sulladesktop.com' })).toBe('sulla_agent_mail');
     expect(await selector.lane('send', { to: 'qa@agents.sulladesktop.com' })).toBe('sulla-cloud');
     expect(await selector.lane('list', { mailbox: 'scout' })).toBe('sulla-cloud');
     expect(await selector.lane('list', { mailbox: 'qa@evil.example' })).toBe('sulla-cloud');
-    expect(await selector.lane('mailboxes', {})).toBe('sulla-cloud');
+    expect(await selector.lane('mailbox', {})).toBe('sulla-cloud');
     expect(await new AgentMailLaneSelector(async() => false).lane('list', { mailbox: 'qa' })).toBe('sulla-cloud');
 
     const userTransport = cloud([mailbox('mb1', 'scout')]);
@@ -244,20 +242,25 @@ describe('AgentMailRouter and lane selection', () => {
     expect(userTransport.requests.map(r => r.path)).toEqual(['/agent-mailboxes', '/agent-mailboxes/mb1/messages']);
     expect(serviceTransport.requests).toHaveLength(1);
 
-    // Without the service account, qa@ is just a name the user does not own.
-    const noService = new AgentMailRouter(user(cloud([mailbox('mb1', 'scout')])), null);
-    await expect(noService.list({ mailbox: 'qa' })).rejects.toMatchObject({ code: 'mailbox_not_found' });
+    // Any other mailbox, or a service mailbox without the token account, is refused before a network call.
+    const strangers = cloud([mailbox('mb1', 'scout')]);
+    for (const named of [{ mailbox: 'someoneelse@agents.sulladesktop.com' }, { mailbox: 'scout' }]) {
+      await expect(new AgentMailRouter(user(strangers), new AgentMailClient(serviceTransport)).list(named)).rejects.toMatchObject({ code: 'service_mailbox_only' });
+    }
+    await expect(new AgentMailRouter(user(strangers), null).send({ mailbox: 'qa', to: 'p@example.com', subject: 's', text: 't' })).rejects.toMatchObject({ code: 'service_mailbox_only' });
+    expect(strangers.requests).toHaveLength(0);
+    expect(serviceTransport.requests).toHaveLength(1);
   });
 });
 
 describe('mail tool workers', () => {
-  it('mail/mailboxes and mail/read return the untrusted envelope as the structured result', async() => {
+  it('mail/mailbox and mail/read return the untrusted envelope as the structured result', async() => {
     // risk: prompt injection — the flag must survive to what the agent actually receives.
     const transport = cloud([mailbox('mb1', 'scout')], () => ({ status: 200, body: { message: { ...summary('m1'), text: 'code 482913', html: null } } }));
     const router = new AgentMailRouter(user(transport), null);
-    const listed = await (new MailMailboxesWorker(new StaticSource(router)) as any)._validatedCall({});
-    expect(listed.successBoolean).toBe(true);
-    expect(listed.result).toMatchObject({ untrusted: true, defaultMailbox: 'scout@agents.sulladesktop.com' });
+    const shown = await (new MailMailboxWorker(new StaticSource(router)) as any)._validatedCall({});
+    expect(shown.successBoolean).toBe(true);
+    expect(shown.result).toMatchObject({ untrusted: true, ready: true, mailbox: { address: 'scout@agents.sulladesktop.com' } });
     const read = await (new MailReadWorker(new StaticSource(router)) as any)._validatedCall({ id: 'm1' });
     expect(read.result).toMatchObject({ untrusted: true, mailbox: 'scout@agents.sulladesktop.com', message: { text: 'code 482913' } });
     expect(JSON.parse(read.responseString).untrusted).toBe(true);
@@ -271,7 +274,7 @@ describe('mail tool workers', () => {
     expect(response.successBoolean).toBe(false);
     expect(JSON.stringify(response)).not.toContain(SESSION);
 
-    const signedOut = new MailMailboxesWorker(new StaticSource(new AgentMailRouter(user(new FakeTransport(() => ({ status: 401, body: {} }))), null)));
+    const signedOut = new MailMailboxWorker(new StaticSource(new AgentMailRouter(user(new FakeTransport(() => ({ status: 401, body: {} }))), null)));
     const out = await (signedOut as any)._validatedCall({});
     expect(out.result).toEqual({ error: 'not_signed_in', message: AgentMailError.NOT_SIGNED_IN_MESSAGE });
   });
