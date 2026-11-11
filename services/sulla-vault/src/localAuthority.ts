@@ -1315,11 +1315,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     });
   }
 
-  /**
-   * Move the existing local user-key wrap to the signed-in Cloud account KDF.
-   * The old row is copied first in the same transaction. No item or Files key
-   * is re-encrypted. Only the trusted Desktop approval identity can call this.
-   */
+  /** Record Cloud ownership metadata without changing the local user-key wrap. */
   async rewrapForAccountPassword(
     serviceId: string, token: string | undefined, input: AccountPasswordRewrapRequest,
   ): Promise<AccountPasswordRewrapResponse> {
@@ -1338,112 +1334,55 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       masterKey.fill(0);
       throw new LocalVaultError('invalid_unlock_material', 400, 'Account master key is invalid');
     }
-    // Fresh install: create from the account key. If the OS unlock cache was
-    // lost, the same account key can also unlock an existing account-wrapped
-    // vault. It can never replace a vault belonging to another Cloud account.
-    if (!this.keys) {
-      await this.runSecurityOperation(async() => {
-        if (this.keys) return false;
-        if (!await this.isSetupRequired()) {
+    const response = { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' } as const;
+    // A fresh install has no local key wrap to rewrite: bootstrap the new vault
+    // once. An existing locked vault remains a strict no-op, aside from owner guard.
+    const keys = this.keys;
+    if (!keys) {
+      try {
+        await this.runSecurityOperation(async() => {
+          if (this.keys || !await this.isSetupRequired()) return false;
+          await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+            authority: 'container', version: 1, cloudUserId,
+            password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+          });
+          return true;
+        });
+        if (!this.keys) {
           const existing = await this.userRepository.findActiveOwner<{ id: string; kdf: { cloudUserId?: string } }>();
           const owner = existing.rows[0]?.kdf?.cloudUserId;
           if (owner && owner !== cloudUserId) {
             throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
           }
-          await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
-            authority: 'container', version: 1, cloudUserId,
-            password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
-          });
-          return false;
         }
-        await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
-          authority: 'container', version: 1, cloudUserId,
-          password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
-        });
-        return true;
-      });
+        return response;
+      } finally { masterKey.fill(0); }
     }
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    let recoveryKey: Buffer | undefined;
-    let recoveryMasterKey: Uint8Array | undefined;
+
     try {
-      const current = await this.userRepository.findCredentials<{
-        login_hash_salt: Buffer; login_hash_verifier: Buffer;
-        kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
-      }>(keys.userId);
-      const currentOwner = current.rows[0]?.kdf?.cloudUserId;
-      if (currentOwner && currentOwner !== cloudUserId) {
+    const current = await this.userRepository.findCredentials<{
+      kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
+    }>(keys.userId);
+    if (!current.rows.length) throw new LocalVaultError('invalid_credentials', 404, 'Local vault owner was not found');
+    const currentOwner = current.rows[0].kdf?.cloudUserId;
+    if (currentOwner && currentOwner !== cloudUserId) {
+      throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+    }
+    if (!currentOwner) {
+      const priorCloud = await this.db.query<{ active_account_id: string }>(
+        `SELECT active_account_id FROM local_integration_state
+          WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [keys.userId],
+      );
+      if (priorCloud.rows[0]?.active_account_id && priorCloud.rows[0].active_account_id !== cloudUserId) {
         throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
       }
-      if (!currentOwner) {
-        const priorCloud = await this.db.query<{ active_account_id: string }>(
-          `SELECT active_account_id FROM local_integration_state
-            WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [keys.userId],
-        );
-        if (priorCloud.rows[0]?.active_account_id && priorCloud.rows[0].active_account_id !== cloudUserId) {
-          throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
-        }
-      }
-      const passwordKdf = current.rows[0]?.kdf?.password;
-      const recoveryExists = await this.recoveryRepository.exists(keys.userId);
-      const alreadyWrapped = passwordKdf?.salt === kdf.salt && passwordKdf.parameters?.memoryBytes === kdf.memoryBytes &&
-        passwordKdf.parameters?.operations === kdf.ops &&
-        verifyLoginHash(await deriveLoginHash(masterKey), current.rows[0].login_hash_salt, current.rows[0].login_hash_verifier);
-      if (alreadyWrapped && recoveryExists.rowCount) {
-        if (!currentOwner) {
-          await this.userRepository.updateKdf(keys.userId, { authority: 'container', version: 1, cloudUserId, password: passwordKdf });
-        }
-        this.stageCacheUpdate(masterKey);
-        return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
-      }
-      const verifier = makeLoginVerifier(await deriveLoginHash(masterKey));
-      const wrapped = await encryptWithKey(keys.userKey, masterKey, 'sulla:user-key:v1');
-      let recoveryRow: { salt: string; verifierSalt: string; verifier: string; parameters: { memoryBytes: number; operations: number }; wrap: EncryptedEnvelope } | undefined;
-      if (!recoveryExists.rowCount) {
-        recoveryKey = randomBytes(32);
-        const derived = await deriveMasterKey(recoveryKey.toString('base64url'));
-        recoveryMasterKey = derived.key;
-        const recoveryVerifier = makeLoginVerifier(await deriveLoginHash(derived.key));
-        recoveryRow = {
-          salt: derived.salt,
-          verifierSalt: recoveryVerifier.salt.toString('base64url'),
-          verifier: recoveryVerifier.verifier.toString('base64url'),
-          parameters: derived.parameters,
-          wrap: await encryptWithKey(keys.userKey, derived.key, 'sulla:recovery-user-key:v1'),
-        };
-      }
-      await this.runTransaction(async client => {
-        await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'account_password_migration', client);
-        await this.userRepository.updatePassword(keys.userId, [
-          verifier.salt,
-          verifier.verifier,
-          wrapped,
-          { authority: 'container', version: 1, cloudUserId, password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } } },
-        ], client);
-        if (recoveryRow) {
-          await this.recoveryRepository.insert([
-            keys.userId,
-            JSON.stringify({ kdf: recoveryRow.salt, verifier: recoveryRow.verifierSalt, parameters: recoveryRow.parameters }),
-            recoveryRow.verifier,
-            recoveryRow.wrap,
-          ], client);
-        }
-        this.requireGeneration(generation);
-        await this.auditHumanAction(client, keys.userId, 'account_password_wrap_migrated');
+      await this.userRepository.updateKdf(keys.userId, {
+        authority: 'container', version: 1, cloudUserId,
+        ...(current.rows[0].kdf?.password ? { password: current.rows[0].kdf.password } : {}),
       });
-      this.stageCacheUpdate(masterKey);
-      return {
-        migrated: true,
-        recoveryCreated: Boolean(recoveryKey),
-        ...(recoveryKey ? { recoveryKey: recoveryKey.toString('base64url') } : {}),
-        cacheMode: 'helper-update-required',
-      };
-    } finally {
-      masterKey.fill(0);
-      recoveryMasterKey?.fill(0);
-      recoveryKey?.fill(0);
     }
+    return response;
+    } finally { masterKey.fill(0); }
   }
 
   async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
