@@ -11,6 +11,7 @@
     v-model="model"
     class="input"
     :placeholder="placeholder"
+    :aria-activedescendant="activeDescendant"
     rows="1"
     autocomplete="off"
     autocorrect="off"
@@ -28,6 +29,7 @@ import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 const props = defineProps<{
   modelValue: string;
   placeholder?: string;
+  activeDescendant?: string;
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;

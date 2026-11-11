@@ -14,6 +14,7 @@ import Electron from 'electron';
 import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
+import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
 /**
@@ -943,6 +944,8 @@ export interface IpcMainInvokeEvents {
     promptLength: number;
     updatedAt:    string;
   }[];
+  // Composer type-ahead: skills, agents, workflows, recipes (never functions).
+  'use-case-suggest:query': (text: string, options?: { limit?: number }) => UseCaseSuggestionResponse;
   'library-list-recipes':  () => {
     slug:        string;
     name:        string;
