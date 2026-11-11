@@ -74,9 +74,8 @@ async function saveDraftToDatabase(draft: {
 
   const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
   // A saved draft can overwrite a published or installed row; tell the suggestion index after the write commits.
-  const { redisClient } = await import('@pkg/agent/database/RedisClient');
-  const { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer } = await import('@pkg/agent/useCases/UseCaseChangeBus');
-  const useCaseChanges = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
+  const { RedisUseCaseChangePublisherFactory } = await import('@pkg/agent/useCases/RedisUseCaseChangePublisherFactory');
+  const useCaseChanges = new RedisUseCaseChangePublisherFactory().create();
   if (draft.kind === 'function') {
     const runtime = String(manifest.spec?.runtime ?? manifest.runtime ?? '');
     await postgresClient.query(`INSERT INTO function_definitions (slug,name,description,manifest,runtime,files,source_kind,version,user_edited)

@@ -10,8 +10,8 @@ import path from 'node:path';
 import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import { redisClient } from '@pkg/agent/database/RedisClient';
-import { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, type UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
+import { RedisUseCaseChangePublisherFactory } from '@pkg/agent/useCases/RedisUseCaseChangePublisherFactory';
+import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
 import type { UseCaseChange, UseCaseType } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import { installMemoryPackForSkill, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
@@ -26,12 +26,10 @@ export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'inte
 /**
  * Post-commit hints to the suggestion index. The publisher is injected (tests
  * pass their own); the default broadcasts on the app's Redis channel, which
- * the main-process index subscribes to. `announce` never throws, so a
+ * the main-process index subscribes to (a fresh, unretained publisher per call). `announce` never throws, so a
  * committed install/uninstall is never reported as failed; the index's
  * fingerprint reconcile repairs a lost hint.
  */
-const defaultUseCaseChanges: UseCaseChangePublisher = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
-
 class MarketplaceSuggestionChanges {
   constructor(private readonly publisher: UseCaseChangePublisher) {}
 
@@ -397,7 +395,7 @@ export async function installStandaloneArtifact(
   artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
   overwrite = false,
   database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
-  useCaseChanges: UseCaseChangePublisher = defaultUseCaseChanges,
+  useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(),
 ): Promise<{ installed: boolean; reason?: string }> {
   const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   if (detail.kind === 'package') throw new Error('Packages must be installed with installPackageManifest');
@@ -471,7 +469,7 @@ export async function installPackageManifest(
   value: unknown,
   author?: string | null,
   database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
-  useCaseChanges: UseCaseChangePublisher = defaultUseCaseChanges,
+  useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(),
 ): Promise<PackageInstallResult> {
   const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const manifest = validatePackageManifest(value);
@@ -568,7 +566,7 @@ async function removePackageItem(client: PoolClient, kind: InstallableKind, slug
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function uninstallPackage(slug: string, removeData = false, useCaseChanges: UseCaseChangePublisher = defaultUseCaseChanges): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
+export async function uninstallPackage(slug: string, removeData = false, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
   const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const recipeItems = await postgresClient.query(`SELECT i.item_slug
     FROM installed_package_items i
@@ -606,7 +604,7 @@ export async function uninstallPackage(slug: string, removeData = false, useCase
   return { ok: result.ok, removed: result.removed };
 }
 
-export async function setPackageActive(slug: string, active: boolean, useCaseChanges: UseCaseChangePublisher = defaultUseCaseChanges): Promise<{ ok: true; active: boolean; recipes: string[] }> {
+export async function setPackageActive(slug: string, active: boolean, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<{ ok: true; active: boolean; recipes: string[] }> {
   const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const rows = await postgresClient.query(`SELECT i.kind,i.item_slug
     FROM installed_package_items i JOIN installed_packages p ON p.slug=i.package_slug

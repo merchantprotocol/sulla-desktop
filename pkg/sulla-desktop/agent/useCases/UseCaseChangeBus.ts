@@ -55,11 +55,12 @@ export class RedisUseCaseChangeTransport implements UseCaseChangeTransport {
     subscriber.on('message', (from, message) => { if (from === channel) onMessage(message); });
     // ioredis reconnects and re-subscribes on its own; errors only need to stay handled.
     subscriber.on('error', () => undefined);
-    await subscriber.subscribe(channel);
-    return async() => {
+    const dispose = async(): Promise<void> => {
       await subscriber.unsubscribe(channel).catch(() => undefined);
       subscriber.disconnect();
     };
+    try { await subscriber.subscribe(channel); } catch (error) { await dispose(); throw error; }
+    return dispose;
   }
 }
 
@@ -147,11 +148,15 @@ export class UseCaseChangeBus implements UseCaseChangeNotifier, UseCaseChangePub
     return this.unsubscribeTransport.then(() => undefined);
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Stops receiving. Never waits on a subscription that is still connecting
+   * (Redis down at shutdown must not hang the app); it is torn down once it lands.
+   */
+  stop(): Promise<void> {
     const pending = this.unsubscribeTransport;
     this.unsubscribeTransport = undefined;
-    const unsubscribe = await pending;
-    await unsubscribe?.().catch(() => undefined);
+    void pending?.then(unsubscribe => unsubscribe?.()).catch(() => undefined);
+    return Promise.resolve();
   }
 
   announce(event: UseCaseChangeEvent): void {

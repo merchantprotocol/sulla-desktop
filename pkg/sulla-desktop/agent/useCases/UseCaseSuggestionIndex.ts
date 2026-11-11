@@ -182,6 +182,20 @@ export class UseCaseSuggestionIndex {
     return results;
   }
 
+  /**
+   * Re-check the catalog now (fingerprint compare, then rebuild if changed).
+   * Queued behind any in-flight load, so it always runs against a snapshot
+   * that predates the call. Used once the change subscription is live, to
+   * catch writes whose events fired before anyone was listening.
+   */
+  refresh(): Promise<void> {
+    return this.enqueue(async() => {
+      if (!this.loaded) return;
+      if (this.source.fingerprint) { await this.reconcile(); return; }
+      this.items = this.build(await this.source.listPublished(), await this.getEmbedder(), this.items);
+    });
+  }
+
   dispose(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
 
   // ── mutation queue ────────────────────────────────────────────────────
@@ -386,6 +400,14 @@ export class UseCaseSuggestionCompositionRoot {
     this.notifier = new UseCaseChangeBus(transport);
     this.index = new UseCaseSuggestionIndex(embedderLoader, new PostgresUseCaseCatalogSource(db, builtinSkillSlugs), this.notifier);
   }
-  start(): void { void this.notifier.start(); void this.index.warm(); }
+  /**
+   * Warm immediately (suggestions must not wait on Redis), and refresh once the
+   * subscription is live: any write whose event fired before then is caught by
+   * that fingerprint check instead of waiting for the 15 s backstop.
+   */
+  start(): void {
+    void this.index.warm();
+    void this.notifier.start().then(() => this.index.refresh());
+  }
   stop(): void { this.index.dispose(); void this.notifier.stop(); }
 }

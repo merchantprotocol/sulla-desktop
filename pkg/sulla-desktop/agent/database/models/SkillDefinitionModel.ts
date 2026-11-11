@@ -6,8 +6,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
-import { redisClient } from '../RedisClient';
-import { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, type UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
+import { RedisUseCaseChangePublisherFactory } from '../../useCases/RedisUseCaseChangePublisherFactory';
+import type { UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'marketplace' | 'resources';
 
@@ -161,13 +161,6 @@ function required(value: string, field: string): string {
 }
 
 export class SkillDefinitionModel {
-  /**
-   * Post-commit change broadcast for the use case suggestion index. Each
-   * write announces only after its statement returned a committed row;
-   * announce never throws, so a broadcast failure never fails the write.
-   */
-  private static readonly useCaseChanges: UseCaseChangePublisher = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
-
   /** Finds a row by slug, including disabled and soft-deleted rows. */
   static async findBySlug(slug: string): Promise<SkillDefinition | null> {
     const row = await postgresClient.queryOne('SELECT * FROM skill_definitions WHERE slug = $1 LIMIT 1', [slug]);
@@ -191,7 +184,8 @@ export class SkillDefinitionModel {
     return new Set(rows.map((row: { slug: string }) => String(row.slug)));
   }
 
-  static async create(input: SkillDefinitionInput): Promise<SkillDefinition> {
+  /** `useCaseChanges` hears the committed row (post-commit, never throws). */
+  static async create(input: SkillDefinitionInput, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<SkillDefinition> {
     const slug = required(input.slug, 'slug');
     const title = required(input.title, 'title');
     const row = await postgresClient.queryOne(`
@@ -209,7 +203,7 @@ export class SkillDefinitionModel {
       input.marketplaceTemplateId ?? null, input.marketplaceSlug ?? null, input.marketplaceVersion ?? null, input.marketplaceAuthor ?? null,
     ]);
     if (!row) throw new Error(`Failed to create skill ${ slug }.`);
-    SkillDefinitionModel.useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
+    useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
     return rowToSkillDefinition(row);
   }
 
@@ -218,7 +212,7 @@ export class SkillDefinitionModel {
    * row has not changed since it was read (compare-and-set on updated_at);
    * otherwise null is returned and nothing is written.
    */
-  static async update(id: string, patch: SkillDefinitionPatch, expectedUpdatedAt?: string): Promise<SkillDefinition | null> {
+  static async update(id: string, patch: SkillDefinitionPatch, expectedUpdatedAt?: string, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<SkillDefinition | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
     const add = (column: string, value: unknown, cast = '') => {
@@ -258,7 +252,7 @@ export class SkillDefinitionModel {
     }
     const row = await postgresClient.queryOne(`UPDATE skill_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
     if (!row) return null;
-    SkillDefinitionModel.useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
+    useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
     return rowToSkillDefinition(row);
   }
 

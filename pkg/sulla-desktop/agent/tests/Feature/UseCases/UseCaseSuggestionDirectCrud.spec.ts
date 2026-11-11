@@ -15,7 +15,8 @@ import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import type { RedisPubSubConnection } from '../../../useCases/UseCaseChangeBus';
+import type { RedisPubSubConnection, UseCaseChangeTransport } from '../../../useCases/UseCaseChangeBus';
+import type { UseCaseChangeEvent } from '../../../useCases/UseCaseSuggestionIndex';
 
 const boundary = vi.hoisted(() => ({ db: undefined as any, redis: undefined as any }));
 
@@ -34,7 +35,7 @@ const { AgentDefinitionModel } = await import('../../../database/models/AgentDef
 const { WorkflowModel } = await import('../../../database/models/WorkflowModel');
 const { PostgresUseCaseCatalogSource } = await import('../../../useCases/PostgresUseCaseCatalogSource');
 const { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, UseCaseChangeBus, USE_CASE_CHANGE_CHANNEL } = await import('../../../useCases/UseCaseChangeBus');
-const { UseCaseSuggestionIndex } = await import('../../../useCases/UseCaseSuggestionIndex');
+const { UseCaseSuggestionCompositionRoot, UseCaseSuggestionIndex } = await import('../../../useCases/UseCaseSuggestionIndex');
 
 /** Real Postgres (WASM) with the Desktop migrations applied; PostgresClient-shaped `query`. */
 class MigratedPglite {
@@ -335,5 +336,78 @@ describe('PostgresUseCaseCatalogSource SQL on the migrated schema', () => {
     expect(changed).not.toBe(first);
     await database.query(`UPDATE agent_definitions SET enabled=false WHERE id='a1'`);
     expect(await source.fingerprint()).not.toBe(changed);
+  });
+});
+
+describe('bus lifecycle', () => {
+  it('stop never waits on a subscription that is still connecting', async() => {
+    // risk: availability — Redis down at shutdown must not hang app quit.
+    const never: RedisPubSubConnection = Object.assign(hub.connection(), { subscribe: () => new Promise<unknown>(() => undefined) });
+    const bus = new UseCaseChangeBus(new RedisUseCaseChangeTransport({ getClient: () => ({ ...never, status: 'ready', duplicate: () => never } as any) }), quiet);
+    void bus.start();
+    const outcome = await Promise.race([bus.stop().then(() => 'stopped'), new Promise(resolve => setTimeout(() => resolve('hung'), 200))]);
+    expect(outcome).toBe('stopped');
+  });
+});
+
+describe('per-operation publisher injection', () => {
+  it('model writes announce on the publisher the caller injects, after the row commits', async() => {
+    // risk: data accuracy — writers own their publisher per call; no hidden model-level service.
+    const heard: UseCaseChangeEvent[] = [];
+    const publisher = { announce: (event: UseCaseChangeEvent) => { heard.push(event) } };
+    const skill = await SkillDefinitionModel.create({ slug: `inj-${ randomUUID().slice(0, 8) }`, title: 'Injected', description: 'x' }, publisher);
+    await SkillDefinitionModel.update(skill.id, { enabled: false }, undefined, publisher);
+    const agent = await AgentDefinitionModel.create({ slug: `inj-agent-${ randomUUID().slice(0, 8) }`, name: 'Injected agent', status: 'production' }, publisher);
+    await AgentDefinitionModel.setStatus(agent.id, 'draft', publisher);
+    await AgentDefinitionModel.delete(agent.id, publisher);
+    await WorkflowModel.upsertFromDefinition({ id: 'inj-flow', name: 'Injected flow' }, { status: 'production', useCaseChanges: publisher });
+    await WorkflowModel.setEnabled('inj-flow', false, publisher);
+    await WorkflowModel.updateStatus('inj-flow', 'draft', { useCaseChanges: publisher });
+    await WorkflowModel.deleteById('inj-flow', { useCaseChanges: publisher });
+    expect(heard.map(event => `${ event.change }:${ event.type }`)).toEqual([
+      'updated:skill', 'updated:skill', 'updated:agent', 'updated:agent', 'deleted:agent',
+      'updated:workflow', 'updated:workflow', 'updated:workflow', 'deleted:workflow',
+    ]);
+    // A compare-and-set miss writes nothing and announces nothing.
+    const before = heard.length;
+    expect(await SkillDefinitionModel.update(skill.id, { description: 'y' }, '2000-01-01T00:00:00Z', publisher)).toBeNull();
+    expect(heard.length).toBe(before);
+  });
+});
+
+describe('transport and start-order failures', () => {
+  it('disconnects the duplicate connection when subscribe rejects', async() => {
+    // risk: resource leak — a failed subscribe must not leave a retrying Redis connection behind.
+    let disconnected = 0;
+    const failing = Object.assign(hub.connection(), {
+      subscribe: async() => { throw new Error('NOPERM') },
+      disconnect: () => { disconnected++ },
+    });
+    const transport = new RedisUseCaseChangeTransport({ getClient: () => ({ status: 'ready', duplicate: () => failing } as any) });
+    await expect(transport.subscribe(USE_CASE_CHANGE_CHANNEL, () => undefined)).rejects.toThrow('NOPERM');
+    expect(disconnected).toBe(1);
+  });
+
+  it('a write committed while the subscription is still connecting is indexed once it connects, without the 15 s backstop', async() => {
+    // risk: data accuracy — events fired before the subscription lands must not be lost until the next reconcile.
+    let open!: () => void;
+    const gate = new Promise<void>(resolve => { open = resolve });
+    const redis = new RedisUseCaseChangeTransport({ getClient: () => hub.connection() });
+    const gated: UseCaseChangeTransport = {
+      publish:   (channel, message) => redis.publish(channel, message),
+      subscribe: async(channel, onMessage) => { await gate; return redis.subscribe(channel, onMessage) },
+    };
+    const root = new UseCaseSuggestionCompositionRoot(database, ['gate-skill'], gated, async() => new WordEmbedder());
+    root.start();
+    await vi.waitFor(() => expect(root.index.isReady).toBe(true));
+
+    const skill = await SkillDefinitionModel.create({ slug: 'gate-skill', title: 'Gate skill', description: 'vendor onboarding packet' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect((await root.index.suggest('vendor onboarding packet')).map(row => row.slug)).not.toContain('gate-skill');
+
+    open();
+    await vi.waitFor(async() => expect((await root.index.suggest('vendor onboarding packet')).map(row => row.slug)).toContain('gate-skill'));
+    root.stop();
+    await SkillDefinitionModel.update(skill.id, { deleted: true });
   });
 });
