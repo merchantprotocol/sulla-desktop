@@ -93,7 +93,7 @@ export class VoiceTurnAccumulatorService implements VoiceTurnAccumulator {
     // Never store the bare globals: calling them as this.setTimer(...) rebinds `this` and
     // Chromium throws "Illegal invocation", so no turn would ever commit in the app.
     this.setTimer = config.setTimer ?? (((fn: () => void, ms?: number) => setTimeout(fn, ms)) as typeof setTimeout);
-    this.clearTimerFn = config.clearTimer ?? ((id?: ReturnType<typeof setTimeout>) => clearTimeout(id));
+    this.clearTimerFn = config.clearTimer ?? (((id: ReturnType<typeof setTimeout> | undefined) => clearTimeout(id)) as typeof clearTimeout);
     this.detector = config.endOfTurnDetector ?? new HeuristicEndOfTurnDetector();
     this.noise = config.noiseFilter ?? new TranscriptNoiseFilter();
     this.now = config.now ?? (() => Date.now());
