@@ -112,6 +112,7 @@ export class AgentNode extends BaseNode {
       chatMode,
     });
     preModelPhases.enrichPrompt = Date.now() - enrichStart;
+    const promptSectionTimings = (state.metadata as any).__promptSectionTimings as Array<{ id: string; durationMs: number }> | undefined;
 
     // Run subconscious middleware: parallel agents for summarization,
     // memory recall, and observation management.
@@ -196,7 +197,7 @@ export class AgentNode extends BaseNode {
     // This timestamp marks the actual hand-off into normalizedChat/CLI setup.
     // The corresponding CLI setup/first-token spans are logged by the model layer.
     if (!isToolCallLoop) {
-      perf.log(`[PreModelTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ Date.now() - turnReceivedAt } handoffAtMs=${ Date.now() - turnReceivedAt } phases=[${ Object.entries(preModelPhases).map(([name, ms]) => `${ name }=${ ms }ms`).join(', ') }]`);
+      perf.log(`[PreModelTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ Date.now() - turnReceivedAt } handoffAtMs=${ Date.now() - turnReceivedAt } phases=[${ Object.entries(preModelPhases).map(([name, ms]) => `${ name }=${ ms }ms`).join(', ') }] enrichPrompt.sections=[${ (promptSectionTimings || []).map(({ id, durationMs }) => `${ id }=${ durationMs }ms`).join(', ') }]`);
     }
     const executeStart = Date.now();
     const agentResult = await this.executeAgent(enrichedPrompt, state);
