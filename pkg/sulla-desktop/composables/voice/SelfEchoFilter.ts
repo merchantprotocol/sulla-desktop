@@ -22,6 +22,7 @@ export interface SelfEchoFilterOptions {
  */
 export class SelfEchoFilter {
   private entries: SpokenEntry[] = [];
+  private playbackActive = false;
   private readonly now: () => number;
   private readonly secondsPerWord: number;
   private readonly tailMs: number;
@@ -35,7 +36,21 @@ export class SelfEchoFilter {
   }
 
   private static words(text: string): string[] {
-    return text.toLowerCase().replace(/[^a-z0-9'\s]/g, ' ').split(/\s+/).filter(Boolean);
+    const numbers: Record<string, string> = {
+      zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6',
+      seven: '7', eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12',
+      thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17',
+      eighteen: '18', nineteen: '19', twenty: '20',
+    };
+    return text.toLowerCase().replace(/[^a-z0-9'\s]/g, ' ').split(/\s+/).filter(Boolean)
+      .flatMap(word => {
+        const expanded = word.replace(/\bcan't\b/g, 'can not').replace(/\bwon't\b/g, 'will not')
+          .replace(/n't\b/g, ' not').replace(/'re\b/g, ' are').replace(/'ve\b/g, ' have')
+          .replace(/'ll\b/g, ' will').replace(/'m\b/g, ' am').replace(/'d\b/g, ' would')
+          .replace(/\b(it's|that's|what's|there's|he's|she's|here's|who's|where's)\b/g,
+            contraction => `${contraction.slice(0, -2)} is`);
+        return expanded.split(/\s+/).map(token => numbers[token] ?? token);
+      });
   }
 
   /** Record text that is about to be spoken aloud. */
@@ -46,36 +61,75 @@ export class SelfEchoFilter {
     this.entries.push({ words, expiresAt: start + words.length * this.secondsPerWord * 1000 + this.tailMs });
   }
 
-  clear(): void { this.entries = []; }
+  clear(): void { this.entries = []; this.playbackActive = false; }
 
-  /** Remove a ≥4-word contiguous echo at either transcript edge, preserving user words. */
+  /** Anchor the estimate to audible playback, not enqueue/synthesis time. */
+  playbackStarted(): void {
+    this.playbackActive = true;
+    const start = this.now();
+    for (const entry of this.entries) {
+      entry.expiresAt = start + entry.words.length * this.secondsPerWord * 1000 + this.tailMs;
+    }
+  }
+
+  /** Keep all queued speech through the actual end of playback and the recognition tail. */
+  playbackEnded(): void {
+    this.playbackActive = false;
+    const expiresAt = this.now() + this.tailMs;
+    for (const entry of this.entries) entry.expiresAt = expiresAt;
+  }
+
+  hasRecentSpeech(): boolean {
+    const now = this.now();
+    this.entries = this.entries.filter(entry => this.playbackActive || entry.expiresAt > now);
+    return this.playbackActive || this.entries.length > 0;
+  }
+
+  /** Remove exact contiguous echo spans anywhere while preserving surrounding user words. */
   stripEchoSpans(transcript: string): string {
-    const heard = SelfEchoFilter.words(transcript);
-    const spoken = this.entries.filter(e => e.expiresAt > this.now()).flatMap(e => e.words);
-    if (!heard.length || !spoken.length) return transcript;
-    const overlapAt = (start: number): number => {
+    const entries = this.entries.filter(e => this.playbackActive || e.expiresAt > this.now());
+    this.entries = entries;
+    const spoken = entries.flatMap(e => e.words);
+    if (!spoken.length) return transcript;
+    const tokens = transcript.match(/\S+/g) ?? [];
+    const heardTokens: Array<{ word: string; tokenIndex: number }> = [];
+    tokens.forEach((token, tokenIndex) => {
+      for (const word of SelfEchoFilter.words(token)) heardTokens.push({ word, tokenIndex });
+    });
+    const heard = heardTokens.map(token => token.word);
+    if (!heard.length) return transcript;
+    const longestOverlapAt = (start: number): number => {
       let best = 0;
       for (let i = 0; i < spoken.length; i++) {
         let n = 0;
         while (start + n < heard.length && i + n < spoken.length && heard[start + n] === spoken[i + n]) n++;
         best = Math.max(best, n);
       }
-      return best >= 4 ? best : 0;
+      return best;
     };
-    const leading = overlapAt(0, 'leading');
-    const trailing = (() => { let best = 0; for (let n = 4; n <= heard.length; n++) { const suffix = heard.slice(heard.length - n); if (spoken.some((_, i) => suffix.every((w, j) => spoken[i + j] === w))) best = n; } return best; })();
-    // Token-aware slicing keeps punctuation and casing on the retained user span.
-    const tokens = transcript.match(/\S+/g) ?? [];
-    const cleanWord = (v: string) => v.toLowerCase().replace(/[^a-z0-9']/g, '');
-    let from = 0, to = tokens.length;
-    for (let i = 0; i < tokens.length && from < leading; i++) if (cleanWord(tokens[i])) from++;
-    for (let i = tokens.length - 1; i >= 0 && to > tokens.length - trailing; i--) if (cleanWord(tokens[i])) to--;
-    return tokens.slice(from, Math.max(from, to)).join(' ').trim();
+    const removed = new Set<number>();
+    for (let i = 0; i < heard.length;) {
+      const span = longestOverlapAt(i);
+      // Common short phrases occur constantly in genuine speech. Remove spans
+      // of four+ words anywhere, or three+ only when they dominate a short
+      // transcript. Preserve the legacy two-word interruption case only when
+      // the complete spoken entry is exactly those two leading words.
+      const coversShortTranscript = span >= 3 && heard.length <= 5 && span / heard.length >= 0.6;
+      const exactShortEntryPrefix = i === 0 && span === 2 && heard.length === 3 &&
+        entries.some(entry => entry.words.length === 2 &&
+          entry.words[0] === heard[i] && entry.words[1] === heard[i + 1]);
+      if ((span >= 4 || coversShortTranscript || exactShortEntryPrefix) && heard.length > span) {
+        for (let n = i; n < i + span; n++) removed.add(heardTokens[n].tokenIndex);
+        i += span;
+      } else i++;
+    }
+    if (!removed.size) return transcript;
+    return tokens.filter((_, index) => !removed.has(index)).join(' ').trim();
   }
 
   isEcho(transcript: string): boolean {
     const now = this.now();
-    this.entries = this.entries.filter(e => e.expiresAt > now);
+    this.entries = this.entries.filter(e => this.playbackActive || e.expiresAt > now);
     if (!this.entries.length) return false;
     const heard = SelfEchoFilter.words(transcript);
     if (!heard.length) return false;

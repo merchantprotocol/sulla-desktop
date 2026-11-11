@@ -9,7 +9,7 @@ import type { UseCaseSuggestionQuery } from '../../../services/UseCaseSuggestion
 describe('SkillRecallService', () => {
   it('queries only published indexed skills and formats the existing context block', async() => {
     // risk: published-only skill recall and preserving the skill ID used by the loader
-    const query = vi.fn<UseCaseSuggestionQuery['query']>(async(_text, _options) => [
+    const query = vi.fn<UseCaseSuggestionQuery['query']>(async() => [
       { type: 'skill' as const, slug: 'summarize-document', title: 'Summarize document', description: 'Summarize a long document.', score: 0.03, reason: 'semantic match' },
     ]);
     const service = new SkillRecallService({ query });

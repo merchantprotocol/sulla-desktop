@@ -75,6 +75,8 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  /** Non-fatal renderer diagnostics sent to the main-process debug service. */
+  'debug:report': (source: string, error: { message?: string; stack?: string }) => void;
   /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
   'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
   'support:open': (section?: string) => void;
@@ -715,7 +717,7 @@ export interface IpcMainInvokeEvents {
     approvalId: string;
     decision:   'approved' | 'denied';
     note?:      string;
-  }) => { settled: boolean; reason?: string };
+  }) => { settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean };
 
   // Question gate — renderer resolves a pending user-question request that a
   // backend tool (in-process ask_user_question or the MCP twin) parked via
@@ -723,7 +725,7 @@ export interface IpcMainInvokeEvents {
   'question:resolve': (payload: {
     questionId: string;
     answers:    { question: string; selected: string[] }[];
-  }) => { settled: boolean; reason?: string };
+  }) => { settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean };
 
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {

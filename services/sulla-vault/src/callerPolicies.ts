@@ -28,6 +28,16 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
     pathPattern: /^\/(?:calls(?:\/[A-Za-z0-9._~-]{1,200})?|leads|messages|devices|push\/[A-Za-z0-9._~-]{1,200})$/,
   },
+  // Agent mailboxes (<local>@agents.sulladesktop.com): the token-gated
+  // /agent-mail read API and the agent send endpoint. The AGENT_MAIL_TOKEN
+  // lives on its own vault account so it never mixes with the Cloud login.
+  'sulla-agent-mail.api': {
+    integrations: ['sulla_agent_mail'],
+    hosts: ['sulla-workers.merchantprotocol.workers.dev'],
+    methods: ['GET', 'POST'],
+    injections: [{ field: 'token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/agent-mail(?:\/(?:wait-for-code|send|[A-Za-z0-9._~-]{1,200}(?:\/read)?))?$/,
+  },
   'sulla-cloud.shares': {
     integrations: ['sulla-cloud'],
     hosts: ['sulla-workers.merchantprotocol.workers.dev'],
