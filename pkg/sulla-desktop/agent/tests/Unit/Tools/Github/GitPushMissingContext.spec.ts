@@ -8,6 +8,7 @@ import { runCommand } from '../../../../tools/util/CommandRunner';
 
 vi.mock('../../../../tools/util/CommandRunner', () => ({ runCommand: vi.fn() }));
 vi.mock('../../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => true }));
+vi.mock('../../../../services/IntegrationService', () => ({ getIntegrationService: vi.fn() }));
 
 describe('GitPushWorker missing context', () => {
   it('fails closed before executing git when broker context is absent', async() => {
