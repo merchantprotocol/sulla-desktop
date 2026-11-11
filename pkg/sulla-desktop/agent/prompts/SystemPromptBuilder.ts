@@ -238,7 +238,7 @@ class SystemPromptBuilderImpl {
         db: ctx.dbSections ? [...ctx.dbSections.entries()] : [], basePrompt: ctx.basePrompt,
       });
       const cached = this.stableSectionCache.get(id);
-      if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilder.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
+      if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilderImpl.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
       const started = Date.now();
       try {
         const section = await reg.factory(ctx);
