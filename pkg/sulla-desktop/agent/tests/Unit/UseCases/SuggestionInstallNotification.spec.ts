@@ -59,6 +59,14 @@ describe('marketplace install → suggestion index notification', () => {
     await expect(installStandaloneArtifact(functionDetail, functionArtifact, false, db as any, new UseCaseChangeAnnouncer(throwingTransport, quiet))).resolves.toEqual({ installed: true });
   });
 
+  it('reports a committed install even when the injected publisher itself throws', async() => {
+    // risk: irreversible side effects — a throwing publisher must not surface as a failed install.
+    const db = new CommittingDatabase();
+    const publisher = { announce: () => { throw new Error('publisher boom'); } };
+    await expect(installStandaloneArtifact(functionDetail, functionArtifact, false, db as any, publisher as any)).resolves.toEqual({ installed: true });
+    expect(db.statements.some(sql => sql.includes('INSERT INTO function_definitions'))).toBe(true);
+  });
+
   it('announces the installed use case on the injected publisher after commit', async() => {
     // risk: data accuracy — a fresh install must reach suggestions without waiting for reconciliation.
     const transport = new RecordingTransport();

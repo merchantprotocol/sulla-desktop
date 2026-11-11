@@ -388,6 +388,19 @@ describe('transport and start-order failures', () => {
     expect(disconnected).toBe(1);
   });
 
+  it('disconnects without waiting for unsubscribe when subscribe rejects offline', async() => {
+    // risk: availability — an unsubscribe that never resolves must not hang startup.
+    let disconnected = 0;
+    const failing = Object.assign(hub.connection(), {
+      subscribe: async() => { throw new Error('offline') },
+      unsubscribe: () => new Promise<never>(() => undefined),
+      disconnect: () => { disconnected++ },
+    });
+    const transport = new RedisUseCaseChangeTransport({ getClient: () => ({ status: 'ready', duplicate: () => failing } as any) });
+    await expect(transport.subscribe(USE_CASE_CHANGE_CHANNEL, () => undefined)).rejects.toThrow('offline');
+    expect(disconnected).toBe(1);
+  });
+
   it('a write committed while the subscription is still connecting is indexed once it connects, without the 15 s backstop', async() => {
     // risk: data accuracy — events fired before the subscription lands must not be lost until the next reconcile.
     let open!: () => void;
