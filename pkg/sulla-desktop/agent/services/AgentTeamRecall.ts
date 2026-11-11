@@ -43,16 +43,24 @@ export class AgentTeamRecallService {
     const self = await this.findAgent(slug);
     if (!self || self.can_call.length === 0) return '';
     const canCall = new Set(self.can_call);
-    const directoryCards = (await this.listDirectory(self.can_call))
-      .filter(card => card.slug !== slug && (canCall.has('*') || canCall.has(card.slug)));
-    if (directoryCards.length === 0) return '';
+    const wildcard = canCall.has('*');
+    // Policy: a callee is eligible when it is not the lead itself and is listed in can_call ('*' allows any slug).
+    const callable = (candidate: string): boolean => candidate !== slug && (wildcard || canCall.has(candidate));
 
-    // Query the main-process index; retain the author's allowlist and order as policy/tie-breaks.
-    const allowlist = new Set(directoryCards.map(card => card.slug));
-    const suggestions = await this.suggestions.query(opts.text, { types: ['agent'], allowedSlugs: [...allowlist], limit: 50 });
-    const publishedSuggestions = suggestions.filter(item => allowlist.has(item.slug));
-    const publishedSlugs = new Set(publishedSuggestions.map(item => item.slug));
-    const cards = directoryCards.filter(card => publishedSlugs.has(card.slug));
+    // Query the index first, restricted to can_call minus self; no slug restriction when can_call has '*'.
+    const allowedSlugs = self.can_call.filter(callee => callee !== '*' && callable(callee));
+    if (!wildcard && allowedSlugs.length === 0) return '';
+    const suggestions = await this.suggestions.query(opts.text, {
+      types: ['agent'], ...(wildcard ? {} : { allowedSlugs }), limit: 50,
+    });
+    const publishedSuggestions = suggestions.filter(item => callable(item.slug));
+    const matchedSlugs = [...new Set(publishedSuggestions.map(item => item.slug))];
+    if (matchedSlugs.length === 0) return '';
+
+    // Fetch cards only for the slugs the index returned, then re-apply the policy to the cards.
+    const publishedSlugs = new Set(matchedSlugs);
+    const cards = (await this.listDirectory(matchedSlugs))
+      .filter(card => publishedSlugs.has(card.slug) && callable(card.slug));
     if (cards.length === 0) return '';
     const scoreBySlug = new Map(publishedSuggestions.map(item => [item.slug, item.score]));
     const order = new Map(self.can_call.map((callee, index) => [callee, index]));

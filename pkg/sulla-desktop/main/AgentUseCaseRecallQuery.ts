@@ -12,6 +12,9 @@ export interface AgentRecallSuggester {
 }
 
 const MAX_RESULTS = 50;
+/** Largest allowlist the index will accept; larger or malformed allowlists are rejected, never truncated. */
+export const MAX_ALLOWED_SLUGS = 2000;
+const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ALLOWED_TYPES = new Set<AgentRecallUseCaseType>(['skill', 'agent']);
 
 /** Agent recall's typed IPC boundary; independent from the composer query contract. */
@@ -23,9 +26,9 @@ export class AgentUseCaseRecallQuery {
     if (!normalizedText.trim()) return { items: [], ms: 0 };
     const types = [...new Set((Array.isArray(options?.types) ? options.types : []).filter((type): type is AgentRecallUseCaseType => ALLOWED_TYPES.has(type)))];
     if (types.length === 0) return { items: [], ms: 0 };
-    const allowedSlugs = Array.isArray(options?.allowedSlugs)
-      ? [...new Set(options.allowedSlugs.filter((slug): slug is string => typeof slug === 'string' && slug.trim().length > 0))].slice(0, MAX_RESULTS)
-      : undefined;
+    const allowedSlugs = this.normalizeAllowedSlugs(options?.allowedSlugs);
+    // A provided but invalid, empty or overlimit allowlist fails closed: no query, no rows.
+    if (allowedSlugs === null) return { items: [], ms: 0 };
     const limit = typeof options?.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(1, Math.min(MAX_RESULTS, Math.floor(options.limit))) : MAX_RESULTS;
     const started = this.now();
@@ -39,6 +42,14 @@ export class AgentUseCaseRecallQuery {
       items: rows.filter(row => types.includes(row.type) && (!allow || allow.has(row.slug))).slice(0, limit),
       ms: this.now() - started,
     };
+  }
+
+  /** undefined = no slug restriction requested; null = reject the request; otherwise a deduped, non-empty allowlist. */
+  private normalizeAllowedSlugs(value: unknown): string[] | undefined | null {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ALLOWED_SLUGS) return null;
+    const slugs = [...new Set(value)];
+    return slugs.every(slug => typeof slug === 'string' && SLUG_PATTERN.test(slug)) ? slugs as string[] : null;
   }
 }
 
