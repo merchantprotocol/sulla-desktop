@@ -8,12 +8,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DeviceMessage, type DevicePurpose } from '@sulla/domain';
+import { DeviceMessage, type DevicePurpose as DomainDevicePurpose } from '@sulla/domain';
 
 // Key custody stays in main; the spec gives it a throwaway config directory.
 vi.mock('@pkg/utils/paths', () => ({ default: { get sullaConfig() { return process.env.SULLA_TEST_DEVICE_KEY_DIR as string; } } }));
 
-import { _resetDeviceKeyCache, deviceMessage, getDevicePublicKey, signDeviceMessage, signDeviceMessageExact } from '../../../../main/cloud/deviceKey';
+import { _resetDeviceKeyCache, deviceMessage, getDevicePublicKey, signDeviceMessage, signDeviceMessageExact, type DevicePurpose } from '../../../../main/cloud/deviceKey';
 
 /** The tag table the removed builder in deviceKey.ts used (10 of the 16 purposes). */
 class LegacyDeviceMessageBuilder {
@@ -37,7 +37,7 @@ class LegacyDeviceMessageBuilder {
 
 const legacy = new LegacyDeviceMessageBuilder();
 const PARTS = ['user-1', 'device-1', 'op', 42];
-const ALL = Object.keys(DeviceMessage.PURPOSE_TAGS) as DevicePurpose[];
+const ALL = Object.keys(DeviceMessage.PURPOSE_TAGS) as DomainDevicePurpose[];
 let dir = '';
 
 beforeAll(() => {
@@ -55,8 +55,29 @@ afterAll(() => {
 describe('deviceKey signed message (domain DeviceMessage registry)', () => {
   it('builds the same bytes as the old builder for each of the 10 purposes Desktop already signed', () => {
     // risk: every device signature is rejected by Cloud if a tag or the framing changes by one byte.
-    for (const purpose of Object.keys(LegacyDeviceMessageBuilder.TAGS) as DevicePurpose[]) {
+    for (const purpose of Object.keys(LegacyDeviceMessageBuilder.TAGS) as DomainDevicePurpose[]) {
       expect(Buffer.from(deviceMessage(purpose, PARTS)), purpose).toEqual(legacy.build(purpose, PARTS));
+    }
+  });
+
+  it('signs Slack purposes with the exact worker-verifier tags and rejects newline framing', () => {
+    // risk: Slack workspace/inbound signatures must use the server-verified purpose tags and canonical fields.
+    const slackTags = {
+      'slack-inbound-v1': 'sulla-slack-inbound-v1',
+      'slack-workspace-v1': 'sulla-slack-workspace-v1',
+    } as const;
+    const publicKey = crypto.createPublicKey({
+      key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(getDevicePublicKey(), 'base64').toString('base64url') },
+      format: 'jwk',
+    });
+    for (const [purpose, tag] of Object.entries(slackTags) as [keyof typeof slackTags, string][]) {
+      const expected = Buffer.from([tag, ...PARTS.map(String)].join('\n'));
+      const exact = signDeviceMessageExact(purpose, PARTS);
+      expect(Buffer.from(deviceMessage(purpose, PARTS))).toEqual(expected);
+      expect(crypto.verify(null, expected, publicKey, Buffer.from(exact, 'base64'))).toBe(true);
+      const { ts, signature } = signDeviceMessage(purpose, PARTS);
+      expect(crypto.verify(null, Buffer.from([tag, ...PARTS.map(String), String(ts)].join('\n')), publicKey, Buffer.from(signature, 'base64'))).toBe(true);
+      expect(() => deviceMessage(purpose, ['bad\npart'])).toThrow('newlines');
     }
   });
 

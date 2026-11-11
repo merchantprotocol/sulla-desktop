@@ -22,7 +22,7 @@ import fs from 'fs';
 import path from 'path';
 
 import paths from '@pkg/utils/paths';
-import { DeviceMessage, type DevicePurpose } from '@sulla/domain';
+import { DeviceMessage, type DevicePurpose as DomainDevicePurpose } from '@sulla/domain';
 
 interface StoredKey {
   v:          1;
@@ -86,24 +86,36 @@ export function getDeviceKeyFingerprint(): string {
   return hex.replace(/(.{4})(?!$)/g, '$1-');
 }
 
-// The purpose registry (tag per purpose) is the shared domain DeviceMessage; it matches the sulla-workers
-// verifier. An unknown purpose or a newline in a part throws instead of signing the wrong bytes.
-export type { DevicePurpose };
+// Slack purpose tags are introduced by this feature and are not yet in the vendored
+// domain package. All existing purposes continue through the shared domain codec.
+const SLACK_PURPOSE_TAGS = {
+  'slack-inbound-v1': 'sulla-slack-inbound-v1',
+  'slack-workspace-v1': 'sulla-slack-workspace-v1',
+} as const;
+export type DevicePurpose = DomainDevicePurpose | keyof typeof SLACK_PURPOSE_TAGS;
+
+function deviceMessageBytes(purpose: DevicePurpose, parts: (string | number)[]): Buffer {
+  if (Object.hasOwn(SLACK_PURPOSE_TAGS, purpose)) {
+    const values = parts.map(String);
+    if (values.some(value => value.includes('\n'))) throw new TypeError('message parts must not contain newlines');
+    return Buffer.from([SLACK_PURPOSE_TAGS[purpose as keyof typeof SLACK_PURPOSE_TAGS], ...values].join('\n'), 'utf8');
+  }
+  return Buffer.from(new DeviceMessage(purpose as DomainDevicePurpose, parts).toBytes());
+}
 
 export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return new DeviceMessage(purpose, parts).toString();
+  return deviceMessageBytes(purpose, parts).toString('utf8');
 }
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
 export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return crypto.sign(null, Buffer.from(new DeviceMessage(purpose, parts).toBytes()), load().key).toString('base64');
+  return crypto.sign(null, deviceMessageBytes(purpose, parts), load().key).toString('base64');
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
 export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
   const ts = Math.floor(Date.now() / 1000);
-  const message = new DeviceMessage(purpose, [...parts, ts]);
-  const signature = crypto.sign(null, Buffer.from(message.toBytes()), load().key).toString('base64');
+  const signature = crypto.sign(null, deviceMessageBytes(purpose, [...parts, ts]), load().key).toString('base64');
   return { ts, signature };
 }
 

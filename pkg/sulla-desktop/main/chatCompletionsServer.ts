@@ -18,7 +18,8 @@ import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrok
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
-import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
+import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
+import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeToolExecutionContextToAccount, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
@@ -114,6 +115,7 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
   gitlab:    'https://gitlab.com/api/v4',
   bitbucket: 'https://api.bitbucket.org/2.0',
   forgejo:   'https://codeberg.org/api/v1',
+  slack:     'https://slack.com/api',
 };
 
 export class ChatCompletionsServer {
@@ -204,14 +206,6 @@ export class ChatCompletionsServer {
       content:      content.slice(0, 100),
     });
 
-    if (msg.type === 'user_message' && metadata?.origin === 'slack' && metadata?.eventType === 'app_mention') {
-      console.log('[ChatCompletionsAPI] Tasker listener received Slack app_mention trigger', {
-        id:            msg.id,
-        slackChannel:  metadata?.channel,
-        slackThreadTs: metadata?.threadTs,
-        slackUser:     metadata?.user,
-      });
-    }
   }
 
   private async loadApiToken(): Promise<void> {
@@ -1339,6 +1333,21 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: (error as Error).message });
           }
         }
+        // Slack tools need a signed scope for the account they call, or the
+        // broker transport refuses every Web API request.
+        if (canonicalCategory === 'slack' && usesContainerVaultAuthority()) {
+          if (!executionContext) {
+            return res.status(403).json({ success: false, error: 'Tool session is missing verified execution context' });
+          }
+          try {
+            const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+            const requestedAccount = typeof params.account === 'string' ? params.account : undefined;
+            const slackAccountId = await new SlackAccountResolver(getIntegrationService()).resolve(requestedAccount);
+            executionContext = await scopeToolExecutionContextToAccount(executionContext, 'slack', slackAccountId);
+          } catch (error) {
+            return res.status(403).json({ success: false, error: (error as Error).message });
+          }
+        }
         // Agent mail tools use their own vault account (sulla_agent_mail/token).
         // With no account configured the tool reports a clear setup error.
         if (executionContext && usesContainerVaultAuthority() && canonicalCategory === 'mail') {
@@ -1634,6 +1643,7 @@ export class ChatCompletionsServer {
           const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
           const auth = getIntegrationConfigLoader().getClient(slug)?.getIntegration().auth;
           const injections: import('../vault-broker').BrokerInjection[] = [];
+          if (slug === 'slack') injections.push({ field: 'bot_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
           if (auth?.auth.type === 'oauth2' || slug === 'grok') {
             injections.push({ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' });
           } else if (auth?.auth.type === 'bearer' || slug === 'cloudflare') {
@@ -1658,7 +1668,7 @@ export class ChatCompletionsServer {
             return res.status(direct.status).json({ success: direct.ok, status: direct.status, result });
           }
           const forwarded = await broker.execute(broker.requestFor(ctx, {
-            operation: 'catalog.http',
+            operation: slug === 'slack' ? 'slack.web-api' : 'catalog.http',
             ref:       { integrationId: slug, accountId },
             url:       url.toString(),
             method:    method.toUpperCase(),

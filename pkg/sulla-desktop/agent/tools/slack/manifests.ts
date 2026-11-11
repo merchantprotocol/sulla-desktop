@@ -11,6 +11,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Check Slack integration health and auto-reinitialize if disconnected/unhealthy.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       reinitializeIfNeeded: {
         type:        'boolean',
         optional:    true,
@@ -45,6 +46,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Search Slack users by username, real name, display name, or email.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       query: { type: 'string', description: 'Search query for Slack users' },
       limit: { type: 'number', optional: true, description: 'Maximum number of users to return (default: 10)' },
     },
@@ -56,8 +58,10 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Send a new message to a Slack channel.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       channel: { type: 'string', description: 'Channel ID where the message will be posted' },
       text:    { type: 'string', description: 'Message text to post' },
+      thread_ts: { type: 'string', optional: true, description: 'Slack parent timestamp to reply in an existing thread' },
     },
     operationTypes: ['read'],
     loader:         () => import('./slack_send_message'),
@@ -67,6 +71,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Get replies in a Slack thread.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       channel: { type: 'string', description: 'Channel ID where the thread is' },
       ts:      { type: 'string', description: 'Timestamp of the parent message' },
     },
@@ -78,6 +83,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Remove a reaction emoji from a Slack message.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       channel:  { type: 'string', description: 'Channel ID where the message is' },
       ts:       { type: 'string', description: 'Timestamp of the message' },
       reaction: { type: 'string', description: 'Reaction emoji name to remove (without colons)' },
@@ -90,6 +96,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Update an existing Slack message.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       channel: { type: 'string', description: 'Channel ID where the message is' },
       ts:      { type: 'string', description: 'Timestamp of the message to update' },
       text:    { type: 'string', description: 'New message text' },
@@ -102,6 +109,7 @@ export const slackToolManifests: ToolManifest[] = [
     description: 'Get information about a Slack user.',
     category:    'slack',
     schemaDef:   {
+      account: { type: 'string', optional: true, description: "Slack account id (for example 'dataripple_slack'); defaults to the active Slack account." },
       userId: { type: 'string', description: 'User ID to get info for' },
     },
     operationTypes: ['read'],

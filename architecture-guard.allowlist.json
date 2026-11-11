@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1102,
+  "entries": 1100,
   "files": {
     "background.ts": {
       "rules": {
@@ -390,12 +390,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/integrations/slack/SlackClient.ts": {
-      "rules": {
-        "long-file": 794
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
     },
     "pkg/sulla-desktop/agent/languagemodels/AlibabaService.ts": {
       "rules": {
@@ -4929,8 +4923,7 @@
     },
     "services/sulla-vault/src/relays.ts": {
       "rules": {
-        "long-file": 985,
-        "mutable-state": 1
+        "long-file": 985
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
