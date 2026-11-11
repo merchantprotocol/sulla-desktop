@@ -175,7 +175,10 @@ interface RegisteredSection {
 
 class SystemPromptBuilderImpl {
   private sections = new Map<string, RegisteredSection>();
-  private stableSectionCache = new Map<string, { key: string; section: PromptSection | null }>();
+  // Stable sections can still read state outside ctx (DB agent prompts, tool catalog,
+  // installed skills), so a cached section also expires after a short TTL.
+  private static readonly STABLE_SECTION_TTL_MS = 60_000;
+  private stableSectionCache = new Map<string, { key: string; section: PromptSection | null; at: number }>();
 
   /**
    * Register a section factory.
@@ -235,12 +238,12 @@ class SystemPromptBuilderImpl {
         db: ctx.dbSections ? [...ctx.dbSections.entries()] : [], basePrompt: ctx.basePrompt,
       });
       const cached = this.stableSectionCache.get(id);
-      if (cached?.key === cacheKey) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
+      if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilder.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
       const started = Date.now();
       try {
         const section = await reg.factory(ctx);
         const elapsed = Date.now() - started;
-        if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section });
+        if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section, at: Date.now() });
         return { id, reg, section, elapsed, error: undefined as unknown };
       } catch (error) {
         return { id, reg, section: null, elapsed: Date.now() - started, error };
