@@ -38,6 +38,26 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     injections: [{ field: 'token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
     pathPattern: /^\/agent-mail(?:\/(?:wait-for-code|send|[A-Za-z0-9._~-]{1,200}(?:\/read)?))?$/,
   },
+  // User agent mailboxes (AGENT-MAILBOXES-SPEC): agents reach only their
+  // owner's /agent-mailboxes API on the owner's Sulla Cloud session. The
+  // vault refreshes and injects the session Bearer itself
+  // (sullaCloudSession/AgentMailboxCloudLane.ts); agents never hold it.
+  // Registration (POST /agent-mailboxes), relabel (PATCH) and disable
+  // (DELETE) stay dashboard-only, so no lane allows them.
+  'sulla-cloud.agent-mailboxes.read': {
+    integrations: ['sulla-cloud'],
+    hosts: ['sulla-workers.merchantprotocol.workers.dev'],
+    methods: ['GET'],
+    injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/agent-mailboxes(?:\/[A-Za-z0-9._~-]{1,200}\/(?:messages(?:\/[A-Za-z0-9._~-]{1,200})?|wait-for-code|sent))?$/,
+  },
+  'sulla-cloud.agent-mailboxes.write': {
+    integrations: ['sulla-cloud'],
+    hosts: ['sulla-workers.merchantprotocol.workers.dev'],
+    methods: ['POST'],
+    injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/agent-mailboxes\/[A-Za-z0-9._~-]{1,200}\/(?:messages\/[A-Za-z0-9._~-]{1,200}\/read|send)$/,
+  },
   'sulla-cloud.shares': {
     integrations: ['sulla-cloud'],
     hosts: ['sulla-workers.merchantprotocol.workers.dev'],
@@ -92,3 +112,6 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     pathPattern: /^\/v1\/stt$/,
   },
 };
+
+/** Broker operations served by the vault's agent-mailbox Cloud session lane. */
+export const AGENT_MAILBOX_OPERATIONS: readonly string[] = ['sulla-cloud.agent-mailboxes.read', 'sulla-cloud.agent-mailboxes.write'];
