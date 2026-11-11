@@ -4772,12 +4772,7 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-vault/src/browserEnvelope/envelope.ts": {
-      "rules": {
-        "long-file": 475
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
+
     "services/sulla-vault/src/browserEnvelope/routes.ts": {
       "rules": {
         "mutable-state": 1,
