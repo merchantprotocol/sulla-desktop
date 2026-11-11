@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { UseCaseCatalogItem, UseCaseCatalogSource, UseCaseInput, UseCaseType } from './UseCaseSuggestionIndex';
+import type { UseCaseCatalogItem, UseCaseCatalogSource, UseCaseInput, UseCaseType } from '../UseCaseSuggestionIndex';
 
 export interface SuggestionSqlClient { query<T = any>(sql: string, params?: unknown[]): Promise<T[]> }
 

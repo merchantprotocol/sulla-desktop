@@ -15,16 +15,17 @@ const MAX_RESULTS = 50;
 /** Largest allowlist the index will accept; larger or malformed allowlists are rejected, never truncated. */
 export const MAX_ALLOWED_SLUGS = 2000;
 const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const ALLOWED_TYPES = new Set<AgentRecallUseCaseType>(['skill', 'agent']);
 
 /** Agent recall's typed IPC boundary; independent from the composer query contract. */
 export class AgentUseCaseRecallQuery {
+  private static readonly ALLOWED_TYPES = new Set<AgentRecallUseCaseType>(['skill', 'agent']);
+
   constructor(private readonly suggester: AgentRecallSuggester, private readonly now: () => number = Date.now) {}
 
   async query(text: unknown, options?: Partial<AgentRecallQueryOptions>): Promise<AgentRecallSuggestionResponse> {
     const normalizedText = typeof text === 'string' ? text : '';
     if (!normalizedText.trim()) return { items: [], ms: 0 };
-    const types = [...new Set((Array.isArray(options?.types) ? options.types : []).filter((type): type is AgentRecallUseCaseType => ALLOWED_TYPES.has(type)))];
+    const types = [...new Set((Array.isArray(options?.types) ? options.types : []).filter((type): type is AgentRecallUseCaseType => AgentUseCaseRecallQuery.ALLOWED_TYPES.has(type)))];
     if (types.length === 0) return { items: [], ms: 0 };
     const allowedSlugs = this.normalizeAllowedSlugs(options?.allowedSlugs);
     // A provided but invalid, empty or overlimit allowlist fails closed: no query, no rows.

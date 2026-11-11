@@ -10,8 +10,6 @@ import type { SuggestionLogger, UseCaseChange, UseCaseChangeEvent, UseCaseChange
 /** Redis channel shared by every Sulla process that writes or indexes use case definitions. */
 export const USE_CASE_CHANGE_CHANNEL = 'sulla:usecase:changes';
 
-const TYPES: ReadonlySet<UseCaseType> = new Set(['skill', 'agent', 'workflow', 'function', 'recipe']);
-const CHANGES: ReadonlySet<UseCaseChange> = new Set(['published', 'installed', 'updated', 'deleted']);
 const MAX_SLUG_LENGTH = 200;
 
 /** Fire-and-forget pub/sub carrier between processes (Redis in Desktop, in-memory in tests). */
@@ -74,6 +72,9 @@ interface Envelope { v: 1; origin: string; type: UseCaseType; slug: string; chan
 
 /** Validates and (de)serialises change messages. Malformed input is rejected, never forwarded. */
 class UseCaseChangeCodec {
+  private static readonly TYPES: ReadonlySet<UseCaseType> = new Set(['skill', 'agent', 'workflow', 'function', 'recipe']);
+  private static readonly CHANGES: ReadonlySet<UseCaseChange> = new Set(['published', 'installed', 'updated', 'deleted']);
+
   encode(origin: string, event: UseCaseChangeEvent): string {
     const envelope: Envelope = { v: 1, origin, type: event.type, slug: event.slug, change: event.change };
     return JSON.stringify(envelope);
@@ -88,7 +89,7 @@ class UseCaseChangeCodec {
   }
 
   valid(event: Partial<UseCaseChangeEvent> | null | undefined): UseCaseChangeEvent | null {
-    if (!event || !TYPES.has(event.type as UseCaseType) || !CHANGES.has(event.change as UseCaseChange)) return null;
+    if (!event || !UseCaseChangeCodec.TYPES.has(event.type as UseCaseType) || !UseCaseChangeCodec.CHANGES.has(event.change as UseCaseChange)) return null;
     if (typeof event.slug !== 'string' || !event.slug || event.slug.length > MAX_SLUG_LENGTH) return null;
     return { type: event.type as UseCaseType, slug: event.slug, change: event.change as UseCaseChange };
   }

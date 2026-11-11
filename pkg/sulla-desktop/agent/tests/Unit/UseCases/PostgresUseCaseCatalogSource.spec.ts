@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 import { describe, expect, it } from 'vitest';
-import { PostgresUseCaseCatalogSource } from '../../../useCases/PostgresUseCaseCatalogSource';
+import { PostgresUseCaseCatalogSource } from '../../../useCases/repositories/PostgresUseCaseCatalogSource';
 
 /** Returns rows per table; records every statement and its params. */
 class FakeDb {

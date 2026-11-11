@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1103,
+  "entries": 1102,
   "files": {
     "background.ts": {
       "rules": {
@@ -910,12 +910,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/agent/services/AgentTeamRecall.ts": {
-      "rules": {
-        "procedural-module": 3
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/services/ArtifactCustodyPolicy.ts": {
       "rules": {
         "raw-sql": 2
@@ -1469,7 +1463,7 @@
     },
     "pkg/sulla-desktop/agent/tools/workflow/set_workflow_status.ts": {
       "rules": {
-        "raw-sql": 3
+        "raw-sql": 2
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
