@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createRequire } from 'node:module';
+import * as nodeModule from 'node:module';
 import path from 'node:path';
 
 interface Request { id: number; modelPath: string; audio: Float32Array; sampleRate: number; appRoot: string; }
@@ -19,7 +19,9 @@ class SpeakerEmbeddingProcess {
   private async handle(request: Request): Promise<void> {
     try {
       if (!this.extractor || this.modelPath !== request.modelPath) {
-        const sherpa = createRequire(path.join(request.appRoot, 'package.json'))('sherpa-onnx-node');
+        // Resolved at runtime from the app root; keep this call out of webpack's createRequire analysis.
+        const requireFromApp: NodeJS.Require = Reflect.apply(nodeModule.createRequire, nodeModule, [path.join(request.appRoot, 'package.json')]);
+        const sherpa = requireFromApp('sherpa-onnx-node');
         this.extractor = new sherpa.SpeakerEmbeddingExtractor(new sherpa.SpeakerEmbeddingExtractorConfig({ model: request.modelPath, numThreads: 1, debug: false, provider: 'cpu' }));
         this.modelPath = request.modelPath;
       }
