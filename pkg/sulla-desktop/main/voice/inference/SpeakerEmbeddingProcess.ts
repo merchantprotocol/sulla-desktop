@@ -22,12 +22,15 @@ class SpeakerEmbeddingProcess {
         // Resolved at runtime from the app root; keep this call out of webpack's createRequire analysis.
         const requireFromApp: NodeJS.Require = Reflect.apply(nodeModule.createRequire, nodeModule, [path.join(request.appRoot, 'package.json')]);
         const sherpa = requireFromApp('sherpa-onnx-node');
-        this.extractor = new sherpa.SpeakerEmbeddingExtractor(new sherpa.SpeakerEmbeddingExtractorConfig({ model: request.modelPath, numThreads: 1, debug: false, provider: 'cpu' }));
+        this.extractor = new sherpa.SpeakerEmbeddingExtractor({ model: request.modelPath, numThreads: 1, debug: false, provider: 'cpu' });
         this.modelPath = request.modelPath;
       }
       const stream = this.extractor.createStream();
-      stream.acceptWaveform(request.sampleRate, request.audio);
-      const embedding = Array.from(this.extractor.compute(stream) as ArrayLike<number>);
+      stream.acceptWaveform({ sampleRate: request.sampleRate, samples: request.audio });
+      stream.inputFinished();
+      if (!this.extractor.isReady(stream)) throw new Error('Speaker audio is too short for an embedding');
+      // Electron forbids external ArrayBuffers, so copy the result into a V8-owned buffer.
+      const embedding = Array.from(this.extractor.compute(stream, false) as ArrayLike<number>);
       this.port.postMessage({ id: request.id, ok: true, embedding } satisfies Response);
     } catch (error) {
       this.port.postMessage({ id: request.id, ok: false, error: String(error) } satisfies Response);
