@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 
 import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '../PostgresClient';
+import { JsonObjectParser } from './JsonObjectParser';
 import { RedisUseCaseChangePublisherFactory } from '../../useCases/RedisUseCaseChangePublisherFactory';
 import type { UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
@@ -173,19 +174,6 @@ function toAgentModelSlot(value: unknown): AgentModelSlot | null {
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-function toObject(value: unknown): Record<string, any> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
 function rowToDefinition(row: any): AgentDefinition {
   const policy = new AgentModelCategoryPolicy();
   const category = policy.resolve({ choice: row.model_choice, model: row.model, slot: row.model_slot, slug: row.slug });
@@ -205,10 +193,10 @@ function rowToDefinition(row: any): AgentDefinition {
     enabled:                 row.enabled !== false,
     source_template_slug:    row.source_template_slug == null ? null : String(row.source_template_slug),
     content_hash:            row.content_hash == null ? null : String(row.content_hash),
-    config:                  policy.config(toObject(row.config), category),
+    config:                  policy.config(JsonObjectParser.parse(row.config), category),
     prompt_content:          String(row.prompt_content ?? ''),
     goals_content:           String(row.goals_content ?? ''),
-    prompt_files:            toObject(row.prompt_files) as Record<string, string>,
+    prompt_files:            JsonObjectParser.parse(row.prompt_files) as Record<string, string>,
     provider:                null,
     model:                   null,
     model_slot:              null,

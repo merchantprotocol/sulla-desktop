@@ -20,7 +20,8 @@ import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync }
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
-import { UseCaseSuggestionCompositionRoot, type SuggestionOptions, type UseCaseSuggestion } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
+import { UseCaseSuggestionCompositionRoot } from '@pkg/agent/useCases/UseCaseSuggestionCompositionRoot';
+import type { SuggestionOptions, UseCaseSuggestion } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import { getBuiltinSkillSpecs } from '@pkg/agent/builtinSkills';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';

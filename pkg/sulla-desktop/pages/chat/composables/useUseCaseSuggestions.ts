@@ -24,80 +24,103 @@ export interface UseCaseSuggestionDeps {
 /**
  * Wires the strip state machine and the picked intent to the composer: debounced
  * queries (stale responses dropped, old results kept until new ones land), the
- * one-chip-per-message intent, and the hint state.
+ * one-chip-per-message intent, and the hint state. Construct it inside a
+ * component's setup so its watcher and unmount hook bind to that component.
  */
-export function useUseCaseSuggestions(deps: UseCaseSuggestionDeps) {
-  const strip = reactive(new UseCaseSuggestionStrip()) as UseCaseSuggestionStrip;
-  const intent = ref<UseCaseIntent | null>(null);
-  const factory = new UseCaseIntentFactory();
-  const directive = new UseCaseIntentDirective();
-  const debounceMs = deps.debounceMs ?? 150;
-  const minChars = deps.minChars ?? 3;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let generation = 0;
+export class UseCaseSuggestionBinding {
+  readonly strip = reactive(new UseCaseSuggestionStrip()) as UseCaseSuggestionStrip;
+  readonly intent = ref<UseCaseIntent | null>(null);
+  readonly directive = new UseCaseIntentDirective();
+  readonly open = computed(() => !this.intent.value && this.strip.isOpen(this.deps.draft.value, this.deps.blocked.value));
+  private readonly factory = new UseCaseIntentFactory();
+  private readonly debounceMs: number;
+  private readonly minChars: number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private generation = 0;
 
-  const open = computed(() => !intent.value && strip.isOpen(deps.draft.value, deps.blocked.value));
+  constructor(private readonly deps: UseCaseSuggestionDeps) {
+    this.debounceMs = deps.debounceMs ?? 150;
+    this.minChars = deps.minChars ?? 3;
+    watch(deps.draft, (text) => {
+      this.strip.draftChanged(text);
+      this.schedule(text);
+    });
+    onBeforeUnmount(() => { if (this.timer) clearTimeout(this.timer) });
+  }
 
-  function schedule(text: string): void {
-    if (timer) clearTimeout(timer);
-    const request = ++generation;
-    if (intent.value || text.trim().length < minChars) {
-      strip.receive([], 0);
+  private schedule(text: string): void {
+    if (this.timer) clearTimeout(this.timer);
+    const request = ++this.generation;
+    if (this.intent.value || text.trim().length < this.minChars) {
+      this.strip.receive([], 0);
 
       return;
     }
-    timer = setTimeout(() => {
-      const limit = deps.isNarrow() ? 3 : 5;
-      deps.query(text, limit)
+    this.timer = setTimeout(() => {
+      const limit = this.deps.isNarrow() ? 3 : 5;
+      this.deps.query(text, limit)
         .then((result) => {
-          if (request === generation) strip.receive(Array.isArray(result?.items) ? result.items : [], limit, result?.ms ?? 0);
+          if (request === this.generation) this.strip.receive(Array.isArray(result?.items) ? result.items : [], limit, result?.ms ?? 0);
         })
         .catch(() => {
-          if (request === generation) strip.receive([], 0);
+          if (request === this.generation) this.strip.receive([], 0);
         });
-    }, debounceMs);
+    }, this.debounceMs);
   }
 
-  watch(deps.draft, (text) => {
-    strip.draftChanged(text);
-    schedule(text);
-  });
-  onBeforeUnmount(() => { if (timer) clearTimeout(timer) });
-
-  function pick(item: SuggestedUseCase): void {
-    strip.pick(item);
-    intent.value = factory.create(item, deps.draft.value);
+  pick(item: SuggestedUseCase): void {
+    this.strip.pick(item);
+    this.intent.value = this.factory.create(item, this.deps.draft.value);
   }
 
-  function removeIntent(): void {
-    intent.value = null;
-    schedule(deps.draft.value);
+  removeIntent(): void {
+    this.intent.value = null;
+    this.schedule(this.deps.draft.value);
+  }
+
+  dismiss(): void {
+    this.strip.dismiss(this.deps.draft.value);
   }
 
   /** Returns true when the strip or chip consumed the key. */
-  function onKeydown(e: KeyboardEvent, caretAtEnd: boolean): boolean {
-    if (e.key === 'Backspace' && intent.value && !deps.draft.value) {
+  onKeydown(e: KeyboardEvent, caretAtEnd: boolean): boolean {
+    if (e.key === 'Backspace' && this.intent.value && !this.deps.draft.value) {
       e.preventDefault();
-      removeIntent();
+      this.removeIntent();
 
       return true;
     }
     const key: StripKey = { key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, caretAtEnd };
-    const result = strip.handleKey(key, deps.draft.value, deps.blocked.value || !!intent.value);
+    const result = this.strip.handleKey(key, this.deps.draft.value, this.deps.blocked.value || !!this.intent.value);
     if (result.kind === 'ignored') return false;
     e.preventDefault();
-    if (result.kind === 'pick') intent.value = factory.create(result.item, deps.draft.value);
+    if (result.kind === 'pick') this.intent.value = this.factory.create(result.item, this.deps.draft.value);
 
     return true;
   }
 
   /** Called after the message (with its chip) went out. */
-  function reset(): void {
-    intent.value = null;
-    strip.clear();
-    generation++;
-    if (timer) clearTimeout(timer);
+  reset(): void {
+    this.intent.value = null;
+    this.strip.clear();
+    this.generation++;
+    if (this.timer) clearTimeout(this.timer);
   }
+}
 
-  return { strip, intent, open, directive, pick, removeIntent, dismiss: () => strip.dismiss(deps.draft.value), onKeydown, reset };
+/** Composable surface for the composer: the binding's state and bound actions. */
+export function useUseCaseSuggestions(deps: UseCaseSuggestionDeps) {
+  const binding = new UseCaseSuggestionBinding(deps);
+
+  return {
+    strip:        binding.strip,
+    intent:       binding.intent,
+    open:         binding.open,
+    directive:    binding.directive,
+    pick:         (item: SuggestedUseCase) => binding.pick(item),
+    removeIntent: () => binding.removeIntent(),
+    dismiss:      () => binding.dismiss(),
+    onKeydown:    (e: KeyboardEvent, caretAtEnd: boolean) => binding.onKeydown(e, caretAtEnd),
+    reset:        () => binding.reset(),
+  };
 }

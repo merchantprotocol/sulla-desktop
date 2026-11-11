@@ -9,6 +9,7 @@ import { Notification } from 'electron';
 import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
 import { installMemoryPackForSkill, listPacks, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
@@ -245,7 +246,7 @@ export class SullaUseCaseFiles {
 
   private async disableMissing(active:Set<string>):Promise<void> {
     // Read before the disable so the index hears which rows left; a failed read only loses the hint (reconcile repairs it).
-    const removed = await postgresClient.query<{type:string;slug:string}>(`SELECT 'agent' AS type,slug FROM agent_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($1::text[])) UNION ALL SELECT 'skill',slug FROM skill_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND deleted_at IS NULL AND NOT (slug=ANY($2::text[])) UNION ALL SELECT 'workflow',id FROM workflows WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (id=ANY($3::text[])) UNION ALL SELECT 'function',slug FROM function_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($4::text[])) UNION ALL SELECT 'recipe',slug FROM recipe_definitions WHERE use_case_file_id IS NOT NULL AND enabled=TRUE AND NOT (slug=ANY($5::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7)),[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7)),[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10)),[...active].filter(k=>k.startsWith('functions/')).map(k=>k.slice(10)),[...active].filter(k=>k.startsWith('recipes/')).map(k=>k.slice(8))]).catch(():{type:string;slug:string}[] => []);
+    const removed = await new UseCaseRemovalRepository(postgresClient).listRemoved(active);
     await postgresClient.query(`UPDATE agent_definitions SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE skill_definitions SET enabled=FALSE,deleted_at=COALESCE(deleted_at,NOW()),updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE workflows SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (id=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10))]);

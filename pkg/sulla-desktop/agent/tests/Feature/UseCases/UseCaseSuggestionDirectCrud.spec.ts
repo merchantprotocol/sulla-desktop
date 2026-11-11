@@ -33,9 +33,10 @@ const { migrationsRegistry } = await import('../../../database/migrations');
 const { SkillDefinitionModel } = await import('../../../database/models/SkillDefinitionModel');
 const { AgentDefinitionModel } = await import('../../../database/models/AgentDefinitionModel');
 const { WorkflowModel } = await import('../../../database/models/WorkflowModel');
-const { PostgresUseCaseCatalogSource } = await import('../../../useCases/PostgresUseCaseCatalogSource');
+const { PostgresUseCaseCatalogSource } = await import('../../../useCases/repositories/PostgresUseCaseCatalogSource');
 const { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, UseCaseChangeBus, USE_CASE_CHANGE_CHANNEL } = await import('../../../useCases/UseCaseChangeBus');
-const { UseCaseSuggestionCompositionRoot, UseCaseSuggestionIndex } = await import('../../../useCases/UseCaseSuggestionIndex');
+const { UseCaseSuggestionIndex } = await import('../../../useCases/UseCaseSuggestionIndex');
+const { UseCaseSuggestionCompositionRoot } = await import('../../../useCases/UseCaseSuggestionCompositionRoot');
 
 /** Real Postgres (WASM) with the Desktop migrations applied; PostgresClient-shaped `query`. */
 class MigratedPglite {

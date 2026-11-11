@@ -40,7 +40,6 @@ import { extractRecallTerms } from '../utils/recallTerms';
 import { stripTurnContext } from '../prompts/turnContext';
 
 import Logging from '@pkg/utils/logging';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
@@ -1143,6 +1142,8 @@ async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise
       import('../services/AgentTeamRecall'), import('../services/UseCaseSuggestionQueryClient'),
     ]);
     const { resolveAgentDepth } = await import('../tools/agents/jobRegistry');
+    // Lazy: the renderer IPC bridge only exists inside the app, so loading this middleware must not require it.
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
     const meta = state.metadata as any;
     (state.metadata as any).teamDirectoryContext = await buildTeamRecallContext({
       agentSlug,
@@ -1160,6 +1161,7 @@ async function runSkillRecall(state: BaseThreadState): Promise<void> {
     const [{ SkillRecallService }, { IpcUseCaseSuggestionQuery }] = await Promise.all([
       import('../services/SkillRecall'), import('../services/UseCaseSuggestionQueryClient'),
     ]);
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
     (state.metadata as any).skillRecallContext = await new SkillRecallService(new IpcUseCaseSuggestionQuery(ipcRenderer as any))
       .buildContext(recentUserTexts(state, 2).join('\n'));
   } catch (err) {
