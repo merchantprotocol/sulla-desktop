@@ -10,6 +10,9 @@ import path from 'node:path';
 import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { RedisUseCaseChangePublisherFactory } from '@pkg/agent/useCases/RedisUseCaseChangePublisherFactory';
+import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
+import type { UseCaseChange, UseCaseType } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import { installMemoryPackForSkill, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import type { MarketplaceTemplateDetail } from '@pkg/main/marketplace/client';
@@ -19,6 +22,28 @@ import { IntegrationPackageLoader, integrationGrantStore, resolveTrustedPublishe
 import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agent/integrations/packageLoader';
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
+
+/**
+ * Post-commit hints to the suggestion index. The publisher is injected (tests
+ * pass their own); the default broadcasts on the app's Redis channel, which
+ * the main-process index subscribes to (a fresh, unretained publisher per call). `announce` never throws, so a
+ * committed install/uninstall is never reported as failed; the index's
+ * fingerprint reconcile repairs a lost hint.
+ */
+class MarketplaceSuggestionChanges {
+  constructor(private readonly publisher: UseCaseChangePublisher) {}
+
+  announce(items: { kind: InstallableKind; slug: string }[], change: UseCaseChange): void {
+    for (const item of items) {
+      const type = this.typeFor(item.kind);
+      if (!type) continue;
+      // The install is already committed; a throwing publisher must never turn it into a failure.
+      try { this.publisher.announce({ type, slug: item.slug, change }) } catch { /* reconcile repairs a lost hint */ }
+    }
+  }
+
+  private typeFor(kind: InstallableKind): UseCaseType | undefined { return kind === 'routine' ? 'workflow' : kind === 'integration' ? undefined : kind }
+}
 
 export interface PackageContent {
   kind:     InstallableKind;
@@ -372,7 +397,9 @@ export async function installStandaloneArtifact(
   artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
   overwrite = false,
   database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
+  useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(),
 ): Promise<{ installed: boolean; reason?: string }> {
+  const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   if (detail.kind === 'package') throw new Error('Packages must be installed with installPackageManifest');
   if (detail.kind === 'integration' && isSignedIntegrationPackageManifest(artifact.manifest)) {
     return installIntegrationPackage(detail, artifact, trustedPublisherVerifier(publisherKeysPath()), database, overwrite);
@@ -392,10 +419,13 @@ export async function installStandaloneArtifact(
     } catch (error) {
       await uninstallPack(detail.slug).catch(() => false);
       await database.transaction(client => client.query(`DELETE FROM skill_definitions WHERE slug=$1 AND source_kind='marketplace' AND marketplace_template_id=$2`, [detail.slug, detail.id]));
+      changes.announce([{ kind: 'skill', slug: detail.slug }], 'deleted');
       throw new Error(`Marketplace skill ${ detail.slug } was removed because its memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
   if (result.installed) await refreshRuntimeCatalogs([detail.kind as InstallableKind]);
+  // After the memory-pack step: a rolled-back skill must never be announced as installed.
+  if (result.installed) changes.announce([{ kind: detail.kind as InstallableKind, slug: detail.slug }], overwrite ? 'updated' : 'installed');
   return result;
 }
 
@@ -441,7 +471,9 @@ export async function installPackageManifest(
   value: unknown,
   author?: string | null,
   database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
+  useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(),
 ): Promise<PackageInstallResult> {
+  const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const manifest = validatePackageManifest(value);
   const result = await database.transaction(async(client) => {
     const duplicate = await client.query('SELECT slug FROM installed_packages WHERE slug = $1 OR template_id = $2', [manifest.slug, templateId]);
@@ -492,10 +524,11 @@ export async function installPackageManifest(
       if(content){const artifact=packageContentToArtifact(content);await installMarketplaceMemoryPack(item.slug,artifact.files,`marketplace:${ templateId }`);}
     }
   } catch(error) {
-    await uninstallPackage(manifest.slug).catch(() => undefined);
+    await uninstallPackage(manifest.slug, false, useCaseChanges).catch(() => undefined);
     throw new Error(`Marketplace package ${ manifest.slug } was removed because a memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
   }
   await refreshRuntimeCatalogs(result.installed.map(item => item.kind));
+  changes.announce(result.installed, 'installed');
 
   return { ok: true, package: { slug: manifest.slug, version: manifest.version }, ...result };
 }
@@ -535,7 +568,8 @@ async function removePackageItem(client: PoolClient, kind: InstallableKind, slug
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function uninstallPackage(slug: string, removeData = false): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
+export async function uninstallPackage(slug: string, removeData = false, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
+  const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const recipeItems = await postgresClient.query(`SELECT i.item_slug
     FROM installed_package_items i
     JOIN installed_packages p ON p.slug=i.package_slug
@@ -568,10 +602,12 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
   for(const pack of memoryPackSkills)if(removedSkills.has(String(pack.slug)))await uninstallPack(String(pack.slug));
   for (const version of result.revokedVersions) await setIntegrationGrant(slug, version, [], false);
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
+  changes.announce(result.removed, 'deleted');
   return { ok: result.ok, removed: result.removed };
 }
 
-export async function setPackageActive(slug: string, active: boolean): Promise<{ ok: true; active: boolean; recipes: string[] }> {
+export async function setPackageActive(slug: string, active: boolean, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<{ ok: true; active: boolean; recipes: string[] }> {
+  const changes = new MarketplaceSuggestionChanges(useCaseChanges);
   const rows = await postgresClient.query(`SELECT i.kind,i.item_slug
     FROM installed_package_items i JOIN installed_packages p ON p.slug=i.package_slug
     WHERE i.package_slug=$1 ORDER BY i.kind,i.item_slug`, [slug]);
@@ -607,6 +643,7 @@ export async function setPackageActive(slug: string, active: boolean): Promise<{
     throw error;
   }
   await refreshRuntimeCatalogs(rows.map((row: any) => row.kind as InstallableKind));
+  changes.announce(rows.map((row:any) => ({ kind: row.kind as InstallableKind, slug: String(row.item_slug) })), active ? 'installed' : 'deleted');
   return { ok: true, active, recipes: recipeSlugs };
 }
 

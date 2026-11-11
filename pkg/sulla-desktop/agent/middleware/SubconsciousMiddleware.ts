@@ -1135,27 +1135,35 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
   }
 }
 
-/** Best effort: a directory read failure just means no team block this turn. */
+/** Best effort: a query failure just means no team block this turn. */
 async function runTeamRecall(state: BaseThreadState, agentSlug: string): Promise<void> {
   try {
-    const { buildTeamRecallContext } = await import('../services/AgentTeamRecall');
+    const [{ buildTeamRecallContext }, { IpcUseCaseSuggestionQuery }] = await Promise.all([
+      import('../services/AgentTeamRecall'), import('../services/UseCaseSuggestionQueryClient'),
+    ]);
     const { resolveAgentDepth } = await import('../tools/agents/jobRegistry');
+    // Lazy: the renderer IPC bridge only exists inside the app, so loading this middleware must not require it.
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
     const meta = state.metadata as any;
     (state.metadata as any).teamDirectoryContext = await buildTeamRecallContext({
       agentSlug,
       text:  latestUserText(state.messages),
       depth: await resolveAgentDepth(meta.subAgentDepth, meta.threadId),
-    });
+    }, new IpcUseCaseSuggestionQuery(ipcRenderer as any));
   } catch (err) {
     console.warn('[SubconsciousMiddleware] team recall failed:', err instanceof Error ? err.message : err);
   }
 }
 
-/** Best effort: a table read failure just means no installed-skills block this turn. */
+/** Best effort: a suggestion query failure just means no installed-skills block this turn. */
 async function runSkillRecall(state: BaseThreadState): Promise<void> {
   try {
-    const { buildSkillRecallContext } = await import('../services/SkillRecall');
-    (state.metadata as any).skillRecallContext = await buildSkillRecallContext(recentUserTexts(state, 2).join('\n'));
+    const [{ SkillRecallService }, { IpcUseCaseSuggestionQuery }] = await Promise.all([
+      import('../services/SkillRecall'), import('../services/UseCaseSuggestionQueryClient'),
+    ]);
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    (state.metadata as any).skillRecallContext = await new SkillRecallService(new IpcUseCaseSuggestionQuery(ipcRenderer as any))
+      .buildContext(recentUserTexts(state, 2).join('\n'));
   } catch (err) {
     console.warn('[SubconsciousMiddleware] skill recall failed:', err instanceof Error ? err.message : err);
   }

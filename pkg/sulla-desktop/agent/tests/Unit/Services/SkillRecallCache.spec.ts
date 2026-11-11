@@ -5,19 +5,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SkillRecallService } from '../../../services/SkillRecall';
 
-describe('SkillRecallService catalog cache', () => {
-  it('reuses the catalog and returns fresh data after invalidation', async() => {
-    // risk: stale capability discovery — installed/updated skills become discoverable after cache invalidation
-    let catalog = [] as any[];
-    const load = vi.fn(async() => catalog);
-    const service = new SkillRecallService(load, 60_000, () => 1);
-    await service.buildContext('summarize a document');
-    await service.buildContext('summarize another document');
-    expect(load).toHaveBeenCalledTimes(1);
-    catalog = [{ slug: 'summarize-document', title: 'Summarize document', description: 'summarize document', tags: [], triggers: [] }];
-    await service.invalidate();
-    const context = await service.buildContext('summarize a document');
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(context).toContain('[skill:summarize-document]');
+describe('SkillRecallService', () => {
+  it('queries only published indexed skills and formats the existing context block', async() => {
+    // risk: published-only skill recall and preserving the skill ID used by the loader
+    const query = vi.fn(async(_text: string, _options: { types: string[]; limit: number }) => [
+      { type: 'skill' as const, slug: 'summarize-document', title: 'Summarize document', description: 'Summarize a long document.', score: 0.03, reason: 'semantic match' },
+    ]);
+    const service = new SkillRecallService({ query });
+    const context = await service.buildContext('Need a document summary');
+    expect(query).toHaveBeenCalledWith('Need a document summary', { types: ['skill'], limit: 4 });
+    expect(context).toContain('[skill:summarize-document] Summarize document');
+    expect(context).toContain('semantic suggestion');
+  });
+
+  it('does not query blank text and emits no block when there are no suggestions', async() => {
+    // risk: empty or irrelevant prompts must not inject unrelated skill capabilities
+    const query = vi.fn(async() => []);
+    const service = new SkillRecallService({ query });
+    expect(await service.buildContext('  ')).toBe('');
+    expect(query).not.toHaveBeenCalled();
+    expect(await service.buildContext('unrelated request')).toBe('');
   });
 });
