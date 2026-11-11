@@ -55,7 +55,9 @@ export class AgentFleetProjectionService {
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
-    const all = await this.states.jobs();
+    const all = request.scope === 'mine'
+      ? await this.states.descendants(this.requiredCaller(request.callerThreadId))
+      : await this.states.jobs();
     const index = new AgentLineageIndex(all);
     const scoped = request.scope === 'mine'
       ? index.descendants(this.requiredCaller(request.callerThreadId))
