@@ -21,10 +21,20 @@ import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agen
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
 const suggestionTypeFor = (kind: InstallableKind):'skill'|'agent'|'workflow'|'function'|'recipe'|undefined => kind === 'routine' ? 'workflow' : kind === 'integration' ? undefined : kind;
+/**
+ * Post-commit hint to the suggestion index. It never throws: the database
+ * write already committed, so a notification problem must not turn a
+ * successful install/uninstall into an error. The index's fingerprint
+ * reconciliation repairs anything a lost hint leaves behind.
+ */
 async function notifySuggestionChanges(items: { kind: InstallableKind; slug: string }[], change:'installed'|'updated'|'deleted'|'published'):Promise<void> {
-  const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
-  const watcher = getSullaFilesWatcher();
-  for (const item of items) { const type = suggestionTypeFor(item.kind); if (type) watcher.notifyUseCaseChange(type, item.slug, change); }
+  try {
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    const watcher = getSullaFilesWatcher();
+    for (const item of items) { const type = suggestionTypeFor(item.kind); if (type) watcher.notifyUseCaseChange(type, item.slug, change); }
+  } catch (error) {
+    console.warn('Marketplace change committed, but the suggestion index was not notified:', error);
+  }
 }
 
 export interface PackageContent {
@@ -393,17 +403,19 @@ export async function installStandaloneArtifact(
     templateId: detail.id,
     author:     detail.author_display,
   }, overwrite));
-  if (result.installed) await notifySuggestionChanges([{ kind: detail.kind as InstallableKind, slug: detail.slug }], overwrite ? 'updated' : 'installed');
   if (result.installed && detail.kind === 'skill') {
     try {
       await installMarketplaceMemoryPack(detail.slug, artifact.files, `marketplace:${ detail.id }`);
     } catch (error) {
       await uninstallPack(detail.slug).catch(() => false);
       await database.transaction(client => client.query(`DELETE FROM skill_definitions WHERE slug=$1 AND source_kind='marketplace' AND marketplace_template_id=$2`, [detail.slug, detail.id]));
+      await notifySuggestionChanges([{ kind: 'skill', slug: detail.slug }], 'deleted');
       throw new Error(`Marketplace skill ${ detail.slug } was removed because its memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
   if (result.installed) await refreshRuntimeCatalogs([detail.kind as InstallableKind]);
+  // After the memory-pack step: a rolled-back skill must never be announced as installed.
+  if (result.installed) await notifySuggestionChanges([{ kind: detail.kind as InstallableKind, slug: detail.slug }], overwrite ? 'updated' : 'installed');
   return result;
 }
 
