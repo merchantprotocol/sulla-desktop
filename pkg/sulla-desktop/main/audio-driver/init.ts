@@ -609,7 +609,6 @@ function registerIpcHandlers(): void {
         console.warn(`[WhisperTranscribe] ${ message }`);
       },
       undefined,
-      undefined,
       400,
       (message, stats) => log.info('WhisperTranscribe', message, stats),
     );
