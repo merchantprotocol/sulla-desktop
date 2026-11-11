@@ -85,8 +85,10 @@ class PerPrTestRunner {
   async run() {
     const started = this.clock.now();
     const deadline = started + PerPrTestRunner.budgetMs;
+    if (process.env.TEST_PR_CI_DIAGNOSTICS === 'true') process.stdout.write(`::warning title=agent-tests timing::test-pr started ${ new Date().toISOString() }\n`);
     try {
       await this.processRunner.run('node', ['scripts/architecture-guard/guard.mjs'], deadline);
+      if (process.env.TEST_PR_CI_DIAGNOSTICS === 'true') process.stdout.write(`::warning title=agent-tests timing::architecture guard ended after ${ (this.clock.now() - started).toFixed(0) }ms\n`);
       const files = await this.selector.select();
       this.output.log(`Changed files (${ files.length }): ${ files.join(', ') || '(none)' }`);
       const proofDelay = Number.parseInt(process.env.TEST_PR_BUDGET_PROOF_DELAY_MS ?? '0', 10);
@@ -97,7 +99,8 @@ class PerPrTestRunner {
           ? ['run', '--config', 'vitest.agent.config.mts', ...new Set([...PerPrTestRunner.smokeSpecs, ...changedSpecs])]
           : ['related', ...files, '--run', '--config', 'vitest.agent.config.mts'];
         this.output.log(this.requiresSmoke(files) ? 'Sensitive test infrastructure changed; running the fast smoke set.' : 'Running related specs only.');
-        await this.processRunner.run('yarn', ['vitest', ...selection], deadline);
+        if (process.env.TEST_PR_CI_DIAGNOSTICS === 'true') process.stdout.write(`::warning title=agent-tests timing::vitest started with ${ selection.filter(value => value.endsWith('.spec.ts')).length } explicit specs\n`);
+        await this.processRunner.run('yarn', ['vitest', ...selection, ...(process.env.TEST_PR_CI_DIAGNOSTICS === 'true' ? ['--reporter=hanging-process'] : [])], deadline);
       }
       this.output.log(`Per-PR tests completed in ${ ((this.clock.now() - started) / 1_000).toFixed(2) }s (budget: 60s).`);
     } catch (error) {

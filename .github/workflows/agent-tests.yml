@@ -214,11 +214,17 @@ jobs:
         with:
           path: node_modules
           key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
+      - name: Diagnose dependency cache result
+        if: always()
+        run: echo "::warning title=agent-tests timing::dependency cache hit=${{ steps.dependency-cache.outputs.cache-hit }}"
       - name: Install dependencies on cache miss
         if: steps.dependency-cache.outputs.cache-hit != 'true'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+        run: |
+          echo "::warning title=agent-tests timing::dependency install started $(date -u +%FT%TZ)"
+          yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+          echo "::warning title=agent-tests timing::dependency install ended $(date -u +%FT%TZ)"
       - name: Install BusyBox for guest disk characterization
         if: needs.changes.outputs.needs_busybox == 'true'
         run: sudo apt-get update && sudo apt-get install -y busybox
@@ -312,6 +318,7 @@ jobs:
       - name: Per-PR agent runtime specs (hard 60-second test budget)
         env:
           TEST_PR_BASE_REF: origin/${{ github.base_ref }}
+          TEST_PR_CI_DIAGNOSTICS: 'true'
         run: yarn test:pr
 
   # Full run on push to main (and manual dispatch): yarn test:agent runs the
