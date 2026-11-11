@@ -39,8 +39,9 @@ import { clearPendingCredential, getPendingCredential, queuePendingCredential, s
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
-import { deriveAccountAuthHash, deriveMasterKey } from '../../../packages/vault-crypto/src/index';
+import type { AccountKdf } from '@sulla/domain';
 
+import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
 import { readRecoveryKeyFromMacKeychain, recoveryKeyStorageStatus, saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
@@ -63,19 +64,6 @@ async function cloudFetch(path: string, init: RequestInit, retry = false): Promi
     }
   }
   throw lastError;
-}
-
-interface AccountKdf {
-  alg:         'argon2id13';
-  salt:        string;
-  memoryBytes: number;
-  ops:         number;
-}
-
-interface DerivedAccountCredential {
-  authHash: string;
-  kdf:      AccountKdf;
-  masterKey: Uint8Array;
 }
 
 let pendingCloudMasterKey: Uint8Array | undefined;
@@ -150,35 +138,6 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
     return { recoveryKey: result.recoveryKey };
   } finally {
     attemptKey.fill(0);
-  }
-}
-
-function parseAccountKdf(value: unknown): AccountKdf {
-  const kdf = value as Partial<AccountKdf> | null;
-  if (kdf?.alg !== 'argon2id13' || typeof kdf.salt !== 'string' || !kdf.salt ||
-      kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
-    throw new Error('Sulla Cloud returned an unsupported account KDF.');
-  }
-  return kdf as AccountKdf;
-}
-
-async function deriveAccountCredential(password: string, accountKdf?: AccountKdf): Promise<DerivedAccountCredential> {
-  const derived = await deriveMasterKey(
-    password,
-    accountKdf?.salt,
-    accountKdf ? { memoryBytes: accountKdf.memoryBytes, operations: accountKdf.ops } : undefined,
-  );
-  const kdf: AccountKdf = {
-    alg:         'argon2id13',
-    salt:        derived.salt,
-    memoryBytes: derived.parameters.memoryBytes,
-    ops:         derived.parameters.operations,
-  };
-  try {
-    return { authHash: await deriveAccountAuthHash(derived.key), kdf, masterKey: derived.key };
-  } catch (error) {
-    derived.key.fill(0);
-    throw error;
   }
 }
 
@@ -634,7 +593,7 @@ async function prelogin(email: string): Promise<{ kdf: AccountKdf; authVersion: 
   }
   const data = await res.json() as { kdf?: unknown; authVersion?: unknown };
   if (data.authVersion !== 1 && data.authVersion !== 2) throw new Error('Sulla Cloud returned an unsupported authentication version.');
-  return { kdf: parseAccountKdf(data.kdf), authVersion: data.authVersion };
+  return { kdf: (await CloudAccountCredentialService.forDesktop()).parseIssuedKdf(data.kdf), authVersion: data.authVersion };
 }
 
 interface PasswordAuthResponse {
@@ -660,7 +619,7 @@ function throttled(result: PasswordAuthResponse, accountExists = true) {
 
 async function emailLoginOnce(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
   const account = knownAccount ?? await prelogin(email);
-  const credential = await deriveAccountCredential(password, account.kdf);
+  const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password, account.kdf);
   const endpoint = account.authVersion === 1 ? '/auth/upgrade' : '/auth/email/login';
   const body = account.authVersion === 1
     ? { email, password, authHash: credential.authHash, kdf: credential.kdf }
@@ -693,7 +652,7 @@ async function emailLogin(email: string, password: string, knownAccount?: Awaite
 }
 
 async function emailRegister(email: string, password: string, name?: string): Promise<PasswordAuthResponse> {
-  const credential = await deriveAccountCredential(password.normalize('NFC'));
+  const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password.normalize('NFC'));
   try {
     const res = await cloudFetch('/auth/email/register', {
       method:  'POST',
@@ -1259,7 +1218,7 @@ export function initSullaCloudAuthEvents(): void {
     const c = String(code ?? '').replace(/\s+/g, '');
     if (!/^\d{6}$/.test(c)) return { ok: false, error: 'Enter the 6-digit code from the email.' };
     if (!password) return { ok: false, error: 'Enter a password.' };
-    const credential = await deriveAccountCredential(password.normalize('NFC'));
+    const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password.normalize('NFC'));
     try {
       const response = await cloudFetch('/auth/email/reset-password/complete', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

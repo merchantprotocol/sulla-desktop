@@ -11,10 +11,10 @@
     },
     {
       "package": "@sulla/domain",
-      "version": "0.2.1",
-      "file": "sulla-domain-0.2.1-8aa51f.tgz",
-      "sha256": "8aa51f453f10966ab2f75e7c684b89c492cbbfb47c6d480efb52d45a095c1345",
-      "source": "supplied v0.2.1 release artifact (same sha256 as sulla-mobile vendor/sulla-core)"
+      "version": "0.2.3",
+      "file": "sulla-domain-0.2.3-aeebbf.tgz",
+      "sha256": "aeebbfa1c681e2c58e0da5a05369f94450a26ceed66689aadeca8ec857a7c61c",
+      "source": "sulla-core main 0b63c8a3 v0.2.3 build (npm run build, npm pack packages/domain)"
     }
   ]
 }
