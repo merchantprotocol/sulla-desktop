@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { USE_CASE_SUGGEST_CHANNEL, UseCaseSuggestionQuery, registerUseCaseSuggestionQuery } from './UseCaseSuggestionQuery';
+import { USE_CASE_SUGGEST_CHANNEL, UseCaseSuggestionQuery, registerUseCaseSuggestionQuery } from '../../../../main/UseCaseSuggestionQuery';
 
 const row = (type: string, slug: string) => ({ type, slug, title: slug, description: '', score: 0.9, reason: '' });
 

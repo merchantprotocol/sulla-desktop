@@ -552,6 +552,19 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
  */
 export async function onMainProxyLoad(ipcMainProxy: any) {
   // Assume main process
+  const { registerUseCaseSuggestionQuery } = await import('@pkg/main/UseCaseSuggestionQuery');
+  registerUseCaseSuggestionQuery((channel, handler) => ipcMainProxy.handle(channel, handler), {
+    suggest: async(text, options) => {
+      // S1 adds this index-backed method to the Files watcher. Keep the seam
+      // structural so S3 can land independently; until then return no rows
+      // rather than leaving the renderer's IPC channel unhandled.
+      const filesModule = await import('@pkg/main/sullaFilesWatcher') as unknown as {
+        queryUseCaseSuggestions?: (query: string, options: { types?: string[]; limit?: number; minScore?: number }) => Promise<import('@pkg/main/UseCaseSuggestionQuery').IndexedUseCaseSuggestion[]>;
+      };
+      return filesModule.queryUseCaseSuggestions ? filesModule.queryUseCaseSuggestions(text, options) : [];
+    },
+  });
+
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
