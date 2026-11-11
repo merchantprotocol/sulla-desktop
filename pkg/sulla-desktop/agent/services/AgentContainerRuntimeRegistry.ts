@@ -4,8 +4,28 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import crypto from 'node:crypto';
 import type { ToolExecutionContext } from '../tools/executionContext';
 import type { ToolExecutionTarget } from '../tools/executionTargets';
+import type { BaseThreadState } from '../nodes/Graph';
+
+/** Builds a session's capability from its explicit container binding, falling back only to ALS. */
+export class ContainerExecutionContextFactory {
+  constructor(private readonly runtime: () => AgentContainerRuntimeBinding | undefined = () => currentAgentContainerRuntime()) {}
+  create(state: BaseThreadState, ttlMs: number, binding?: AgentContainerRuntimeBinding): ToolExecutionContext | undefined {
+    const runtime = binding ?? this.runtime();
+    if (!runtime) return undefined;
+    const allowed = (state.metadata as { allowedToolNames?: string[] }).allowedToolNames ?? [];
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: runtime.subject,
+      org_id: runtime.orgId, agent_id: runtime.agentId, pod_id: runtime.podId,
+      thread_id: runtime.threadId, job_id: runtime.jobId, device_id: runtime.deviceId,
+      scopes: allowed.length === 0 || allowed.includes('exec') ? ['*'] : [...allowed],
+      iat: now, exp: now + Math.ceil(ttlMs / 1000), jti: crypto.randomUUID(), request_id: crypto.randomUUID(),
+    };
+  }
+}
 
 export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; threadId?: string; deviceId: string; workspacePath: string; }
 export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }

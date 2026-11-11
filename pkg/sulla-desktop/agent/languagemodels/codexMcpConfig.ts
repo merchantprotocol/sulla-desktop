@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import type { RegisteredSession } from '@pkg/main/MCPServerHost';
 
 export const CODEX_MCP_TOKEN_ENV = 'SULLA_MCP_SESSION_TOKEN';
@@ -23,8 +24,8 @@ export const CODEX_MCP_SESSION_TTL_MS = 4 * 60 * 60_000 + 30 * 60_000;
 
 interface CodexMcpSessionHost {
   running: boolean;
-  registerSession(state: BaseThreadState, ttlMs?: number): RegisteredSession;
-  rebindSession(id: string, state: BaseThreadState): boolean;
+  registerSession(state: BaseThreadState, ttlMs?: number, binding?: AgentContainerRuntimeBinding): RegisteredSession;
+  rebindSession(id: string, state: BaseThreadState, ttlMs?: number, binding?: AgentContainerRuntimeBinding): boolean;
 }
 
 /** Bind an existing token to this turn, minting a replacement if it expired. */
@@ -32,13 +33,14 @@ export function bindCodexMcpSession(
   host: CodexMcpSessionHost,
   state: BaseThreadState,
   existing?: RegisteredSession | null,
+  binding?: AgentContainerRuntimeBinding,
 ): RegisteredSession | null {
   if (!host.running) return existing ?? null;
-  if (existing && host.rebindSession(existing.id, state)) return existing;
+  if (existing && host.rebindSession(existing.id, state, undefined, binding)) return existing;
   if (existing) {
     try { existing.revoke() } catch { /* already revoked */ }
   }
-  return host.registerSession(state, CODEX_MCP_SESSION_TTL_MS);
+  return host.registerSession(state, CODEX_MCP_SESSION_TTL_MS, binding);
 }
 
 /** Per-process Codex CLI overrides for Sulla's graph-bound MCP bridge. */
