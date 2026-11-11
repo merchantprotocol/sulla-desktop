@@ -17,7 +17,7 @@ import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { assertSystemAreaWritable } from './systemAreas.js';
 
 import { resolveFilesUiSession } from './accountsAuth.js';
-import { ROLE_LEVEL, requireOrganizationScope, resolveCollectionAccess } from './acl.js';
+import { CollectionRoleGate, requireOrganizationScope, resolveCollectionAccess } from './acl.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
@@ -268,6 +268,7 @@ export function createApp(
   ) {
     return resolveCollectionAccess(queryable, identity(request), collectionId);
   }
+  const roleGate = new CollectionRoleGate();
   async function requireCollection(
     request:RequestWithIdentity,
     collectionId:string,
@@ -276,13 +277,15 @@ export function createApp(
     _allowExactFiles = false,
   ) {
     const access = await collectionAccess(request, collectionId);
-    if (ROLE_LEVEL[access.role] < ROLE_LEVEL[right]) throw new HttpError(403, 'access denied');
+    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
     if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;
   }
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right, queryable:pg.Pool | pg.PoolClient = db) {
     identity(request);
     const access = await collectionAccess(request, collectionId, queryable);
+    // Every edit/move/delete/upload path funnels through here (requireFile too), so the level is checked here.
+    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
     if (isProtectedPath(path) && !(access.collection.system_area === 'logs' && (isAuditLogPath(path) || path === 'audit/vault'))) throw protectedPathError();
     if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;

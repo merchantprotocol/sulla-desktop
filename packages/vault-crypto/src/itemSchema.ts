@@ -127,7 +127,7 @@ export interface AgentPolicy {
   /** 'only_me' blocks every agent regardless of the other fields. */
   mode:              'only_me' | 'agents';
   level:             AgentAccessLevel;
-  /** Ignored: agent identity access belongs to the accounts service, not the vault. */
+  /** Agent ids allowed to use the item; empty or absent = every agent (owner decision 2026-11-11). */
   agents:            string[];
   /** Hostnames the credential may be used on; empty = any. */
   sites:             string[];
@@ -165,8 +165,15 @@ export function agentPolicyAllows(
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
   if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
-  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.sites)) {
+  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.sites) ||
+      (policy.agents !== undefined && policy.agents !== null && !Array.isArray(policy.agents))) {
     return { allowed: false, reason: 'The agent access policy is invalid' };
+  }
+  // Same semantics as @sulla/domain AgentAccessPolicy: a non-empty list names
+  // the only agents allowed; an empty or absent list allows every agent.
+  const allowedAgents = policy.agents ?? [];
+  if (allowedAgents.length > 0 && (!request.agentId || !allowedAgents.includes(request.agentId))) {
+    return { allowed: false, reason: 'This agent is not allowed to use this item' };
   }
   const rank: Record<AgentAccessLevel, number> = { metadata: 0, autofill: 1, full: 2 };
   if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };

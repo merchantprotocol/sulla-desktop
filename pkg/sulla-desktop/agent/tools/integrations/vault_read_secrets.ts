@@ -5,6 +5,7 @@
 
 import { integrations } from '../../integrations/catalog';
 import { getIntegrationService } from '../../services/IntegrationService';
+import { AgentCredentialAccess } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
 
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
@@ -17,6 +18,7 @@ import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 export class IntegrationGetCredentialsWorker extends BaseTool {
   name = '';
   description = '';
+  private readonly credentialAccess = new AgentCredentialAccess();
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { account_type, include_secrets } = input;
 
@@ -63,6 +65,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
       }
 
       responseString += `Accounts: ${ accounts.length }\n\n`;
+      const agentId = this.credentialAccess.agentIdFrom((this.state as any)?.metadata);
 
       for (const acct of accounts) {
         const status = await service.getConnectionStatus(account_type, acct.account_id);
@@ -75,7 +78,7 @@ export class IntegrationGetCredentialsWorker extends BaseTool {
         }
 
         // Check LLM access level for this account
-        const llmAccess = storedValues['llm_access'] || 'autofill';
+        const llmAccess = this.credentialAccess.levelFor({ storedLevel: storedValues['llm_access'], agentId });
 
         // If access is 'none', skip this account entirely
         if (llmAccess === 'none') {
