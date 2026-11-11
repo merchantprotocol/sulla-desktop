@@ -13,6 +13,10 @@ export const AGENT_MAIL_INTEGRATION_ID = 'sulla_agent_mail';
 export const AGENT_MAIL_TOKEN_FIELD = 'token';
 /** Vault broker operation (services/sulla-vault/src/callerPolicies.ts). */
 export const AGENT_MAIL_BROKER_OPERATION = 'sulla-agent-mail.api';
+/** The user's Sulla Cloud session account and its agent-mailbox vault lanes. */
+export const SULLA_CLOUD_INTEGRATION_ID = 'sulla-cloud';
+export const AGENT_MAILBOX_READ_OPERATION = 'sulla-cloud.agent-mailboxes.read';
+export const AGENT_MAILBOX_WRITE_OPERATION = 'sulla-cloud.agent-mailboxes.write';
 
 export interface AgentMailHttpRequest {
   method: 'GET' | 'POST';
@@ -92,22 +96,72 @@ export class BrokerAgentMailTransport implements AgentMailTransport {
   }
 }
 
+/**
+ * User mailboxes (desktop vault mode): the vault refreshes the signed-in
+ * user's Sulla Cloud session and injects it as Bearer on the pinned
+ * sulla-cloud.agent-mailboxes.* lane. The session token never enters this
+ * process, and the app-wide trusted Cloud client is not used.
+ */
+export class CloudSessionAgentMailTransport implements AgentMailTransport {
+  constructor(
+    private readonly baseUrl: string,
+    private readonly broker: () => Promise<AgentMailBroker>,
+    private readonly activeAccountId: () => Promise<string>,
+  ) {}
+
+  async request(request: AgentMailHttpRequest, ctx: ToolExecutionContext | undefined): Promise<AgentMailHttpResponse> {
+    if (!ctx) throw new AgentMailError('rejected', 'Agent mail tools require a verified caller identity');
+    let accountId: string;
+    try {
+      accountId = await this.activeAccountId();
+    } catch {
+      throw AgentMailError.notSignedIn();
+    }
+    if (!accountId) throw AgentMailError.notSignedIn();
+    if (ctx.credential_scope?.integration_id !== SULLA_CLOUD_INTEGRATION_ID || ctx.credential_scope.account_id !== accountId) {
+      throw AgentMailError.notSignedIn();
+    }
+    const broker = await this.broker();
+    try {
+      const result = await broker.execute(broker.requestFor(ctx, {
+        operation:    request.method === 'GET' ? AGENT_MAILBOX_READ_OPERATION : AGENT_MAILBOX_WRITE_OPERATION,
+        ref:          { integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId },
+        url:          AgentMailUrl.build(this.baseUrl, request),
+        method:       request.method,
+        headers:      { accept: 'application/json', ...(request.body === undefined ? {} : { 'content-type': 'application/json' }) },
+        body:         request.body,
+        injections:   [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        responseType: 'json',
+      }));
+      return { status: result.status, body: result.body };
+    } catch (error) {
+      const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
+      if (code === 'credential_field_missing' || code === 'not_found' || code === 'integration_denied' || status === 401) throw AgentMailError.notSignedIn();
+      if (code === 'vault_locked') throw new AgentMailError('rejected', 'The Sulla vault is locked. Unlock it and retry.');
+      throw new AgentMailError('server_error', `Agent mail request failed${ typeof code === 'string' ? ` (${ code })` : '' }`);
+    }
+  }
+}
+
 export type AgentMailFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
- * Server vault mode (SULLA_VAULT_MODE=server): reads the token in-process and
- * sends it only in the Authorization header. Any echo of it is scrubbed.
+ * Server vault mode (SULLA_VAULT_MODE=server): reads the token (the service
+ * AGENT_MAIL_TOKEN, or the user's Cloud access token for user mailboxes)
+ * in-process and sends it only in the Authorization header. Any echo of it
+ * is scrubbed.
  */
 export class DirectAgentMailTransport implements AgentMailTransport {
   constructor(
     private readonly baseUrl: string,
     private readonly token: () => Promise<string | null>,
     private readonly fetcher: AgentMailFetch = (url, init) => fetch(url, init),
+    private readonly missing: () => AgentMailError = () => AgentMailError.tokenMissing(),
   ) {}
 
   async request(request: AgentMailHttpRequest): Promise<AgentMailHttpResponse> {
     const token = (await this.token().catch(() => null))?.trim();
-    if (!token) throw AgentMailError.tokenMissing();
+    if (!token) throw this.missing();
     let response: Response;
     try {
       response = await this.fetcher(AgentMailUrl.build(this.baseUrl, request), {

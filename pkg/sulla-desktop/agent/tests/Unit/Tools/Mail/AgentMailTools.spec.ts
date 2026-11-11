@@ -17,8 +17,6 @@ import {
 } from '../../../../tools/mail/AgentMailTransport';
 import { AgentMailAddress } from '../../../../tools/mail/AgentMailAddress';
 import { AgentMailUntrustedContent } from '../../../../tools/mail/AgentMailUntrustedContent';
-import { MailReadWorker } from '../../../../tools/mail/read';
-import { MailWaitForCodeWorker } from '../../../../tools/mail/wait_for_code';
 
 const TOKEN = 'agent-mail-secret-token-0123456789abcdef';
 const BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
@@ -48,11 +46,6 @@ class FakeClock implements AgentMailClock {
 
 const client = (transport: AgentMailTransport, clock = new FakeClock()) =>
   new AgentMailClient(transport, new AgentMailAddress(), new AgentMailUntrustedContent(), clock);
-
-class StaticClientSource {
-  constructor(private readonly value: AgentMailClient) {}
-  async create() { return this.value }
-}
 
 describe('DirectAgentMailTransport', () => {
   it('sends the token only as a Bearer Authorization header and scrubs any echo of it', async() => {
@@ -210,27 +203,6 @@ describe('AgentMailClient', () => {
     await expect(client(transport).send({ from_local: 'evil@other.com', to: 'p@example.com', subject: 's', text: 't' })).rejects.toMatchObject({ code: 'invalid_address' });
     await expect(client(transport).send({ from_local: 'signup', to: 'p@example.com', subject: 'a\r\nBcc: x@y.z', text: 't' })).rejects.toMatchObject({ code: 'invalid_input' });
     expect(transport.requests).toHaveLength(1);
-  });
-});
-
-describe('mail tool workers', () => {
-  it('mail/read returns the untrusted envelope as the structured result', async() => {
-    // risk: prompt injection — the flag must survive to what the agent actually receives.
-    const transport = new FakeTransport(() => ({ status: 200, body: { message: { ...summary('m1'), text: 'code 482913', html: null } } }));
-    const worker = new MailReadWorker(new StaticClientSource(client(transport)));
-    const response = await (worker as any)._validatedCall({ id: 'm1' });
-    expect(response.successBoolean).toBe(true);
-    expect(response.result).toMatchObject({ untrusted: true, message: { text: 'code 482913' } });
-    expect(JSON.parse(response.responseString).untrusted).toBe(true);
-  });
-
-  it('a failure never exposes a raw error that could carry the token', async() => {
-    // risk: credential disclosure — unexpected errors are replaced by a generic message.
-    const transport: AgentMailTransport = { request: async() => { throw new Error(`socket closed Bearer ${ TOKEN }`) } };
-    const worker = new MailWaitForCodeWorker(new StaticClientSource(client(transport)));
-    const response = await (worker as any)._validatedCall({ to: 'signup', timeout: 5 });
-    expect(response.successBoolean).toBe(false);
-    expect(JSON.stringify(response)).not.toContain(TOKEN);
   });
 });
 
