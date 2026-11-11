@@ -5,17 +5,11 @@
 
 import { AgentMailTool } from './AgentMailTool';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
-/** mail/send — send from <from_local>@agents.sulladesktop.com. Needs the server send endpoint. */
+/** mail/send — send from one of your mailboxes (default: your only active one). */
 export class MailSendWorker extends AgentMailTool {
-  protected run(client: AgentMailClient, input: Record<string, unknown>) {
-    return client.send({
-      from_local: String(input.from_local ?? ''),
-      to:         String(input.to ?? ''),
-      subject:    String(input.subject ?? ''),
-      text:       typeof input.text === 'string' ? input.text : undefined,
-      html:       typeof input.html === 'string' ? input.html : undefined,
-    }, this.executionContext);
+  protected run(mail: AgentMailService, input: Record<string, unknown>) {
+    return mail.send(input, this.executionContext);
   }
 }

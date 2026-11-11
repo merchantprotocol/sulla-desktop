@@ -5,11 +5,11 @@
 
 import { AgentMailTool } from './AgentMailTool';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
-/** mail/list — message summaries (no bodies) for an agent mailbox. */
+/** mail/list — message summaries (no bodies) in one mailbox (default: your only active one). */
 export class MailListWorker extends AgentMailTool {
-  protected run(client: AgentMailClient, input: Record<string, unknown>) {
-    return client.list({ to: input.to, since: input.since, limit: input.limit }, this.executionContext);
+  protected run(mail: AgentMailService, input: Record<string, unknown>) {
+    return mail.list(input, this.executionContext);
   }
 }

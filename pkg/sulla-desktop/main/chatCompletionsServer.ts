@@ -19,6 +19,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
+import { AgentMailLaneSelector } from '@pkg/agent/tools/mail/AgentMailLaneSelector';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
@@ -1339,12 +1340,13 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: (error as Error).message });
           }
         }
-        // Agent mail tools use their own vault account (sulla_agent_mail/token).
-        // With no account configured the tool reports a clear setup error.
+        // Agent mail: user mailboxes run on the user's Sulla Cloud session;
+        // only sulla@/qa@/e2e@ use the service token account, when it exists.
+        // A missing account leaves the scope unset and the tool reports a clear error.
         if (executionContext && usesContainerVaultAuthority() && canonicalCategory === 'mail') {
           try {
-            executionContext = await scopeToolExecutionContext(executionContext, 'sulla_agent_mail');
-          } catch { /* AgentMailClient maps the missing scope to "agent mail token missing" */ }
+            executionContext = await scopeToolExecutionContext(executionContext, await new AgentMailLaneSelector().lane(endpoint, params));
+          } catch { /* the mail transports map a missing scope to "not signed in" / "token missing" */ }
         }
         if (canonicalCategory === 'vault' && ['request', 'list_api_keys'].includes(endpoint)) {
           if (!executionContext) return res.status(403).json({ success: false, error: 'Vault item tools require a verified execution context' });

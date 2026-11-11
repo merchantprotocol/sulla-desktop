@@ -5,11 +5,11 @@
 
 import { AgentMailTool } from './AgentMailTool';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
 /** mail/read — one message with its body as plain, untrusted text. */
 export class MailReadWorker extends AgentMailTool {
-  protected run(client: AgentMailClient, input: Record<string, unknown>) {
-    return client.read(input.id, this.executionContext);
+  protected run(mail: AgentMailService, input: Record<string, unknown>) {
+    return mail.read(input, this.executionContext);
   }
 }

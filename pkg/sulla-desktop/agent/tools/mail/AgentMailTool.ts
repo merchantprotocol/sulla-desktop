@@ -7,14 +7,14 @@ import { BaseTool, type ToolResponse } from '../base';
 import { AgentMailClientFactory } from './AgentMailClientFactory';
 import { AgentMailError } from './AgentMailError';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
 export interface AgentMailClientSource {
-  create(): Promise<AgentMailClient>;
+  create(): Promise<AgentMailService>;
 }
 
 /**
- * Shared shell for the mail/* tools: builds the client, runs one action and
+ * Shared shell for the mail/* tools: builds the mail service, runs one action and
  * returns its JSON. Errors carry only the AgentMailError message, never a
  * token or a raw server/vault error.
  */
@@ -26,7 +26,7 @@ export abstract class AgentMailTool extends BaseTool {
     super();
   }
 
-  protected abstract run(client: AgentMailClient, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  protected abstract run(mail: AgentMailService, input: Record<string, unknown>): Promise<Record<string, unknown>>;
 
   protected async _validatedCall(input: Record<string, unknown>): Promise<ToolResponse> {
     try {
