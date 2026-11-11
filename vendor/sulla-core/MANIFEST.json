@@ -13,24 +13,17 @@
     },
     {
       "package": "@sulla/domain",
-      "version": "0.2.5",
-      "file": "sulla-domain-0.2.5-7d4a6dd.tgz",
-      "sha256": "11ad742a63083d606a6ed6af3904a87d07bb350efa98082d8e82fe70e462630c",
-      "sourceRef": "7d4a6dd8",
-      "source": "sulla-core main 7d4a6dd8 build (npm ci, npm run build, npm pack packages/domain); depends on @sulla/foundation 0.1.1"
+      "version": "0.3.0",
+      "file": "sulla-domain-0.3.0-66539a1.tgz",
+      "sha256": "dce41b44ffb02405a1b5a6117476be744ee78dd34707241eb321cb5771042638",
+      "sourceRef": "66539a1",
+      "source": "sulla-core main 66539a1 build (npm ci, npm run build, npm pack packages/domain); identity/session classes (TokenPair, AuthSession, ClientSessionService, SignOutService, ...); depends on @sulla/foundation 0.1.1. Pre-built copy: /mnt/worktrees/_deps/sulla-core-tarballs/v0.3.0-66539a1/"
     },
     {
       "package": "@sulla/foundation",
       "version": "0.1.0",
       "file": "sulla-foundation-0.1.0-2213270.tgz",
       "sha256": "9bf68774363077242b615c84fa0a78ef0f020ec0eae242ee5033a36978ccc9ca"
-    },
-    {
-      "package": "@sulla/domain",
-      "version": "0.2.3",
-      "file": "sulla-domain-0.2.3-aeebbf.tgz",
-      "sha256": "aeebbfa1c681e2c58e0da5a05369f94450a26ceed66689aadeca8ec857a7c61c",
-      "source": "sulla-core main 0b63c8a3 v0.2.3 build (npm run build, npm pack packages/domain)"
     }
   ]
 }

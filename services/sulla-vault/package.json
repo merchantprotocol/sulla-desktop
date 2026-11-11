@@ -13,8 +13,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.2.3-aeebbf.tgz",
-    "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.0-2213270.tgz",
+    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.3.0-66539a1.tgz",
+    "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz",
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
     "express": "5.2.1",
     "hash-wasm": "4.12.0",

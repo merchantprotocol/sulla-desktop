@@ -135,9 +135,15 @@ export class PostgresVaultItemRepository {
          VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`, values);
   }
 
-  softDeleteIntegrationFamilies<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>(`UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
-          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+  /**
+   * Destroys token ciphertext: overwrites ciphertext and keys with an empty envelope and marks the row deleted. The row is kept
+   * only as a tombstone (audit_log references it and cloud sync needs the deletion). Includes rows soft-deleted earlier,
+   * which still held old refresh tokens.
+   */
+  scrubIntegrationFamilies<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
+    return client.query<T>(`UPDATE items SET ciphertext='{}'::jsonb,encrypted_item_key='{}'::jsonb,agent_wrapped_item_key=NULL,
+              deleted_at=COALESCE(deleted_at,now()),revision=revision+1,updated_at=now()
+          WHERE owner_user_id=$1 AND collection_id IS NULL AND ciphertext<>'{}'::jsonb
             AND split_part(integration_ref,'/',1)=ANY($2::text[]) RETURNING id`, values);
   }
 
