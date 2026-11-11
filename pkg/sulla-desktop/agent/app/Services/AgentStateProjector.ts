@@ -33,7 +33,8 @@ export class AgentStateProjector {
   }
 
   private async buildSnapshot(): Promise<AgentStateSnapshot> {
-    const jobs = await this.states.jobs();
+    // Bounded read that never waits on container inventory; includes ancestors so root threads resolve.
+    const jobs = await this.states.jobsForProjection(this.config.terminalTtlMs * 5);
     // A change while telemetry loads must retain its own later version so the
     // renderer can accept the following snapshot instead of discarding it.
     const version = this.states.version;
