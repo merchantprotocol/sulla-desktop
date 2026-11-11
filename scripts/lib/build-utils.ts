@@ -140,6 +140,7 @@ export default {
         background:            path.resolve(this.rootDir, 'bootstrapEntry'),
         // Electron utilityProcess for on-device voice inference (Silero, Smart Turn, Whisper).
         voiceInferenceProcess: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'voice', 'inference', 'voiceInferenceProcess.ts'),
+        speakerEmbeddingProcess: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'voice', 'inference', 'SpeakerEmbeddingProcess.ts'),
       },
       experiments: { outputModule: true },
       externals:   [

@@ -116,6 +116,12 @@ let utteranceOpen = false;
 // Push-to-talk: the user decides when the turn ends (key release), so silence
 // never ends it — pauses mid-thought stay in one message. finish() ends it.
 let manualTurn = false;
+let scoreCommittedTurn: ((pcm: Buffer, holdToTalk: boolean) => void) | null = null;
+
+/** Installs a fail-open observer; scoring is deliberately never awaited by transcription. */
+export function configureSpeakerScoring(observer: (pcm: Buffer, holdToTalk: boolean) => void): void {
+  scoreCommittedTurn = observer;
+}
 
 // Full-utterance PCM (conversation mode). Each 2s segment is transcribed live as a
 // partial for feedback, but its PCM is ALSO kept here so the complete utterance can be
@@ -474,8 +480,12 @@ function finalizeUtterance(): void {
   }
 
   const pcm = Buffer.concat(utterancePcm);
+  const holdToTalk = manualTurn;
   utterancePcm.length = 0;
   utterancePcmBytes = 0;
+
+  // Shadow scoring starts alongside the authoritative final transcription and is never awaited.
+  try { scoreCommittedTurn?.(pcm, holdToTalk); } catch (error) { log.warn('SpeakerVerifier', 'Unable to schedule shadow score; voice continues', { error: String(error) }); }
 
   // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
   // long utterance isn't truncated by the default 10s per-chunk timeout.

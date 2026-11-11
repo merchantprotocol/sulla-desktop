@@ -52,6 +52,8 @@ import { OrtInferenceClient } from '../voice/inference/OrtInferenceClient';
 import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
 import { ModelRepository } from '../voice/engine/ModelRepository';
 import voiceModelManifest from '../voice/models/voice-model-manifest.json';
+import { SpeakerEmbeddingRunner } from '../voice/inference/SpeakerEmbeddingRunner';
+import { SpeakerVerifier } from '../voice/inference/SpeakerVerifier';
 
 const rendererLog = createLogger('renderer');
 
@@ -597,6 +599,10 @@ function registerIpcHandlers(): void {
     // The main bundle is ESM (no __dirname). webpack emits the ORT utility process as its own
     // entry next to background.js in dist/app (see scripts/lib/build-utils.ts).
     const ortEntry = path.join(app.getAppPath(), 'dist', 'app', 'voiceInferenceProcess.js');
+    const speakerEntry = path.join(app.getAppPath(), 'dist', 'app', 'speakerEmbeddingProcess.js');
+    const speakerModels = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
+    const speakerVerifier = new SpeakerVerifier(speakerModels, new SpeakerEmbeddingRunner(speakerEntry), app.getPath('userData'), log);
+    whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk) => { void speakerVerifier.scoreTurn(pcm, holdToTalk); });
     const sileroStartedAt = Date.now();
     log.info('WhisperTranscribe', 'Silero model resolve started', { id: 'vad-silero-onnx', ortEntry });
     const sileroGate = new SpeechChunkGate(
