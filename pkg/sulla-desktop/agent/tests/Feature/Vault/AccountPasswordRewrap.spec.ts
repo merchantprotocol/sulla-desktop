@@ -44,7 +44,7 @@ class AccountPasswordRewrapFixture {
     const state = authority as unknown as Record<string, unknown>;
     Object.assign(state, {
       db: database, config: thisConfig(), userRepository: repositories, rewrapHistory: repositories,
-      auditLogRepository: repositories, securityOperationTail: Promise.resolve(), generation: 0,
+      auditLogRepository: repositories, securityOperationTail: Promise.resolve(), generation: 0, cacheChallenges: new Map(),
       keys: options.keys === false ? undefined : { userId: 'user-1', userKey: Uint8Array.from({ length: 32 }, () => 9) },
       humanSessions: new Map([['session', { csrf: 'csrf', expiresAt: Date.now() + 60_000, phase: 'unlocked' }]]),
     });
