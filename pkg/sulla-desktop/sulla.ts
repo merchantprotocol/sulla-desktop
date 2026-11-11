@@ -552,6 +552,13 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
  */
 export async function onMainProxyLoad(ipcMainProxy: any) {
   // Assume main process
+  const { registerAgentUseCaseRecallQuery } = await import('@pkg/main/AgentUseCaseRecallQuery');
+  const { queryUseCaseSuggestions } = await import('@pkg/main/sullaFilesWatcher');
+  registerAgentUseCaseRecallQuery((channel, handler) => ipcMainProxy.handle(channel, handler), {
+    suggest: async(text, options) => (await queryUseCaseSuggestions(text, options as any))
+      .filter(row => row.type === 'skill' || row.type === 'agent') as any,
+  });
+
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
