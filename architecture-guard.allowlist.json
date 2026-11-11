@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1104,
+  "entries": 1103,
   "files": {
     "background.ts": {
       "rules": {
@@ -4790,7 +4790,6 @@
     "services/sulla-vault/src/browserEnvelope/syncRunner.ts": {
       "rules": {
         "long-file": 568,
-        "mutable-state": 1,
         "raw-sql": 43
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
