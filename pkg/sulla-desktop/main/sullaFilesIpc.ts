@@ -27,6 +27,9 @@ import { getSullaFilesBackups } from './sullaFilesBackups';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { getSullaFileProvider } from './sullaFileProvider';
 import { FilesSyncV1 } from './cloud/filesSyncV1';
+import { UseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
+import type { AgentRecallQueryOptions } from './AgentUseCaseRecallQuery';
+import type { SuggestionOptions } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
@@ -551,6 +554,13 @@ function initFilesMediaProtocol():void {
 }
 
 export function initSullaFilesIpc():void {
+  const watcher = getSullaFilesWatcher();
+  new UseCaseSuggestionIpcRegistrar(
+    (channel, handler) => ipcMain.handle(channel, handler),
+    (channel, handler) => ipcMain.handle(channel, handler),
+    { suggest: (text, options) => watcher.queryUseCaseSuggestions(text, options as SuggestionOptions) },
+    { suggest: (text, options) => watcher.queryUseCaseSuggestions(text, options as SuggestionOptions) },
+  ).register();
   void getSullaFileProvider().start();
   app.once('will-quit', () => { void getSullaFileProvider().stop() });
   const feeds = new Map<number, FilesChangeFeed>();
