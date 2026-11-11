@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LocalUseCaseChangeNotifier, UseCaseSuggestionIndex, type SuggestionEmbedder } from '../agent/useCases/UseCaseSuggestionIndex';
-import { UseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
-import type { SuggestionOptions } from '../agent/useCases/UseCaseSuggestionIndex';
+import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
 
 describe('use-case suggestion IPC registrations', () => {
   it('dispatches both registered channels through the same live index service', async() => {
@@ -22,12 +21,13 @@ describe('use-case suggestion IPC registrations', () => {
     }, notifier, { info: () => undefined }, () => 10_000, { semanticThreshold: 0, keywordThreshold: 0 });
     await index.warm();
     const handlers = new Map<string, (...args: any[]) => Promise<any>>();
-    new UseCaseSuggestionIpcRegistrar(
-      (channel, handler) => handlers.set(channel, handler),
-      (channel, handler) => handlers.set(channel, handler),
-      { suggest: (text, options) => index.suggest(text, options as SuggestionOptions) },
-      { suggest: (text, options) => index.suggest(text, options) },
-    ).register();
+    const registrations: string[] = [];
+    const watcher = { queryUseCaseSuggestions: (text: string, options?: Parameters<typeof index.suggest>[1]) => index.suggest(text, options) };
+    const register = (channel: string, handler: (...args: any[]) => Promise<any>) => {
+      registrations.push(channel);
+      handlers.set(channel, handler);
+    };
+    createUseCaseSuggestionIpcRegistrar(register, register, watcher).register();
 
     const composer = await handlers.get('use-case-suggest:query')!({}, 'deploy');
     const recall = await handlers.get('use-case-recall:query')!({}, 'deploy', { types: ['agent'], allowedSlugs: ['release-agent'] });
@@ -35,6 +35,8 @@ describe('use-case suggestion IPC registrations', () => {
     expect(composer.items.map(item => item.slug)).toContain('deploy-skill');
     expect(composer.items.some(item => item.type === 'function')).toBe(false);
     expect(recall.items.map(item => item.slug)).toEqual(['release-agent']);
+    expect(recall.items.every(item => item.type === 'skill' || item.type === 'agent')).toBe(true);
+    expect(registrations).toEqual(['use-case-suggest:query', 'use-case-recall:query']);
     index.dispose();
   });
 });
