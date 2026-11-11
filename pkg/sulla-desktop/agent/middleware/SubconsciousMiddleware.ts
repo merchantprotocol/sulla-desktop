@@ -31,7 +31,6 @@ import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { DEFAULT_SUBCONSCIOUS_RECALL_MODE, recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
-import { PreModelRecallBudget } from '../services/PreModelRecallBudget';
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
@@ -244,7 +243,6 @@ export async function runSubconsciousMiddleware(
   const meta = state.metadata as any;
   const inputSource = String(meta.inputSource || '');
   const voiceTurn = inputSource === 'microphone' || inputSource === 'voice';
-  const budgetMs = voiceTurn ? 700 : 1500;
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -252,8 +250,9 @@ export async function runSubconsciousMiddleware(
 
   const conversationalistVoice = String(meta.agentId || meta.wsChannel || '') === 'conversationalist'
     && (inputSource === 'microphone' || inputSource === 'voice');
-  // Conversationalist voice still receives the active subject-memory mode;
-  // only optional directories / supplementary knowledge recall are skipped.
+  // Conversationalist voice keeps memory/observation recall. It skips only
+  // team, skill-catalog and subagent-roster hints; this is an explicit,
+  // reversible latency trade-off for Jonathon to veto.
 
   const startTime = Date.now();
   for (const key of ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext']) meta[key] = '';
@@ -263,8 +262,8 @@ export async function runSubconsciousMiddleware(
   meta.brainMemoryContext = '';
 
   const launched: string[] = [];
+  const skipped: string[] = [];
   const awaitedTasks: Promise<void>[] = [];
-  const awaitedTaskNames: string[] = [];
   const background = backgroundStateFor(state);
   applyPendingBackground(state, background);
 
@@ -277,7 +276,6 @@ export async function runSubconsciousMiddleware(
   // dominates the blocking prelude. Settles even on rejection.
   const timings: Record<string, number> = {};
   const timed = (name: string, label: string, p: Promise<void>): Promise<void> => {
-    awaitedTaskNames.push(name);
     const t0 = Date.now();
     progress(`${ label }…`);
     return p.finally(() => {
@@ -286,8 +284,8 @@ export async function runSubconsciousMiddleware(
       progress(`${ label } done (${ ((Date.now() - t0) / 1000).toFixed(1) }s)`);
     });
   };
-  // Recall workers may outlive their deadline. A private state snapshot keeps
-  // their eventual results from mutating the live turn after the model starts.
+  // Recall workers share a private snapshot; merge only after the complete
+  // parallel fan-out finishes so none can race with the model hand-off.
   const recallState = { ...state, messages: [...state.messages], metadata: { ...meta } } as BaseThreadState;
   const recallMeta = recallState.metadata as any;
 
@@ -479,6 +477,7 @@ export async function runSubconsciousMiddleware(
   // Keyword ranking over one table read: no LLM call, bounded size. It
   // suggests; the lead agent decides.
   const teamAgentSlug = resolveAgentIdentity(state.metadata);
+  if (teamAgentSlug && conversationalistVoice) skipped.push('team-recall');
   if (teamAgentSlug && !conversationalistVoice) {
     launched.push('team-recall');
     awaitedTasks.push(timed('team-recall', 'Recalling team', runTeamRecall(recallState, teamAgentSlug)));
@@ -488,6 +487,7 @@ export async function runSubconsciousMiddleware(
   // triggers, tags or description match the current turn, injected as
   // <installed_skills>. Keyword ranking over one table read: no LLM call.
   // It suggests; the agent decides whether to load one.
+  if (options.includeObservations && analyzable && conversationalistVoice) skipped.push('skill-recall');
   if (options.includeObservations && analyzable && !conversationalistVoice) {
     launched.push('skill-recall');
     awaitedTasks.push(timed('skill-recall', 'Recalling skills', runSkillRecall(recallState)));
@@ -496,6 +496,7 @@ export async function runSubconsciousMiddleware(
   // R11. Subagent directory — any agent with children on this thread sees each
   // child (hidden or tab), its last check-in, stalls and unprocessed results,
   // injected as <subagent_directory>. Job-table read only: no LLM call.
+  if (typeof meta.threadId === 'string' && meta.threadId && conversationalistVoice) skipped.push('subagent-directory');
   if (typeof meta.threadId === 'string' && meta.threadId && !conversationalistVoice) {
     launched.push('subagent-directory');
     awaitedTasks.push(timed('subagent-directory', 'Checking subagents', runSubagentDirectory(recallState)));
@@ -507,29 +508,19 @@ export async function runSubconsciousMiddleware(
   // 300-400ms (dominated by embedding). Returns pre-formatted <brain_memory>
   // XML that the engine already builds. Gated on the brainMemory setting.
   // v7 owns brainMemoryContext; Brain v2 would race it and clear the block.
-  if (options.includeObservations && analyzable && recallModeForTurn !== 'v7' && !conversationalistVoice) {
+  if (options.includeObservations && analyzable && recallModeForTurn !== 'v7') {
     launched.push('brain-recall');
     awaitedTasks.push(timed('brain-recall', 'Recalling brain knowledge', runBrainRecall(recallState)));
   }
 
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
-  // Apply each isolated task independently: a slow directory must not erase a
-  // completed memory result. Each task only merges its owned metadata keys.
-  const remainingBudgetMs = Math.max(0, budgetMs - (Date.now() - startTime));
-  const ownedKeys: Record<string, string[]> = {
-    'ranked-memory-recall': ['observationContext'], 'v7-subject-memory': ['observationContext','userObservationContext','selfObservationContext','businessObservationContext','environmentObservationContext','projectsObservationContext','worldObservationContext','skillsObservationContext','brainMemoryContext','v7LedgerCompactedAt','lastV7LedgerSummaryReset'],
-    'observation-recall': ['observationContext'], 'identity-observation-recall': ['userObservationContext'], 'self-observation-recall': ['selfObservationContext'], 'business-observation-recall': ['businessObservationContext'], 'environment-observation-recall': ['environmentObservationContext'], 'projects-observation-recall': ['projectsObservationContext'], 'world-observation-recall': ['worldObservationContext'], 'skills-observation-recall': ['skillsObservationContext'], 'team-recall': ['teamDirectoryContext'], 'skill-recall': ['skillRecallContext'], 'subagent-directory': ['subagentDirectoryContext'], 'brain-recall': ['brainMemoryContext'],
-  };
-  const completion = await new PreModelRecallBudget().runEach(awaitedTasks.map((work, index) => ({
-    name: awaitedTaskNames[index], work,
-    apply: () => { for (const key of ownedKeys[awaitedTaskNames[index]] ?? []) meta[key] = recallMeta[key] },
-  })), remainingBudgetMs);
-  const dropped = completion.dropped;
-  const timedOut = dropped.length > 0;
-  if (dropped.length) console.warn(`[SubconsciousMiddleware] Recall tasks exceeded ${ budgetMs }ms and were dropped: ${ dropped.join(', ') }`);
-
-  const failures = completion.failures;
+  // Recall is intentionally unbounded per Jonathon's standing rule. Wait for
+  // every requested recall to finish; independent tasks still run in parallel.
+  const settledResults = await Promise.allSettled(awaitedTasks);
+  const contextKeys = ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext', 'brainMemoryContext', 'teamDirectoryContext', 'skillRecallContext', 'subagentDirectoryContext', 'v7LedgerCompactedAt', 'lastV7LedgerSummaryReset'];
+  for (const key of contextKeys) meta[key] = recallMeta[key];
+  const failures = settledResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
   const elapsed = Date.now() - startTime;
 
   if (failures.length > 0) {
@@ -539,11 +530,11 @@ export async function runSubconsciousMiddleware(
   }
 
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ awaitedTasks.length - failures.length - dropped.length }/${ awaitedTasks.length } succeeded | observationContext: ${ obsRecallLen } chars`);
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | observationContext: ${ obsRecallLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } budgetMs=${ budgetMs } budgetExceeded=${ timedOut } dropped=[${ dropped.join(', ') }] launched=[${ launched.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] skipped=[${ skipped.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
 }
 
 /**

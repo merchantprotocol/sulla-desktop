@@ -16,6 +16,7 @@
  */
 
 import { agentDefinitionService } from './AgentDefinitionService';
+import { TeamRecallDirectoryCache } from './TeamRecallDirectoryCache';
 import { formatCardLine, listAgentDirectory, scoreCard } from './AgentDirectoryService';
 import { callingYourTeamSection } from '../prompts/callingYourTeam';
 import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
@@ -33,20 +34,7 @@ export const TEAM_DIRECTORY_MAX_CHARS = 3500;
 const FIT_MARK = '**fits right now** · ';
 const CALLING_YOUR_TEAM_HEADING = /^#{1,6}\s*Calling your team\b/im;
 
-/** Short-lived process cache for the two directory reads used on every lead turn. */
-class TeamRecallDirectoryCache {
-  private readonly values = new Map<string, { loadedAt: number; value: unknown }>();
-  constructor(private readonly ttlMs = 60_000, private readonly now: () => number = Date.now) {}
-  async get<T>(key: string, load: () => Promise<T>): Promise<T> {
-    const cached = this.values.get(key);
-    if (cached && this.now() - cached.loadedAt < this.ttlMs) return cached.value as T;
-    const value = await load();
-    this.values.set(key, { loadedAt: this.now(), value });
-    return value;
-  }
-  invalidate(): void { this.values.clear(); }
-}
-
+/** Process-wide TTL cache for the two directory reads each lead turn makes. */
 const directoryCache = new TeamRecallDirectoryCache();
 export function invalidateTeamRecallDirectoryCache(): void { directoryCache.invalidate(); }
 
