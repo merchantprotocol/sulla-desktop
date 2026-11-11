@@ -116,16 +116,36 @@ let utteranceOpen = false;
 // Push-to-talk: the user decides when the turn ends (key release), so silence
 // never ends it — pauses mid-thought stay in one message. finish() ends it.
 let manualTurn = false;
-let scoreCommittedTurn: ((pcm: Buffer, holdToTalk: boolean, turnId?: string) => void) | null = null;
-let currentVoiceTurnId = '';
+type SpeakerScoreObserver = (pcm: Buffer, holdToTalk: boolean, turnId?: string) => void;
+
+/** Holds the voice-ID hooks for this module. State lives on the instance, not as loose module lets. */
+class VoiceIdHooks {
+  private observer: SpeakerScoreObserver | null = null;
+  private turnId = '';
+
+  setObserver(observer: SpeakerScoreObserver): void {
+    this.observer = observer;
+  }
+
+  setTurnId(turnId: string): void {
+    this.turnId = turnId;
+  }
+
+  /** Fail-open: callers wrap this, and transcription never awaits it. */
+  score(pcm: Buffer, holdToTalk: boolean, turnId?: string): void {
+    this.observer?.(pcm, holdToTalk, turnId || this.turnId || undefined);
+  }
+}
+
+const voiceIdHooks = new VoiceIdHooks();
 
 /** Installs a fail-open observer; scoring is deliberately never awaited by transcription. */
-export function configureSpeakerScoring(observer: (pcm: Buffer, holdToTalk: boolean, turnId?: string) => void): void {
-  scoreCommittedTurn = observer;
+export function configureSpeakerScoring(observer: SpeakerScoreObserver): void {
+  voiceIdHooks.setObserver(observer);
 }
 
 export function setVoiceTurnId(turnId: string): void {
-  currentVoiceTurnId = turnId;
+  voiceIdHooks.setTurnId(turnId);
 }
 
 // Full-utterance PCM (conversation mode). Each 2s segment is transcribed live as a
@@ -490,7 +510,7 @@ function finalizeUtterance(turnId?: string): void {
   utterancePcmBytes = 0;
 
   // Shadow scoring starts alongside the authoritative final transcription and is never awaited.
-  try { scoreCommittedTurn?.(pcm, holdToTalk, turnId || currentVoiceTurnId || undefined); } catch (error) { log.warn('VoiceId', 'Unable to schedule voice identification; voice continues', { error: String(error) }); }
+  try { voiceIdHooks.score(pcm, holdToTalk, turnId); } catch (error) { log.warn('VoiceId', 'Unable to schedule voice identification; voice continues', { error: String(error) }); }
 
   // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
   // long utterance isn't truncated by the default 10s per-chunk timeout.
