@@ -7,6 +7,11 @@ import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '../../../app/Services/AgentLivenessReconciler';
 import type { AgentJob, AgentJobTask } from '../../../tools/agents/jobRegistry';
 import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
+import { AgentJobLivenessPolicy } from '../../../services/AgentJobLivenessPolicy';
+
+// These specs exercise the lost-transition mechanics with small lostAfterMs windows; the 10-minute
+// new-job grace (added in #2143) would otherwise dominate, so they opt out of it explicitly.
+const noGrace = new AgentJobLivenessPolicy(0);
 
 class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
@@ -130,7 +135,7 @@ describe('authoritative live agent state', () => {
   it('reconciles a stale running task to lost in durable and memory state and disables actions', async() => {
     // risk: stale job remains actionable after a desktop restart
     const { store, cache, states } = harness([job('stale', [task()])], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(1);
     expect(cache.jobs.get('stale')?.status).toBe('failed');
     expect(store.durable.get('stale')?.tasks[0].status).toBe('error');
@@ -228,7 +233,7 @@ describe('authoritative live agent state', () => {
     // risk: an active model/tool turn is killed because durable start/check-in timestamps are stale
     const { store, states } = harness([job('live-activity', [task({ startedAt: 100_000 })])], 500_000);
     const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'live-activity#0' ? 499_500 : undefined });
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.durable.get('live-activity')?.tasks[0].status).toBe('running');
   });
@@ -237,7 +242,7 @@ describe('authoritative live agent state', () => {
     // risk: an old model/tool activity timestamp permanently prevents a dead task from becoming lost
     const { store, states } = harness([job('aged-activity', [task({ startedAt: 100_000 })])], 500_000);
     const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'aged-activity#0' ? 200_000 : undefined });
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(1);
     expect(store.observedActivity).toEqual([100_000]);
     expect(store.durable.get('aged-activity')?.tasks[0].status).toBe('error');
@@ -248,7 +253,7 @@ describe('authoritative live agent state', () => {
     const { store, states } = harness([job('historic-checkin', [task({ startedAt: 300_000 })])], 500_000);
     const reconciler = new AgentLivenessReconciler(states, {
       graph: () => false, container: async() => false, lastCheckin: async() => 200_000,
-    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(1);
     expect(store.observedActivity).toEqual([200_000]);
   });
@@ -258,7 +263,7 @@ describe('authoritative live agent state', () => {
     const { store, states } = harness([job('activity-race', [task({ startedAt: 100_000 })])], 500_000);
     let reads = 0;
     const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'activity-race#0' && ++reads === 2 ? 499_500 : undefined });
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.observedActivity).toEqual([]);
     expect(store.durable.get('activity-race')?.tasks[0].status).toBe('running');
@@ -285,7 +290,7 @@ describe('authoritative live agent state', () => {
     const activity = new AgentTaskActivityProjector({ lastActivityAt: key => activityTimes.get(key) });
     const firstMutation = states.transition('queued-race', 0, { summary: 'queued mutation' });
     await didEnter;
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, activity, () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     const reconciling = reconciler.reconcile();
     await didSubmit;
     activityTimes.set('queued-race#0', 499_500);
@@ -307,7 +312,7 @@ describe('authoritative live agent state', () => {
     const futureWake = 600_000;
     const scheduled = job('scheduled', [task({ wakeAt: futureWake }), task({ status: 'blocked', wakeAt: futureWake })]);
     const { store, states } = harness([scheduled], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.durable.get('scheduled')?.tasks.map(value => value.status)).toEqual(['running', 'blocked']);
     const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
@@ -336,7 +341,7 @@ describe('authoritative live agent state', () => {
     // risk: agents/wait is mistaken for a dead worker after its quiet threshold
     const parked = job('future-wake', [task({ status: 'parked', threadId: 'future-wake-thread' })], { status: 'parked' });
     const { store, states } = harness([parked], 500_000);
-    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 });
+    const reconciler = new AgentLivenessReconciler(states, { graph: () => false, container: async() => false, lastCheckin: async() => null }, new AgentTaskActivityProjector({ lastActivityAt: () => undefined }), () => 500_000, { quietAfterMs: 100, lostAfterMs: 1_000 }, noGrace);
     expect(await reconciler.reconcile()).toBe(0);
     expect(store.durable.get('future-wake')).toMatchObject({ status: 'parked', tasks: [{ status: 'parked' }] });
     expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows[0].state).toBe('parked');
