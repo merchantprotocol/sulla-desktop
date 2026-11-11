@@ -56,6 +56,7 @@ export class OrtInferenceClient {
     private readonly threads = 1,
     private readonly spawn: (entry: string) => Child = entry =>
       utilityProcess.fork(entry, [], { serviceName: 'sulla-voice-ort' }) as unknown as Child,
+    private readonly log: (level: 'info' | 'warn', message: string, data?: Record<string, unknown>) => void = () => undefined,
   ) {}
 
   async infer(
@@ -63,7 +64,13 @@ export class OrtInferenceClient {
     signal?: AbortSignal,
     timeoutMs = this.timeoutMs,
   ): Promise<OrtResponse> {
-    const child = this.getChild();
+    let child: Child;
+    try {
+      child = this.getChild();
+    } catch (error) {
+      this.log('warn', 'ORT utility process fork failed', { entryPath: this.entryPath, error: String(error) });
+      throw error;
+    }
     const id = ++this.nextId;
     if (signal?.aborted) throw new Error('ONNX inference aborted');
     return new Promise((resolve, reject) => {
@@ -79,6 +86,7 @@ export class OrtInferenceClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         signal?.removeEventListener('abort', abort);
+        this.log('warn', 'ORT inference timed out', { id, operation: request.operation, timeoutMs, entryPath: this.entryPath });
         reject(new Error('ONNX inference timed out'));
       }, timeoutMs);
       this.pending.set(id, { child, resolve: value => { signal?.removeEventListener('abort', abort); resolve(value); }, reject: error => { signal?.removeEventListener('abort', abort); reject(error); }, timer });
@@ -101,6 +109,7 @@ export class OrtInferenceClient {
       throw new Error('ONNX utility process restart limit reached');
     }
     const proc = this.spawn(this.entryPath);
+    this.log('info', 'ORT utility process forked', { entryPath: this.entryPath });
     if (this.hasSpawned) this.restarts.push(now);
     this.hasSpawned = true;
     this.child = proc;
@@ -113,6 +122,7 @@ export class OrtInferenceClient {
       else entry.reject(new Error(message.error || 'ONNX inference failed'));
     });
     proc.on('exit', code => {
+      this.log(code === 0 ? 'info' : 'warn', 'ORT utility process exited', { code, entryPath: this.entryPath });
       if (this.child === proc) this.child = null;
       for (const [id, entry] of this.pending) {
         if (entry.child !== proc) continue;
