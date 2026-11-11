@@ -120,6 +120,7 @@ export class VoiceSessionAdapter {
   private vadSpeaking = false;
   private speakSegment = 0;
   private readonly pendingTurn = new PendingVoiceTurn();
+  private replacingPendingTurn = false;
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
@@ -208,7 +209,10 @@ export class VoiceSessionAdapter {
     });
 
     this.unsubs.push(
-      watch(controller.runState, state => { if (state.phase === 'idle') this.pendingTurn.clear(); }),
+      watch(controller.runState, state => {
+        if (state.phase === 'idle' || state.phase === 'error' ||
+            (state.phase === 'paused' && !this.replacingPendingTurn)) this.pendingTurn.clear();
+      }),
       this.tts.on('audioStarted', () => this.pendingTurn.markAudioStarted()),
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
@@ -520,10 +524,15 @@ export class VoiceSessionAdapter {
     if (transcript && speakable) {
       const merged = this.pendingTurn.mergeWithNext(transcript, this.controller.runState.value.phase !== 'idle');
       if (merged) {
-        this.controller.stop();
-        this.tts.stop();
-        this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
-        this.pendingTurn.submitted(merged);
+        this.replacingPendingTurn = true;
+        try {
+          this.controller.stop();
+          this.tts.stop();
+          this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+          this.pendingTurn.submitted(merged, true);
+        } finally {
+          this.replacingPendingTurn = false;
+        }
       } else {
         this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
         this.pendingTurn.submitted(transcript);
