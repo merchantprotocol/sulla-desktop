@@ -12,6 +12,8 @@ import {
 } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
+import { GitHubLogStreamFetcher } from './githubLogStreamFetcher';
+
 import type { ToolExecutionContext } from '../executionContext';
 
 function headersRecord(headers: HeadersInit | undefined): Record<string, string> {
@@ -30,6 +32,7 @@ export async function createGitHubOctokit(ctx: ToolExecutionContext | undefined)
   }
   if (!ctx) throw new Error('GitHub vault routing requires a verified tool execution context');
   const broker = requireConfiguredCredentialBroker();
+  const logStreams = new GitHubLogStreamFetcher();
   if (ctx.credential_scope?.integration_id !== 'github' || ctx.credential_scope.account_id !== accountId) {
     throw new Error('GitHub vault routing requires a signed credential scope for the active account');
   }
@@ -55,6 +58,10 @@ export async function createGitHubOctokit(ctx: ToolExecutionContext | undefined)
           injections:   [{ field: 'token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
           responseType: 'json',
         });
+        const isActionsLogRequest = new URL(destination).pathname.match(/\/actions\/jobs\/\d+\/logs$/) !== null;
+        if (isActionsLogRequest) {
+          return logStreams.fetchLogStream(broker, request, init?.signal ?? undefined);
+        }
         const result = await broker.execute(request, init?.signal ?? undefined);
         return new Response(result.body == null ? null : JSON.stringify(result.body), {
           status:  result.status,

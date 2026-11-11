@@ -11,6 +11,7 @@ import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
 import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
+import { CloudRenameSuccessor } from './Repositories/CloudRenameSuccessor.js';
 import { copyLockedFile } from './fileOperations.js';
 import { mimeForPath as mime } from './mimeTypes.js';
 import { isProtectedPath } from './protectedFiles.js';
@@ -1048,7 +1049,9 @@ export class LocalFilesManager {
           if (action === 'move') {
             await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1', [row.id, nextPath]);
             await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [collectionId, row.id, nextPath]);
-            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [collectionId, row.id, row.current_version_id]);
+            const parentFollows = item.folder && row.watched_path.startsWith(`${ item.sourcePath }/`);
+            const versionId = await new CloudRenameSuccessor(actor).versionFor(client, { fileId: row.id, currentVersionId: row.current_version_id, parentFollows });
+            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [collectionId, row.id, versionId]);
             await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId, from: row.path, to: nextPath })]);
           } else {
             const copied = await copyLockedFile(client, row, nextPath, actor);

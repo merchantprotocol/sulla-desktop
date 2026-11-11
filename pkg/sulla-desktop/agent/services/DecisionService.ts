@@ -7,6 +7,10 @@ import { randomUUID } from 'crypto';
 
 import { postgresClient } from '../database/PostgresClient';
 import { PendingDecisionRepository } from '../repositories/PendingDecisionRepository';
+import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+import { getWebSocketClientService } from './WebSocketClientService';
+import { LateDecisionAnswerHandler } from './LateDecisionAnswerHandler';
+import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 
 import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
@@ -15,7 +19,17 @@ import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/sha
  * No tool arguments or credentials are copied into cloud snapshots.
  */
 export class DecisionService {
-  private readonly pendingDecisions = new PendingDecisionRepository(postgresClient);
+  private readonly pendingDecisions: PendingDecisionRepository;
+  private readonly lateAnswerHandler: LateDecisionAnswerHandler;
+
+  constructor(lateAnswerHandler?: LateDecisionAnswerHandler) {
+    this.pendingDecisions = new PendingDecisionRepository(postgresClient);
+    this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
+      this.pendingDecisions,
+      { find: async conversationId => (await ConversationHistoryModel.getByThread(conversationId)) ?? await ConversationHistoryModel.getById(conversationId) },
+      new LazyLateAnswerMessageSender(() => getWebSocketClientService()),
+    );
+  }
   private readonly session = randomUUID();
   private readonly listeners = new Set<(record: DecisionRecord) => void>();
   subscribe(listener: (record: DecisionRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -61,15 +75,21 @@ export class DecisionService {
     return rows.map(row => row.record);
   }
 
-  async resolve(response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string }> {
+  async resolve(response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
     if (!response || typeof response.id !== 'string' || typeof response.conversationId !== 'string') return { settled: false, reason: 'Request and conversation are required.' };
     const entry = this.waiting.get(response.id);
-    if (!entry) return { settled: false, reason: 'Request is no longer waiting.' };
+    if (!entry) {
+      const record = await this.pendingDecisions.findById(response.id);
+      if (record?.kind === 'question' && record.status === 'expired' && response.action === 'answered' && record.conversationId === response.conversationId) return this.lateAnswerHandler.handle(record, response);
+      return { settled: false, reason: 'Request is no longer waiting.' };
+    }
     if (entry.record.conversationId !== response.conversationId || entry.busy) {
       return { settled: false, reason: 'Already answered, unavailable, or not this conversation.' };
     }
     if (Date.now() >= entry.record.expiresAt) {
       await this.expire(response.id);
+      const expired = await this.pendingDecisions.findById(response.id);
+      if (expired?.kind === 'question' && expired.status === 'expired' && response.action === 'answered') return this.lateAnswerHandler.handle(expired, response);
       return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
     }
     const action = response.action;
@@ -83,7 +103,7 @@ export class DecisionService {
       answers = questions.map((q, i) => {
         const selected = response.answers![i]?.selected;
         if (!Array.isArray(selected) || !selected.length || (!q.multiSelect && selected.length !== 1) ||
-          selected.some(s => typeof s !== 'string' || !s.trim() || s.length > 10000)) throw new Error('Invalid answer');
+          selected.some(s => typeof s !== 'string' || !s.trim() || s.length > 10000)) throw new Error('Answer could not be recorded.');
         return { question: q.question, selected: selected.map(s => s.trim()) };
       });
     }

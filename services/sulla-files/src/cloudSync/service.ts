@@ -17,8 +17,12 @@ import { FilesSyncCloudApi } from './cloudApi.js';
 import { configureCryptoModule, type CryptoModuleStatus } from './cryptoModule.js';
 import { sealCollectionInfo, sealEscrowWithKey, signHead, stateHash, verifyHead, type SyncHead, type TransportEnvelope } from './envelope.js';
 import { EscrowTransportRequests } from './escrowTransport.js';
+import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageRepository.js';
+import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
+import { CloudFolderCoverage } from './folderCoverage.js';
 import { CloudRootKeyStore } from './keyStore.js';
 import { CloudPuller } from './pull.js';
+import { CloudPushOrdering } from './pushOrdering.js';
 import { buildCommitBatch, CloudPusher, sha256Text, type RecursiveDeleteMetadata } from './push.js';
 import { CloudRemoteContent } from './remoteContent.js';
 import { PgCloudSyncRepository, type QueuedOperation, type SyncRow, type UploadSession } from './repository.js';
@@ -43,6 +47,7 @@ class HttpStatusError extends Error {
 function safeError(error:unknown):string {
   const code = (error as { code?:unknown })?.code;
   if (code === 'FILE_OFFLINE') return 'Sulla Cloud is unreachable';
+  if (code === 'FILE_BUSY') return 'Sulla Cloud is busy; retrying shortly';
   if (code === 'FILES_SYNC_INTEGRITY' || code === 'FILE_INTEGRITY') return `Integrity check failed: ${ String((error as Error).message).slice(0, 200) }`;
   return 'Cloud backup step failed';
 }
@@ -114,6 +119,7 @@ export class CloudSyncService {
   private readonly puller:CloudPuller;
   private readonly pusher:CloudPusher;
   private readonly restorer:CloudRestore;
+  private readonly coverage:CloudFolderCoverage;
   private readonly locks = new Map<string, Promise<unknown>>();
   private readonly lastPullAt = new Map<string, number>();
   private loop?:Promise<void>;
@@ -135,12 +141,18 @@ export class CloudSyncService {
     this.repository = new PgCloudSyncRepository(db, actor);
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repository, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
-    this.pusher = new CloudPusher(this.repository, store, keyring, this.staging);
+    const candidates = new PgCloudPushCandidateRepository(db);
+    this.pusher = new CloudPusher(this.repository, store, keyring, this.staging, new CloudPushOrdering(candidates));
     this.restorer = new CloudRestore(this.transport, this.api, new PgRestoreTarget(db, config, keyring, this.roots));
+    this.coverage = new CloudFolderCoverage(new PgCloudFolderCoverageStore(db, candidates), line => console.log(line));
   }
 
   start():void {
     this.stopped = false;
+    // Read-only counts first (owner-visible preview), then queue only folders Cloud never received.
+    void this.coverage.previewAndBackfill()
+      .then(() => this.nudge())
+      .catch(error => console.warn(`[SullaFiles] cloud folder coverage check failed: ${ safeError(error) }`));
     this.schedule(LOOP_MS);
   }
 
@@ -183,6 +195,7 @@ export class CloudSyncService {
         wrapped = created.wrapped;
       }
       await this.repository.setEnabled(collectionId, enabled, wrapped);
+      if (enabled) await this.coverage.previewAndBackfill([collectionId]);
       if (enabled) this.nudge();
       return { enabled };
     });
@@ -276,7 +289,7 @@ export class CloudSyncService {
       } catch (error) {
         return this.failed(current, safeError(error), undefined);
       }
-      return this.handleResponse(current, response.status, response.body);
+      return this.handleResponse(current, response.status, response.body, response.headers);
     });
   }
 
@@ -344,12 +357,16 @@ export class CloudSyncService {
 
   // ---- signed responses ----
 
-  private async handleResponse(operation:QueuedOperation, status:number, body:any):Promise<{ status:SendStatus; detail:unknown }> {
+  private async handleResponse(operation:QueuedOperation, status:number, body:any, headers:Record<string,string> = {}):Promise<{ status:SendStatus; detail:unknown }> {
     const collectionId = operation.collectionId;
     const ok = status >= 200 && status < 300;
     if (status === 401 || status === 403) {
       // Stale timestamp or signature problems are fixed by re-signing; main retries with backoff.
       return this.failed(operation, 'Sulla Cloud rejected the device signature', { status, error: body?.error });
+    }
+    if (status === 429) {
+      const retryAfterMs = Math.min(5 * 60_000, Math.max(1_000, Number(headers['retry-after']) * 1_000 || 1_000));
+      return this.failed(operation, 'Sulla Cloud is busy; retrying shortly', { status, retryAfterMs, error: body?.error });
     }
     switch (operation.op) {
       case 'create': {
@@ -701,6 +718,8 @@ export class CloudSyncService {
   }
 
   private async dropSession(collectionId:string):Promise<void> {
+    const uploadId = (await this.repository.sync(collectionId))?.uploadSession?.uploadId;
+    if (uploadId) await this.api.abortUpload(uploadId).catch(() => undefined);
     await this.staging.clear(collectionId);
     await this.repository.dropCollectionOperations(collectionId, ['upload-open', 'commit']);
     await this.repository.saveSession(collectionId, null, 0, 'idle');

@@ -14,6 +14,7 @@ import Electron from 'electron';
 import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
+import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
 /**
@@ -241,6 +242,7 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
   'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
   'extension-permissions:audit': () => import('@pkg/agent/extensions/HookRegistry').HookAuditEvent[];
@@ -444,6 +446,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
+  'sulla-cloud-vault:list-held':              () => Array<{ id: string; legacy: boolean; currentPolicy: Record<string, unknown> | null; proposedPolicy: Record<string, unknown> | null }>;
+  'sulla-cloud-vault:decide-held':            (recordId: string, decision: 'approve' | 'reject') => boolean;
   'sulla-cloud-memory:list-pending':          () => Array<{ id: string; generation: number | string; record: Record<string, unknown>; source_device_id: string }>;
   'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
@@ -943,6 +947,8 @@ export interface IpcMainInvokeEvents {
     promptLength: number;
     updatedAt:    string;
   }[];
+  // Composer type-ahead: skills, agents, workflows, recipes (never functions).
+  'use-case-suggest:query': (text: string, options?: { limit?: number }) => UseCaseSuggestionResponse;
   'library-list-recipes':  () => {
     slug:        string;
     name:        string;

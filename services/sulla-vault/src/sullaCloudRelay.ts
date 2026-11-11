@@ -12,6 +12,7 @@ export const SULLA_CLOUD_INTEGRATION_ID = 'sulla-cloud';
 export const SULLA_CLOUD_RELAY_OPERATION = 'sulla-cloud.relay';
 export const SULLA_CLOUD_HOST = 'sulla-workers.merchantprotocol.workers.dev';
 export const SULLA_CLOUD_REFRESH_URL = `https://${ SULLA_CLOUD_HOST }/auth/refresh`;
+export const SULLA_CLOUD_LOGOUT_URL = `https://${ SULLA_CLOUD_HOST }/auth/logout`;
 /** Refresh when the access token has less than this left (worker TTL is 15 min). */
 export const SULLA_CLOUD_REFRESH_SKEW_SECONDS = 120;
 

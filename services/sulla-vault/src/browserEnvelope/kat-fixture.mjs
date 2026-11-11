@@ -5,7 +5,7 @@
 
 // Regenerates vault-sync-v3-kat.json, the cross-implementation fixture for
 // Passwords sync v3. The "desktop" half is produced by this service's
-// envelope.ts with @sulla/vault-crypto (exactly what the container uploads);
+// DomainVaultSyncCodec with @sulla/domain (exactly what the container uploads);
 // the "browser" half by www-sulladesktop js/cloud/passwords/sync-envelope.js
 // (exactly what the Passwords crypto worker commits). Each side's test must
 // verify and decrypt the other side's half. Synthetic data only.
@@ -24,7 +24,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const bundled = await build({
   stdin: {
     contents: `
-      export * as desktop from ${ JSON.stringify(path.join(here, 'envelope.ts')) };
+      export { DomainVaultSyncCodec } from ${ JSON.stringify(path.join(here, 'DomainVaultSyncCodec.ts')) };
+      export { SodiumCryptoPrimitives } from ${ JSON.stringify(path.join(here, 'SodiumCryptoPrimitives.ts')) };
+      export { NobleCryptoPrimitives } from '@sulla/domain';
       export * as browser from ${ JSON.stringify(path.resolve(browserModule)) };
       export * as vc from '@sulla/vault-crypto';
       export { default as sodium } from 'libsodium-wrappers-sumo';
@@ -36,7 +38,7 @@ const bundled = await build({
 });
 const tmp = path.join(path.dirname(path.resolve(out)), `.kat-${ process.pid }.mjs`);
 writeFileSync(tmp, bundled.outputFiles[0].text);
-const { desktop, browser, vc, sodium } = await import(tmp);
+const { DomainVaultSyncCodec, SodiumCryptoPrimitives, NobleCryptoPrimitives, browser, vc, sodium } = await import(tmp);
 (await import('node:fs')).unlinkSync(tmp);
 await sodium.ready;
 
@@ -45,7 +47,8 @@ const PARAMS = { memoryBytes: 64 * 1024 * 1024, operations: 2 };
 const VAULT_USER = '9a1c3f00-0000-4000-8000-00000000c0de';
 
 async function half(kind) {
-  const env = kind === 'desktop' ? desktop.createSyncEnvelope(sodium) : browser.createSyncEnvelope(sodium);
+  const crypto = new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives());
+  const env = kind === 'desktop' ? new DomainVaultSyncCodec(crypto, crypto) : browser.createSyncEnvelope(sodium);
   const master = await vc.deriveMasterKey(PASSWORD, undefined, PARAMS);
   const { userKey, encryptedUserKey } = await vc.createUserKey(master.key);
   const pair = await vc.createUserKeyPair(userKey);
@@ -65,9 +68,7 @@ async function half(kind) {
     const id = `${ kind === 'desktop' ? 'd' : 'b' }0000000-0000-4000-8000-00000000000${ i + 1 }`;
     const json = JSON.stringify(item);
     plaintexts[id] = json;
-    const sealed = kind === 'desktop'
-      ? await vc.encryptItem(json, userKey, { itemId: id, ownerId: VAULT_USER })
-      : env.encryptItem(json, userKey, VAULT_USER, id);
+    const sealed = env.encryptItem(json, userKey, VAULT_USER, id);
     records.push(env.buildRecord({ vaultId, scope: 'personal', kind: 'item', id, generation: i + 1, deleted: false, item: sealed }, userKey));
   }
   records.push(env.buildRecord({ vaultId, scope: 'personal', kind: 'item', id: `${ kind === 'desktop' ? 'd' : 'b' }0000000-0000-4000-8000-0000000000ff`, generation: 3, deleted: true }, userKey));

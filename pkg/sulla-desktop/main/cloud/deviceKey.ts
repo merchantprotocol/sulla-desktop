@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 
 import paths from '@pkg/utils/paths';
+import { DeviceMessage, type DevicePurpose } from '@sulla/domain';
 
 interface StoredKey {
   v:          1;
@@ -85,39 +86,24 @@ export function getDeviceKeyFingerprint(): string {
   return hex.replace(/(.{4})(?!$)/g, '$1-');
 }
 
-// Must match sulla-workers src/services/device-keys.ts PURPOSE_TAGS.
-const PURPOSE_TAGS = {
-  'relay-desktop': 'sulla-relay-desktop-v1',
-  'sync-upload':   'sulla-sync-upload-v1',
-  'key-rotate':    'sulla-key-rotate-v1',
-  'vault-sync-v3': 'sulla-vault-sync-v3',
-  'files-sync-v1': 'sulla-files-sync-v1',
-  'device-tools-rpc-v1': 'sulla-device-tools-rpc-v1',
-  'device-tools-host-v1': 'sulla-device-tools-host-v1',
-  'support-desktop-v1': 'sulla-support-desktop-v1',
-  'support-request-v1': 'sulla-support-request-v1',
-  'support-guest-v1': 'sulla-support-guest-v1',
-} as const;
-
-export type DevicePurpose = keyof typeof PURPOSE_TAGS;
+// The purpose registry (tag per purpose) is the shared domain DeviceMessage; it matches the sulla-workers
+// verifier. An unknown purpose or a newline in a part throws instead of signing the wrong bytes.
+export type { DevicePurpose };
 
 export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
-  for (const p of parts) {
-    if (String(p).includes('\n')) throw new Error('message parts must not contain newlines');
-  }
-  return [PURPOSE_TAGS[purpose], ...parts.map(String)].join('\n');
+  return new DeviceMessage(purpose, parts).toString();
 }
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
 export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return crypto.sign(null, Buffer.from(deviceMessage(purpose, parts)), load().key).toString('base64');
+  return crypto.sign(null, Buffer.from(new DeviceMessage(purpose, parts).toBytes()), load().key).toString('base64');
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
 export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
   const ts = Math.floor(Date.now() / 1000);
-  const message = deviceMessage(purpose, [...parts, ts]);
-  const signature = crypto.sign(null, Buffer.from(message), load().key).toString('base64');
+  const message = new DeviceMessage(purpose, [...parts, ts]);
+  const signature = crypto.sign(null, Buffer.from(message.toBytes()), load().key).toString('base64');
   return { ts, signature };
 }
 

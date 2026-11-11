@@ -48,6 +48,7 @@ import { initRecipeRailApps } from './marketplace/recipeRailApps';
 import { initExtensionUiIpc } from './extensionUiIpc';
 import { initIntegrationGrantIpc } from './integrationGrantIpc';
 import { initSupportSessionIpc } from './supportSessionIpc';
+import { initDebugErrorReporting } from './DebugErrorService';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -85,6 +86,7 @@ function assertInsideUserHome(targetPath: string): string {
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+  initDebugErrorReporting();
   initMessageBusIpc();
   initExtensionUiIpc();
   initIntegrationGrantIpc();

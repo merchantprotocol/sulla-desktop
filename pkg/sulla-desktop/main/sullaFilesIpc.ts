@@ -27,6 +27,7 @@ import { getSullaFilesBackups } from './sullaFilesBackups';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { getSullaFileProvider } from './sullaFileProvider';
 import { FilesSyncV1 } from './cloud/filesSyncV1';
+import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
@@ -551,6 +552,12 @@ function initFilesMediaProtocol():void {
 }
 
 export function initSullaFilesIpc():void {
+  const watcher = getSullaFilesWatcher();
+  createUseCaseSuggestionIpcRegistrar(
+    (channel, handler) => ipcMain.handle(channel, handler),
+    (channel, handler) => ipcMain.handle(channel, handler),
+    watcher,
+  ).register();
   void getSullaFileProvider().start();
   app.once('will-quit', () => { void getSullaFileProvider().stop() });
   const feeds = new Map<number, FilesChangeFeed>();

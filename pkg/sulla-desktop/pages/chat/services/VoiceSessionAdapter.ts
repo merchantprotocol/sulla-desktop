@@ -41,9 +41,11 @@ import { newMessageId, type MessageId } from '../types/chat';
 
 import {
   TTSPlayerService,
-  createVoiceBargeInDetector,
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
+import { PassThroughAddressedSpeechClassifier } from '@pkg/composables/voice/AddressedSpeechClassifier';
+import { SelfEchoFilter } from '@pkg/composables/voice/SelfEchoFilter';
+import { TranscriptNoiseFilter } from '@pkg/composables/voice/VoiceTurnAccumulator';
 import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
 import { newVoiceTurnId, voiceTrace } from '@pkg/composables/voice/VoiceTrace';
@@ -69,11 +71,6 @@ export interface VoiceSessionAdapterOptions {
   isActive?: () => boolean;
 }
 
-// Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
-// `utterance_end` event (VAD silence + drained pipeline); this is only a safety net
-// for when that signal never arrives. Long on purpose — the old 2000ms collided with
-// whisper's 2000ms chunk cadence and split utterances into separate agent turns.
-const UTTERANCE_FALLBACK_MS = 8000;
 
 // Hold-to-talk shorter than this after activation is a slip, not a message
 // (Sulla Mobile's MIN_RECORDING_MS).
@@ -123,16 +120,23 @@ export class VoiceSessionAdapter {
   private voiceTurnId = '';
   private vadSpeaking = false;
   private speakSegment = 0;
-  private readonly bargeIn = createVoiceBargeInDetector();
   private readonly pendingTurn = new PendingVoiceTurn();
+  private replacingPendingTurn = false;
+  private readonly addressedSpeech = new PassThroughAddressedSpeechClassifier();
+  private playbackEndedAt = 0;
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
+  // The mic has no echo cancellation, so Sulla's own Kokoro voice comes back as speech.
+  private readonly selfEcho = new SelfEchoFilter();
+  private readonly noise = new TranscriptNoiseFilter();
+
   private readonly turn = createVoiceTurnAccumulator({
     onInterim:    text => this.updateInterim(text),
     onCommit:     text => this.commitTurn(text),
     isTTSPlaying: () => this.tts.isPlaying,
-    fallbackMs:   UTTERANCE_FALLBACK_MS,
+    isEcho:       text => this.selfEcho.isEcho(text),
+    stripEcho:    text => this.selfEcho.stripEchoSpans(text),
   });
 
   // TTS transcript bubble — one active at a time.
@@ -154,8 +158,24 @@ export class VoiceSessionAdapter {
       size:      typeof msg?.text === 'string' ? msg.text.length : 0,
       state:     msg?.event_type ?? 'unknown',
     });
+    this.bargeInOnRealWords(msg);
     this.turn.handleEvent(msg);
   };
+
+  /**
+   * Hands-free barge-in only on real words that are not Sulla's own voice. VAD alone can't
+   * tell the user from Kokoro coming back through the speakers, so it no longer stops playback.
+   */
+  private bargeInOnRealWords(msg: any): void {
+    if (this.mode !== 'handsfree') return;
+    if (!this.tts.isPlaying && this.tts.queueLength === 0) return;
+    const text = typeof msg?.text === 'string' ? msg.text.trim() : '';
+    if (!text || this.noise.isNoise(text) || this.selfEcho.isEcho(text)) return;
+    logBargeIn();
+    voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'user_words_during_playback' });
+    this.tts.stop();
+    this.selfEcho.clear();
+  }
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!this.capturing) return;
@@ -170,13 +190,9 @@ export class VoiceSessionAdapter {
       });
     }
 
-    // Sustained speech filters coughs/clicks before cutting off playback.
     // (Hold-to-talk stops TTS outright on activation.)
-    if (this.mode === 'handsfree' && this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
-      logBargeIn();
-      voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'sustained_vad_during_playback' });
-      this.tts.stop();
-    }
+    // Barge-in is decided on transcribed words in bargeInOnRealWords(), not raw VAD:
+    // without echo cancellation, Sulla's own playback looks exactly like the user talking.
 
     const v = this.controller.voice.value;
     if (v.phase !== 'recording' || v.finishing) return;
@@ -197,7 +213,10 @@ export class VoiceSessionAdapter {
     });
 
     this.unsubs.push(
-      watch(controller.runState, state => { if (state.phase === 'idle') this.pendingTurn.clear(); }),
+      watch(controller.runState, state => {
+        if (state.phase === 'idle' || state.phase === 'error' ||
+            (state.phase === 'paused' && !this.replacingPendingTurn)) this.pendingTurn.clear();
+      }),
       this.tts.on('audioStarted', () => this.pendingTurn.markAudioStarted()),
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
@@ -306,7 +325,6 @@ export class VoiceSessionAdapter {
 
     this.capturing = true;
     this.turn.reset();
-    this.bargeIn.reset();
     this.lastLevel = 0;
     this.lastSpeaking = false;
     this.vadSpeaking = false;
@@ -401,7 +419,6 @@ export class VoiceSessionAdapter {
     this.active = false;
     this.startPromise = null;
     this.turn.reset();
-    this.bargeIn.reset();
 
     ipcRenderer.removeListener('gateway-transcript', this.onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', this.onMicVad);
@@ -507,14 +524,27 @@ export class VoiceSessionAdapter {
     // Mark voice idle — a fresh interim will spawn if the user keeps talking.
     this.controller.stopVoice(true);
 
+    const addressed = this.addressedSpeech.isAddressed(speakable, {
+      holdToTalk: this.mode === 'ptt',
+      sincePlaybackEndMs: Date.now() - this.playbackEndedAt,
+    });
+    if (transcript && speakable && !addressed) {
+      this.controller.appendMessage({ id: newMessageId(), kind: 'notice', text: `Overheard: ${ transcript }`, detail: 'Not sent to Sulla', createdAt: Date.now() });
+    }
+
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (transcript && speakable) {
+    if (transcript && speakable && addressed) {
       const merged = this.pendingTurn.mergeWithNext(transcript, this.controller.runState.value.phase !== 'idle');
       if (merged) {
-        this.controller.stop();
-        this.tts.stop();
-        this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
-        this.pendingTurn.submitted(merged);
+        this.replacingPendingTurn = true;
+        try {
+          this.controller.stop();
+          this.tts.stop();
+          this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+          this.pendingTurn.submitted(merged, true);
+        } finally {
+          this.replacingPendingTurn = false;
+        }
       } else {
         this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
         this.pendingTurn.submitted(transcript);
@@ -553,6 +583,7 @@ export class VoiceSessionAdapter {
       textLength: text.trim().length,
     });
     voiceTrace(this.voiceTurnId, 'speak_segment', { elapsedMs: Date.now() - this.captureRequestedAt, segment: ++this.speakSegment, size: text.trim().length });
+    this.selfEcho.recordSpoken(text);
     this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
   }
 
@@ -591,6 +622,7 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsEnd(): void {
+    this.playbackEndedAt = Date.now();
     const id = this.activeTtsMessageId;
     this.activeTtsMessageId = null;
     if (id) this.controller.removeMessage(id);

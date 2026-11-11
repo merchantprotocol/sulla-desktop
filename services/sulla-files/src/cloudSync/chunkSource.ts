@@ -10,7 +10,7 @@ import type pg from 'pg';
 
 import type { CloudChunkSource } from '../chunkCache/types.js';
 import type { Envelope } from '../crypto.js';
-import { CloudOfflineError, type FilesSyncCloudApi } from './cloudApi.js';
+import { CloudBusyError, CloudOfflineError, type FilesSyncCloudApi } from './cloudApi.js';
 import { CHUNK_PLAIN_BYTES, chunkId, FLAG_DEFLATE_RAW, openChunk } from './envelope.js';
 import type { CloudRootKeyStore } from './keyStore.js';
 
@@ -102,6 +102,7 @@ export class FilesCloudChunkSource implements CloudChunkSource {
       wire = await this.api.getChunk(collectionId, mapped.cloudChunkId);
     } catch (error:any) {
       if (error?.code === 'FILE_INTEGRITY') throw error;
+      if (error instanceof CloudBusyError) throw error;
       throw new CloudOfflineError('Sulla Cloud is unreachable');
     }
     if (wire.length !== mapped.cipherBytes || createHash('sha256').update(wire).digest('hex') !== mapped.cipherSha256) {

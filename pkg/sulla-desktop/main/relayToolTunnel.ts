@@ -87,6 +87,10 @@ export function startRelayToolTunnel(): RelayToolTunnel | null {
     deviceId:      getDesktopDeviceId,
     currentUserId: getRelayUserId,
     execute:       executeThroughRegistry,
+    operationTypes: (_category, name) => {
+      const registered = toolRegistry.resolveRegisteredName(_category, name);
+      return registered ? toolRegistry.getOperationTypes(registered) : [];
+    },
     log:           console,
   });
   cloudTunnel.start();
@@ -124,6 +128,10 @@ export async function startLocalToolTunnel(): Promise<RelayToolTunnel> {
     deviceId: () => Promise.resolve(deviceId),
     currentUserId: () => Promise.resolve(userId),
     execute: executeThroughRegistry,
+    operationTypes: (category, name) => {
+      const registered = toolRegistry.resolveRegisteredName(category, name);
+      return registered ? toolRegistry.getOperationTypes(registered) : [];
+    },
     log: console,
   });
   localTunnel.start();

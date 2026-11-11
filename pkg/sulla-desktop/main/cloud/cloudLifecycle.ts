@@ -17,7 +17,7 @@
  * Signed out ⇒ everything stops.
  */
 
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, net, powerMonitor } from 'electron';
 
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
@@ -30,6 +30,9 @@ import { VaultSyncV3 } from './vaultSyncV3';
 import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { MemorySyncV1 } from './memorySyncV1';
+import { SyncDriverSupervisor } from './syncDriverSupervisor';
+import { NetworkResumeMonitor, type NetworkResumePowerSource, type NetworkStatusSource } from './networkResumeMonitor';
+import { CloudResumeSync } from './cloudResumeSync';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -44,6 +47,51 @@ const console = Logging.background;
 let channel: SecureDesktopChannel | null = null;
 let signedIn = false;
 let prefsListenerInstalled = false;
+const syncDriverSupervisor=new SyncDriverSupervisor();
+
+function reconcileSyncDrivers():void {
+  if(!signedIn)return;
+  const device=DevicesCloudApi.getState();
+  const registered=device.registered&&!device.revoked;
+  getCloudPreferences().then(prefs=>{
+    const active=Boolean(registered&&prefs.enabled);
+    const vaultHealth=VaultSyncV3.getStatus()[0].health;
+    if(vaultHealth)syncDriverSupervisor.reconcile({
+      running:vaultHealth.running,startedAt:vaultHealth.startedAt,lastAttemptAt:vaultHealth.lastAttemptAt,scheduledNextAt:vaultHealth.scheduledNextAt,intervalMs:10*60_000,
+      restart:()=>VaultSyncV3.restart(),
+    },active&&prefs.vault);
+    const filesHealth=FilesSyncV1.driverHealth();
+    syncDriverSupervisor.reconcile({
+      running:filesHealth.running,startedAt:filesHealth.startedAt,lastAttemptAt:filesHealth.lastAttemptAt,scheduledNextAt:filesHealth.scheduledNextAt,intervalMs:15_000,
+      restart:()=>FilesSyncV1.restart(),
+    },active&&prefs.files);
+  }).catch(()=>undefined);
+}
+
+function startSyncDriverSupervisor():void {
+  syncDriverSupervisor.start(reconcileSyncDrivers);
+  reconcileSyncDrivers();
+}
+
+function stopSyncDriverSupervisor():void {
+  syncDriverSupervisor.stop();
+}
+
+// Electron modules are read on first use, not at import, so this file loads before app ready.
+const powerEvents: NetworkResumePowerSource = {
+  on: (event, listener) => { if (event === 'resume') powerMonitor.on('resume', listener); else powerMonitor.on('unlock-screen', listener) },
+  removeListener: (event, listener) => { if (event === 'resume') powerMonitor.removeListener('resume', listener); else powerMonitor.removeListener('unlock-screen', listener) },
+};
+const networkStatus: NetworkStatusSource = { isOnline: () => net.isOnline() };
+
+const cloudResumeSync = new CloudResumeSync({
+  files: FilesSyncV1,
+  vault: VaultSyncV3,
+  preferences: () => getCloudPreferences(),
+  isSignedIn: () => signedIn,
+});
+const networkResume = new NetworkResumeMonitor({ power: powerEvents, net: networkStatus });
+networkResume.on('online', () => { cloudResumeSync.handleOnline().catch(() => undefined) });
 
 /**
  * Native, local-only approval. Default button is Deny; the dialog can only
@@ -136,6 +184,7 @@ async function stopConversationSync(): Promise<void> {
 }
 
 async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
+  reconcileSyncDrivers();
   if (!prefs.enabled) {
     await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop(); MemorySyncV1.stop();
     DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); ByoUsageSync.stop(); return;
@@ -173,6 +222,8 @@ function installPrefsListener() {
 /** Called after a successful sign-in and after restoring a saved session. */
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
+  startSyncDriverSupervisor();
+  networkResume.start();
   installPrefsListener();
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
@@ -187,6 +238,8 @@ export async function startCloudServices(): Promise<void> {
 
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
+  stopSyncDriverSupervisor();
+  networkResume.stop();
   channel?.stop();
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
@@ -279,6 +332,11 @@ export function initCloudConnectionEvents(): void {
     else if (kind === 'all') { await CloudDataSync.deleteAll(); await MemorySyncV1.deleteCloudCopy(); await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' }); await ConversationSyncService.deleteAllCloudCopies() }
     else await CloudDataSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
+  });
+  ipc.handle('sulla-cloud-vault:list-held', async() => VaultSyncV3.listHeld());
+  ipc.handle('sulla-cloud-vault:decide-held', async(_e: unknown, recordId: string, decision: 'approve' | 'reject') => {
+    if (typeof recordId !== 'string' || (decision !== 'approve' && decision !== 'reject')) return false;
+    return VaultSyncV3.decideHeld(recordId, decision);
   });
   ipc.handle('sulla-cloud-memory:list-pending',async()=>MemorySyncV1.pending());
   ipc.handle('sulla-cloud-memory:decide-pending',async(_e:unknown,id:string,decision:'confirm'|'reject')=>MemorySyncV1.decide(id,decision==='confirm'));

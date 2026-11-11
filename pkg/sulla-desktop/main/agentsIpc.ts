@@ -31,6 +31,7 @@ import { readConversationLog, readConversationPreview, type AgentConversationEnt
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
+import { debugErrorService } from './DebugErrorService';
 
 // ── Response shape ───────────────────────────────────────────────────────────
 
@@ -464,8 +465,11 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
+    try {
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
-    const checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null;
+    let checkin = null;
+    try { checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null; }
+    catch (error) { void debugErrorService.reportError(`agents:thread-jobs:telemetry:${ job.jobId }#${ taskIndex }`, error); }
     const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
     const lastActivityAt = activity.lastActivityAt;
 
@@ -516,6 +520,25 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
           }
         : {}),
     };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      void debugErrorService.reportError(`agents:thread-jobs:card:${ job.jobId }#${ taskIndex }`, error);
+      return {
+        jobId: job.jobId,
+        taskIndex,
+        agentId: task.agentId,
+        label: task.label,
+        status: task.status === 'parked' ? 'parked' : task.status === 'completed' ? 'done'
+          : task.status === 'stopped' ? 'stopped' : ['error', 'lost', 'blocked'].includes(task.status) ? 'failed' : 'running',
+        createdAt: task.startedAt ?? job.createdAt,
+        finishedAt: task.finishedAt ?? job.finishedAt,
+        conversationId: task.threadId,
+        lastActivity: clipLine(`Details unavailable: ${ reason }`),
+        lastActivityAt: task.startedAt ?? job.createdAt,
+        kind: isTab ? 'tab' : 'job',
+        contract: task.contract?.name ?? 'result',
+      };
+    }
   })));
 
   return cards.filter((card): card is ThreadAgentCard => card !== null)
@@ -568,7 +591,8 @@ async function fetchAgents(): Promise<AgentsListResponse['agents']> {
         startedAt:    a.startedAt,
         lastActiveAt: a.lastActiveAt,
       }));
-  } catch {
+  } catch (error) {
+    void debugErrorService.reportError('agents:list:active-agents', error);
     return [];
   }
 }
@@ -579,7 +603,8 @@ async function fetchHeartbeat(): Promise<AgentsListResponse['heartbeat']> {
       '@pkg/agent/services/HeartbeatService'
     );
     return getHeartbeatService().getStatus();
-  } catch {
+  } catch (error) {
+    void debugErrorService.reportError('agents:list:heartbeat', error);
     return null;
   }
 }
@@ -603,7 +628,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     // from the last hour. Enriching every historical job reads one log file
     // per task on each 3s poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
-    const allJobs = (await agentJobProvider.states.jobs()).filter(job => {
+    const allJobs = (await agentJobProvider.states.list(100, true)).filter(job => {
       if (job.status === 'completed') return false;
       if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
@@ -616,6 +641,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     const logsDir = resolveSullaLogsDir();
 
     return Promise.all(allJobs.map(async job => {
+      try {
       const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
       const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
@@ -684,9 +710,14 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
         parentTitle: parent?.title || undefined,
         tasks,
       };
+      } catch (error) {
+        void debugErrorService.reportError(`agents:list:job-enrichment:${ job.jobId }`, error);
+        return { jobId: job.jobId, status: job.status, createdAt: job.createdAt, finishedAt: job.finishedAt, taskCount: job.taskCount, error: job.error, parentChannel: job.parentChannel, parentThreadId: job.parentThreadId, parentAgentId: job.parentAgentId, tasks: [] };
+      }
     }));
-  } catch {
-    return [];
+  } catch (error) {
+    void debugErrorService.reportError('agents:list:jobs', error);
+    throw error;
   }
 }
 
@@ -721,7 +752,8 @@ async function fetchWorkflowRuns(): Promise<AgentsListResponse['workflowRuns']> 
       progress: typeof row.payload?.percent === 'number' ? row.payload.percent : undefined,
       error: row.error || undefined,
     }));
-  } catch {
+  } catch (error) {
+    void debugErrorService.reportError('agents:list:workflow-runs', error);
     return [];
   }
 }

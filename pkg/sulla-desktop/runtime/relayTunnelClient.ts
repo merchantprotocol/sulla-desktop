@@ -8,6 +8,8 @@ import WebSocket from 'ws';
 import type {
   RelayEnvelope, RelayError, RelayToolCallEnvelope, RelayToolExecutionContext, RelayToolResult,
 } from './relayProtocol.js';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+import { LateToolResultStore, type LateToolResult } from './LateToolResultStore.js';
 
 const BASE_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 60_000;
@@ -18,6 +20,8 @@ export interface RelayToolTunnelOptions {
   deviceId:      () => Promise<string>;
   currentUserId: () => Promise<string>;
   execute:       (ctx: RelayToolExecutionContext, category: string, tool: string, args: unknown, signal: AbortSignal) => Promise<RelayToolResult>;
+  operationTypes?: (category: string, tool: string) => readonly string[];
+  lateResults?:    LateToolResultStore;
   createSocket?: (url: string, token: string) => WebSocket;
   log?:          Pick<Console, 'log' | 'warn'>;
 }
@@ -30,13 +34,19 @@ export function validateRelayToolCallUser(ctx: RelayToolExecutionContext, ownUse
 }
 
 export class RelayToolTunnel {
+  private readonly deadlinePolicy = new ToolDeadlinePolicy();
+  private readonly lateResults: LateToolResultStore;
   private socket:         WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectMs = BASE_RECONNECT_MS;
   private running = false;
   private calls = new Map<string, AbortController>();
 
-  constructor(private readonly options: RelayToolTunnelOptions) {}
+  constructor(private readonly options: RelayToolTunnelOptions) {
+    this.lateResults = options.lateResults ?? new LateToolResultStore();
+  }
+
+  getLateResult(requestId: string): LateToolResult | undefined { return this.lateResults.get(requestId) }
 
   start(): void {
     if (this.running || !this.options.relayUrl || !this.options.deviceToken) return;
@@ -117,19 +127,44 @@ export class RelayToolTunnel {
     }
     const controller = new AbortController();
     this.calls.set(call.requestId, controller);
-    const delay = Math.max(0, call.deadlineAt! - Date.now());
-    const timer = setTimeout(() => controller.abort(), delay);
+    const startedAt = Date.now();
+    const delay = Math.max(0, call.deadlineAt! - startedAt);
+    let timedOut = false;
+    let rejectDeadline: (error: Error) => void = () => undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      rejectDeadline(new Error('deadline'));
+    }, delay);
+    const deadline = new Promise<never>((_resolve, reject) => {
+      rejectDeadline = reject;
+    });
+    const execution = this.options.execute(call.ctx!, call.category!, call.tool!, call.args, controller.signal);
+    execution.then(result => {
+      if (!timedOut && !controller.signal.aborted) return;
+      const late = this.lateResults.record(call.requestId, result);
+      this.options.log?.warn(`[RelayToolTunnel] Late tool result for ${ call.requestId }: ${ late.outcome }`);
+    }, error => {
+      if (!timedOut && !controller.signal.aborted) return;
+      const late = this.lateResults.record(call.requestId, undefined, error);
+      this.options.log?.warn(`[RelayToolTunnel] Late tool result for ${ call.requestId }: ${ late.outcome }`);
+    });
     try {
-      const result = await this.options.execute(call.ctx!, call.category!, call.tool!, call.args, controller.signal);
-      if (!controller.signal.aborted) this.send({ type: 'tool-result', requestId: call.requestId, deviceId: call.deviceId, result });
+      const result = await Promise.race([execution, deadline]);
+      this.send({ type: 'tool-result', requestId: call.requestId, deviceId: call.deviceId, result });
     } catch (cause) {
-      const timedOut = controller.signal.aborted || Date.now() >= call.deadlineAt!;
+      timedOut = timedOut || controller.signal.aborted || Date.now() >= call.deadlineAt!;
+      const elapsedMs = Date.now() - startedAt;
+      const operationTypes = call.operationTypes ?? this.options.operationTypes?.(call.category!, call.tool!) ?? [];
       this.send({
         type:      'tool-result',
         requestId: call.requestId,
         deviceId:  call.deviceId,
         error:     timedOut
-          ? { code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true }
+          ? {
+            code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true,
+            details: this.deadlinePolicy.timeoutDetails(call.tool!, delay, elapsedMs, operationTypes),
+          }
           : { code: 'INTERNAL', message: cause instanceof Error ? cause.message : String(cause) },
       });
     } finally {
@@ -142,7 +177,18 @@ export class RelayToolTunnel {
     if (!call.ctx || !call.category || !call.tool || !call.deadlineAt) {
       return { code: 'BAD_REQUEST', message: 'Incomplete tool-call envelope' };
     }
-    if (call.deadlineAt <= Date.now()) return { code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true };
+    if (call.deadlineAt <= Date.now()) {
+      const deadlineMs = this.deadlinePolicy.deadlineMs(call.tool, call.operationTypes ?? this.options.operationTypes?.(call.category, call.tool));
+      return {
+        code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true,
+        details: this.deadlinePolicy.timeoutDetails(
+          call.tool,
+          deadlineMs,
+          deadlineMs + (Date.now() - call.deadlineAt),
+          call.operationTypes ?? this.options.operationTypes?.(call.category, call.tool),
+        ),
+      };
+    }
     if (call.ctx.device_id && call.ctx.device_id !== call.deviceId) {
       return { code: 'FORBIDDEN', message: 'Tool capability is bound to a different Desktop device' };
     }

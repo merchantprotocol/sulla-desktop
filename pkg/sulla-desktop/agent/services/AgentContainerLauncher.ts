@@ -1083,10 +1083,20 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
           'sulla-native': { type: 'http', url: mcpUrl, headers: { Authorization: 'Bearer ${SULLA_MCP_SESSION_TOKEN}' } },
         },
       });
-      await guestExec(
-        ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(this.options.identity.uid), String(this.options.identity.gid)],
+      // Self-healing: /dev/shm is tmpfs, so the per-container secret dir can
+      // vanish (startup orphan sweep, runtime restart, early teardown). Recreate
+      // it with the right owner before writing, log the repair, and retry once.
+      const writeConfig = () => guestExec(
+        ['sh', '-c', 'set -eu; umask 077; sudo install -d -m 0700 -o "$2" -g "$3" "$(dirname "$1")"; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(this.options.identity.uid), String(this.options.identity.gid)],
         Buffer.from(payload).toString('base64'),
       );
+      try {
+        await writeConfig();
+      } catch (error) {
+        log.error(`[AgentContainer] MCP tool-config write failed for session ${ sessionId } (dir ${ this.options.secretDir }); recreating secret dir and retrying once: ${ (error as Error).message }`);
+        await writeConfig();
+        log.warn(`[AgentContainer] MCP tool-config write self-healed for session ${ sessionId }`);
+      }
       const ref = crypto.randomUUID();
       return {
         ref,

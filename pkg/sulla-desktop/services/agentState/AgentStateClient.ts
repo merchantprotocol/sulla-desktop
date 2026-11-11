@@ -7,6 +7,7 @@ export interface AgentStateTransport {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   on(channel: string, listener: (event: unknown, snapshot: AgentStateSnapshot) => void): unknown;
   removeListener(channel: string, listener: (event: unknown, snapshot: AgentStateSnapshot) => void): unknown;
+  send?(channel: string, ...args: unknown[]): void;
 }
 export interface AgentStateWindow {
   document: { visibilityState: string; addEventListener(type: string, listener: () => void): void; removeEventListener(type: string, listener: () => void): void };
@@ -20,9 +21,11 @@ const EMPTY: AgentStateSnapshot = { version: -1, generatedAt: new Date(0).toISOS
 
 export class AgentStateClient {
   private readonly state = shallowRef<AgentStateSnapshot>(EMPTY);
+  private readonly loadError = shallowRef('');
   private timer:     ReturnType<typeof setInterval> | null = null;
   private started = false;
   readonly snapshot: Readonly<ShallowRef<AgentStateSnapshot>> = readonly(this.state) as Readonly<ShallowRef<AgentStateSnapshot>>;
+  readonly error: Readonly<ShallowRef<string>> = readonly(this.loadError) as Readonly<ShallowRef<string>>;
 
   constructor(private readonly transport: AgentStateTransport, private readonly host: AgentStateWindow, private readonly intervalMs = 15_000) {}
 
@@ -55,11 +58,17 @@ export class AgentStateClient {
   }
 
   async resync(): Promise<void> {
-    const snapshot = await this.transport.invoke(AGENT_STATE_SNAPSHOT_CHANNEL) as AgentStateSnapshot;
-    this.apply(snapshot);
+    try {
+      const snapshot = await this.transport.invoke(AGENT_STATE_SNAPSHOT_CHANNEL) as AgentStateSnapshot;
+      this.apply(snapshot);
+      this.loadError.value = '';
+    } catch (error) {
+      this.loadError.value = error instanceof Error ? error.message : String(error);
+      this.transport.send?.('debug:report', 'live-agents:snapshot', { message: this.loadError.value, stack: error instanceof Error ? error.stack : '' });
+    }
   }
 
   private readonly onSnapshot = (_event: unknown, snapshot: AgentStateSnapshot): void => { this.apply(snapshot) };
-  private readonly onReconnect = (): void => { this.resync().catch(() => undefined) };
-  private readonly onVisibility = (): void => { if (this.host.document.visibilityState === 'visible') this.resync().catch(() => undefined); };
+  private readonly onReconnect = (): void => { void this.resync() };
+  private readonly onVisibility = (): void => { if (this.host.document.visibilityState === 'visible') void this.resync(); };
 }
