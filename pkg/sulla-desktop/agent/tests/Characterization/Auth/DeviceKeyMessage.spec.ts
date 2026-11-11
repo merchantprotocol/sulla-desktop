@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DeviceMessage } from '@sulla/domain';
+import { DeviceMessage, type DevicePurpose as DomainDevicePurpose } from '@sulla/domain';
 
 // Key custody stays in main; the spec gives it a throwaway config directory.
 vi.mock('@pkg/utils/paths', () => ({ default: { get sullaConfig() { return process.env.SULLA_TEST_DEVICE_KEY_DIR as string; } } }));
@@ -37,7 +37,7 @@ class LegacyDeviceMessageBuilder {
 
 const legacy = new LegacyDeviceMessageBuilder();
 const PARTS = ['user-1', 'device-1', 'op', 42];
-const ALL = Object.keys(DeviceMessage.PURPOSE_TAGS) as DevicePurpose[];
+const ALL = Object.keys(DeviceMessage.PURPOSE_TAGS) as DomainDevicePurpose[];
 let dir = '';
 
 beforeAll(() => {
@@ -55,7 +55,7 @@ afterAll(() => {
 describe('deviceKey signed message (domain DeviceMessage registry)', () => {
   it('builds the same bytes as the old builder for each of the 10 purposes Desktop already signed', () => {
     // risk: every device signature is rejected by Cloud if a tag or the framing changes by one byte.
-    for (const purpose of Object.keys(LegacyDeviceMessageBuilder.TAGS) as DevicePurpose[]) {
+    for (const purpose of Object.keys(LegacyDeviceMessageBuilder.TAGS) as DomainDevicePurpose[]) {
       expect(Buffer.from(deviceMessage(purpose, PARTS)), purpose).toEqual(legacy.build(purpose, PARTS));
     }
   });
