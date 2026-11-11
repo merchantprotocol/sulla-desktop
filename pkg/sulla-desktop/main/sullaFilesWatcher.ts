@@ -20,6 +20,9 @@ import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync }
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
+import { UseCaseSuggestionCompositionRoot } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
+import { getBuiltinSkillSpecs } from '@pkg/agent/builtinSkills';
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
@@ -151,7 +154,8 @@ class SullaFilesWatcher {
   private nativePollRunning = false;
   private nativePollDelayMs = NATIVE_POLL_ACTIVE_MS;
   private nativeNextPollAt = 0;
-  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init));
+  private readonly suggestionRoot = new UseCaseSuggestionCompositionRoot(postgresClient, getBuiltinSkillSpecs().map(skill => skill.slug));
+  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init), this.suggestionRoot.notifier);
   private nativeEnabled = false;
   private started = false;
   private stopped = false;
@@ -227,6 +231,7 @@ class SullaFilesWatcher {
     for (const root of await getSullaFilesRootRegistry().stored()) {
       await this.enrollRoot(root).catch(error => console.warn(`[SullaFiles] tracked root ${ root.id } re-enrollment after unlock failed:`, error));
     }
+    this.suggestionRoot.start();
     this.useCases.start();
   }
 

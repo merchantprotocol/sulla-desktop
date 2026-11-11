@@ -16,6 +16,7 @@ import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
+import type { LocalUseCaseChangeNotifier } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 
 const console = Logging.background;
 const ROOT = 'Use Cases';
@@ -60,7 +61,7 @@ export class SullaUseCaseFiles {
   private lastFailure = '';
   private stopped = false;
 
-  constructor(private readonly request:Request) {}
+  constructor(private readonly request:Request, private readonly notifier?:LocalUseCaseChangeNotifier) {}
 
   start():void {
     activeUseCaseFiles = this;
@@ -234,6 +235,7 @@ export class SullaUseCaseFiles {
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
     });
+    this.notifier?.emit({ type: kind === 'routine' ? 'workflow' : kind, slug, change: 'published' });
     if (kind === 'skill') {
       const raw = text(files['SKILL.md']);
       const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
