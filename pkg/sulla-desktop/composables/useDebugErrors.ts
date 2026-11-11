@@ -19,10 +19,10 @@ export class DebugErrorsController {
   readonly errors = ref<DebugErrorRecord[]>([]);
 
   readonly onReported = (_event: unknown, record: DebugErrorRecord) => { this.errors.value = [record, ...this.errors.value].slice(0, 100) };
-  readonly onWindowError = (event: ErrorEvent) => ipcRenderer.send('debug:report', 'window.onerror', { message: event.message, stack: event.error?.stack });
+  readonly onWindowError = (event: ErrorEvent) => ipcRenderer.send('debug:report' as any, 'window.onerror', { message: event.message, stack: event.error?.stack });
   readonly onUnhandledRejection = (event: PromiseRejectionEvent) => {
     const error = event.reason;
-    ipcRenderer.send('debug:report', 'unhandledrejection', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' });
+    ipcRenderer.send('debug:report' as any, 'unhandledrejection', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' });
   };
   readonly dismiss = (index: number) => this.errors.value.splice(index, 1);
   readonly clear = () => { this.errors.value = [] };

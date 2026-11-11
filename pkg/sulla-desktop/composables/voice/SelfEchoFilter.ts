@@ -62,7 +62,7 @@ export class SelfEchoFilter {
       }
       return best >= 4 ? best : 0;
     };
-    const leading = overlapAt(0, 'leading');
+    const leading = overlapAt(0);
     const trailing = (() => { let best = 0; for (let n = 4; n <= heard.length; n++) { const suffix = heard.slice(heard.length - n); if (spoken.some((_, i) => suffix.every((w, j) => spoken[i + j] === w))) best = n; } return best; })();
     // Token-aware slicing keeps punctuation and casing on the retained user span.
     const tokens = transcript.match(/\S+/g) ?? [];
