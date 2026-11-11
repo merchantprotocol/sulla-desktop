@@ -17,7 +17,7 @@ export class AgentJobCustodyRepository {
   constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>,private readonly observer:CustodyTransactionObserver=new NoopCustodyTransactionObserver()) {}
 
   async resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
-    const rows = await this.database.query<any>(this.resolveSql(false), [jobId, taskIndex ?? null]);
+    const rows = await this.database.query<any>(this.resolveSql(), [jobId, taskIndex ?? null]);
     return rows[0] ? this.mapRecord(rows[0], taskIndex) : undefined;
   }
 
@@ -88,7 +88,7 @@ export class AgentJobCustodyRepository {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), -1)`, [jobId]);
     if (taskIndex !== undefined) await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), $2)`, [jobId, taskIndex]);
     await this.observe(kind,'locked',jobId,taskIndex);
-    const result = await client.query(this.resolveSql(true), [jobId, taskIndex ?? null]);
+    const result = await client.query(this.resolveSql(), [jobId, taskIndex ?? null]);
     return result.rows[0] ? this.mapRecord(result.rows[0], taskIndex) : undefined;
   }
 
@@ -154,14 +154,14 @@ export class AgentJobCustodyRepository {
       input.actor.kind,input.actor.kind==='agent'?input.actor.channel:null,input.actor.kind==='agent'?input.actor.threadId:null,input.actor.kind==='agent'?input.actor.agentId:null,input.reason,nextVersion,changedAt]);
   }
 
-  private resolveSql(lock: boolean): string { return `SELECT c.*, COALESCE(c.version,0) AS version,
+  private resolveSql(): string { return `SELECT c.*, COALESCE(c.version,0) AS version,
       COALESCE(c.owner_channel,j.parent_channel) AS owner_channel, COALESCE(c.owner_thread_id,j.parent_thread_id) AS owner_thread_id,
       COALESCE(c.owner_agent_id,j.parent_agent_id) AS owner_agent_id
     FROM agent_jobs j LEFT JOIN LATERAL (
       SELECT * FROM agent_job_custody c WHERE c.job_id=j.job_id AND (c.task_index=$2 OR c.task_index IS NULL)
       ORDER BY c.task_index NULLS LAST LIMIT 1
     ) c ON true WHERE j.job_id=$1 AND COALESCE(c.owner_channel,j.parent_channel) IS NOT NULL
-      AND COALESCE(c.owner_thread_id,j.parent_thread_id) IS NOT NULL AND COALESCE(c.owner_agent_id,j.parent_agent_id) IS NOT NULL${lock?' FOR UPDATE OF j':''}`; }
+      AND COALESCE(c.owner_thread_id,j.parent_thread_id) IS NOT NULL AND COALESCE(c.owner_agent_id,j.parent_agent_id) IS NOT NULL`; }
   private sameSnapshot(left:CustodyRecord,right:CustodyRecord):boolean{return left.version===right.version&&left.channel===right.channel&&left.threadId===right.threadId&&left.agentId===right.agentId;}
   private mapRecord(row:any, taskIndex?:number):CustodyRecord { return {jobId:String(row.job_id),...(taskIndex===undefined?{}:{taskIndex}),channel:String(row.owner_channel),threadId:String(row.owner_thread_id),agentId:String(row.owner_agent_id),version:Number(row.version),changedAt:new Date(row.changed_at??0)}; }
   private mapOwner(row:any,prefix:string):CustodyOwner{return {channel:String(row[`${prefix}_channel`]),threadId:String(row[`${prefix}_thread_id`]),agentId:String(row[`${prefix}_agent_id`])};}
