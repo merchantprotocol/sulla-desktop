@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { getIntegrationService } from '../../services/IntegrationService';
+import { AgentCredentialAccess } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -13,6 +14,7 @@ import { BaseTool, ToolResponse } from '../base';
 export class VaultListWorker extends BaseTool {
   name = '';
   description = '';
+  private readonly credentialAccess = new AgentCredentialAccess();
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
     try {
       const service = getIntegrationService();
@@ -28,6 +30,7 @@ export class VaultListWorker extends BaseTool {
       }
 
       let responseString = `Saved website credentials: ${ accounts.length }\n\n`;
+      const agentId = this.credentialAccess.agentIdFrom((this.state as any)?.metadata);
 
       for (const acct of accounts) {
         const formValues = await service.getFormValues('website', acct.account_id);
@@ -36,7 +39,7 @@ export class VaultListWorker extends BaseTool {
           storedValues[fv.property] = fv.value;
         }
 
-        const llmAccess = storedValues['llm_access'] || 'autofill';
+        const llmAccess = this.credentialAccess.levelFor({ storedLevel: storedValues['llm_access'], agentId });
 
         if (llmAccess === 'none') {
           responseString += `- ${ acct.label } (${ acct.account_id }): [VAULT PROTECTED]\n`;
