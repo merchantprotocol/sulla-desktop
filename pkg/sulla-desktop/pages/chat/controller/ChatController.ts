@@ -79,6 +79,7 @@ export interface SendOptions {
   inputSource?: 'voice';
   /** Content-free correlation id used only for voice lifecycle diagnostics. */
   voiceTurnId?: string;
+  voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   /** Use case the user picked in the composer for this message. */
   useCaseIntent?: UseCaseIntentMetadata;
   /** Route this one message to an agent (an "Ask <agent>" chip). */
