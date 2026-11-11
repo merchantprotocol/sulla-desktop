@@ -23,8 +23,12 @@ class BenchmarkLogger {
       // Keep diagnostics useful without printing arbitrary exception text, paths, or user data.
       const code = line.match(/\b(ENOENT|EACCES|EINVAL|ERR_[A-Z0-9_]+)\b/)?.[1];
       this.fallbackDiagnostic = line.includes('Potion retrieval model directory unavailable')
-        ? 'model directory unresolved (check packaged/dev model path)'
-        : code ? `embedder unavailable (${ code })` : 'embedder unavailable (unclassified load error)';
+        ? 'model directory unresolved'
+        : code ? `model file access failed (${ code })`
+          : line.includes('bad magic') ? 'model binary format invalid (bad magic)'
+            : line.includes('table shape mismatch') ? 'model binary shape invalid'
+              : line.includes('SyntaxError') ? 'tokenizer JSON invalid'
+                : 'model load/runtime error (details redacted)';
     }
   }
 }
