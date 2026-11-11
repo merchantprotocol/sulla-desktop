@@ -60,12 +60,14 @@ suite('agents/replace_lead registered production path',()=>{
  async function seedLead(suffix:string,leadStatus='error',children=3,parent=owner){
   const leadId=`lead-${suffix}`;const leadThread=`old-lead-${suffix}`;
   await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,$2,1,$3,$4,$5,$6::jsonb)`,[leadId,leadStatus,parent.channel,parent.threadId,parent.agentId,JSON.stringify([task('Lead',leadThread,leadStatus)])]);
+  if(leadStatus==='running')await database.query(`INSERT INTO agent_task_execution_identities(job_id,task_index,generation,launch_state,identity,activated_at) VALUES($1,0,$2,'active',$3::jsonb,now())`,[leadId,`fixture-${leadId}`,JSON.stringify({kind:'container',generation:`fixture-${leadId}`,containerId:`fixture-${leadId}`,containerName:`fixture-${leadId}`,labels:{}})]);
   for(let index=0;index<children;index++)await seedChild(suffix,index,leadThread);
   return {leadId,leadThread};
  }
  async function seedChild(suffix:string,index:number,parentThread:string,status='running'){
   await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,restart_resume_count,tasks) VALUES($1,$2,1,$3,$4,'coding-manager-sol',$5,$6::jsonb)`,[`child-${suffix}-${index}`,status,owner.channel,parentThread,status==='parked'?1:0,JSON.stringify([task(`Worker ${index+1}`,`worker-${suffix}-${index}`,status)])]);
  }
+ function confirmExternalTeardown(provider:any){provider.wrapUp.stops.teardownTask=async(jobId:string,taskIndex:number)=>{provider.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);return 'confirmed';};}
  async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
  async function returnResult(threadId:string){const tool=await registry.createToolForCategory('agents','return_result');tool.setState({metadata:{wsChannel:owner.channel,threadId,agentId:'codex-sol-worker',subAgentDepth:2}});return tool.call({status:'completed',summary:'done',output:{head:'abc1234'}});}
  async function callAgent(name:string,input:any,metadata:any){const tool=await registry.createToolForCategory('agents',name);tool.setState({metadata});return tool.call(input);}
@@ -75,7 +77,8 @@ suite('agents/replace_lead registered production path',()=>{
   const {leadId}=await seedLead('h3','error',3);const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
   const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
   expect(await database.query<any>(`SELECT owner_channel,owner_thread_id,owner_agent_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`)).toEqual(Array(3).fill({owner_channel:replacement.channel,owner_thread_id:replacement.threadId,owner_agent_id:replacement.agentId}));
-  for(let index=0;index<3;index++){await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);}
+  for(let index=0;index<3;index++)await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);
+  for(let index=0;index<3;index++)expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);
   expect(await database.query<any>(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'child-h3-%' AND tasks->0->>'returnedAt' IS NOT NULL ORDER BY job_id`)).toHaveLength(3);
   const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');
   expect(completionInboxStore.take(replacement.channel,replacement.threadId).map(item=>item.jobId).sort()).toEqual(['child-h3-0','child-h3-1','child-h3-2']);
@@ -164,7 +167,7 @@ suite('agents/replace_lead registered production path',()=>{
   const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
   await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
-  const restartedProvider=new AgentJobServiceProvider();await restartedProvider.start();await new Promise(resolve=>setTimeout(resolve,25));
+  const restartedProvider=new AgentJobServiceProvider();confirmExternalTeardown(restartedProvider);await restartedProvider.start();await new Promise(resolve=>setTimeout(resolve,25));
   expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,tasks->0->'stoppedBy' AS stopped_by,tasks->0->>'stopReason' AS stop_reason FROM agent_jobs WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',stopped_by:{agentId:owner.agentId,threadId:owner.threadId},stop_reason:expect.stringContaining('replaced by')});
   expect(await database.query(`SELECT * FROM agent_job_wrap_up_requests WHERE job_id=$1 AND completed_at IS NOT NULL`,[leadId])).toHaveLength(1);
   expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
@@ -182,7 +185,7 @@ suite('agents/replace_lead registered production path',()=>{
   const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
   for(const handle of timers.values())clearTimeout(handle);timers.clear();
   await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
-  const first=new AgentJobServiceProvider();const second=new AgentJobServiceProvider();
+  const first=new AgentJobServiceProvider();const second=new AgentJobServiceProvider();confirmExternalTeardown(first);confirmExternalTeardown(second);
   const {JobAbortScope}=await import('../../../app/Services/JobAbortScope');
   const staleScope=new JobAbortScope();let staleTeardowns=0;staleScope.taskSignal(0).addEventListener('abort',()=>staleTeardowns++);first.runtime.abortScopes.set(leadId,staleScope);
   const winningScope=new JobAbortScope();let winningTeardowns=0;winningScope.taskSignal(0).addEventListener('abort',()=>winningTeardowns++);second.runtime.abortScopes.set(leadId,winningScope);
@@ -206,7 +209,7 @@ suite('agents/replace_lead registered production path',()=>{
   expect(await repository.beginTeardown(crashClaim)).toBe(true);
   expect((await database.query<any>(`SELECT status,teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[crash.leadId]))[0]).toMatchObject({status:'stopped',needed:true,teardown_acknowledged_at:null});
   await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[crash.leadId]);
-  const freshOne=new AgentJobServiceProvider();const freshTwo=new AgentJobServiceProvider();
+  const freshOne=new AgentJobServiceProvider();const freshTwo=new AgentJobServiceProvider();confirmExternalTeardown(freshOne);confirmExternalTeardown(freshTwo);
   const replayScope=new JobAbortScope();let replayTeardowns=0;replayScope.taskSignal(0).addEventListener('abort',()=>replayTeardowns++);freshOne.runtime.abortScopes.set(crash.leadId,replayScope);
   await Promise.all([freshOne.wrapUp.recover(),freshTwo.wrapUp.recover()]);
   expect(await repository.acknowledgeTeardown(crashClaim)).toBe(false);
