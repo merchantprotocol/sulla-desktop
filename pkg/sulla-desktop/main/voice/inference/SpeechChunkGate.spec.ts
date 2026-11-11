@@ -9,6 +9,29 @@ const pcm = Buffer.alloc(1024 * 2);
 const client = (probability: number) => ({ infer: vi.fn(async ({ audio }: { audio: Float32Array }) => ({ ok: true, probabilities: Array(Math.floor((audio.length - 64) / 512)).fill(probability), state: new Float32Array(256) })) });
 
 describe('SpeechChunkGate', () => {
+  it('warms a verified model outside the live chunk budget before enabling the gate', async () => {
+    const vad = client(0.1);
+    const gate = new SpeechChunkGate(vad, null, () => true, () => undefined);
+
+    await gate.warmModel('/silero.onnx');
+
+    expect(vad.infer).toHaveBeenCalledTimes(1);
+    expect(vad.infer.mock.calls[0][0]).toMatchObject({ operation: 'vad-chunk', modelPath: '/silero.onnx' });
+    expect(vad.infer.mock.calls[0][2]).toBe(10_000);
+    // risk: user messages — after prewarm, actual noise must be gated rather than fail-open on cold ORT startup.
+    expect(await gate.shouldTranscribe(pcm)).toBe(false);
+  });
+
+  it('keeps the model unavailable and the audio path fail-open if warm-up fails', async () => {
+    const warn = vi.fn();
+    const vad = { infer: vi.fn(async () => { throw new Error('ORT unavailable'); }) };
+    const gate = new SpeechChunkGate(vad, null, () => true, warn);
+
+    await expect(gate.warmModel('/silero.onnx')).rejects.toThrow('ORT unavailable');
+    // risk: user messages — failed optional model initialization must never block or drop speech.
+    expect(await gate.shouldTranscribe(pcm)).toBe(true);
+  });
+
   it('drops noise and forwards speech through Silero inference', async () => {
     const vad = client(0.1);
     const gate = new SpeechChunkGate(vad, '/silero.onnx', () => true, () => undefined);

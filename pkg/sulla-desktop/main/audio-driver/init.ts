@@ -600,7 +600,12 @@ function registerIpcHandlers(): void {
     const sileroGate = new SpeechChunkGate(
       new OrtInferenceClient(ortEntry), null,
       undefined,
-      message => log.warn('WhisperTranscribe', message),
+      message => {
+        log.warn('WhisperTranscribe', message);
+        // The audio-driver log is separate from Desktop's background.log. Keep
+        // the fail-open warning visible in the log Sulla already reads.
+        console.warn(`[WhisperTranscribe] ${ message }`);
+      },
     );
     whisperTranscribe.configureSpeechChunkGate(sileroGate);
     void Promise.resolve(new ModelRepository(
@@ -608,8 +613,17 @@ function registerIpcHandlers(): void {
       voiceModelManifest as any,
       { fetch: (url, options) => fetch(url, options) },
     )).then(models => models.resolve('vad-silero-onnx'))
-      .then(modelPath => sileroGate.setModelPath(modelPath))
-      .catch(error => log.warn('WhisperTranscribe', 'Silero model unavailable; passing audio through until next session', { error: String(error) }));
+      // ORT cold start/model session creation can exceed the 400 ms chunk
+      // budget. Warm it before exposing the model to live audio; chunks remain
+      // fail-open while download and warm-up run in the background.
+      .then(modelPath => sileroGate.warmModel(modelPath).then(() => {
+        console.info('[WhisperTranscribe] Silero model checksum verified and ready');
+      }))
+      .catch(error => {
+        const message = `Silero model unavailable; passing audio through until next session: ${ String(error) }`;
+        log.warn('WhisperTranscribe', message);
+        console.warn(`[WhisperTranscribe] ${ message }`);
+      });
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,
