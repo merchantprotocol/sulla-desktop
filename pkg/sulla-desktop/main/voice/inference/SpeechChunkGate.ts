@@ -22,7 +22,7 @@ export class SpeechChunkGate {
   private counters = { seen: 0, admitted: 0, rejected: 0, failedOpen: 0, inferenceMs: 0 };
   private inferenceCount = 0;
   private lastStatsAt = 0;
-  private state: 'cold' | 'warm' | 'disabled' = 'cold';
+  private gateState: 'cold' | 'warm' | 'disabled' = 'cold';
 
   constructor(
     private readonly client: SpeechGateClient,
@@ -51,7 +51,7 @@ export class SpeechChunkGate {
     }
     this.reset();
     this.setModelPath(modelPath);
-    this.state = 'warm';
+    this.gateState = 'warm';
     this.logStats(`Silero gate state: warm; model=${modelPath}; ms=${this.now() - started}`, this.snapshot());
   }
 
@@ -97,8 +97,8 @@ export class SpeechChunkGate {
   private fallback(message: string): true {
     this.counters.failedOpen++;
     this.reset();
-    if (this.state !== 'disabled') {
-      this.state = 'disabled';
+    if (this.gateState !== 'disabled') {
+      this.gateState = 'disabled';
       this.logStats(`Silero gate state: disabled; ${message}`, this.snapshot());
     }
     if (!this.warned) {
