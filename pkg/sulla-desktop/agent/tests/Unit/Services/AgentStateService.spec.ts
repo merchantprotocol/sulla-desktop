@@ -11,6 +11,7 @@ import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActiv
 class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   readonly observedActivity: Array<number | null> = [];
+  jobsForProjection?: (recentMs: number) => Promise<AgentJob[]>;
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async job(jobId: string): Promise<AgentJob | undefined> {
@@ -222,6 +223,19 @@ describe('authoritative live agent state', () => {
 
     states.setReadiness(Promise.reject(new Error('reconcile failed')));
     await expect(states.jobs()).rejects.toThrow('reconcile failed');
+  });
+
+  it('serves the Live Agents projection from a bounded read even when runtime inventory has failed', async() => {
+    // risk: the drawer and Live Agents stay empty whenever Docker inventory is down, and every change parses the whole job history
+    const { states, store } = harness([job('visible-now', [task()])]);
+    states.setReadiness(Promise.reject(new Error('runtime inventory pending/retrying')));
+    const bounded = vi.fn(async(_recentMs: number) => [job('visible-now', [task()])]);
+    store.jobsForProjection = bounded;
+    const history = vi.spyOn(store, 'allJobs');
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot();
+    expect(snapshot.rows.map(row => row.jobId)).toEqual(['visible-now']);
+    expect(bounded).toHaveBeenCalledTimes(1);
+    expect(history).not.toHaveBeenCalled();
   });
 
   it('does not mark a stale task lost while its exact RunActivity key is fresh', async() => {
