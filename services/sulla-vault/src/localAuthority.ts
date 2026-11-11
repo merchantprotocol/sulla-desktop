@@ -1329,15 +1329,37 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
       throw new LocalVaultError('invalid_operation', 400, 'Account KDF is unsupported');
     }
-    if (!/^[A-Za-z0-9_-]{43}$/.test(input.masterKey || '')) {
+    const masterKey = Buffer.from(input.masterKey || '', 'base64url');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(input.masterKey || '') || masterKey.byteLength !== 32) {
+      masterKey.fill(0);
       throw new LocalVaultError('invalid_unlock_material', 400, 'Account master key is invalid');
     }
-    // Sign-in may occur while the local vault is locked or not yet set up. In
-    // either case this endpoint is intentionally a no-op: the Cloud credential
-    // must never rewrite the owner's straight local encrypted_user_key.
+    const response = { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' } as const;
+    // A fresh install has no local key wrap to rewrite: bootstrap the new vault
+    // once. An existing locked vault remains a strict no-op, aside from owner guard.
     const keys = this.keys;
-    if (!keys) return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
+    if (!keys) {
+      try {
+        await this.runSecurityOperation(async() => {
+          if (this.keys || !await this.isSetupRequired()) return false;
+          await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+            authority: 'container', version: 1, cloudUserId,
+            password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+          });
+          return true;
+        });
+        if (!this.keys) {
+          const existing = await this.userRepository.findActiveOwner<{ id: string; kdf: { cloudUserId?: string } }>();
+          const owner = existing.rows[0]?.kdf?.cloudUserId;
+          if (owner && owner !== cloudUserId) {
+            throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
+          }
+        }
+        return response;
+      } finally { masterKey.fill(0); }
+    }
 
+    try {
     const current = await this.userRepository.findCredentials<{
       kdf: { cloudUserId?: string; password?: { salt?: string; parameters?: { memoryBytes?: number; operations?: number } } };
     }>(keys.userId);
@@ -1359,7 +1381,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         ...(current.rows[0].kdf?.password ? { password: current.rows[0].kdf.password } : {}),
       });
     }
-    return { migrated: false, recoveryCreated: false, cacheMode: 'helper-update-required' };
+    return response;
+    } finally { masterKey.fill(0); }
   }
 
   async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
