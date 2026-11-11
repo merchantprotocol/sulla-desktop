@@ -1347,6 +1347,7 @@ export class ChatCompletionsServer {
           } catch (error) {
             return res.status(403).json({ success: false, error: (error as Error).message });
           }
+        }
         // Agent mail tools use their own vault account (sulla_agent_mail/token).
         // With no account configured the tool reports a clear setup error.
         if (executionContext && usesContainerVaultAuthority() && canonicalCategory === 'mail') {
