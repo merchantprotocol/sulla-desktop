@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 
 import { BaseModel } from '../BaseModel';
 import { postgresClient } from '../PostgresClient';
+import { redisClient } from '../RedisClient';
+import { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, type UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 import { WorkflowHistoryModel } from './WorkflowHistoryModel';
 
@@ -84,6 +86,13 @@ export interface WorkflowListRow {
 }
 
 export class WorkflowModel extends BaseModel<WorkflowAttributes> {
+  /**
+   * Post-commit change broadcast for the use case suggestion index. Each
+   * write announces only after its statement returned a committed row;
+   * announce never throws, so a broadcast failure never fails the write.
+   */
+  private static readonly useCaseChanges: UseCaseChangePublisher = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
+
   protected readonly tableName = 'workflows';
   protected readonly primaryKey = 'id';
   protected readonly timestamps = true;
@@ -276,6 +285,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
 
       const model = new WorkflowModel();
       model.databaseFill(row);
+      WorkflowModel.useCaseChanges.announce({ type: 'workflow', slug: id, change: 'updated' });
 
       if (!options.skipHistory) {
         await WorkflowHistoryModel.recordChange({
@@ -349,6 +359,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
 
       const model = new WorkflowModel();
       model.databaseFill(row);
+      WorkflowModel.useCaseChanges.announce({ type: 'workflow', slug: id, change: 'updated' });
 
       await WorkflowHistoryModel.recordChange({
         workflowId:       id,
@@ -372,6 +383,13 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     }
   }
 
+  /** Pause or resume a routine (locked core routines included); returns whether a row changed. */
+  static async setEnabled(id: string, enabled: boolean): Promise<boolean> {
+    const row = await postgresClient.queryOne('UPDATE workflows SET enabled = $1, updated_at = NOW() WHERE id = $2 RETURNING id', [enabled, id]);
+    if (row) WorkflowModel.useCaseChanges.announce({ type: 'workflow', slug: id, change: 'updated' });
+    return !!row;
+  }
+
   static async deleteById(id: string, options: { actor?: 'seeder' | 'user' } = {}): Promise<boolean> {
     // Lock guard: locked core routines cannot be deleted by any user surface.
     if (options.actor !== 'seeder' && await WorkflowModel.isSystem(id)) {
@@ -383,6 +401,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
         [id],
       );
       const deleted = (result?.length ?? 0) > 0;
+      WorkflowModel.useCaseChanges.announce({ type: 'workflow', slug: id, change: 'deleted' });
       console.log(`[WorkflowModel.deleteById] ← ${ deleted ? 'ok' : 'miss' } id=${ id }`);
 
       return deleted;

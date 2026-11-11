@@ -73,12 +73,17 @@ async function saveDraftToDatabase(draft: {
   }
 
   const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+  // A saved draft can overwrite a published or installed row; tell the suggestion index after the write commits.
+  const { redisClient } = await import('@pkg/agent/database/RedisClient');
+  const { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer } = await import('@pkg/agent/useCases/UseCaseChangeBus');
+  const useCaseChanges = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
   if (draft.kind === 'function') {
     const runtime = String(manifest.spec?.runtime ?? manifest.runtime ?? '');
     await postgresClient.query(`INSERT INTO function_definitions (slug,name,description,manifest,runtime,files,source_kind,version,user_edited)
       VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,'user',$7,true)
       ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,runtime=EXCLUDED.runtime,files=EXCLUDED.files,source_kind='user',version=EXCLUDED.version,user_edited=true,updated_at=now()`,
     [draft.slug, draft.name, description, JSON.stringify(manifest), runtime, JSON.stringify(draft.files_json), version]);
+    useCaseChanges.announce({ type: 'function', slug: draft.slug, change: 'updated' });
   } else if (draft.kind === 'integration') {
     manifest.id = draft.slug;
     await postgresClient.query(`INSERT INTO integration_definitions (slug,name,description,manifest,files,source_kind,version,user_edited)
@@ -95,6 +100,7 @@ async function saveDraftToDatabase(draft: {
       VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,'user',$7,true)
       ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,compose=EXCLUDED.compose,files=EXCLUDED.files,source_kind='user',version=EXCLUDED.version,user_edited=true,updated_at=now()`,
     [draft.slug, draft.name, description, JSON.stringify(manifest), compose, JSON.stringify(draft.files_json), version]);
+    useCaseChanges.announce({ type: 'recipe', slug: draft.slug, change: 'updated' });
   }
 }
 

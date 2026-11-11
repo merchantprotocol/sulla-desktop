@@ -6,6 +6,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { redisClient } from '../RedisClient';
+import { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, type UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'marketplace' | 'resources';
 
@@ -159,6 +161,13 @@ function required(value: string, field: string): string {
 }
 
 export class SkillDefinitionModel {
+  /**
+   * Post-commit change broadcast for the use case suggestion index. Each
+   * write announces only after its statement returned a committed row;
+   * announce never throws, so a broadcast failure never fails the write.
+   */
+  private static readonly useCaseChanges: UseCaseChangePublisher = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
+
   /** Finds a row by slug, including disabled and soft-deleted rows. */
   static async findBySlug(slug: string): Promise<SkillDefinition | null> {
     const row = await postgresClient.queryOne('SELECT * FROM skill_definitions WHERE slug = $1 LIMIT 1', [slug]);
@@ -200,6 +209,7 @@ export class SkillDefinitionModel {
       input.marketplaceTemplateId ?? null, input.marketplaceSlug ?? null, input.marketplaceVersion ?? null, input.marketplaceAuthor ?? null,
     ]);
     if (!row) throw new Error(`Failed to create skill ${ slug }.`);
+    SkillDefinitionModel.useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
     return rowToSkillDefinition(row);
   }
 
@@ -247,7 +257,9 @@ export class SkillDefinitionModel {
       where += ` AND abs(extract(epoch FROM updated_at - $${ params.length }::timestamptz)) < 0.002`;
     }
     const row = await postgresClient.queryOne(`UPDATE skill_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
-    return row ? rowToSkillDefinition(row) : null;
+    if (!row) return null;
+    SkillDefinitionModel.useCaseChanges.announce({ type: 'skill', slug: String(row.slug), change: 'updated' });
+    return rowToSkillDefinition(row);
   }
 
   /** Text search over the active skills: slug, title, description, tags, triggers and body. */

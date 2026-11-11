@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 
 import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '../PostgresClient';
+import { redisClient } from '../RedisClient';
+import { RedisUseCaseChangeTransport, UseCaseChangeAnnouncer, type UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
@@ -247,6 +249,13 @@ function validateModelPriority(entries: ModelPriorityEntry[] = []): ModelPriorit
 }
 
 export class AgentDefinitionModel {
+  /**
+   * Post-commit change broadcast for the use case suggestion index. Each
+   * write announces only after its statement returned a committed row;
+   * announce never throws, so a broadcast failure never fails the write.
+   */
+  private static readonly useCaseChanges: UseCaseChangePublisher = new UseCaseChangeAnnouncer(new RedisUseCaseChangeTransport(redisClient));
+
   static async get(id: string): Promise<AgentDefinition | null> {
     const row = await postgresClient.queryOne('SELECT * FROM agent_definitions WHERE id = $1 LIMIT 1', [id]);
     return row ? rowToDefinition(row) : null;
@@ -297,6 +306,7 @@ export class AgentDefinitionModel {
       input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
+    AgentDefinitionModel.useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
     return rowToDefinition(row);
   }
 
@@ -366,7 +376,9 @@ export class AgentDefinitionModel {
       where += ` AND abs(extract(epoch FROM updated_at - $${ params.length }::timestamptz)) < 0.002`;
     }
     const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
-    return row ? rowToDefinition(row) : null;
+    if (!row) return null;
+    AgentDefinitionModel.useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
+    return rowToDefinition(row);
   }
 
   /**
@@ -386,7 +398,8 @@ export class AgentDefinitionModel {
   }
 
   static async delete(id: string): Promise<boolean> {
-    const row = await postgresClient.queryOne('DELETE FROM agent_definitions WHERE id = $1 RETURNING id', [id]);
+    const row = await postgresClient.queryOne('DELETE FROM agent_definitions WHERE id = $1 RETURNING id, slug', [id]);
+    if (row) AgentDefinitionModel.useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'deleted' });
     return !!row;
   }
 
