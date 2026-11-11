@@ -14,29 +14,38 @@ export interface DebugErrorRecord {
   stack: string;
 }
 
-export function useDebugErrors() {
-  const errors = ref<DebugErrorRecord[]>([]);
-  const onReported = (_event: unknown, record: DebugErrorRecord) => { errors.value = [record, ...errors.value].slice(0, 100) };
-  const onWindowError = (event: ErrorEvent) => ipcRenderer.send('debug:report', 'window.onerror', { message: event.message, stack: event.error?.stack });
-  const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+/** Owns the debug-error list and the window listeners that feed it. */
+export class DebugErrorsController {
+  readonly errors = ref<DebugErrorRecord[]>([]);
+
+  readonly onReported = (_event: unknown, record: DebugErrorRecord) => { this.errors.value = [record, ...this.errors.value].slice(0, 100) };
+  readonly onWindowError = (event: ErrorEvent) => ipcRenderer.send('debug:report', 'window.onerror', { message: event.message, stack: event.error?.stack });
+  readonly onUnhandledRejection = (event: PromiseRejectionEvent) => {
     const error = event.reason;
     ipcRenderer.send('debug:report', 'unhandledrejection', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' });
   };
-  const dismiss = (index: number) => errors.value.splice(index, 1);
-  const clear = () => { errors.value = [] };
+  readonly dismiss = (index: number) => this.errors.value.splice(index, 1);
+  readonly clear = () => { this.errors.value = [] };
 
-  onMounted(() => {
-    ipcRenderer.on('debug:error' as any, onReported as any);
-    void ipcRenderer.invoke('debug:errors:list' as any).then((records: DebugErrorRecord[]) => { errors.value = records }).catch(error => {
+  start(): void {
+    ipcRenderer.on('debug:error' as any, this.onReported as any);
+    void ipcRenderer.invoke('debug:errors:list' as any).then((records: DebugErrorRecord[]) => { this.errors.value = records }).catch(error => {
       ipcRenderer.send('debug:report' as any, 'debug-overlay:initial-errors', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' });
     });
-    window.addEventListener('error', onWindowError);
-    window.addEventListener('unhandledrejection', onUnhandledRejection);
-  });
-  onBeforeUnmount(() => {
-    ipcRenderer.removeListener('debug:error' as any, onReported as any);
-    window.removeEventListener('error', onWindowError);
-    window.removeEventListener('unhandledrejection', onUnhandledRejection);
-  });
-  return { errors, dismiss, clear };
+    window.addEventListener('error', this.onWindowError);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection);
+  }
+
+  stop(): void {
+    ipcRenderer.removeListener('debug:error' as any, this.onReported as any);
+    window.removeEventListener('error', this.onWindowError);
+    window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
+  }
+}
+
+export function useDebugErrors() {
+  const controller = new DebugErrorsController();
+  onMounted(() => controller.start());
+  onBeforeUnmount(() => controller.stop());
+  return { errors: controller.errors, dismiss: controller.dismiss, clear: controller.clear };
 }
