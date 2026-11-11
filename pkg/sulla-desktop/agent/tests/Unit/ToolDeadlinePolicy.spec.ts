@@ -31,12 +31,14 @@ describe('tool deadline policy', () => {
     expect(policy.deadlineMs('git_push', ['update'])).toBe(120_000);
     expect(policy.deadlineMs('custom_write', ['create'])).toBe(120_000);
     expect(policy.deadlineMs('unknown_tool')).toBe(120_000);
+    // risk: a read deadline (15 s) would kill the agent mail OTP long-poll (up to 300 s) mid-wait
+    expect(policy.deadlineMs('mail_wait_for_code', ['read'])).toBe(305_000);
   });
 
   it('does not clamp a writer request below its 120 s deadline', () => {
     // risk: Desktop aborted writers at 60 s, so the longer writer deadline never took effect
     expect(policy.requestedDeadlineMs(120_000)).toBe(120_000);
-    expect(policy.requestedDeadlineMs(999_999)).toBe(120_000);
+    expect(policy.requestedDeadlineMs(999_999)).toBe(305_000);
     expect(policy.requestedDeadlineMs(undefined)).toBe(30_000);
     expect(policy.requestedDeadlineMs('not-a-number')).toBe(30_000);
     expect(policy.requestedDeadlineMs(0)).toBe(1);
