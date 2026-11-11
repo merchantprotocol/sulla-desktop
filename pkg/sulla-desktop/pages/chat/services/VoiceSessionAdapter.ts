@@ -49,6 +49,7 @@ import { TranscriptNoiseFilter } from '@pkg/composables/voice/VoiceTurnAccumulat
 import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
 import { newVoiceTurnId, voiceTrace } from '@pkg/composables/voice/VoiceTrace';
+import { VoiceAssignmentCache } from './VoiceAssignmentCache';
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
@@ -118,11 +119,16 @@ export class VoiceSessionAdapter {
   private lastSpeaking = false;
   private captureRequestedAt = 0;
   private voiceTurnId = '';
+  private readonly voiceAssignments = new VoiceAssignmentCache();
   private vadSpeaking = false;
   private speakSegment = 0;
   private readonly pendingTurn = new PendingVoiceTurn();
   private replacingPendingTurn = false;
   private readonly addressedSpeech = new PassThroughAddressedSpeechClassifier();
+  private readonly onVoiceId = (_event: unknown, result: { turnId: string; voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): void => {
+    if (!result?.turnId) return;
+    this.voiceAssignments.put(result.turnId, result);
+  };
   private playbackEndedAt = 0;
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
@@ -205,6 +211,7 @@ export class VoiceSessionAdapter {
 
   constructor(controller: ChatController, opts: VoiceSessionAdapterOptions = {}) {
     this.controller = controller;
+    ipcRenderer.on('audio-driver:voice-id', this.onVoiceId);
     this.onError = opts.onError;
     this.isActive = opts.isActive ?? (() => true);
 
@@ -487,6 +494,7 @@ export class VoiceSessionAdapter {
     this.cancelWarmRelease(true);
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+    ipcRenderer.removeListener('audio-driver:voice-id', this.onVoiceId);
     this.tts.dispose();
     if (this.activeTtsMessageId) {
       this.controller.removeMessage(this.activeTtsMessageId);
@@ -509,6 +517,8 @@ export class VoiceSessionAdapter {
     });
     voiceTrace(this.voiceTurnId, 'agent_dispatch', { elapsedMs: Date.now() - this.captureRequestedAt, size: text.trim().length });
     const transcript = text.trim();
+    const assignment = this.voiceAssignments.take(this.voiceTurnId);
+    if (!assignment && transcript) voiceTrace(this.voiceTurnId, 'voice_id_late', {});
     if (!this.active) return;
     // Whisper uses punctuation wrappers for sounds that are not speech. A sequence
     // made entirely from those markers is not a user turn (but ordinary words with
@@ -540,13 +550,13 @@ export class VoiceSessionAdapter {
         try {
           this.controller.stop();
           this.tts.stop();
-          this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+          this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId, ...(assignment ? { voiceIdentity: assignment } : {}) });
           this.pendingTurn.submitted(merged, true);
         } finally {
           this.replacingPendingTurn = false;
         }
       } else {
-        this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+        this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId, ...(assignment ? { voiceIdentity: assignment } : {}) });
         this.pendingTurn.submitted(transcript);
       }
     }
