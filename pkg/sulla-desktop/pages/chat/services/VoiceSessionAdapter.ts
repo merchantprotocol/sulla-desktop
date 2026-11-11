@@ -208,7 +208,9 @@ export class VoiceSessionAdapter {
     });
 
     this.unsubs.push(
-      watch(controller.runState, state => { if (state.phase === 'idle') this.pendingTurn.clear(); }),
+      watch(controller.runState, state => {
+        if (state.phase === 'idle' || state.phase === 'paused' || state.phase === 'error') this.pendingTurn.clear();
+      }),
       this.tts.on('audioStarted', () => this.pendingTurn.markAudioStarted()),
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
@@ -523,7 +525,7 @@ export class VoiceSessionAdapter {
         this.controller.stop();
         this.tts.stop();
         this.controller.send(merged, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
-        this.pendingTurn.submitted(merged);
+        this.pendingTurn.submitted(merged, true);
       } else {
         this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
         this.pendingTurn.submitted(transcript);
