@@ -23,3 +23,14 @@ export class ModelAddressedSpeechClassifier implements AddressedSpeechClassifier
   constructor(private readonly classify: (text: string) => boolean) {}
   isAddressed(text: string): boolean { return this.classify(text); }
 }
+
+/**
+ * Default until a model-backed classifier ships: every hands-free utterance counts as addressed.
+ * The keyword heuristic above drops natural speech that doesn't start with "Sulla" or a question
+ * word ("now you don't have to keep that out of memory…"), which breaks normal voice use.
+ * Overheard-speech protection currently comes from the merge cap (#2167) and the agent staying silent.
+ */
+export class PassThroughAddressedSpeechClassifier implements AddressedSpeechClassifier {
+  isAddressed(): boolean { return true; }
+}
+

@@ -43,7 +43,7 @@ import {
   TTSPlayerService,
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
-import { LocalAddressedSpeechClassifier } from '@pkg/composables/voice/AddressedSpeechClassifier';
+import { PassThroughAddressedSpeechClassifier } from '@pkg/composables/voice/AddressedSpeechClassifier';
 import { SelfEchoFilter } from '@pkg/composables/voice/SelfEchoFilter';
 import { TranscriptNoiseFilter } from '@pkg/composables/voice/VoiceTurnAccumulator';
 import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
@@ -122,7 +122,7 @@ export class VoiceSessionAdapter {
   private speakSegment = 0;
   private readonly pendingTurn = new PendingVoiceTurn();
   private replacingPendingTurn = false;
-  private readonly addressedSpeech = new LocalAddressedSpeechClassifier();
+  private readonly addressedSpeech = new PassThroughAddressedSpeechClassifier();
   private playbackEndedAt = 0;
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →

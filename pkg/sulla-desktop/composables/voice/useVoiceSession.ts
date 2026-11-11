@@ -26,7 +26,7 @@
 
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
-import { LocalAddressedSpeechClassifier } from './AddressedSpeechClassifier';
+import { PassThroughAddressedSpeechClassifier } from './AddressedSpeechClassifier';
 import { SelfEchoFilter } from './SelfEchoFilter';
 import { TTSPlayerService } from './TTSPlayerService';
 import { createVoiceBargeInDetector } from './VoiceBargeInDetector';
@@ -184,7 +184,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     interimMessageId = null;
   }
 
-  const addressedSpeech = new LocalAddressedSpeechClassifier();
+  const addressedSpeech = new PassThroughAddressedSpeechClassifier();
   const selfEcho = new SelfEchoFilter();
 
   // ── Whisper transcript handler ──
