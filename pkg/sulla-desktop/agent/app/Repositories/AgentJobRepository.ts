@@ -239,6 +239,27 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return (await this.query().unsafeAll().get()).map(row => this.map(row));
   }
 
+  /**
+   * Live Agents projection input: every running/parked job, jobs that ended within `recentMs`, and the
+   * ancestor chain of each (so root threads still resolve). Replaces a full-table read of every job
+   * ever run, which parsed tens of MB on each state change.
+   */
+  async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
+    const rows = await this.connection.select(`WITH RECURSIVE owner AS MATERIALIZED (
+      SELECT j.job_id, task->>'threadId' AS thread_id FROM agent_jobs j
+      CROSS JOIN LATERAL jsonb_array_elements(j.tasks) task WHERE task->>'threadId' IS NOT NULL
+    ), chain(job_id, parent_thread_id, depth) AS (
+      SELECT job_id, parent_thread_id, 0 FROM agent_jobs
+      WHERE status IN ('running', 'parked') OR COALESCE(finished_at, created_at) > now() - ($1::bigint * interval '1 millisecond')
+      UNION
+      SELECT o.job_id, p.parent_thread_id, c.depth + 1 FROM chain c
+      JOIN owner o ON o.thread_id = c.parent_thread_id
+      JOIN agent_jobs p ON p.job_id = o.job_id
+      WHERE c.depth < 8
+    ) SELECT j.* FROM agent_jobs j WHERE j.job_id IN (SELECT job_id FROM chain) ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
+    return rows.map(row => this.map(row));
+  }
+
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
       SELECT * FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL

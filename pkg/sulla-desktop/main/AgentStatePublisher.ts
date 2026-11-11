@@ -27,7 +27,7 @@ export class AgentStatePublisher {
   }
   private snapshot(): Promise<AgentStateSnapshot> {
     if (this.snapshotInFlight) return this.snapshotInFlight;
-    const read = this.states.ready().then(() => this.projector.snapshot()).finally(() => {
+    const read = this.projector.snapshot().finally(() => {
       if (this.snapshotInFlight === read) this.snapshotInFlight = undefined;
     });
     this.snapshotInFlight = read;
