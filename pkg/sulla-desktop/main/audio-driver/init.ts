@@ -54,7 +54,7 @@ import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
 import { ModelRepository } from '../voice/engine/ModelRepository';
 import voiceModelManifest from '../voice/models/voice-model-manifest.json';
 import { SpeakerEmbeddingRunner } from '../voice/inference/SpeakerEmbeddingRunner';
-import { SpeakerVerifier } from '../voice/inference/SpeakerVerifier';
+import { VoiceIdentifier } from '../voice/inference/VoiceIdentifier';
 
 const rendererLog = createLogger('renderer');
 
@@ -612,9 +612,16 @@ function registerIpcHandlers(): void {
     const unpackedAppPath = `${ appPath }.unpacked`;
     const sherpaAppRoot = existsSync(path.join(unpackedAppPath, 'node_modules', 'sherpa-onnx-node')) ? unpackedAppPath : appPath;
     const models = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
-    const speakerVerifier = new SpeakerVerifier(models, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log);
+    const voiceIdentifier = new VoiceIdentifier(models, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log,
+      assignment => broadcast('audio-driver:voice-id', assignment), async () => {
+        try {
+          const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+          const enabled = await SullaSettingsModel.get('voiceIdentificationEnabled', true);
+          return enabled !== false && enabled !== 'false';
+        } catch { return true; }
+      });
     whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk, turnId) => {
-      setImmediate(() => { void speakerVerifier.scoreTurn(pcm, holdToTalk, turnId); });
+      setImmediate(() => voiceIdentifier.scoreTurn(pcm, holdToTalk, turnId));
     });
     const sileroStartedAt = Date.now();
     log.info('WhisperTranscribe', 'Silero model resolve started', { id: 'vad-silero-onnx', ortEntry });
