@@ -13,11 +13,11 @@
     },
     {
       "package": "@sulla/domain",
-      "version": "0.3.0",
-      "file": "sulla-domain-0.3.0-66539a1.tgz",
-      "sha256": "dce41b44ffb02405a1b5a6117476be744ee78dd34707241eb321cb5771042638",
-      "sourceRef": "66539a1",
-      "source": "sulla-core main 66539a1 build (npm ci, npm run build, npm pack packages/domain); identity/session classes (TokenPair, AuthSession, ClientSessionService, SignOutService, ...); depends on @sulla/foundation 0.1.1. Pre-built copy: /mnt/worktrees/_deps/sulla-core-tarballs/v0.3.0-66539a1/"
+      "version": "0.3.1",
+      "file": "sulla-domain-0.3.1-c5f7154.tgz",
+      "sha256": "74b4f85278b4cc89b8b08c1d3fe18722d0e98718a3cee53ec77ce112c6d15d82",
+      "sourceRef": "c5f7154",
+      "source": "sulla-core main c5f7154 build (npm pack packages/domain); VaultSyncService full-state heads, missing_head, rollback, head_moved, CAS retries, commit caps, unit of work; depends on @sulla/foundation 0.1.1. Identical tarball to www-sulladesktop and sulla-mobile."
     },
     {
       "package": "@sulla/foundation",
