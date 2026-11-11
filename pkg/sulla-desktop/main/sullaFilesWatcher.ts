@@ -20,7 +20,7 @@ import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync }
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
-import { UseCaseSuggestionCompositionRoot } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
+import { UseCaseSuggestionCompositionRoot, type SuggestionOptions, type UseCaseSuggestion } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import { getBuiltinSkillSpecs } from '@pkg/agent/builtinSkills';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
@@ -783,6 +783,8 @@ class SullaFilesWatcher {
     }
   }
 
+  async queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return this.suggestionRoot.index.suggest(text, options); }
+
   async folderForCollection(collectionId?:string):Promise<string> {
     if (!collectionId) return this.folder;
     const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
@@ -796,3 +798,6 @@ class SullaFilesWatcher {
 
 let instance:SullaFilesWatcher | undefined;
 export function getSullaFilesWatcher():SullaFilesWatcher { instance ??= new SullaFilesWatcher(); return instance }
+
+/** Main-process service seam for the planned use-case-suggest:query IPC handler. */
+export function queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return getSullaFilesWatcher().queryUseCaseSuggestions(text, options) }

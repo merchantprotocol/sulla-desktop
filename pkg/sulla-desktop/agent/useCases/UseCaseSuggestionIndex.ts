@@ -44,6 +44,8 @@ export class UseCaseSuggestionIndex {
     this.unsubscribe = notifier.subscribe(event => { void this.applyChange(event); });
   }
 
+  get rowCount(): number { return this.items.size; }
+
   async warm(): Promise<void> {
     if (this.ready) return;
     try {
@@ -94,6 +96,9 @@ export class UseCaseSuggestionIndex {
 
   dispose(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
   private async applyChange(event: UseCaseChangeEvent): Promise<void> {
+    try { await this.applyChangeSafely(event); } catch (error) { this.logger.info(`[SuggestionIndex] change event failed (${String(error)})`); }
+  }
+  private async applyChangeSafely(event: UseCaseChangeEvent): Promise<void> {
     const key = this.key(event.type, event.slug);
     if (event.change === 'deleted') { this.items.delete(key); return; }
     const item = await this.source.findPublished(event.type, event.slug);
