@@ -27,6 +27,7 @@ export interface RefreshReporter {
 export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
   private readonly store: LegacyTokenStore<S>;
   private readonly sessions: ClientSessionService;
+  private readonly schedule: RefreshSchedule;
 
   constructor(
     private readonly storage: CloudSessionStorage<S>,
@@ -36,8 +37,9 @@ export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
     clock: Clock = new SystemClock(),
   ) {
     this.store = new LegacyTokenStore(storage);
+    this.schedule = new RefreshSchedule(clock);
     this.sessions = new ClientSessionService(
-      this.store, new ElectronCloudRefreshTransport(http), lock, new RefreshSchedule(clock),
+      this.store, new ElectronCloudRefreshTransport(http), lock, this.schedule,
       new RefreshOutcomeClassifier(), new EventDispatcher(new NoListenerResolver()),
     );
   }
@@ -48,10 +50,13 @@ export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
     const before = stored?.tokens.accessToken ?? '';
     if (!before) return '';
     if (!stored?.tokens.refreshToken) return before;
+    const seen = await this.store.read();
+    if (!seen) return before;
+    if (!this.schedule.shouldRefresh(seen)) return seen.tokens.accessToken;
     try {
-      const token = await this.sessions.accessToken();
-      if (token && token !== before) this.reporter.refreshed();
-      if (token) return token;
+      const next = await this.sessions.refresh(seen);
+      if (next && next.tokens.accessToken !== before) this.reporter.refreshed();
+      if (next) return next.tokens.accessToken;
       return (await this.storage.load())?.tokens.accessToken ?? '';
     } catch (error) {
       this.reporter.failed(`Refresh failed: ${ error instanceof IdentityError ? error.message : error instanceof Error ? error.name : 'error' }`);
