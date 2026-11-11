@@ -149,6 +149,9 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
+  }, async next => {
+    await this.repository.updateTaskCompletions(jobId, taskIndex, next.tasks, next.results);
+    return true;
   });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
