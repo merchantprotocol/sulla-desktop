@@ -9,7 +9,7 @@ import { NobleCryptoPrimitives, type RandomSource } from '@sulla/domain';
 export interface AccountSodium {
   crypto_pwhash(length: number, password: Uint8Array, salt: Uint8Array, ops: number, memoryBytes: number, algorithm: number): Uint8Array;
   crypto_pwhash_ALG_ARGON2ID13: number;
-  crypto_generichash(length: number, message: Uint8Array, key?: Uint8Array | null): Uint8Array;
+  crypto_generichash(length: number, message: Uint8Array, key: Uint8Array | null): Uint8Array;
   randombytes_buf(length: number): Uint8Array;
 }
 
