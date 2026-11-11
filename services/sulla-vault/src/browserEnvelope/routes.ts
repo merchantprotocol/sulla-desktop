@@ -14,6 +14,7 @@ import { EnvelopeError } from './envelope.js';
 import { CloudSyncError, type CloudVaultSyncRunner, type SyncOp } from './syncRunner.js';
 
 const OPS = new Set<SyncOp>(['enable', 'replace', 'commit', 'rewrap', 'pause', 'resume', 'delete']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEVICE_ID = /^[A-Za-z0-9_.-]{8,128}$/;
 
 type Handler = (request: express.Request) => Promise<unknown>;
@@ -60,5 +61,13 @@ export function registerCloudSyncRoutes(
     if (typeof handle !== 'string' || handle.length > 64) throw new CloudSyncError('invalid_handle', 400, 'handle is required');
     return runner.send(handle, { ts: Number(request.body?.ts), signature: request.body?.signature });
   });
+  const recordId = (request: express.Request) => {
+    const value = request.body?.recordId;
+    if (typeof value !== 'string' || !UUID.test(value)) throw new CloudSyncError('invalid_record', 400, 'recordId is required');
+    return value;
+  };
+  route('held/list', async() => ({ held: await runner.heldList() }));
+  route('held/approve', request => runner.heldApprove(recordId(request)));
+  route('held/reject', request => runner.heldReject(recordId(request)));
   route('forget', async() => { await runner.forget(); return { ok: true } });
 }

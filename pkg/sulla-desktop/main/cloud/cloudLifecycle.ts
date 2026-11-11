@@ -333,6 +333,11 @@ export function initCloudConnectionEvents(): void {
     else await CloudDataSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
   });
+  ipc.handle('sulla-cloud-vault:list-held', async() => VaultSyncV3.listHeld());
+  ipc.handle('sulla-cloud-vault:decide-held', async(_e: unknown, recordId: string, decision: 'approve' | 'reject') => {
+    if (typeof recordId !== 'string' || (decision !== 'approve' && decision !== 'reject')) return false;
+    return VaultSyncV3.decideHeld(recordId, decision);
+  });
   ipc.handle('sulla-cloud-memory:list-pending',async()=>MemorySyncV1.pending());
   ipc.handle('sulla-cloud-memory:decide-pending',async(_e:unknown,id:string,decision:'confirm'|'reject')=>MemorySyncV1.decide(id,decision==='confirm'));
 }

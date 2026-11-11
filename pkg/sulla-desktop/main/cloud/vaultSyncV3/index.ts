@@ -28,7 +28,7 @@ import { getCurrentUserId } from '../../sullaCloudAuth';
 import { isCloudSignedIn } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
-import { ContainerSyncError, VaultSyncContainer, type PreparedSync, type SyncOp } from './containerClient';
+import { ContainerSyncError, VaultSyncContainer, type HeldPolicyChange, type PreparedSync, type SyncOp } from './containerClient';
 
 import Logging from '@pkg/utils/logging';
 import { SyncDriverHealth } from '../syncDriverHealth';
@@ -130,6 +130,22 @@ class VaultSyncV3Impl {
       return result;
     })().finally(() => { this.inFlight = null });
     return this.inFlight;
+  }
+
+  /** Pulled changes that would widen agent access and wait for the owner. */
+  async listHeld(): Promise<HeldPolicyChange[]> {
+    return (await VaultSyncContainer.heldList()).held;
+  }
+
+  /**
+   * Owner decision on one held change. Approve applies the Cloud version; reject
+   * keeps the local one, which the sync that follows pushes to Cloud.
+   */
+  async decideHeld(recordId: string, decision: 'approve' | 'reject'): Promise<boolean> {
+    if (decision === 'approve') await VaultSyncContainer.heldApprove(recordId);
+    else await VaultSyncContainer.heldReject(recordId);
+    this.syncNow().catch(() => undefined);
+    return true;
   }
 
   /** Owner turned the toggle off: Cloud keeps a read-only copy and stops accepting edits. */

@@ -332,45 +332,6 @@ export class PgCloudSyncRepository implements PullRepository, RecursiveDeletePro
     return Number(row?.last_push_seq ?? 0);
   }
 
-  /** The earliest current file or folder namespace version unknown to Cloud. */
-  async nextPushCandidate(collectionId:string, cursor:number):Promise<PushCandidate | null> {
-    const row = (await this.db.query(`SELECT * FROM (
-      SELECT j.op,j.seq,f.id::text AS file_id,f.path,f.mime,v.id::text AS version_id,v.parent_version_id::text AS parent_version_id,
-        v.deleted,v.chunk_collection_id::text AS chunk_collection_id,v.size,v.created_at,m.chunk_ids,w.mtime_ms,v.restored_from_version_id,
-        regexp_replace(f.path,'^.*/','') AS item_name,
-        CASE WHEN strpos(f.path,'/')=0 THEN NULL ELSE COALESCE((SELECT ff.id::text FROM file_folders ff WHERE ff.collection_id=f.collection_id AND ff.path=regexp_replace(f.path,'/[^/]+$','') AND ff.deleted_at IS NULL LIMIT 1),
-          (SELECT cf.file_id::text FROM files_cloud_folders cf WHERE cf.collection_id=f.collection_id AND cf.path=regexp_replace(f.path,'/[^/]+$','') AND cf.deleted=FALSE LIMIT 1)) END AS parent_folder_id,
-        'file'::text AS item_kind
-      FROM journal j
-      JOIN files f ON f.id=j.file_id AND f.current_version_id=j.version_id
-      JOIN file_versions v ON v.id=j.version_id
-      LEFT JOIN manifests m ON m.hash=v.manifest_hash
-      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
-      LEFT JOIN files_cloud_skips k ON k.version_id=v.id
-      WHERE j.collection_id=$1 AND (j.seq>$2 OR k.retry_at<=NOW()) AND (k.version_id IS NULL OR k.retry_at<=NOW())
-        AND NOT EXISTS(SELECT 1 FROM files_cloud_versions cv WHERE cv.version_id=v.id)
-      UNION ALL
-      SELECT fj.op,fj.seq,fj.folder_id::text,fj.path,''::text,fj.version_id::text,fj.parent_version_id::text,
-        fj.deleted,fj.collection_id::text,0,fj.at,NULL,NULL,fj.restored_from_version_id,regexp_replace(fj.path,'^.*/',''),
-        CASE WHEN strpos(fj.path,'/')=0 THEN NULL ELSE (SELECT parent.id::text FROM file_folders parent WHERE parent.collection_id=fj.collection_id
-          AND parent.path=regexp_replace(fj.path,'/[^/]+$','') AND parent.deleted_at IS NULL LIMIT 1) END, 'folder'::text
-      FROM files_folder_journal fj
-      JOIN file_folders f ON f.id=fj.folder_id AND f.namespace_version_id=fj.version_id
-      WHERE fj.collection_id=$1 AND fj.seq>$2
-        AND NOT EXISTS(SELECT 1 FROM files_cloud_folder_versions cv WHERE cv.version_id=fj.version_id)
-    ) candidates ORDER BY seq LIMIT 1`, [collectionId, cursor])).rows[0];
-    if (!row) return null;
-    const mtime = row.mtime_ms !== null && row.mtime_ms !== undefined ? new Date(Number(row.mtime_ms)) : new Date(row.created_at);
-    const folder = row.item_kind === 'folder';
-    return {
-      journalSeq:Number(row.seq), fileId:row.file_id, path:row.path, mime:row.mime, versionId:row.version_id,
-      parentVersionId:row.parent_version_id ?? null, deleted:Boolean(row.deleted), chunkCollectionId:row.chunk_collection_id,
-      chunkIds:folder || row.deleted ? [] : (row.chunk_ids ?? []), size:folder || row.deleted ? 0 : Number(row.size), mtime:mtime.toISOString(),
-      namespace:{ kind:folder ? 'folder' : 'file', name:String(row.item_name), parentFolderId:row.parent_folder_id ?? null,
-        restoredFromVersionId:row.restored_from_version_id ?? undefined, operation:row.deleted ? 'delete' : row.op === 'rename' || row.op === 'metadata' ? 'metadata' : row.op === 'restore' ? 'restore' : row.parent_version_id ? 'content' : 'create' },
-    };
-  }
-
   async advancePushCursor(collectionId:string, journalSeq:number):Promise<void> {
     await this.db.query(`UPDATE file_sync_cursors SET last_push_seq=GREATEST(last_push_seq,$2) WHERE collection_id=$1 AND device_id='cloud'`, [collectionId, journalSeq]);
   }

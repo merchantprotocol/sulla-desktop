@@ -10,6 +10,7 @@ import https from 'node:https';
 import net from 'node:net';
 
 import pg from 'pg';
+import { IdentityError } from '@sulla/domain';
 
 import {
   agentPolicyAllows,
@@ -46,15 +47,7 @@ import {
   upstreamFailurePhase, upstreamFailureReason,
 } from './upstreamEgress.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
-import {
-  parseSullaCloudRefresh,
-  SULLA_CLOUD_HOST,
-  SULLA_CLOUD_INTEGRATION_ID,
-  SULLA_CLOUD_REFRESH_URL,
-  sullaCloudRelayUrl,
-  sullaCloudTokenNeedsRefresh,
-  validateSullaCloudRelayParams,
-} from './sullaCloudRelay.js';
+import { SULLA_CLOUD_HOST, SULLA_CLOUD_INTEGRATION_ID, sullaCloudRelayUrl, validateSullaCloudRelayParams } from './sullaCloudRelay.js';
 import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 import type { VaultConfig } from './config.js';
@@ -104,6 +97,9 @@ import {
 } from './contracts.js';
 import type { Database, Queryable } from './db.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
+import { PostgresSullaCloudRevocationRepository } from './repositories/PostgresSullaCloudRevocationRepository.js';
+import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionManager.js';
+import { SullaCloudSessionManagerFactory } from './sullaCloudSession/SullaCloudSessionManagerFactory.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
@@ -598,6 +594,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
   private readonly humanSessions = new Map<string, HumanSession>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
+  private sullaCloudSessionManager: SullaCloudSessionManager | null = null;
   private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
   private securityOperationTail: Promise<void> = Promise.resolve();
   private migrationState: LocalVaultState = 'locked';
@@ -621,6 +618,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
     private readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
     private readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
+    private readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -963,6 +961,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         : { rowCount: 1 };
       this.requireGeneration(activeGeneration);
       this.migrationState = committed.rowCount ? 'unlocked' : 'migration_required';
+      this.retryPendingSullaCloudRevocations();
       return { state: this.migrationState };
   }
 
@@ -2058,20 +2057,20 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_adopted', itemId);
       this.requireGeneration(generation);
     }));
+    this.sullaCloudSessions().sessionAdopted();
+    this.retryPendingSullaCloudRevocations();
     return { userId: input.userId, activeContractorId: input.activeContractorId };
   }
 
-  async clearSullaCloudSession(callerId: string, token: string | undefined): Promise<{ cleared: number }> {
+  /**
+   * Sign out: revoke the refresh token on Sulla Cloud with the copy the vault holds (queued durably when offline),
+   * then destroy the stored token ciphertext. The token never crosses into Electron.
+   */
+  async clearSullaCloudSession(callerId: string, token: string | undefined): Promise<{ cleared: number; remoteRevoked: boolean; queued: boolean }> {
     this.requireDesktopIdentity(callerId, token);
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    return this.runSecurityOperation(() => this.runTransaction(async client => {
-      const result = await this.itemRepository.softDeleteIntegrationFamilies([keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']], client);
-      await this.integrationStateRepository.clear(keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin'], client);
-      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_cleared');
-      this.requireGeneration(generation);
-      return { cleared: result.rowCount ?? 0 };
-    }));
+    this.requireKeys();
+    const result = await this.sullaCloudSessions().signOut();
+    return { cleared: 1, remoteRevoked: result.remoteRevoked, queued: result.queued };
   }
 
   async executeDesktopSullaCloudRequest(
@@ -2102,7 +2101,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       url: target.toString(), method, headers: {}, body: input.body, bodyEncoding: input.bodyEncoding,
       injections: [], responseType: input.responseType ?? 'json',
     };
-    const { credential, item } = await this.withCredentialQueue(request.ref, () => this.freshSullaCloudAccessToken(request, true));
+    const { credential, item } = await this.freshSullaCloudAccessToken(request, true);
     const allowedHeaders = new Set(['accept', 'content-type', 'x-sulla-timestamp', 'x-sulla-device-signature', 'x-sulla-support-token']);
     const headers = Object.fromEntries(Object.entries(input.headers ?? {})
       .filter(([name, value]) => allowedHeaders.has(name.toLowerCase()) && typeof value === 'string'));
@@ -2470,6 +2469,29 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.relayManager.close(relayId, 'caller_closed');
   }
 
+  private sullaCloudSessions(): SullaCloudSessionManager {
+    this.sullaCloudSessionManager ??= new SullaCloudSessionManagerFactory({
+      userKey: () => { const keys = this.requireKeys(); return { userId: keys.userId, userKey: keys.userKey }; },
+      generation: () => this.generation,
+      requireGeneration: generation => this.requireGeneration(generation),
+      transaction: work => this.runSecurityOperation(() => this.runTransaction(work)),
+      auditHumanAction: (client, userId, action, itemId) => this.auditHumanAction(client, userId, action, itemId ?? null),
+    }, {
+      items: this.itemRepository, state: this.integrationStateRepository, revocations: this.revocationRepository,
+      serialize: (name, work) => this.withCredentialQueue({ integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId: name }, work),
+      postJson: async(url, body) => {
+        const result = await this.send(await this.validateTarget(url), 'POST', { 'content-type': 'application/json' }, body, 'json', [body.refreshToken], this.generation, false);
+        return { status: result.status, body: result.body };
+      },
+    }).create();
+    return this.sullaCloudSessionManager;
+  }
+
+  /** Offline sign-outs queue their revoke; it is retried after unlock and after the next sign-in. Never blocks or throws. */
+  private retryPendingSullaCloudRevocations(): void {
+    this.sullaCloudSessions().retryPendingRevocations().catch(() => undefined);
+  }
+
   /** Serialize token mutations per integration account (refresh tokens rotate). */
   private async withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T> {
     const queueKey = `${ ref.integrationId ?? '' }/${ ref.accountId ?? '' }`;
@@ -2547,9 +2569,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     };
     const generation = this.generation;
     const trustedDesktopRelay = input.claims.agent_id === 'sulla' && input.claims.pod_id === 'desktop-relay';
-    const { credential, item } = await this.withCredentialQueue(
-      input.ref, () => this.freshSullaCloudAccessToken(request, trustedDesktopRelay),
-    );
+    const { credential, item } = await this.freshSullaCloudAccessToken(request, trustedDesktopRelay);
     let targetUrl: string;
     try {
       targetUrl = sullaCloudRelayUrl(params, credential).toString();
@@ -2601,36 +2621,20 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
       this.approvals.delete(request.approvalId!);
     }
-    const current = credentialField(plaintext, 'access_token');
-    if (current && !sullaCloudTokenNeedsRefresh(current)) return { credential: current, item };
-    const refreshToken = plaintext.integration?.properties?.refresh_token;
-    if (!refreshToken || !plaintext.integration) {
-      throw new LocalVaultError('credential_field_missing', 404, 'Sulla Cloud session is unavailable; sign in again');
-    }
-    const target = await this.validateTarget(SULLA_CLOUD_REFRESH_URL);
-    const result = await this.send(
-      target, 'POST', { 'content-type': 'application/json' }, { refreshToken }, 'json', [refreshToken], generation, false,
-    );
-    if (result.status === 401 || result.status === 403) {
-      throw new LocalVaultError('upstream_failed', 401, 'Sulla Cloud session expired; sign in again');
-    }
-    if (result.status < 200 || result.status >= 300) {
-      throw new LocalVaultError('upstream_failed', 502, 'Sulla Cloud token refresh failed');
-    }
-    let tokens: ReturnType<typeof parseSullaCloudRefresh>;
+    // Refresh-ahead, single-flight and compare-and-set live in ClientSessionService over the vault item.
+    let credential: string | null;
     try {
-      tokens = parseSullaCloudRefresh(result.body);
-    } catch {
+      credential = await this.sullaCloudSessions().accessToken();
+    } catch (error) {
+      if (error instanceof LocalVaultError) throw error;
+      if (error instanceof IdentityError && error.identityCode === 'refresh_transient') {
+        throw new LocalVaultError('upstream_failed', 502, 'Sulla Cloud token refresh failed');
+      }
       throw new LocalVaultError('invalid_upstream_response', 502, 'Sulla Cloud token refresh response is invalid');
     }
-    await this.runSecurityOperation(() => this.runTransaction(async(client) => {
-      this.requireGeneration(generation);
-      plaintext.integration!.properties.access_token = tokens.accessToken;
-      if (tokens.refreshToken) plaintext.integration!.properties.refresh_token = tokens.refreshToken;
-      item.revision = await this.persistOAuthItem({ item, plaintext, generation }, keys, client);
-      await this.audit({ ...request, operation: 'sulla-cloud.refresh', url: SULLA_CLOUD_REFRESH_URL }, item, false, null, client);
-    }));
-    return { credential: tokens.accessToken, item };
+    this.requireGeneration(generation);
+    if (!credential) throw new LocalVaultError('upstream_failed', 401, 'Sulla Cloud session expired; sign in again');
+    return { credential, item };
   }
 
   async executeStream(

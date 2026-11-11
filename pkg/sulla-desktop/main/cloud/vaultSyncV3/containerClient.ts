@@ -34,6 +34,14 @@ export interface LocalSyncStatus {
   bundleStale?:         boolean;
 }
 
+/** A pulled change that would widen agent access, waiting for the owner. Policies only; never item plaintext. */
+export interface HeldPolicyChange {
+  id:             string;
+  legacy:         boolean;
+  currentPolicy:  Record<string, unknown> | null;
+  proposedPolicy: Record<string, unknown> | null;
+}
+
 export class ContainerSyncError extends Error {
   constructor(public readonly code: string, public readonly status: number, message?: string) {
     super(message || code);
@@ -61,5 +69,8 @@ export const VaultSyncContainer = {
   pull:   (deviceId: string) => call<{ applied: number; conflictCopies: number; headSeq: number; syncPaused?: boolean; cloudMissing?: boolean }>('pull', { deviceId }),
   prepare: (op: SyncOp, deviceId: string) => call<PreparedSync | { idle: true }>('prepare', { op, deviceId }),
   send:   (handle: string, ts: number, signature: string) => call<{ ok: boolean; status: number; error?: string; detail?: any }>('send', { handle, ts, signature }),
+  heldList:    () => call<{ held: HeldPolicyChange[] }>('held/list'),
+  heldApprove: (recordId: string) => call<{ ok: true }>('held/approve', { recordId }),
+  heldReject:  (recordId: string) => call<{ ok: true }>('held/reject', { recordId }),
   forget: () => call<{ ok: true }>('forget'),
 };

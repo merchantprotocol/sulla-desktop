@@ -27,6 +27,9 @@ export class GitPushWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
     const localAuthority = usesContainerVaultAuthority();
+    if (localAuthority && !this.executionContext) {
+      return { successBoolean: false, responseString: 'Git push failed: github.git requires a verified tool execution context' };
+    }
 
     const redact = (s: string, secret?: string): string =>
       secret ? (s || '').split(secret).join('***') : (s || '');

@@ -103,7 +103,7 @@ export class VoiceInferenceProcess {
     const output = await session.run({
       input: new this.runtime.Tensor('float32', request.audio, [1, 576]),
       state: new this.runtime.Tensor('float32', state, [2, 1, 128]),
-      sr: new this.runtime.Tensor('int64', BigInt64Array.from([16_000n]), [1]),
+      sr: new this.runtime.Tensor('int64', BigInt64Array.from([BigInt(16_000)]), [1]),
     });
     const probability = Number((output.output?.data as Float32Array)?.[0]);
     const next = output.stateN?.data as Float32Array;
@@ -123,7 +123,7 @@ export class VoiceInferenceProcess {
       const output = await session.run({
         input: new this.runtime.Tensor('float32', input, [1, 576]),
         state: new this.runtime.Tensor('float32', state, [2, 1, 128]),
-        sr: new this.runtime.Tensor('int64', BigInt64Array.from([16_000n]), [1]),
+        sr: new this.runtime.Tensor('int64', BigInt64Array.from([BigInt(16_000)]), [1]),
       });
       const probability = Number((output.output?.data as Float32Array)?.[0]);
       const next = output.stateN?.data as Float32Array;

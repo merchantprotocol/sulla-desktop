@@ -19,6 +19,7 @@ export interface VoiceTurnAccumulatorConfig {
   noiseFilter?: TranscriptNoiseFilter;
   /** Returns true when a transcript is Sulla's own voice picked up by the mic. */
   isEcho?: (text: string) => boolean;
+  stripEcho?: (text: string) => string;
   now?: () => number;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -141,8 +142,10 @@ export class VoiceTurnAccumulatorService implements VoiceTurnAccumulator {
       return;
     }
     if (!msg?.text || this.config.isTTSPlaying()) return;
-    const transcript = String(msg.text).trim();
-    if (this.noise.isNoise(transcript)) return;
+    let transcript = String(msg.text).trim();
+    // Strip a partial self-echo before noise and whole-echo checks.
+    transcript = this.config.stripEcho?.(transcript) ?? transcript;
+    if (!transcript || this.noise.isNoise(transcript)) return;
     if (this.config.isEcho?.(transcript)) return;
     if (msg.event_type === 'transcript_partial') {
       // Partials arrive as incremental chunks; keep every one. An exact repeat of the last
