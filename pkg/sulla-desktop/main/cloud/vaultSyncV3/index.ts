@@ -18,7 +18,7 @@
  *   - every 60 s: if the container reports local edits Cloud lacks, push (≥5 s debounce)
  *   - every 10 min, on unlock, and on "Sync now": pull first, then push
  *   - toggle off: pause (Cloud keeps a read-only copy); "Delete Cloud copy": signed delete
- *   - master password changed on this Desktop: rewrap the Cloud bundle on the next sync
+ *   - Cloud already has a bundle verifiable with the local user key: push records without rewrapping
  * Signed out, revoked, locked or a vault with no master password stop with a
  * clear status rather than failing silently.
  */
@@ -28,7 +28,7 @@ import { getCurrentUserId } from '../../sullaCloudAuth';
 import { isCloudSignedIn } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
-import { ContainerSyncError, VaultSyncContainer, type PreparedSync, type SyncOp } from './containerClient';
+import { ContainerSyncError, VaultSyncContainer, type HeldPolicyChange, type PreparedSync, type SyncOp } from './containerClient';
 
 import Logging from '@pkg/utils/logging';
 import { SyncDriverHealth } from '../syncDriverHealth';
@@ -132,6 +132,22 @@ class VaultSyncV3Impl {
     return this.inFlight;
   }
 
+  /** Pulled changes that would widen agent access and wait for the owner. */
+  async listHeld(): Promise<HeldPolicyChange[]> {
+    return (await VaultSyncContainer.heldList()).held;
+  }
+
+  /**
+   * Owner decision on one held change. Approve applies the Cloud version; reject
+   * keeps the local one, which the sync that follows pushes to Cloud.
+   */
+  async decideHeld(recordId: string, decision: 'approve' | 'reject'): Promise<boolean> {
+    if (decision === 'approve') await VaultSyncContainer.heldApprove(recordId);
+    else await VaultSyncContainer.heldReject(recordId);
+    this.syncNow().catch(() => undefined);
+    return true;
+  }
+
   /** Owner turned the toggle off: Cloud keeps a read-only copy and stops accepting edits. */
   async pause(): Promise<VaultSyncStatus> {
     return this.signedOp('pause', 'Sync paused. The Cloud copy is read-only until you turn it back on.');
@@ -210,15 +226,6 @@ class VaultSyncV3Impl {
         const pulled = await VaultSyncContainer.pull(who.deviceId);
         this.lastCounts.pulled += pulled.applied;
         if (pulled.cloudMissing) return this.set({ lastError: 'The Cloud copy was deleted. Turn sync off and on again to upload a new one.' });
-        if (attempt === 1) {
-          // Master password changed here since the last upload: rewrap the Cloud bundle so the
-          // browser unlocks with the new password (open browser tabs see the new generation and lock).
-          const now = await VaultSyncContainer.status();
-          if (now.bundleStale) {
-            const rewrapped = await this.prepareSignSend('rewrap', who);
-            if (!('idle' in rewrapped) && !rewrapped.ok) throw new ContainerSyncError(rewrapped.error || 'cloud_error', rewrapped.status);
-          }
-        }
         if (pulled.syncPaused) {
           // The toggle is on again after a pause: reopen the Cloud copy for edits.
           const resumed = await this.prepareSignSend('resume', who);

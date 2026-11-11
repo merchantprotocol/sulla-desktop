@@ -23,6 +23,7 @@ import StudioLivePage from '@pkg/components/studio/StudioLivePage.vue';
 
 class FakeAgentStateClient {
   readonly snapshot = shallowRef<AgentStateSnapshot>({ version: 0, generatedAt: new Date(0).toISOString(), rows: [] });
+  readonly error = shallowRef('');
 
   apply(next: AgentStateSnapshot): boolean {
     if (next.version <= this.snapshot.value.version) return false;

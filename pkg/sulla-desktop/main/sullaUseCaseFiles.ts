@@ -9,6 +9,7 @@ import { Notification } from 'electron';
 import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
 import { installMemoryPackForSkill, listPacks, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
@@ -16,6 +17,7 @@ import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
+import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
 
 const console = Logging.background;
 const ROOT = 'Use Cases';
@@ -60,7 +62,7 @@ export class SullaUseCaseFiles {
   private lastFailure = '';
   private stopped = false;
 
-  constructor(private readonly request:Request) {}
+  constructor(private readonly request:Request, private readonly notifier?:UseCaseChangePublisher) {}
 
   start():void {
     activeUseCaseFiles = this;
@@ -234,6 +236,7 @@ export class SullaUseCaseFiles {
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
     });
+    if (kind !== 'integration') this.notifier?.announce({ type: kind === 'routine' ? 'workflow' : kind, slug, change: 'published' });
     if (kind === 'skill') {
       const raw = text(files['SKILL.md']);
       const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
@@ -242,10 +245,13 @@ export class SullaUseCaseFiles {
   }
 
   private async disableMissing(active:Set<string>):Promise<void> {
+    // Read before the disable so the index hears which rows left; a failed read only loses the hint (reconcile repairs it).
+    const removed = await new UseCaseRemovalRepository(postgresClient).listRemoved(active);
     await postgresClient.query(`UPDATE agent_definitions SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE skill_definitions SET enabled=FALSE,deleted_at=COALESCE(deleted_at,NOW()),updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE workflows SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (id=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10))]);
     for (const [table,type] of [['function_definitions','functions'],['recipe_definitions','recipes']] as const) await postgresClient.query(`UPDATE ${ table } SET enabled=FALSE,use_case_version_id=NULL,updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith(`${type}/`)).map(k=>k.slice(type.length+1))]);
+    for (const row of removed) this.notifier?.announce({ type: row.type as 'agent'|'skill'|'workflow'|'function'|'recipe', slug: row.slug, change: 'deleted' });
   }
 
   async scan():Promise<void> {

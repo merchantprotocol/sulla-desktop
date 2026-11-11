@@ -17,6 +17,8 @@ class FleetStateReader {
   constructor(private readonly values: AgentJob[]) {}
   async jobs() { return this.values; }
   async list() { return this.values; }
+  // Mirrors AgentStateService.descendants(): the lineage of one parent thread, resolved by the real index.
+  async descendants(parentThreadId: string) { return new AgentLineageIndex(this.values).descendants(parentThreadId); }
   async job(jobId: string) { return this.values.find(value => value.jobId === jobId); }
 }
 class FleetTelemetryReader {

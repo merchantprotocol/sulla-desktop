@@ -6,6 +6,7 @@
 import type { AgentsListResponse } from '@pkg/main/agentsIpc';
 import type { VisibilitySource } from './AgentDetailFeed';
 import { RefreshSequencer } from './RefreshSequencer';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type TimerHandle = ReturnType<typeof setInterval>;
 
@@ -21,6 +22,8 @@ export class AgentsListPoller {
     private readonly onData: (data: AgentsListResponse) => void,
     private readonly onAvailability: (available: boolean) => void,
     private readonly intervalMs = 3_000,
+    private readonly onError: (reason: string) => void = () => undefined,
+    private readonly reportError: (source: string, error: unknown) => void = (source, error) => ipcRenderer.send('debug:report' as any, source, { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' }),
   ) {}
 
   start(): void {
@@ -52,8 +55,13 @@ export class AgentsListPoller {
       if (!this.refreshSequencer.tryApply(ticket)) return;
       this.onData(data);
       this.onAvailability(true);
-    } catch {
-      if (!this.refreshSequencer.hasAppliedNewerThan(ticket)) this.onAvailability(false);
+    } catch (error) {
+      this.reportError('live-agents:list', error);
+      if (!this.refreshSequencer.hasAppliedNewerThan(ticket)) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.onAvailability(false);
+        this.onError(reason);
+      }
     }
   }
 

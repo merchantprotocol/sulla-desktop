@@ -2,22 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Strict request checks for the vault-origin API. The server holds no key, so
-// it can't check a MAC; it checks shape instead. The field allowlists come from
-// browserEnvelope/envelope.ts (the TypeScript twin of the browser's
-// sync-envelope.js), so a body the browser couldn't verify is never stored.
+// it can't check a MAC; it checks shape instead. The field allowlists are the
+// domain DTO schemas in @sulla/domain (the same ones the Workers API uses), so a
+// body the browser couldn't verify is never stored.
 // On top of that: the record must belong to this vault and scope, counters must
 // line up, sizes are capped, and any key that only ever appears in decrypted
 // items is refused at any depth, so a buggy client can't park a password here.
 
-import {
-  checkBundleShape,
-  checkHeadShape,
-  checkRecordShape,
-  EnvelopeError,
-  type SyncBundle,
-  type SyncHead,
-  type SyncRecord,
-} from '../browserEnvelope/envelope.js';
+import { VaultBundleDtoSchema, VaultHeadDtoSchema, VaultRecordDtoSchema } from '@sulla/domain';
+
+import type { SyncBundle, SyncHead, SyncRecord } from '../browserEnvelope/envelope.js';
 
 export const LIMITS = Object.freeze({
   recordBytes:     64 * 1024,
@@ -79,34 +73,33 @@ function refusePlaintext(value: unknown): void {
   if (key) throw new InvalidBody(`plaintext_key:${ key }`);
 }
 
-function shape<T>(check: (value: unknown) => void, value: unknown, reason: string): T {
-  try {
-    check(value);
-  } catch (error) {
-    if (error instanceof EnvelopeError) throw new InvalidBody(`${ reason }:${ error.code }`);
-    throw error;
-  }
+/** Structural schema from @sulla/domain (VaultBundleDtoSchema, VaultRecordDtoSchema, VaultHeadDtoSchema). */
+interface ShapeSchema { safeParse(value: unknown): { success: boolean } }
+
+function shape<T>(schema: ShapeSchema, value: unknown, kind: 'bundle' | 'record' | 'head'): T {
+  if (!schema.safeParse(value).success) throw new InvalidBody(`${ kind }:${ kind }_shape`);
   return value as T;
 }
 
 export function validateBundle(value: unknown, vaultId: string, vaultUserId: string): SyncBundle {
   refusePlaintext(value);
-  const bundle = shape<SyncBundle>(checkBundleShape, value, 'bundle');
+  // Size first: the domain schema also caps size, and an oversize body must still answer 413.
+  if ((JSON.stringify(value) ?? '').length > LIMITS.bundleBytes) throw new InvalidBody('bundle_size', 413);
+  const bundle = shape<SyncBundle>(VaultBundleDtoSchema, value, 'bundle');
   if (bundle.vaultId !== vaultId || bundle.vaultUserId !== vaultUserId) throw new InvalidBody('bundle_ids');
-  if (JSON.stringify(bundle).length > LIMITS.bundleBytes) throw new InvalidBody('bundle_size', 413);
   return bundle;
 }
 
 export function validateRecord(value: unknown, vaultId: string, scope: string): SyncRecord {
   refusePlaintext(value);
-  const record = shape<SyncRecord>(checkRecordShape, value, 'record');
+  if ((JSON.stringify(value) ?? '').length > LIMITS.recordBytes) throw new InvalidBody('record_size', 413);
+  const record = shape<SyncRecord>(VaultRecordDtoSchema, value, 'record');
   if (record.vaultId !== vaultId || record.scope !== scope) throw new InvalidBody('record_ids');
-  if (JSON.stringify(record).length > LIMITS.recordBytes) throw new InvalidBody('record_size', 413);
   return record;
 }
 
 export function validateHead(value: unknown, vaultId: string, scope: string): SyncHead {
-  const head = shape<SyncHead>(checkHeadShape, value, 'head');
+  const head = shape<SyncHead>(VaultHeadDtoSchema, value, 'head');
   if (head.vaultId !== vaultId || head.scope !== scope) throw new InvalidBody('head_ids');
   return head;
 }

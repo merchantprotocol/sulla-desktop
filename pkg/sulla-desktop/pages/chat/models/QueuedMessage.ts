@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Attachment } from './Attachment';
+import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 import type { QueuedId }   from '../types/chat';
 
 /** A user message that's waiting because a run is in progress. */
@@ -14,4 +15,8 @@ export interface QueuedMessage {
   queuedAt:    number;
   /** 'voice' when the message was spoken — keeps the reply in voice mode once it drains. */
   inputSource?: 'voice';
+  /** Use-case chip picked for this message; travels with it through the queue. */
+  useCaseIntent?: UseCaseIntentMetadata;
+  /** Agent an "Ask <agent>" chip routes this message to. */
+  agentId?: string;
 }

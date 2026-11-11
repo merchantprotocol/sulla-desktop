@@ -12,6 +12,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { AuthInputValidator } from '@pkg/composables/auth/AuthInputValidator';
 import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -114,6 +115,7 @@ export function useAccountSettings() {
   const otpSent = ref(false);
   const otpCode = ref('');
 
+  const authInputs = AuthInputValidator.withDomainRules();
   const emailInput = ref('');
   const emailPassword = ref('');
   const emailName = ref('');
@@ -401,9 +403,14 @@ export function useAccountSettings() {
 
   async function sendEmailCode() {
     cloudError.value = '';
+    const email = authInputs.email(emailInput.value);
+    if (!email.ok) {
+      cloudError.value = email.error;
+      return;
+    }
     busy.value = true;
     try {
-      const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', emailInput.value.trim());
+      const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', email.value);
       if (!res.ok) {
         cloudError.value = res.error || 'Could not send the code.';
         return;
@@ -416,13 +423,19 @@ export function useAccountSettings() {
 
   async function verifyEmailCode() {
     cloudError.value = '';
+    const email = authInputs.email(emailInput.value);
+    if (!email.ok) {
+      cloudError.value = email.error;
+      return;
+    }
+    const code = authInputs.emailCode(emailCode.value);
+    if (!code.ok) {
+      cloudError.value = code.error;
+      return;
+    }
     busy.value = true;
     try {
-      const res = await ipcRenderer.invoke(
-        'sulla-cloud:email-code-verify',
-        emailInput.value.trim(),
-        emailCode.value.trim(),
-      );
+      const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', email.value, code.value);
       cloudStatus.value = res.status;
       if (!res.ok) {
         cloudError.value = res.error || 'That code did not work.';
@@ -438,12 +451,22 @@ export function useAccountSettings() {
 
   async function emailSubmit() {
     cloudError.value = '';
+    const email = authInputs.email(emailInput.value);
+    if (!email.ok) {
+      cloudError.value = email.error;
+      return;
+    }
+    const password = authInputs.password(emailPassword.value);
+    if (!password.ok) {
+      cloudError.value = password.error;
+      return;
+    }
     busy.value = true;
     try {
       const channel = emailMode.value === 'login' ? 'sulla-cloud:email-login' : 'sulla-cloud:email-register';
       const args: [string, string, string?] = emailMode.value === 'login'
-        ? [emailInput.value.trim(), emailPassword.value]
-        : [emailInput.value.trim(), emailPassword.value, emailName.value.trim() || undefined];
+        ? [email.value, password.value]
+        : [email.value, password.value, emailName.value.trim() || undefined];
       const res = await ipcRenderer.invoke(channel, ...args);
       cloudStatus.value = res.status;
       if (!res.ok) {

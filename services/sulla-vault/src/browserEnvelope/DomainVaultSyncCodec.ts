@@ -6,6 +6,9 @@
 import {
   DefaultVaultRecordCodec,
   KeyWrap,
+  VaultBundleDtoSchema,
+  VaultHeadDtoSchema,
+  VaultRecordDtoSchema,
   VaultSyncCodec,
   type CryptoPrimitives,
   type RandomSource,
@@ -13,9 +16,12 @@ import {
   type VaultHead,
   type VaultRecord,
 } from '@sulla/domain';
-import { checkBundleShape, checkHeadShape, checkRecordShape, type BundleFields, type RecordFields, type SyncBundle, type SyncHead, type SyncItem, type SyncRecord } from './envelope.js';
+import { EnvelopeError, type BundleFields, type RecordFields, type SyncBundle, type SyncHead, type SyncItem, type SyncRecord } from './envelope.js';
 
-/** Desktop runtime adapter for the shared vault-sync-v3 domain codec. */
+/** Anything with a Zod-style `safeParse`, which is how the domain DTO schemas are used. */
+interface ShapeSchema { safeParse(value: unknown): { success: boolean } }
+
+/** Desktop runtime adapter for the shared vault-sync-v3 domain codec. Every AAD string lives in the domain codec. */
 export class DomainVaultSyncCodec {
   private readonly codec: VaultSyncCodec;
   private readonly crypto: CryptoPrimitives;
@@ -34,17 +40,17 @@ export class DomainVaultSyncCodec {
   buildBundle(fields: BundleFields, userKey: Uint8Array): SyncBundle {
     const body = { format: 'sulla-vault-sync-bundle', v: fields.recovery ? 2 : 1, ...fields } as Omit<VaultBundle, 'mac'>;
     const result = this.codec.sealBundle(body, userKey) as SyncBundle;
-    checkBundleShape(result);
+    this.assertShape(VaultBundleDtoSchema, result, 'bundle');
     return result;
   }
 
   verifyBundle(bundle: unknown, userKey: Uint8Array): void {
-    checkBundleShape(bundle);
+    this.assertShape(VaultBundleDtoSchema, bundle, 'bundle');
     this.codec.verifyBundle(bundle as VaultBundle, userKey);
   }
 
   unlockBundle(bundle: unknown, password: string): Uint8Array {
-    checkBundleShape(bundle);
+    this.assertShape(VaultBundleDtoSchema, bundle, 'bundle');
     return this.codec.unlockBundle(bundle as VaultBundle, password);
   }
 
@@ -56,12 +62,12 @@ export class DomainVaultSyncCodec {
       ...(!fields.deleted && fields.kind === 'folder' ? { encryptedName: fields.encryptedName } : {}),
     } as Omit<VaultRecord, 'mac'>;
     const result = this.codec.sealRecord(record, scopeKey) as SyncRecord;
-    checkRecordShape(result);
+    this.assertShape(VaultRecordDtoSchema, result, 'record');
     return result;
   }
 
   verifyRecord(record: unknown, scopeKey: Uint8Array, expect: { vaultId: string; scope: string; id?: string }): void {
-    checkRecordShape(record);
+    this.assertShape(VaultRecordDtoSchema, record, 'record');
     this.codec.verifyRecord(record as VaultRecord, scopeKey, expect);
   }
 
@@ -81,7 +87,7 @@ export class DomainVaultSyncCodec {
     scopeKey: Uint8Array,
     expected: { vaultId: string; scope: string; records: Iterable<SyncRecord>; minSeq?: number; expectedPrevHeadMac?: string },
   ): void {
-    checkHeadShape(head);
+    this.assertShape(VaultHeadDtoSchema, head, 'head');
     this.codec.verifyHead(head as VaultHead, scopeKey, [...expected.records] as VaultRecord[], expected.minSeq ?? 0, expected.expectedPrevHeadMac);
   }
 
@@ -94,11 +100,8 @@ export class DomainVaultSyncCodec {
     return this.codec.decryptItem(item, ownerKey, ownerId, itemId);
   }
 
-  itemAad(purpose: 'key' | 'ciphertext', ownerId: string, itemId: string): string {
-    return `sulla:item:${purpose}:v1:${JSON.stringify([ownerId, itemId])}`;
-  }
-
-  folderAad(ownerId: string, folderId: string): string {
-    return `sulla:folder-name:v1:${JSON.stringify([ownerId, folderId])}`;
+  /** Fail closed on any shape the domain DTO schema refuses. The code is `<kind>_shape`. */
+  private assertShape(schema: ShapeSchema, value: unknown, kind: 'bundle' | 'record' | 'head'): void {
+    if (!schema.safeParse(value).success) throw new EnvelopeError(`${ kind }_shape`, `Vault ${ kind } is malformed`);
   }
 }

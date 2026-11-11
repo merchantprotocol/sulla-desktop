@@ -135,12 +135,12 @@ async function refreshMetadata(): Promise<void> {
   try {
     const cards = await ipcRenderer.invoke('agents:thread-jobs' as any, props.parentThreadId) as ThreadAgentCard[];
     legacyCards.value = new Map(cards.map(card => [`${ card.jobId }:${ card.taskIndex }`, card]));
-  } catch { /* Snapshot rows remain authoritative when optional display metadata is unavailable. */ }
+  } catch (error) { ipcRenderer.send('debug:report' as any, 'subagent-rail:metadata-refresh', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' }); }
 }
 async function dismiss(card: ThreadAgentCard): Promise<void> {
   if (!props.parentThreadId) return;
   const hidden = new Set(dismissed.value); hidden.add(`${ card.jobId }:${ card.taskIndex }`); dismissed.value = hidden;
-  try { await ipcRenderer.invoke('agents:dismiss-thread-job' as any, card.jobId, props.parentThreadId, card.taskIndex) } catch { /* Local dismissal still preserves the approved interaction. */ }
+  try { await ipcRenderer.invoke('agents:dismiss-thread-job' as any, card.jobId, props.parentThreadId, card.taskIndex) } catch (error) { ipcRenderer.send('debug:report' as any, 'subagent-rail:dismiss', { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' }); }
 }
 defineExpose({ dismiss });
 watch(() => rows.value.length > 0, visible => emit('visibility', visible), { immediate: true });

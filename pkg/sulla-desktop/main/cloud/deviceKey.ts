@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 
 import paths from '@pkg/utils/paths';
+import { DeviceMessage, type DevicePurpose as DomainDevicePurpose } from '@sulla/domain';
 
 interface StoredKey {
   v:          1;
@@ -85,41 +86,36 @@ export function getDeviceKeyFingerprint(): string {
   return hex.replace(/(.{4})(?!$)/g, '$1-');
 }
 
-// Must match sulla-workers src/services/device-keys.ts PURPOSE_TAGS.
-const PURPOSE_TAGS = {
-  'relay-desktop': 'sulla-relay-desktop-v1',
-  'sync-upload':   'sulla-sync-upload-v1',
-  'key-rotate':    'sulla-key-rotate-v1',
-  'vault-sync-v3': 'sulla-vault-sync-v3',
-  'files-sync-v1': 'sulla-files-sync-v1',
-  'device-tools-rpc-v1': 'sulla-device-tools-rpc-v1',
-  'device-tools-host-v1': 'sulla-device-tools-host-v1',
-  'support-desktop-v1': 'sulla-support-desktop-v1',
-  'support-request-v1': 'sulla-support-request-v1',
-  'support-guest-v1': 'sulla-support-guest-v1',
+// Slack purpose tags are introduced by this feature and are not yet in the vendored
+// domain package. All existing purposes continue through the shared domain codec.
+const SLACK_PURPOSE_TAGS = {
   'slack-inbound-v1': 'sulla-slack-inbound-v1',
   'slack-workspace-v1': 'sulla-slack-workspace-v1',
 } as const;
+export type DevicePurpose = DomainDevicePurpose | keyof typeof SLACK_PURPOSE_TAGS;
 
-export type DevicePurpose = keyof typeof PURPOSE_TAGS;
+function deviceMessageBytes(purpose: DevicePurpose, parts: (string | number)[]): Buffer {
+  if (purpose in SLACK_PURPOSE_TAGS) {
+    const values = parts.map(String);
+    if (values.some(value => value.includes('\n'))) throw new TypeError('message parts must not contain newlines');
+    return Buffer.from([SLACK_PURPOSE_TAGS[purpose as keyof typeof SLACK_PURPOSE_TAGS], ...values].join('\n'), 'utf8');
+  }
+  return Buffer.from(new DeviceMessage(purpose as DomainDevicePurpose, parts).toBytes());
+}
 
 export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
-  for (const p of parts) {
-    if (String(p).includes('\n')) throw new Error('message parts must not contain newlines');
-  }
-  return [PURPOSE_TAGS[purpose], ...parts.map(String)].join('\n');
+  return deviceMessageBytes(purpose, parts).toString('utf8');
 }
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
 export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return crypto.sign(null, Buffer.from(deviceMessage(purpose, parts)), load().key).toString('base64');
+  return crypto.sign(null, deviceMessageBytes(purpose, parts), load().key).toString('base64');
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
 export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
   const ts = Math.floor(Date.now() / 1000);
-  const message = deviceMessage(purpose, [...parts, ts]);
-  const signature = crypto.sign(null, Buffer.from(message), load().key).toString('base64');
+  const signature = crypto.sign(null, deviceMessageBytes(purpose, [...parts, ts]), load().key).toString('base64');
   return { ts, signature };
 }
 

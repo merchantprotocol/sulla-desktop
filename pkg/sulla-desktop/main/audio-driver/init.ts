@@ -32,8 +32,10 @@
  * ```
  */
 
-import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
+import { app, ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import crypto from 'crypto';
+import { existsSync } from 'node:fs';
+import path from 'path';
 
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
 import { SpeakerDriverController } from './controller/SpeakerDriverController';
@@ -47,6 +49,12 @@ import * as micPcmSocket from './service/mic-pcm-socket';
 import * as micSocket from './service/mic-socket';
 import * as speakerSocket from './service/speaker-socket';
 import * as whisperTranscribe from './service/whisper-transcribe';
+import { OrtInferenceClient } from '../voice/inference/OrtInferenceClient';
+import { SpeechChunkGate } from '../voice/inference/SpeechChunkGate';
+import { ModelRepository } from '../voice/engine/ModelRepository';
+import voiceModelManifest from '../voice/models/voice-model-manifest.json';
+import { SpeakerEmbeddingRunner } from '../voice/inference/SpeakerEmbeddingRunner';
+import { VoiceIdentifier } from '../voice/inference/VoiceIdentifier';
 
 const rendererLog = createLogger('renderer');
 
@@ -81,6 +89,11 @@ export function initialize(): void {
     return;
   }
   initialized = true;
+  ipcMain.on('voice-trace', (_event, entry: { turnId?: unknown; stage?: unknown }) => {
+    if (entry?.stage === 'capture_start' && typeof entry.turnId === 'string' && entry.turnId.startsWith('vt_')) {
+      whisperTranscribe.setVoiceTurnId(entry.turnId);
+    }
+  });
   log.info('Init', 'Audio driver initializing within Sulla Desktop');
 
   // Wire speaker level/device-change callbacks — targeted to holder windows only
@@ -587,6 +600,76 @@ function registerIpcHandlers(): void {
       } catch { /* unauthenticated/local installs use the model default */ }
     }
 
+    // Resolve Silero through the checksum-pinned repository. Download stays in the
+    // background; until it completes the gate deliberately passes audio through.
+    // The main bundle is ESM (no __dirname). webpack emits the ORT utility process as its own
+    // entry next to background.js in dist/app (see scripts/lib/build-utils.ts).
+    const appPath = app.getAppPath();
+    const ortEntry = path.join(appPath, 'dist', 'app', 'voiceInferenceProcess.js');
+    const speakerEntry = path.join(appPath, 'dist', 'app', 'speakerEmbeddingProcess.js');
+    // Match Kokoro's sidecar lookup: packaged native modules must resolve from the real
+    // asar-unpacked tree; development resolves from the repository root.
+    const unpackedAppPath = `${ appPath }.unpacked`;
+    const sherpaAppRoot = existsSync(path.join(unpackedAppPath, 'node_modules', 'sherpa-onnx-node')) ? unpackedAppPath : appPath;
+    const voiceModels = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
+    let settingCachedAt = 0;
+    let settingCachedValue = true;
+    let settingRead: Promise<boolean> | undefined;
+    const readVoiceIdentificationEnabled = async(): Promise<boolean> => {
+      if (Date.now() - settingCachedAt < 3000 && settingRead) return settingRead;
+      settingRead = (async() => {
+        try {
+          const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+          const enabled = await SullaSettingsModel.get('voiceIdentificationEnabled', true);
+          return enabled !== false && enabled !== 'false';
+        } catch { return true; }
+      })();
+      try { settingCachedValue = await settingRead; } catch { settingCachedValue = true; }
+      settingCachedAt = Date.now();
+      return settingCachedValue;
+    };
+    const voiceIdentifier = new VoiceIdentifier(voiceModels, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log,
+      assignment => broadcast('audio-driver:voice-id', assignment), readVoiceIdentificationEnabled);
+    whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk, turnId) => {
+      setImmediate(() => voiceIdentifier.scoreTurn(pcm, holdToTalk, turnId));
+    });
+    const sileroStartedAt = Date.now();
+    log.info('WhisperTranscribe', 'Silero model resolve started', { id: 'vad-silero-onnx', ortEntry });
+    const sileroGate = new SpeechChunkGate(
+      new OrtInferenceClient(ortEntry, 5_000, 3, 1, undefined, (level, message, data) => log[level]('WhisperTranscribe', message, data)), null,
+      undefined,
+      message => {
+        log.warn('WhisperTranscribe', message);
+        // The audio-driver log is separate from Desktop's background.log. Keep
+        // the fail-open warning visible in the log Sulla already reads.
+        console.warn(`[WhisperTranscribe] ${ message }`);
+      },
+      undefined,
+      400,
+      (message, stats) => log.info('WhisperTranscribe', message, stats),
+    );
+    whisperTranscribe.configureSpeechChunkGate(sileroGate);
+    void Promise.resolve(new ModelRepository(
+      () => app.getPath('userData'),
+      voiceModelManifest as any,
+      { fetch: (url, options) => fetch(url, options) },
+    )).then(models => models.resolve('vad-silero-onnx').then(modelPath => {
+      log.info('WhisperTranscribe', 'Silero model resolve completed', { modelPath, ms: Date.now() - sileroStartedAt });
+      return modelPath;
+    }))
+      // ORT cold start/model session creation can exceed the 400 ms chunk
+      // budget. Warm it before exposing the model to live audio; chunks remain
+      // fail-open while download and warm-up run in the background.
+      .then(modelPath => {
+        log.info('WhisperTranscribe', 'Silero warm-up started', { modelPath, ortEntry });
+        return sileroGate.warmModel(modelPath).then(() => log.info('WhisperTranscribe', 'Silero warm-up completed', { modelPath, ms: Date.now() - sileroStartedAt }));
+      })
+      .catch(error => {
+        const message = `Silero model unavailable; passing audio through until next session: ${ String(error) }`;
+        log.warn('WhisperTranscribe', message);
+        log.warn('WhisperTranscribe', 'Silero resolve or warm-up failed', { ms: Date.now() - sileroStartedAt, error: String(error) });
+        console.warn(`[WhisperTranscribe] ${ message }`);
+      });
     const ok = whisperTranscribe.start({
       mode:         opts.mode,
       language:     opts.language,

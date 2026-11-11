@@ -23,6 +23,7 @@ import {
 import type { PgCloudSyncRepository, SyncRow, UploadSession } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
 import { serializeNamespaceEvent, type RecursiveDeleteBatch } from './namespaceSerializer.js';
+import type { CloudPushOrdering } from './pushOrdering.js';
 
 const MAX_MANIFEST_ENVELOPE_BYTES = 192 * 1024;
 const MAX_DECLARED_CHUNKS = 4096;
@@ -144,11 +145,13 @@ export class CloudPusher {
     private readonly store:Store,
     private readonly keyring:Pick<FilesKeyring, 'keys'>,
     private readonly staging:CloudStagingStore,
+    private readonly ordering:Pick<CloudPushOrdering, 'next'>,
   ) {}
 
   async stage(sync:SyncRow, root:Uint8Array):Promise<UploadSession | null> {
     const cursor = await this.repository.pushCursor(sync.collectionId);
-    const item = await this.repository.nextPushCandidate(sync.collectionId, cursor);
+    // Parents before children: never publish a parentFolderId Cloud has not committed.
+    const item = await this.ordering.next(sync.collectionId, cursor);
     this.lastCandidate = item ? { fileId: item.fileId, versionId: item.versionId } : null;
     if (!item) return null;
     const collectionId = sync.collectionId;
