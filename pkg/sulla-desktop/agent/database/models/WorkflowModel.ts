@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 
 import { BaseModel } from '../BaseModel';
 import { postgresClient } from '../PostgresClient';
+import { RedisUseCaseChangePublisherFactory } from '../../useCases/RedisUseCaseChangePublisherFactory';
+import type { UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 import { WorkflowHistoryModel } from './WorkflowHistoryModel';
 
@@ -221,6 +223,8 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
       system?: boolean;
       /** Seeder only: sha-256 of the seeded definition, stored in content_hash. */
       contentHash?: string | null;
+      /** Hears the committed row (post-commit, never throws). Defaults to the app's Redis channel. */
+      useCaseChanges?: UseCaseChangePublisher;
     } = {},
   ): Promise<WorkflowModel> {
     const id = String(definition.id ?? '').trim();
@@ -276,6 +280,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
 
       const model = new WorkflowModel();
       model.databaseFill(row);
+      (options.useCaseChanges ?? new RedisUseCaseChangePublisherFactory().create()).announce({ type: 'workflow', slug: id, change: 'updated' });
 
       if (!options.skipHistory) {
         await WorkflowHistoryModel.recordChange({
@@ -308,7 +313,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
   static async updateStatus(
     id: string,
     newStatus: WorkflowStatus,
-    options: { changedBy?: string } = {},
+    options: { changedBy?: string; useCaseChanges?: UseCaseChangePublisher } = {},
   ): Promise<WorkflowModel | null> {
     const existing = await WorkflowModel.findById(id);
     if (!existing) {
@@ -349,6 +354,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
 
       const model = new WorkflowModel();
       model.databaseFill(row);
+      (options.useCaseChanges ?? new RedisUseCaseChangePublisherFactory().create()).announce({ type: 'workflow', slug: id, change: 'updated' });
 
       await WorkflowHistoryModel.recordChange({
         workflowId:       id,
@@ -372,7 +378,14 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     }
   }
 
-  static async deleteById(id: string, options: { actor?: 'seeder' | 'user' } = {}): Promise<boolean> {
+  /** Pause or resume a routine (locked core routines included); returns whether a row changed. */
+  static async setEnabled(id: string, enabled: boolean, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<boolean> {
+    const row = await postgresClient.queryOne('UPDATE workflows SET enabled = $1, updated_at = NOW() WHERE id = $2 RETURNING id', [enabled, id]);
+    if (row) useCaseChanges.announce({ type: 'workflow', slug: id, change: 'updated' });
+    return !!row;
+  }
+
+  static async deleteById(id: string, options: { actor?: 'seeder' | 'user'; useCaseChanges?: UseCaseChangePublisher } = {}): Promise<boolean> {
     // Lock guard: locked core routines cannot be deleted by any user surface.
     if (options.actor !== 'seeder' && await WorkflowModel.isSystem(id)) {
       throw new LockedRoutineError(id, 'deleted');
@@ -383,6 +396,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
         [id],
       );
       const deleted = (result?.length ?? 0) > 0;
+      (options.useCaseChanges ?? new RedisUseCaseChangePublisherFactory().create()).announce({ type: 'workflow', slug: id, change: 'deleted' });
       console.log(`[WorkflowModel.deleteById] ← ${ deleted ? 'ok' : 'miss' } id=${ id }`);
 
       return deleted;

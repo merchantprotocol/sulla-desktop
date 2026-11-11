@@ -7,6 +7,9 @@ import { randomUUID } from 'node:crypto';
 
 import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '../PostgresClient';
+import { JsonObjectParser } from './JsonObjectParser';
+import { RedisUseCaseChangePublisherFactory } from '../../useCases/RedisUseCaseChangePublisherFactory';
+import type { UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
 export type AgentSourceKind = 'local' | 'filesystem-import' | 'marketplace';
@@ -171,19 +174,6 @@ function toAgentModelSlot(value: unknown): AgentModelSlot | null {
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-function toObject(value: unknown): Record<string, any> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
 function rowToDefinition(row: any): AgentDefinition {
   const policy = new AgentModelCategoryPolicy();
   const category = policy.resolve({ choice: row.model_choice, model: row.model, slot: row.model_slot, slug: row.slug });
@@ -203,10 +193,10 @@ function rowToDefinition(row: any): AgentDefinition {
     enabled:                 row.enabled !== false,
     source_template_slug:    row.source_template_slug == null ? null : String(row.source_template_slug),
     content_hash:            row.content_hash == null ? null : String(row.content_hash),
-    config:                  policy.config(toObject(row.config), category),
+    config:                  policy.config(JsonObjectParser.parse(row.config), category),
     prompt_content:          String(row.prompt_content ?? ''),
     goals_content:           String(row.goals_content ?? ''),
-    prompt_files:            toObject(row.prompt_files) as Record<string, string>,
+    prompt_files:            JsonObjectParser.parse(row.prompt_files) as Record<string, string>,
     provider:                null,
     model:                   null,
     model_slot:              null,
@@ -264,7 +254,8 @@ export class AgentDefinitionModel {
     return rows.map(rowToDefinition);
   }
 
-  static async create(input: AgentDefinitionInput): Promise<AgentDefinition> {
+  /** `useCaseChanges` hears the committed row (post-commit, never throws). */
+  static async create(input: AgentDefinitionInput, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<AgentDefinition> {
     const categoryPolicy = new AgentModelCategoryPolicy();
     const category = categoryPolicy.resolve({ choice: input.modelChoice, model: input.model, slot: input.modelSlot, slug: input.slug });
     input = { ...input, modelChoice: category, provider: null, model: null, modelSlot: null, modelPriority: [], config: categoryPolicy.config(input.config ?? {}, category) };
@@ -297,6 +288,7 @@ export class AgentDefinitionModel {
       input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
+    useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
     return rowToDefinition(row);
   }
 
@@ -305,7 +297,7 @@ export class AgentDefinitionModel {
    * row has not changed since it was read (compare-and-set on updated_at);
    * otherwise null is returned and nothing is written.
    */
-  static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
+  static async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<AgentDefinition | null> {
     if (patch.modelChoice !== undefined || patch.provider !== undefined || patch.model !== undefined || patch.modelSlot !== undefined || patch.modelPriority !== undefined || patch.config !== undefined) {
       const current = await this.get(id);
       if (!current) return null;
@@ -366,7 +358,9 @@ export class AgentDefinitionModel {
       where += ` AND abs(extract(epoch FROM updated_at - $${ params.length }::timestamptz)) < 0.002`;
     }
     const row = await postgresClient.queryOne(`UPDATE agent_definitions SET ${ sets.join(', ') } WHERE ${ where } RETURNING *`, params);
-    return row ? rowToDefinition(row) : null;
+    if (!row) return null;
+    useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
+    return rowToDefinition(row);
   }
 
   /**
@@ -381,12 +375,13 @@ export class AgentDefinitionModel {
     return !!row;
   }
 
-  static async setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> {
-    return AgentDefinitionModel.update(id, { status });
+  static async setStatus(id: string, status: AgentDefinitionStatus, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<AgentDefinition | null> {
+    return AgentDefinitionModel.update(id, { status }, undefined, useCaseChanges);
   }
 
-  static async delete(id: string): Promise<boolean> {
-    const row = await postgresClient.queryOne('DELETE FROM agent_definitions WHERE id = $1 RETURNING id', [id]);
+  static async delete(id: string, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<boolean> {
+    const row = await postgresClient.queryOne('DELETE FROM agent_definitions WHERE id = $1 RETURNING id, slug', [id]);
+    if (row) useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'deleted' });
     return !!row;
   }
 

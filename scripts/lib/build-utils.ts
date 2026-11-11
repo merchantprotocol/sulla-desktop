@@ -136,7 +136,12 @@ export default {
         __dirname:  false,
         __filename: false,
       },
-      entry:       { background: path.resolve(this.rootDir, 'bootstrapEntry') },
+      entry:       {
+        background:            path.resolve(this.rootDir, 'bootstrapEntry'),
+        // Electron utilityProcess for on-device voice inference (Silero, Smart Turn, Whisper).
+        voiceInferenceProcess: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'voice', 'inference', 'voiceInferenceProcess.ts'),
+        speakerEmbeddingProcess: path.resolve(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'voice', 'inference', 'SpeakerEmbeddingProcess.ts'),
+      },
       experiments: { outputModule: true },
       externals:   [
         // The MCP SDK needs its own nested Ajv 8 (+ ajv-formats). Externalizing
@@ -147,6 +152,8 @@ export default {
           if (request && /^ajv(\/|$)/.test(request) && /[\\/]@modelcontextprotocol[\\/]sdk[\\/]/.test(context ?? '')) {
             return callback();
           }
+          // sherpa-onnx-node stays external: its platform package includes native .node
+          // bindings and is resolved from the app / app.asar.unpacked at runtime.
           const external = [
             ...Object.keys(this.packageMeta.dependencies),
             'pg-native', 'ws', 'bufferutil', 'utf-8-validate',

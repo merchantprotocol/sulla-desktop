@@ -1656,12 +1656,12 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
-  const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+  const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
 
   ipcMainProxy.handle('vault:save-credential', async(_event: Electron.IpcMainInvokeEvent, data: { origin: string; username: string; password: string }) => {
     denyLegacyVaultIpc();
     try {
-      const service = getIntegrationService();
+      const service = getIS();
       await service.initialize();
 
       // Generate account ID from origin + username
@@ -1695,7 +1695,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:autofill', async(_event: Electron.IpcMainInvokeEvent, data: { tabId?: string; accountId: string }) => {
     denyLegacyVaultIpc();
     try {
-      const service = getIntegrationService();
+      const service = getIS();
       await service.initialize();
 
       // Get the saved credentials for this account

@@ -96,6 +96,8 @@ export class FrameCompositor {
   private readonly layer: HTMLCanvasElement;
   private readonly maskCanvas: HTMLCanvasElement;
   private readonly padded: HTMLCanvasElement;
+  private readonly small: HTMLCanvasElement;
+  private readonly blurred: HTMLCanvasElement;
   private maskPixels?: ImageData;
 
   constructor(
@@ -104,10 +106,11 @@ export class FrameCompositor {
     private readonly rasterizer: PersonMaskRasterizer = new PersonMaskRasterizer(),
   ) {
     this.scene = makeCanvas(); this.layer = makeCanvas(); this.maskCanvas = makeCanvas(); this.padded = makeCanvas();
+    this.small = makeCanvas(); this.blurred = makeCanvas();
   }
 
   close(): void {
-    for (const canvas of [this.scene, this.layer, this.maskCanvas, this.padded]) { canvas.width = 0; canvas.height = 0; }
+    for (const canvas of [this.scene, this.layer, this.maskCanvas, this.padded, this.small, this.blurred]) { canvas.width = 0; canvas.height = 0; }
     this.maskPixels = undefined;
     this.framing.close();
   }
@@ -131,20 +134,19 @@ export class FrameCompositor {
         layer.globalCompositeOperation = 'destination-in';
         layer.drawImage(this.maskCanvas, 0, 0, width, height);
         layer.globalCompositeOperation = 'source-over';
-        scene.filter = `blur(${ Math.min(12, options.backgroundBlur * 12) }px)`;
-        // Extend boundary pixels, never scale the scene under its unscaled person mask.
-        this.extendEdges(width, height, 48);
-        scene.drawImage(this.padded, -48, -48);
-        scene.filter = 'none';
+        // Blur at quarter resolution: a heavy blur hides the lost detail and costs ~16x fewer pixels.
+        this.blurBackground(video, width, height, Math.min(12, options.backgroundBlur * 12));
+        scene.drawImage(this.blurred, 0, 0, width, height);
         scene.drawImage(this.layer, 0, 0);
       }
       if (options.soften > 0) {
         this.paintMask(mask, true);
         const layer = this.context(this.layer);
         layer.clearRect(0, 0, width, height);
-        layer.filter = 'blur(1.5px)';
-        layer.drawImage(video, 0, 0, width, height);
-        layer.filter = 'none';
+        // Softening = a half-resolution copy scaled back up (bilinear), no per-frame CSS blur filter.
+        this.shrink(this.small, video, width, height, 0.5);
+        layer.imageSmoothingEnabled = true;
+        layer.drawImage(this.small, 0, 0, width, height);
         layer.globalCompositeOperation = 'destination-in';
         layer.drawImage(this.maskCanvas, 0, 0, width, height);
         layer.globalCompositeOperation = 'source-over';
@@ -165,16 +167,34 @@ export class FrameCompositor {
     return context;
   }
 
-  private extendEdges(width: number, height: number, padding: number): void {
-    if (this.padded.width !== width + padding * 2) this.padded.width = width + padding * 2;
-    if (this.padded.height !== height + padding * 2) this.padded.height = height + padding * 2;
-    const context = this.context(this.padded);
-    context.clearRect(0, 0, this.padded.width, this.padded.height);
-    const xs = [[0, 1, 0, padding], [0, width, padding, width], [width - 1, 1, padding + width, padding]];
-    const ys = [[0, 1, 0, padding], [0, height, padding, height], [height - 1, 1, padding + height, padding]];
+  private shrink(target: HTMLCanvasElement, source: CanvasImageSource, width: number, height: number, scale: number): void {
+    const w = Math.max(1, Math.ceil(width * scale)); const h = Math.max(1, Math.ceil(height * scale));
+    if (target.width !== w) target.width = w;
+    if (target.height !== h) target.height = h;
+    this.context(target).drawImage(source, 0, 0, w, h);
+  }
+
+  private blurBackground(video: HTMLVideoElement, width: number, height: number, radius: number): void {
+    const scale = 0.25;
+    this.shrink(this.small, video, width, height, scale);
+    const w = this.small.width; const h = this.small.height; const pad = 12;
+    // Extend boundary pixels so the blur does not darken the frame edges.
+    if (this.padded.width !== w + pad * 2) this.padded.width = w + pad * 2;
+    if (this.padded.height !== h + pad * 2) this.padded.height = h + pad * 2;
+    const padded = this.context(this.padded);
+    padded.clearRect(0, 0, this.padded.width, this.padded.height);
+    const xs = [[0, 1, 0, pad], [0, w, pad, w], [w - 1, 1, pad + w, pad]];
+    const ys = [[0, 1, 0, pad], [0, h, pad, h], [h - 1, 1, pad + h, pad]];
     for (const [sx, sw, dx, dw] of xs) {
-      for (const [sy, sh, dy, dh] of ys) context.drawImage(this.scene, sx, sy, sw, sh, dx, dy, dw, dh);
+      for (const [sy, sh, dy, dh] of ys) padded.drawImage(this.small, sx, sy, sw, sh, dx, dy, dw, dh);
     }
+    if (this.blurred.width !== w) this.blurred.width = w;
+    if (this.blurred.height !== h) this.blurred.height = h;
+    const out = this.context(this.blurred);
+    out.clearRect(0, 0, w, h);
+    out.filter = `blur(${ radius * scale }px)`;
+    out.drawImage(this.padded, -pad, -pad);
+    out.filter = 'none';
   }
 
   private paintMask(mask: PersonMask, faceOnly: boolean): void {

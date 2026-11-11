@@ -62,6 +62,8 @@ export class AgentNode extends BaseNode {
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
     const startTime = Date.now();
     const turnReceivedAt = Date.now();
+    const preModelPhases: Record<string, number> = {};
+    const phaseStart = () => Date.now();
 
     // Emit an immediate thinking heartbeat so the UI shows activity within
     // milliseconds of the user sending a message, then keep that same bubble
@@ -75,10 +77,12 @@ export class AgentNode extends BaseNode {
       && (_inputSource === 'microphone' || _inputSource === 'voice');
     // Voice output has its own immediate <speak> path. Avoid a transient text/
     // activity bubble here so an overheard turn can remain truly invisible.
+    const thinkingStart = phaseStart();
     if (_isFirstEntry && !_inWorkflow && !_isConversationalistVoice) {
       console.log(`[ThinkingTrace] AgentNode emit "Thinking…" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel })`);
       await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
     }
+    preModelPhases.thinkingMessage = Date.now() - thinkingStart;
 
     // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
@@ -103,9 +107,12 @@ export class AgentNode extends BaseNode {
     // Build system prompt via section-based builder.
     // All sections (soul, workspace, tooling, voice mode, completion wrappers,
     // channel awareness, etc.) are composed by SystemPromptBuilder.
+    const enrichStart = phaseStart();
     const enrichedPrompt = await this.enrichPrompt('', state, {
       chatMode,
     });
+    preModelPhases.enrichPrompt = Date.now() - enrichStart;
+    const promptSectionTimings = (state.metadata as any).__promptSectionTimings as Array<{ id: string; durationMs: number }> | undefined;
 
     // Run subconscious middleware: parallel agents for summarization,
     // memory recall, and observation management.
@@ -124,6 +131,7 @@ export class AgentNode extends BaseNode {
     // what already happened via <reflex_context>. Below threshold it runs
     // nothing; a close-enough guess becomes a <reflex_context> hint the model
     // may act on, and the post-turn Reflex Trainer learns from the model.
+    const reflexStart = phaseStart();
     if (!isToolCallLoop) {
       (state.metadata as any).reflexContext = '';
       (state.metadata as any).reflexDecision = null;
@@ -144,11 +152,14 @@ export class AgentNode extends BaseNode {
         }
       }
     }
+    preModelPhases.reflex = Date.now() - reflexStart;
 
     let subconsciousMs = 0;
     if (!isToolCallLoop) {
-      const subStart = Date.now();
+      const subStart = phaseStart();
+      const observationSettingStart = phaseStart();
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+      preModelPhases.observationSettings = Date.now() - observationSettingStart;
       await runSubconsciousMiddleware(state, {
         includeObservations: shouldInjectObservations,
         // Surface each subconscious launch/completion as a thinking line.
@@ -160,6 +171,7 @@ export class AgentNode extends BaseNode {
           : (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
       });
       subconsciousMs = Date.now() - subStart;
+      preModelPhases.subconscious = subconsciousMs;
       logVoiceSpan((state.metadata as any).voiceTurnId, 'desktop.subconscious_done', { durationMs: subconsciousMs });
       perf.log(`[TurnPhase] threadId=${ (state.metadata as any).threadId } turnReceivedToSubconsciousDoneMs=${ Date.now() - turnReceivedAt }`);
     }
@@ -170,14 +182,23 @@ export class AgentNode extends BaseNode {
     // Fresh turns only — tool-call loops reuse the block injected when the
     // turn started (injectTurnContext is also internally idempotent).
     if (!isToolCallLoop) {
+      const injectStart = phaseStart();
       await this.injectTurnContext(state, { chatMode });
+      preModelPhases.injectTurnContext = Date.now() - injectStart;
     }
 
+    const contextInjectionStart = phaseStart();
     this.injectSubconsciousAssistantContext(state);
+    preModelPhases.subconsciousContextInjection = Date.now() - contextInjectionStart;
 
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------
+    // This timestamp marks the actual hand-off into normalizedChat/CLI setup.
+    // The corresponding CLI setup/first-token spans are logged by the model layer.
+    if (!isToolCallLoop) {
+      perf.log(`[PreModelTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ Date.now() - turnReceivedAt } handoffAtMs=${ Date.now() - turnReceivedAt } phases=[${ Object.entries(preModelPhases).map(([name, ms]) => `${ name }=${ ms }ms`).join(', ') }] enrichPrompt.sections=[${ (promptSectionTimings || []).map(({ id, durationMs }) => `${ id }=${ durationMs }ms`).join(', ') }]`);
+    }
     const executeStart = Date.now();
     const agentResult = await this.executeAgent(enrichedPrompt, state);
     const executeMs = Date.now() - executeStart;

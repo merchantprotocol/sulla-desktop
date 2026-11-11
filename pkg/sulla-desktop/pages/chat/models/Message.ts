@@ -48,6 +48,7 @@ export interface MessageBase {
 export interface UserMessage extends MessageBase {
   kind:         'user';
   text:         string;
+  voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   attachments?: readonly AttachedFile[];
   /** If this turn is a re-run of an earlier message */
   editedFrom?:  MessageId;
@@ -136,6 +137,7 @@ export interface ToolQuestionAnswerItem {
 }
 export interface ToolQuestionMessage extends MessageBase {
   resolutionError?: string;
+  resolutionNote?: string;
   kind:        'tool_question';
   questions:   readonly ToolQuestionItem[];
   status:      'pending' | 'answered' | 'timed_out';

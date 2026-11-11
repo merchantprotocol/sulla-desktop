@@ -516,36 +516,47 @@ export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesI
     if (!file.deleted_at || (request.expectedVersionId !== undefined && file.current_version_id !== request.expectedVersionId) ||
       (request.expectedRevision!==undefined && String(file.operation_revision)!==request.expectedRevision)) throw fail(409, 'The trashed file changed; refresh Files');
     editable(file, actor);
-    const tombstone = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=TRUE FOR UPDATE', [file.current_version_id, file.id])).rows[0];
-    if (!tombstone) throw fail(409, 'The current version is not a trash tombstone');
+    // The head is normally the trash tombstone. A write that landed after Trash
+    // (upload, sync, import) can move the head to live content while deleted_at
+    // stays set, and the Trash list still shows the file. Restore that live head.
+    const head = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 FOR UPDATE', [file.current_version_id, file.id])).rows[0];
+    const tombstone = head?.deleted === true ? head : null;
     const native=Boolean((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1 LIMIT 1',[file.collection_id])).rowCount);
     const receiptRow=request.receiptId?(await client.query(`SELECT * FROM files_database_operation_receipts WHERE id=$1 AND file_id=$2 AND action='trash' FOR UPDATE`,[request.receiptId,file.id])).rows[0]:null;
     if (request.receiptId && !receiptRow) throw fail(409,'The selected Trash receipt does not match this file');
     if (receiptRow) {
-      if (receiptRow.after_state?.versionId!==tombstone.id) throw fail(409,'The selected Trash receipt is not the current tombstone');
+      if (!tombstone || receiptRow.after_state?.versionId!==tombstone.id) throw fail(409,'The selected Trash receipt is not the current tombstone');
       const updated=await restoreTrashReceipt(client,receiptRow,actor,access,true);
       return {status:'restored' as const,kind:'file' as const,id:updated.id,path:updated.path,revision:String(updated.operation_revision),currentTombstone:null,receiptId:receiptRow.id,versionId:updated.current_version_id};
     }
     if (native) throw Object.assign(fail(409,'Native Trash Restore requires its exact retained receipt'),{code:'trash-receipt-required'});
     // Follow the locked tombstone lineage, never select an unrelated newer
     // draft/version by timestamp. UNION also terminates malformed cycles.
-    const source = (await client.query(`WITH RECURSIVE lineage AS (
+    // A live head (stale Trash flag) is itself the latest content, so start there.
+    const start = tombstone ? tombstone.parent_version_id : (head?.id ?? null);
+    const source = start ? (await client.query(`WITH RECURSIVE lineage AS (
       SELECT id,parent_version_id,deleted FROM file_versions WHERE id=$1 AND file_id=$2
       UNION SELECT v.id,v.parent_version_id,v.deleted FROM file_versions v JOIN lineage p ON v.id=p.parent_version_id
       WHERE p.deleted=TRUE AND v.file_id=$2)
       SELECT v.* FROM file_versions v JOIN lineage l ON l.id=v.id WHERE v.deleted=FALSE AND v.manifest_hash IS NOT NULL
-      FOR UPDATE OF v`, [tombstone.parent_version_id, file.id])).rows[0];
-    if (!source) throw fail(409, 'No restorable ancestor version remains');
-    const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,restored_from_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-      VALUES($1,$2,$3,$4,$5,$6,'user',$7,'Restored from Trash',$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.id, source.manifest_hash, source.size, actor.userId, actor.deviceId || 'server-web'])).rows[0];
-    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]);
+      FOR UPDATE OF v`, [start, file.id])).rows[0] : undefined;
+    if (!source) throw fail(409, 'Nothing in this file can be restored: no non-deleted version remains. Version history is kept.');
+    // Tombstone head: append a restore version. Live head (stale Trash flag): it already
+    // holds the latest content, so add no version and keep chunk refcounts untouched.
+    let restoredVersionId = head.id;
+    if (tombstone) {
+      const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,restored_from_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
+        VALUES($1,$2,$3,$4,$5,$6,'user',$7,'Restored from Trash',$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.id, source.manifest_hash, source.size, actor.userId, actor.deviceId || 'server-web'])).rows[0];
+      await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]);
+      restoredVersionId = version.id;
+    }
     const updated = (await client.query(`UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW()
-      WHERE id=$1 AND current_version_id=$4 AND deleted_at IS NOT NULL RETURNING *`, [file.id, version.id, source.size, file.current_version_id])).rows[0];
+      WHERE id=$1 AND current_version_id=$4 AND deleted_at IS NOT NULL RETURNING *`, [file.id, restoredVersionId, source.size, file.current_version_id])).rows[0];
     if (!updated) throw fail(409, 'The trash tombstone changed while restoring');
-    await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]);
+    await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, restoredVersionId]);
     await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
-      VALUES($1,$2,$3,$4,$5,'trash-restore',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, file.id, version.id, { tombstoneVersionId: tombstone.id, sourceVersionId: source.id }]);
-    return {status:'restored' as const,kind:'file' as const,id:updated.id,path:updated.path,revision:String(updated.operation_revision),currentTombstone:null,receiptId:null,versionId:version.id};
+      VALUES($1,$2,$3,$4,$5,'trash-restore',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, file.id, restoredVersionId, { tombstoneVersionId: tombstone?.id ?? null, sourceVersionId: source.id, staleTrashFlag: !tombstone }]);
+    return {status:'restored' as const,kind:'file' as const,id:updated.id,path:updated.path,revision:String(updated.operation_revision),currentTombstone:null,receiptId:null,versionId:restoredVersionId};
   });
   return access.custody?access.custody.run(execute):execute();
 }

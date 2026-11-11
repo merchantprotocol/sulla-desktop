@@ -5,8 +5,13 @@
 import { EventEmitter } from 'node:events';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 
+
+/** A blocked task is live only while its blocker is open; a returned blocked result is settled. */
+function isOpenBlocker(task: AgentJobTask): boolean { return task.status === 'blocked' && !task.returnedAt && !task.finishedAt; }
+function isLiveTask(task: AgentJobTask): boolean { return ['queued', 'running', 'parked'].includes(task.status) || isOpenBlocker(task); }
 export interface AgentStateStore {
   allJobs(): Promise<AgentJob[]>;
+  lineageForParentThread?(parentThreadId: string, limit?: number): Promise<AgentJob[]>;
   job(jobId: string): Promise<AgentJob | undefined>;
   jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]>;
   insertJob(job: AgentJob): Promise<void>;
@@ -93,7 +98,7 @@ export class AgentStateService {
   private trimTerminalCache(): void {
     const settled = Array.from(this.cache.jobs.values()).filter(job =>
       ['completed', 'failed', 'stopped'].includes(job.status)
-      && !job.tasks.some(task => ['queued', 'running', 'parked', 'blocked'].includes(task.status))
+      && !job.tasks.some(task => isLiveTask(task))
       && (job.status !== 'completed' || job.tasks.every(task => task.returnedAt || ['stopped', 'error'].includes(task.status))))
       .sort((a, b) => b.createdAt - a.createdAt);
     for (const job of settled.slice(100)) this.cache.jobs.delete(job.jobId);
@@ -143,6 +148,14 @@ export class AgentStateService {
   }
 
   async descendants(parentThreadId: string): Promise<AgentJob[]> {
+    await this.ready();
+    if (this.store.lineageForParentThread) {
+      const persisted = await this.store.lineageForParentThread(parentThreadId, 100);
+      const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
+      for (const job of jobs) this.cache.jobs.set(job.jobId, job);
+      this.trimTerminalCache();
+      return jobs;
+    }
     const jobs = await this.jobs(); const threadIds = new Set([parentThreadId]); const descendants: AgentJob[] = [];
     let added = true;
     while (added) { added = false; for (const job of jobs) {
@@ -191,10 +204,15 @@ export class AgentStateService {
       .sort((left, right) => left.createdAt - right.createdAt || left.jobId.localeCompare(right.jobId));
     for (const candidate of candidates) {
       const exhaustedLimit = (candidate.restartResumeCount ?? 0) >= maxResumes;
-      const changed = await this.mutateJob(candidate.jobId, current => current.status !== 'running' || current.visibility === 'tab' ? undefined
-        : exhaustedLimit ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
-          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 }, undefined, false);
-      if (changed) (exhaustedLimit ? exhausted : resumable).push(changed);
+      let settled = false;
+      const changed = await this.mutateJob(candidate.jobId, current => {
+        if (current.status !== 'running' || current.visibility === 'tab') return undefined;
+        // Every task already returned (e.g. a delivered blocked result): settle silently, never resume or fail it.
+        if (!current.tasks.some(task => isLiveTask(task))) { settled = true; return this.withDerivedStatus(current); }
+        return exhaustedLimit ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
+          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 };
+      }, undefined, false);
+      if (changed && !settled) (exhaustedLimit ? exhausted : resumable).push(changed);
     }
     return { resumable, exhausted };
   }
@@ -266,7 +284,8 @@ export class AgentStateService {
     if (job.status === 'stopped' || job.tasks.length === 0) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
     if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
-    else if (statuses.some(value => ['queued', 'running', 'blocked'].includes(value))) status = 'running';
+    // A task that already returned a blocked result is settled; only an open blocker keeps the job running.
+    else if (job.tasks.some(task => ['queued', 'running'].includes(task.status) || isOpenBlocker(task))) status = 'running';
     else if (statuses.some(value => value === 'parked')) status = 'parked';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
     else status = 'completed';

@@ -82,15 +82,12 @@ export class SetWorkflowStatusWorker extends BaseTool {
     }
 
     try {
+      const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
       if (status !== undefined && (status !== target.status || status === 'archive')) {
-        const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
         await WorkflowModel.updateStatus(target.id, status as 'draft' | 'production' | 'archive');
       }
       if (enabled !== undefined) {
-        await postgresClient.query(
-          'UPDATE workflows SET enabled = $1, updated_at = NOW() WHERE id = $2',
-          [enabled, target.id],
-        );
+        await WorkflowModel.setEnabled(target.id, enabled);
       }
     } catch (err) {
       return { successBoolean: false, responseString: `Update failed: ${ (err as Error).message }` };

@@ -8,6 +8,8 @@ COPY packages/vault-crypto/src ./packages/vault-crypto/src
 RUN cd packages/vault-crypto && npm run build
 
 COPY services/sulla-vault/package.json ./services/sulla-vault/package.json
+COPY vendor/sulla-core/sulla-domain-0.3.0-66539a1.tgz ./vendor/sulla-core/sulla-domain-0.3.0-66539a1.tgz
+COPY vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz ./vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz
 RUN cd services/sulla-vault && npm install --ignore-scripts
 COPY services/sulla-vault/tsconfig.json ./services/sulla-vault/tsconfig.json
 COPY services/sulla-vault/src ./services/sulla-vault/src

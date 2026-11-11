@@ -26,6 +26,8 @@
 
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
+import { PassThroughAddressedSpeechClassifier } from './AddressedSpeechClassifier';
+import { SelfEchoFilter } from './SelfEchoFilter';
 import { TTSPlayerService } from './TTSPlayerService';
 import { createVoiceBargeInDetector } from './VoiceBargeInDetector';
 import { logBargeIn } from './VoiceLogger';
@@ -73,12 +75,6 @@ function formatDuration(seconds: number): string {
   return `${ m }:${ s.toString().padStart(2, '0') }`;
 }
 
-// Fallback commit delay (ms). The PRIMARY end-of-turn trigger is the main-process
-// `utterance_end` event (VAD silence + drained pipeline); this timer only fires if
-// that signal never arrives (e.g. VAD wedged open by background noise). It is
-// deliberately long so it never pre-empts a real utterance mid-thought — the old
-// 2000ms value collided with whisper's 2000ms chunk cadence and split utterances.
-const UTTERANCE_FALLBACK_MS = 8000;
 
 // ─── Composable ─────────────────────────────────────────────────
 
@@ -90,6 +86,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   const audioLevel = ref(0);
   const recordingDuration = ref('0:00');
   const isTTSPlaying = ref(false);
+  let playbackEndedAt = 0;
   const pipelineState = ref<PipelineState>('IDLE');
   const voiceMode = ref<VoiceMode>('voice');
 
@@ -106,6 +103,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       pipelineState.value = 'SPEAKING';
     }),
     ttsPlayer.on('queueEmpty', () => {
+      playbackEndedAt = Date.now();
       isTTSPlaying.value = false;
       if (pipelineState.value === 'SPEAKING') {
         pipelineState.value = isRecording.value ? 'LISTENING' : 'IDLE';
@@ -117,6 +115,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   unsubs.push(
     chatController.onSpeakDispatch((text, _threadId, _pipelineSequence) => {
       if (text.trim()) {
+        selfEcho.recordSpoken(text.trim());
         ttsPlayer.enqueue(text.trim(), `speak_${ Date.now() }`);
         if (pipelineState.value === 'THINKING') {
           pipelineState.value = 'SPEAKING';
@@ -185,6 +184,9 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     interimMessageId = null;
   }
 
+  const addressedSpeech = new PassThroughAddressedSpeechClassifier();
+  const selfEcho = new SelfEchoFilter();
+
   // ── Whisper transcript handler ──
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end → commit)
   // lives in VoiceTurnAccumulator so both voice surfaces stay in lockstep.
@@ -193,6 +195,10 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     onCommit:  (text) => {
       removeInterimMessage();
       if (text) {
+        if (!addressedSpeech.isAddressed(text, { sincePlaybackEndMs: Date.now() - playbackEndedAt })) {
+          options.messages.value.push({ id: `overheard_${Date.now()}`, kind: 'notice', text: `Overheard: ${text}`, detail: 'Not sent to Sulla', createdAt: Date.now() } as any);
+          return;
+        }
         console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
         chatController.query.value = text;
         chatController.send({ inputSource: 'voice', agentId: 'conversationalist' });
@@ -200,7 +206,8 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       }
     },
     isTTSPlaying: () => isTTSPlaying.value,
-    fallbackMs:   UTTERANCE_FALLBACK_MS,
+    stripEcho: text => selfEcho.stripEchoSpans(text),
+    isEcho: text => selfEcho.isEcho(text),
   });
 
   const onTranscript = (_event: any, msg: any) => {

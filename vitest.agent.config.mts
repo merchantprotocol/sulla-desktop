@@ -39,7 +39,7 @@ export default defineConfig({
     ],
   },
   test: {
-    include:         ['pkg/sulla-desktop/agent/tests/**/*.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchService.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingRepository.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingPresenter.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchController.spec.ts', 'pkg/sulla-desktop/main/marketplace/MarketplaceBrowseRowMapper.spec.ts'],
+    include:         ['pkg/sulla-desktop/agent/tests/**/*.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchService.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingRepository.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceListingPresenter.spec.ts', 'pkg/sulla-desktop/composables/MarketplaceSearchController.spec.ts', 'pkg/sulla-desktop/main/marketplace/MarketplaceBrowseRowMapper.spec.ts', 'pkg/sulla-desktop/main/UseCaseSuggestionQuery.spec.ts'],
     environment:     'node',
     testTimeout:     20_000,
     hookTimeout:     60_000,

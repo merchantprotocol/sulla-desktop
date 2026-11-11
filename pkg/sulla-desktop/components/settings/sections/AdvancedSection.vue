@@ -93,13 +93,13 @@ onBeforeUnmount(() => {
         </button>
       </PrefRow>
       <PrefRow
-        title="Debug logging"
-        :subtitle="alwaysDebugging ? 'On because SULLA_DEBUG_ENABLED is set.' : 'Writes much more detail to the logs.'"
+        title="Debug mode"
+        :subtitle="alwaysDebugging ? 'On because SULLA_DEBUG_ENABLED is set.' : 'Shows and logs errors with source and stack details.'"
       >
         <PrefToggle
           :model-value="alwaysDebugging || get('application.debug')"
           :disabled="alwaysDebugging || isLocked('application.debug')"
-          label="Debug logging"
+          label="Debug mode"
           @update:model-value="set('application.debug', $event)"
         />
       </PrefRow>

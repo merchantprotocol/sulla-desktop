@@ -20,8 +20,11 @@
 */
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
+import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+import { VoiceAgentRouting } from './VoiceAgentRouting';
+import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
@@ -51,6 +54,8 @@ export interface PersonaAdapterOptions {
 }
 
 export class PersonaAdapter {
+  private readonly voiceAgentRouting = new VoiceAgentRouting();
+  private readonly voiceTranscriptTagger = new VoiceTranscriptTagger();
   private ci:           ChatInterface;
   private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
@@ -114,7 +119,7 @@ export class PersonaAdapter {
     this.hasSentMessage = this.ci.hasMessages;
 
     // Tell the controller to delegate send/stop/continue to us.
-    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId));
+    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId, opts?.useCaseIntent, opts?.agentId, opts?.voiceIdentity));
     this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
     this.controller.setRunHandlers({
       onStop:     () => this.ci.stop(),
@@ -269,7 +274,7 @@ export class PersonaAdapter {
         answers:    ev.answers,
       }).then(receipt => {
         if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
-        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined } as any);
+        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined, resolutionNote: receipt.late ? receipt.reason : undefined } as any);
         this.controller.transitionRun({ type: 'approvalResolved' });
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });
@@ -331,7 +336,7 @@ export class PersonaAdapter {
     } : {};
   }
 
-  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
+  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
     const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
     if (!aiStatus.loading && !aiStatus.connected) {
@@ -353,18 +358,25 @@ export class PersonaAdapter {
       this.controller.persistThread();
       return;
     }
-    this.ci.query.value = text;
+    const taggedText = inputSource === 'voice' && voiceIdentity
+      ? this.agentTextForVoice(text, voiceIdentity)
+      : text;
+    this.ci.query.value = taggedText;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
+    // An "Ask <agent>" chip routes this one turn through the existing explicit agentId override.
+    const agentId = intentAgentId || this.voiceAgentRouting.resolve(inputSource, this.controller.thread.value.agentId);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
     const selection = {
       ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
       ...(inputSource ? { inputSource } : {}),
       ...(voiceTurnId ? { voiceTurnId } : {}),
-      ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
+      ...(voiceIdentity ? { voiceIdentity } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(useCaseIntent ? { useCaseIntent } : {}),
       modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
@@ -374,6 +386,10 @@ export class PersonaAdapter {
     await this.ci.send(selection, resolved.length ? resolved : undefined);
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     await this.loadPersistentArtifacts(this.ci.threadId.value ?? '');
+  }
+
+  private agentTextForVoice(text: string, identity: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): string {
+    return this.voiceTranscriptTagger.agentText(text, identity);
   }
 
   /**
@@ -594,7 +610,8 @@ export class PersonaAdapter {
         id,
         kind:        'user',
         createdAt,
-        text:        b.content ?? '',
+        text:        this.voiceTranscriptTagger.userText(b.content ?? '', b.voiceIdentity),
+        ...(b.voiceIdentity ? { voiceIdentity: b.voiceIdentity } : {}),
         attachments: b.image || fileReferences.length
           ? [...(b.image ? [{
             id: newAttachmentId(), name: b.image.alt || 'image', size: '', kind: 'image',

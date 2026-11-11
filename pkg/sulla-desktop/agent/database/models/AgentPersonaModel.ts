@@ -215,6 +215,7 @@ export class AgentPersonaService {
       threadId:  this.state.threadId,
       role:      'user',
       content:   content || (firstImage ? '(image attached)' : ''),
+      ...(extraMetadata?.voiceIdentity ? { voiceIdentity: extraMetadata.voiceIdentity } : {}),
     };
     if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
     if (firstImage) {

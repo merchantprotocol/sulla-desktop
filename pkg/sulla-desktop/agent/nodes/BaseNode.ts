@@ -588,8 +588,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const agentId = resolveAgentIdentity(state.metadata);
     const agentMeta = (state.metadata as any).agent as AgentConfig | undefined;
 
-    // Build template variables
-    const templateVars = await getTemplateVariables();
+    // These independent reads dominate prompt setup on cold turns. Start them
+    // together; their results are still applied in the original order below.
+    const [templateVars, agentData, llm, toolModeSetting, promptSectionRows] = await Promise.all([
+      getTemplateVariables(),
+      agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID
+        ? loadAgentPromptData(agentId)
+        : Promise.resolve(null),
+      this.resolveLoopProvider(state),
+      SullaSettingsModel.get('toolMode', 'slim'),
+      SystemPromptSectionModel.list().catch(err => {
+        console.warn('[BaseNode] Could not load system prompt sections from DB; using baked factories:', err);
+        return [];
+      }),
+    ]);
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
     templateVars['{{agent_dir}}'] = '';
@@ -599,9 +611,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let excludeSections = new Set<string>();
     let agentConfig: AgentConfig | null = agentMeta || null;
 
-    if (agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID) {
-      const agentData = await loadAgentPromptData(agentId);
-      if (agentData) {
+    if (agentData) {
         agentSectionOverrides = agentData.sectionOverrides;
         excludeSections = new Set(agentData.excludeSections);
         agentConfig = agentData.config || agentConfig;
@@ -610,7 +620,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         if (agentData.genericPrompt) {
           agentConfig = { ...agentConfig, prompt: agentData.genericPrompt };
         }
-      }
     }
 
     // Refresh template variables from the effective loaded config. The graph
@@ -652,7 +661,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Detect provider — use the same routing logic as the LLM call itself
     // so the system prompt's provider-conditional sections (e.g. Anthropic
     // cache blocks vs OpenAI response format) match the model we'll invoke.
-    const llm = await this.resolveLoopProvider(state);
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
     const mode = options.promptMode || 'full';
@@ -660,7 +668,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Tool exposure mode — mirrors the dynamic-discovery tool build in
     // normalizedChat(): slim (default) unless the agent config explicitly
     // allowlists tools (explicit config > default) or the setting is 'full'.
-    const toolModeSetting = await SullaSettingsModel.get('toolMode', 'slim');
     const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentConfig?.tools?.length)
       ? 'slim'
       : 'full';
@@ -670,8 +677,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Enabled rows become dbSections; a disabled row excludes its section.
     // Non-fatal: if the DB is empty or unreachable the baked factories are used.
     let dbSections: Map<string, DbPromptSection> | undefined;
-    try {
-      const rows = await SystemPromptSectionModel.list();
+    {
+      const rows = promptSectionRows;
       if (rows.length) {
         dbSections = new Map<string, DbPromptSection>();
         for (const row of rows) {
@@ -687,8 +694,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           });
         }
       }
-    } catch (err) {
-      console.warn('[BaseNode] Could not load system prompt sections from DB; using baked factories:', err);
     }
 
     // Build prompt context
@@ -712,6 +717,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Build the prompt using the section-based builder
     const built = await SystemPromptBuilder.build(buildCtx);
+    (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
 
     // Subconscious/dream-consolidated identity is context, not policy. Keep it
     // out of the system prompt and hand it to the shared assistant-message

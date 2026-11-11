@@ -12,9 +12,11 @@ import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
 import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection, type CloudRestoreAllResult } from './containerClient';
 import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
+import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import Logging from '@pkg/utils/logging';
 export { requireHumanFilesSync } from './humanGuard';
 import { requireHumanFilesSync, type FilesSyncCaller } from './humanGuard';
+import { SyncDriverHealth } from '../syncDriverHealth';
 
 const console=Logging.background;
 const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
@@ -35,11 +37,17 @@ export async function restoreMissingCloudCollections(
 }
 
 class FilesSyncV1Impl {
+  private readonly health=new SyncDriverHealth();
+  private lastSuccessLogAt=0;
   private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
-  start():void { this.stopped=false; this.schedule(0) }
-  stop():void { this.stopped=true; if(this.timer) clearTimeout(this.timer); this.timer=null }
+  start():void { this.stopped=false; this.health.setRunning(true); this.schedule(0) }
+  restart():void { this.stop(); this.start() }
+  stop():void { this.stopped=true; this.health.setRunning(false); if(this.timer) clearTimeout(this.timer); this.timer=null }
   wake():void { if(!this.stopped) this.schedule(0) }
-  async status():Promise<FilesSyncStatus> { return FilesSyncContainer.status() }
+  /** Called when the network returns: the next attempt should not wait out a long offline backoff. */
+  resetBackoff():void { this.backoff=1_000 }
+  async status():Promise<FilesSyncStatus & {driverHealth:ReturnType<SyncDriverHealth['snapshot']>}> { return {...await FilesSyncContainer.status(),driverHealth:this.health.snapshot()} }
+  driverHealth():ReturnType<SyncDriverHealth['snapshot']> { return this.health.snapshot() }
   async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
   async deleteCloudCopy(collectionId:string,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.deleteCloudCopy(collectionId); this.wake(); return this.status() }
   // Profile › Files off with "delete the Cloud copy": hide every collection
@@ -81,7 +89,7 @@ class FilesSyncV1Impl {
     catch(error) { if(!(error instanceof FilesSyncClientError)||error.code!=='no_cloud_vault')throw error; wrapped=await FilesSyncContainer.vaultRestoreKey(request) }
     return {requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch};
   }
-  private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
+  private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.health.scheduledIn(ms); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
   private async identity():Promise<{userId:string;deviceId:string}|null> {
     if(!await isCloudSignedIn())return null;
     const state=DevicesCloudApi.getState(); if(!state.registered||state.revoked)return null;
@@ -128,6 +136,14 @@ class FilesSyncV1Impl {
   }
   private async tick():Promise<void> {
     if(this.running||this.stopped)return; this.running=true;
+    if(!getSullaFilesWatcher().isReadyForSync()) {
+      this.running=false;
+      this.schedule(1_000);
+      return;
+    }
+    this.health.attempted();
+    // The attempt is due now; the supervisor's stall grace runs from here, so a slow in-flight sync is not restarted early.
+    this.health.scheduledIn(0);
     try {
       const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.files){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}
@@ -142,10 +158,23 @@ class FilesSyncV1Impl {
       const proof=signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
       const sent=await FilesSyncContainer.send(prepared.handle,who.deviceId,proof.ts,proof.signature);
       if(sent.status==='failed')throw new FilesSyncClientError('send_failed',502);
-      this.backoff=sent.status==='retry'?Math.min(this.backoff*2,MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
+      if(sent.status==='sent') {
+        const previous=this.health.snapshot();
+        const recovered=this.health.succeeded();
+        if(recovered) console.log('[FilesSyncV1] back online; sync resumed');
+        const now=Date.now();
+        if(previous.consecutiveFailures>0||now-this.lastSuccessLogAt>=10*60_000) {
+          console.log('[FilesSyncV1] sync ok pushed=1 pulled=0');
+          this.lastSuccessLogAt=now;
+        }
+      }
+      const retryAfter=Number((sent.detail as {retryAfterMs?:unknown}|null)?.retryAfterMs);
+      this.backoff=sent.status==='retry'?Math.min(Math.max(this.backoff*2,retryAfter||0),MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
     } catch(error) {
-      const code=error instanceof FilesSyncClientError?error.code:(error instanceof Error?error.message:String(error));
-      if(code!=='vault_locked'&&code!=='no_cloud_vault')console.warn(`[FilesSyncV1] driver retry: ${code}`);
+      const code=error instanceof FilesSyncClientError?error.code:'sync_failed';
+      const outcome=this.health.failed(code,error instanceof Error?error.message:'');
+      if(outcome==='offline_started')console.warn('[FilesSyncV1] offline; will resume when the network is back');
+      else if(outcome==='error'&&code!=='vault_locked'&&code!=='no_cloud_vault')console.warn(`[FilesSyncV1] driver retry: ${code}`);
       this.schedule(this.backoff=Math.min(this.backoff*2,MAX_BACKOFF_MS));
     } finally { this.running=false }
   }

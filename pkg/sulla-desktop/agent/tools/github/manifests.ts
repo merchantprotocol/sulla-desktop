@@ -259,6 +259,20 @@ export const githubToolManifests: ToolManifest[] = [
     loader:         () => import('./git_pull'),
   },
   {
+    name:        'git_clone',
+    description: 'Clone a GitHub repository using the verified GitHub credential broker when running in an agent container.',
+    category:    'github',
+    schemaDef:   {
+      owner:        { type: 'string', description: 'GitHub repository owner' },
+      repo:         { type: 'string', description: 'GitHub repository name' },
+      absolutePath: { type: 'string', description: 'Absolute destination path for the clone' },
+      branch:       { type: 'string', optional: true, description: 'Branch to check out' },
+      depth:        { type: 'number', optional: true, description: 'Optional positive shallow-clone depth' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./git_clone'),
+  },
+  {
     name:        'git_fetch',
     description: 'Fetch authenticated remote refs without changing the working tree. Reports remote-tracking refs that were added, updated, or pruned.',
     category:    'github',

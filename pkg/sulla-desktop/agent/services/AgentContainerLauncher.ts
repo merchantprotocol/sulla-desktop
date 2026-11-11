@@ -1089,10 +1089,20 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
           'sulla-native': { type: 'http', url: mcpUrl, headers: { Authorization: 'Bearer ${SULLA_MCP_SESSION_TOKEN}' } },
         },
       });
-      await guestExec(
-        ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(this.options.identity.uid), String(this.options.identity.gid)],
+      // Self-healing: /dev/shm is tmpfs, so the per-container secret dir can
+      // vanish (startup orphan sweep, runtime restart, early teardown). Recreate
+      // it with the right owner before writing, log the repair, and retry once.
+      const writeConfig = () => guestExec(
+        ['sh', '-c', 'set -eu; umask 077; sudo install -d -m 0700 -o "$2" -g "$3" "$(dirname "$1")"; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(this.options.identity.uid), String(this.options.identity.gid)],
         Buffer.from(payload).toString('base64'),
       );
+      try {
+        await writeConfig();
+      } catch (error) {
+        log.error(`[AgentContainer] MCP tool-config write failed for session ${ sessionId } (dir ${ this.options.secretDir }); recreating secret dir and retrying once: ${ (error as Error).message }`);
+        await writeConfig();
+        log.warn(`[AgentContainer] MCP tool-config write self-healed for session ${ sessionId }`);
+      }
       const ref = crypto.randomUUID();
       return {
         ref,
@@ -1203,6 +1213,10 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     if (!agentId) throw new Error('Agent container requires an agent identity');
     const allowed = metadata.allowedToolNames;
     const scopes = allowed === undefined || allowed.includes('exec') ? ['*'] : allowed;
+    const toolBinding: AgentContainerRuntimeBinding = {
+      podId: containerName, subject, orgId: metadata.orgId, agentId, jobId: run.jobId,
+      threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
+    };
     const issueLease = () => issueCapabilityToken({
       sub:              subject,
       org_id:           metadata.orgId,
@@ -1216,7 +1230,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
 
-    toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
+    toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const stableKey = run.persistenceKey
       ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
@@ -1481,7 +1495,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     });
     renewTimer = setInterval(() => {
       capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
-      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS);
+      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS, toolBinding);
       if (secretDir) {
         replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease(), identity).catch(error => {
           log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
@@ -1592,8 +1606,8 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   const image = await ensureAgentImage();
   await ensureHostRelay(image);
   const runtime = new GuestDockerRuntimeDriver();
-  const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
+  let session: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
   let secretDir: string | undefined;
   const capabilityJti = crypto.randomUUID();
   let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
@@ -1625,6 +1639,12 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
+    const toolBinding: AgentContainerRuntimeBinding = {
+      podId: containerName, subject, orgId: metadata.orgId,
+      agentId: metadata.agentId ?? run.state.metadata.wsChannel, jobId: run.jobId,
+      threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
+    };
+    session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
     const configuration = containerEnvironment(
@@ -1722,7 +1742,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       });
       const renewTimer = setInterval(() => {
         capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
-        getMCPServerHost().rebindSession(session.id, run.state, LEASE_MS);
+        getMCPServerHost().rebindSession(session!.id, run.state, LEASE_MS, toolBinding);
         if (secretDir) {
           replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease(), identity).catch(error => {
             log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);
@@ -1750,7 +1770,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         unsubscribeSteer();
         unregisterRuntime?.();
         unregisterRuntime = undefined;
-        session.revoke();
+        session?.revoke();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         let cleanupReceipt: AgentContainerCleanupReceipt;
         try {
@@ -1871,7 +1891,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     });
   } catch (error) {
     unregisterRuntime?.();
-    session.revoke();
+    session?.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     const receipt = await cleanupContainerResources(runtime, containerId, secretDir, undefined, workspacePath, guestRuntimePaths, {
       name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
