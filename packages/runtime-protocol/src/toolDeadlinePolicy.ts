@@ -21,6 +21,8 @@ export class ToolDeadlinePolicy {
   private readonly overrides = new Map<string, number>([
     ['git_push', 120_000], ['git_fetch', 120_000], ['create_pr', 120_000],
     ['merge_pr', 120_000], ['ci_logs', 120_000],
+    // Long-polls the agent mailbox for up to 300 s (AgentMailClient.MAX_WAIT_SECONDS).
+    ['mail_wait_for_code', 305_000],
   ]);
 
   /** Longest deadline this policy ever hands out; Desktop must not clamp requests below it. */
