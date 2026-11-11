@@ -84,7 +84,12 @@ describe('DirectAgentMailTransport', () => {
 
 describe('BrokerAgentMailTransport', () => {
   const broker = (reply: () => Promise<any>, captured: any[] = []): AgentMailBroker => ({
-    requestFor: (ctx, request) => ({ ...request, claims: { sub: ctx.sub, agent_id: ctx.agent_id, pod_id: ctx.pod_id, credential_scope: ctx.credential_scope } }),
+    requestFor: (ctx, request) => {
+      expect(ctx.agent_id).toBeDefined();
+      expect(ctx.pod_id).toBeDefined();
+      if (ctx.agent_id === undefined || ctx.pod_id === undefined) throw new Error('Broker test requires agent_id and pod_id claims');
+      return { ...request, claims: { sub: ctx.sub, agent_id: ctx.agent_id, pod_id: ctx.pod_id, credential_scope: ctx.credential_scope } };
+    },
     execute:    async(request) => { captured.push(request); return reply() },
   });
 
