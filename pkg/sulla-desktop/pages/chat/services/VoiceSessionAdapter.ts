@@ -45,6 +45,7 @@ import {
 } from '@pkg/composables/voice';
 import { PassThroughAddressedSpeechClassifier } from '@pkg/composables/voice/AddressedSpeechClassifier';
 import { SelfEchoFilter } from '@pkg/composables/voice/SelfEchoFilter';
+import { VoiceBargeInPolicy } from '@pkg/composables/voice/VoiceBargeInPolicy';
 import { TranscriptNoiseFilter } from '@pkg/composables/voice/VoiceTurnAccumulator';
 import { PendingVoiceTurn } from '@pkg/composables/voice/PendingVoiceTurn';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
@@ -119,7 +120,7 @@ export class VoiceSessionAdapter {
   private lastSpeaking = false;
   private captureRequestedAt = 0;
   private voiceTurnId = '';
-  private readonly voiceAssignments = new VoiceAssignmentCache();
+  private readonly voiceAssignments: VoiceAssignmentCache;
   private vadSpeaking = false;
   private speakSegment = 0;
   private readonly pendingTurn = new PendingVoiceTurn();
@@ -136,6 +137,7 @@ export class VoiceSessionAdapter {
   // The mic has no echo cancellation, so Sulla's own Kokoro voice comes back as speech.
   private readonly selfEcho = new SelfEchoFilter();
   private readonly noise = new TranscriptNoiseFilter();
+  private readonly bargeInPolicy = new VoiceBargeInPolicy(this.selfEcho, this.noise);
 
   private readonly turn = createVoiceTurnAccumulator({
     onInterim:    text => this.updateInterim(text),
@@ -164,23 +166,24 @@ export class VoiceSessionAdapter {
       size:      typeof msg?.text === 'string' ? msg.text.length : 0,
       state:     msg?.event_type ?? 'unknown',
     });
-    this.bargeInOnRealWords(msg);
-    this.turn.handleEvent(msg);
+    const turnEvent = this.bargeInOnRealWords(msg);
+    this.turn.handleEvent(turnEvent);
   };
 
   /**
    * Hands-free barge-in only on real words that are not Sulla's own voice. VAD alone can't
    * tell the user from Kokoro coming back through the speakers, so it no longer stops playback.
    */
-  private bargeInOnRealWords(msg: any): void {
-    if (this.mode !== 'handsfree') return;
-    if (!this.tts.isPlaying && this.tts.queueLength === 0) return;
-    const text = typeof msg?.text === 'string' ? msg.text.trim() : '';
-    if (!text || this.noise.isNoise(text) || this.selfEcho.isEcho(text)) return;
+  private bargeInOnRealWords(msg: any): any {
+    if (this.mode !== 'handsfree') return msg;
+    if (!this.tts.isPlaying && this.tts.queueLength === 0) return msg;
+    const text = typeof msg?.text === 'string' ? this.bargeInPolicy.userWords(msg.text) : '';
+    if (!text) return msg;
     logBargeIn();
     voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'user_words_during_playback' });
     this.tts.stop();
     this.selfEcho.clear();
+    return { ...msg, text };
   }
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
@@ -218,15 +221,23 @@ export class VoiceSessionAdapter {
     this.tts = new TTSPlayerService({
       ipcInvoke: ipcRenderer.invoke.bind(ipcRenderer),
     });
+    this.voiceAssignments = new VoiceAssignmentCache(Date.now, 60_000, 50, () =>
+      !this.tts.isPlaying && this.tts.queueLength === 0 && !this.selfEcho.hasRecentSpeech());
 
     this.unsubs.push(
       watch(controller.runState, state => {
         if (state.phase === 'idle' || state.phase === 'error' ||
             (state.phase === 'paused' && !this.replacingPendingTurn)) this.pendingTurn.clear();
       }),
-      this.tts.on('audioStarted', () => this.pendingTurn.markAudioStarted()),
+      this.tts.on('audioStarted', () => {
+        this.pendingTurn.markAudioStarted();
+        this.selfEcho.playbackStarted();
+      }),
       this.tts.on('playbackStart', () => this.handleTtsStart()),
-      this.tts.on('queueEmpty', () => this.handleTtsEnd()),
+      this.tts.on('queueEmpty', () => {
+        this.selfEcho.playbackEnded();
+        this.handleTtsEnd();
+      }),
       controller.on('voiceCommand', e => this.handleCommand(e.command)),
       controller.on('speakRequested', e => this.speak(e.text, undefined, e.voiceTurnId)),
       // The transcript's "stop" button (TtsIndicator) and Esc only flip controller
