@@ -29,7 +29,7 @@ class EmbeddedDatabase {
   async query<T>(sql: string, values?: unknown[]) {
     if (!values?.length) {
       // PGlite's extended protocol takes one statement; the sync schema is several, so run parameterless SQL through exec.
-      const results = await this.pglite.exec(sql) as Array<{ rows: T[]; affectedRows?: number }>;
+      const results = await this.pglite.exec(sql) as unknown as Array<{ rows: T[]; affectedRows?: number }>;
       const last = results[results.length - 1] ?? { rows: [] as T[] };
       return { rows: last.rows, rowCount: last.affectedRows ?? last.rows.length };
     }
