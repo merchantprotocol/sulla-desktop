@@ -64,6 +64,68 @@ describe('SelfEchoFilter', () => {
     expect(f.stripEchoSpans('please here is your schedule for today stop')).toBe('please stop');
   });
 
+  it('preserves full user replies after playback when they share only common short phrases', () => {
+    // risk: user speech is silently corrupted by common two- or three-word overlaps
+    const cases = [
+      {
+        spoken: 'I can do the review now, it is in the queue.',
+        reply: 'Can you put it in the queue for tomorrow morning?',
+      },
+      {
+        spoken: 'We have a couple of options, and I am ready to explain them.',
+        reply: 'I am the one who can help you with the options later.',
+      },
+      {
+        spoken: 'The report is up to date, and we can review it after lunch.',
+        reply: 'Can you tell me what we can review tomorrow instead?',
+      },
+      {
+        spoken: 'She said she would send it tomorrow, and the final version is ready.',
+        reply: "That's not the one I approved; I need the final version now.",
+      },
+    ];
+
+    for (const { spoken, reply } of cases) {
+      const f = new SelfEchoFilter();
+      f.recordSpoken(spoken);
+      f.playbackStarted();
+      f.playbackEnded();
+      expect(f.stripEchoSpans(reply)).toBe(reply);
+    }
+  });
+
+  it('preserves full barge-in transcripts when only common short phrases overlap', () => {
+    // risk: barge-in transcript words are removed while Sulla is still speaking
+    const cases = [
+      {
+        spoken: 'I can do the review now, it is in the queue.',
+        interruption: 'Can you put it in the queue for tomorrow morning?',
+      },
+      {
+        spoken: 'I am going to check the schedule and call you back.',
+        interruption: 'I am asking you to move my meeting, not cancel it.',
+      },
+      {
+        spoken: 'The report is up to date, and we can review it after lunch.',
+        interruption: 'Can you tell me what we can review tomorrow instead?',
+      },
+    ];
+
+    for (const { spoken, interruption } of cases) {
+      const f = new SelfEchoFilter();
+      f.recordSpoken(spoken);
+      f.playbackStarted();
+      expect(f.stripEchoSpans(interruption)).toBe(interruption);
+    }
+  });
+
+  it("doesn't expand possessive apostrophe-s into 'is'", () => {
+    // risk: transcript matching falsely aliases a person's possessive as spoken content
+    const f = new SelfEchoFilter();
+    f.recordSpoken("Jonathon's notes are ready");
+    expect(f.isEcho('Jonathon is unavailable')).toBe(false);
+  });
+
   it('normalizes spoken numbers written as digits against number words from STT', () => {
     // risk: echo evasion from spoken number normalization
     const f = new SelfEchoFilter();

@@ -47,7 +47,8 @@ export class SelfEchoFilter {
         const expanded = word.replace(/\bcan't\b/g, 'can not').replace(/\bwon't\b/g, 'will not')
           .replace(/n't\b/g, ' not').replace(/'re\b/g, ' are').replace(/'ve\b/g, ' have')
           .replace(/'ll\b/g, ' will').replace(/'m\b/g, ' am').replace(/'d\b/g, ' would')
-          .replace(/'s\b/g, ' is');
+          .replace(/\b(it's|that's|what's|there's|he's|she's|here's|who's|where's)\b/g,
+            contraction => `${contraction.slice(0, -2)} is`);
         return expanded.split(/\s+/).map(token => numbers[token] ?? token);
       });
   }
@@ -104,18 +105,25 @@ export class SelfEchoFilter {
         while (start + n < heard.length && i + n < spoken.length && heard[start + n] === spoken[i + n]) n++;
         best = Math.max(best, n);
       }
-      return best >= 2 ? best : 0;
+      return best;
     };
     const removed = new Set<number>();
     for (let i = 0; i < heard.length;) {
       const span = longestOverlapAt(i);
-      // Short exact spans are safe to remove only when they are part of a mixed
-      // transcript; an all-echo two-word turn is handled by isEcho() instead.
-      if (span >= 2 && heard.length > span) {
+      // Common short phrases occur constantly in genuine speech. Remove spans
+      // of four+ words anywhere, or three+ only when they dominate a short
+      // transcript. Preserve the legacy two-word interruption case only when
+      // the complete spoken entry is exactly those two leading words.
+      const coversShortTranscript = span >= 3 && heard.length <= 5 && span / heard.length >= 0.6;
+      const exactShortEntryPrefix = i === 0 && span === 2 && heard.length === 3 &&
+        entries.some(entry => entry.words.length === 2 &&
+          entry.words[0] === heard[i] && entry.words[1] === heard[i + 1]);
+      if ((span >= 4 || coversShortTranscript || exactShortEntryPrefix) && heard.length > span) {
         for (let n = i; n < i + span; n++) removed.add(heardTokens[n].tokenIndex);
         i += span;
       } else i++;
     }
+    if (!removed.size) return transcript;
     return tokens.filter((_, index) => !removed.has(index)).join(' ').trim();
   }
 
