@@ -20,6 +20,23 @@ import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agen
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
+const suggestionTypeFor = (kind: InstallableKind):'skill'|'agent'|'workflow'|'function'|'recipe'|undefined => kind === 'routine' ? 'workflow' : kind === 'integration' ? undefined : kind;
+/**
+ * Post-commit hint to the suggestion index. It never throws: the database
+ * write already committed, so a notification problem must not turn a
+ * successful install/uninstall into an error. The index's fingerprint
+ * reconciliation repairs anything a lost hint leaves behind.
+ */
+async function notifySuggestionChanges(items: { kind: InstallableKind; slug: string }[], change:'installed'|'updated'|'deleted'|'published'):Promise<void> {
+  try {
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    const watcher = getSullaFilesWatcher();
+    for (const item of items) { const type = suggestionTypeFor(item.kind); if (type) watcher.notifyUseCaseChange(type, item.slug, change); }
+  } catch (error) {
+    console.warn('Marketplace change committed, but the suggestion index was not notified:', error);
+  }
+}
+
 export interface PackageContent {
   kind:     InstallableKind;
   slug:     string;
@@ -392,10 +409,13 @@ export async function installStandaloneArtifact(
     } catch (error) {
       await uninstallPack(detail.slug).catch(() => false);
       await database.transaction(client => client.query(`DELETE FROM skill_definitions WHERE slug=$1 AND source_kind='marketplace' AND marketplace_template_id=$2`, [detail.slug, detail.id]));
+      await notifySuggestionChanges([{ kind: 'skill', slug: detail.slug }], 'deleted');
       throw new Error(`Marketplace skill ${ detail.slug } was removed because its memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
   if (result.installed) await refreshRuntimeCatalogs([detail.kind as InstallableKind]);
+  // After the memory-pack step: a rolled-back skill must never be announced as installed.
+  if (result.installed) await notifySuggestionChanges([{ kind: detail.kind as InstallableKind, slug: detail.slug }], overwrite ? 'updated' : 'installed');
   return result;
 }
 
@@ -496,6 +516,7 @@ export async function installPackageManifest(
     throw new Error(`Marketplace package ${ manifest.slug } was removed because a memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
   }
   await refreshRuntimeCatalogs(result.installed.map(item => item.kind));
+  await notifySuggestionChanges(result.installed, 'installed');
 
   return { ok: true, package: { slug: manifest.slug, version: manifest.version }, ...result };
 }
@@ -568,6 +589,7 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
   for(const pack of memoryPackSkills)if(removedSkills.has(String(pack.slug)))await uninstallPack(String(pack.slug));
   for (const version of result.revokedVersions) await setIntegrationGrant(slug, version, [], false);
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
+  await notifySuggestionChanges(result.removed, 'deleted');
   return { ok: result.ok, removed: result.removed };
 }
 
@@ -607,6 +629,7 @@ export async function setPackageActive(slug: string, active: boolean): Promise<{
     throw error;
   }
   await refreshRuntimeCatalogs(rows.map((row: any) => row.kind as InstallableKind));
+  await notifySuggestionChanges(rows.map((row:any) => ({ kind: row.kind as InstallableKind, slug: String(row.item_slug) })), active ? 'installed' : 'deleted');
   return { ok: true, active, recipes: recipeSlugs };
 }
 

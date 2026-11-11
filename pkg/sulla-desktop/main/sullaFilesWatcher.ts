@@ -785,6 +785,10 @@ class SullaFilesWatcher {
 
   async queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return this.suggestionRoot.index.suggest(text, options); }
 
+  notifyUseCaseChange(type:'skill'|'agent'|'workflow'|'function'|'recipe', slug:string, change:'published'|'installed'|'updated'|'deleted'):void {
+    this.suggestionRoot.notifier.emit({ type, slug, change });
+  }
+
   async folderForCollection(collectionId?:string):Promise<string> {
     if (!collectionId) return this.folder;
     const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
