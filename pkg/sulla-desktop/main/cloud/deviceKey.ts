@@ -95,7 +95,7 @@ const SLACK_PURPOSE_TAGS = {
 export type DevicePurpose = DomainDevicePurpose | keyof typeof SLACK_PURPOSE_TAGS;
 
 function deviceMessageBytes(purpose: DevicePurpose, parts: (string | number)[]): Buffer {
-  if (purpose in SLACK_PURPOSE_TAGS) {
+  if (Object.hasOwn(SLACK_PURPOSE_TAGS, purpose)) {
     const values = parts.map(String);
     if (values.some(value => value.includes('\n'))) throw new TypeError('message parts must not contain newlines');
     return Buffer.from([SLACK_PURPOSE_TAGS[purpose as keyof typeof SLACK_PURPOSE_TAGS], ...values].join('\n'), 'utf8');
