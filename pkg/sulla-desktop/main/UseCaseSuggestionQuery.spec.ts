@@ -4,6 +4,8 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { describe, expect, it } from 'vitest';
+import type { AgentRecallSuggestionResponse } from './AgentUseCaseRecallQuery';
+import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { LocalUseCaseChangeNotifier, UseCaseSuggestionIndex, type SuggestionEmbedder } from '../agent/useCases/UseCaseSuggestionIndex';
 import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
 
@@ -34,11 +36,11 @@ describe('use-case suggestion IPC registrations', () => {
     };
     createUseCaseSuggestionIpcRegistrar(register, register, watcher).register();
 
-    const composer = await handlers.get('use-case-suggest:query')!({}, 'deploy');
-    const recall = await handlers.get('use-case-recall:query')!({}, 'deploy', { types: ['agent'], allowedSlugs: ['release-agent'] });
+    const composer = await handlers.get('use-case-suggest:query')!({}, 'deploy') as UseCaseSuggestionResponse;
+    const recall = await handlers.get('use-case-recall:query')!({}, 'deploy', { types: ['agent'], allowedSlugs: ['release-agent'] }) as AgentRecallSuggestionResponse;
 
     expect(composer.items.map(item => item.slug)).toContain('deploy-skill');
-    expect(composer.items.some(item => item.type === 'function')).toBe(false);
+    expect(composer.items.some(item => (item.type as string) === 'function')).toBe(false);
     expect(recall.items.map(item => item.slug)).toEqual(['release-agent']);
     expect(recall.items.every(item => item.type === 'skill' || item.type === 'agent')).toBe(true);
     expect(registrations).toEqual(['use-case-suggest:query', 'use-case-recall:query']);

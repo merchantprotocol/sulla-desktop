@@ -31,6 +31,6 @@ export class ModelAddressedSpeechClassifier implements AddressedSpeechClassifier
  * Overheard-speech protection currently comes from the merge cap (#2167) and the agent staying silent.
  */
 export class PassThroughAddressedSpeechClassifier implements AddressedSpeechClassifier {
-  isAddressed(): boolean { return true; }
+  isAddressed(_text: string, _context?: { sincePlaybackEndMs?: number; holdToTalk?: boolean }): boolean { return true; }
 }
 

@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+import type { SpeechGateClient } from './SpeechChunkGate';
 import { SpeechChunkGate } from './SpeechChunkGate';
 
 const pcm = Buffer.alloc(1024 * 2);
-const client = (probability: number) => ({ infer: vi.fn(async ({ audio }: { audio: Float32Array }) => ({ ok: true, probabilities: Array(Math.floor((audio.length - 64) / 512)).fill(probability), state: new Float32Array(256) })) });
+const client = (probability: number) => ({ infer: vi.fn<SpeechGateClient['infer']>(async({ audio }) => ({ id: 0, ok: true, probabilities: Array(Math.floor((audio.length - 64) / 512)).fill(probability), state: new Float32Array(256) })) });
 
 describe('SpeechChunkGate', () => {
   it('warms a verified model outside the live chunk budget before enabling the gate', async () => {
@@ -24,7 +25,7 @@ describe('SpeechChunkGate', () => {
 
   it('keeps the model unavailable and the audio path fail-open if warm-up fails', async () => {
     const warn = vi.fn();
-    const vad = { infer: vi.fn(async () => { throw new Error('ORT unavailable'); }) };
+    const vad = { infer: vi.fn<SpeechGateClient['infer']>(async() => { throw new Error('ORT unavailable'); }) };
     const gate = new SpeechChunkGate(vad, null, () => true, warn);
 
     await expect(gate.warmModel('/silero.onnx')).rejects.toThrow('ORT unavailable');
@@ -47,9 +48,10 @@ describe('SpeechChunkGate', () => {
   });
 
   it('retains a rejected onset chunk and exposes it before the admitted speech chunk', async () => {
-    const vad = { infer: vi.fn()
-      .mockResolvedValueOnce({ ok: true, probabilities: [...Array(7).fill(0.1), 0.8], state: new Float32Array(256) })
-      .mockResolvedValueOnce({ ok: true, probabilities: [0.1, 0.1, ...Array(6).fill(0.8)], state: new Float32Array(256) }) };
+    const infer = vi.fn<SpeechGateClient['infer']>();
+    infer.mockResolvedValueOnce({ id: 0, ok: true, probabilities: [...Array(7).fill(0.1), 0.8], state: new Float32Array(256) });
+    infer.mockResolvedValueOnce({ id: 0, ok: true, probabilities: [0.1, 0.1, ...Array(6).fill(0.8)], state: new Float32Array(256) });
+    const vad = { infer };
     const gate = new SpeechChunkGate(vad, '/silero.onnx', () => true, () => undefined);
     const onset = Buffer.alloc(8192, 1);
     const speech = Buffer.alloc(8192, 2);
@@ -62,7 +64,7 @@ describe('SpeechChunkGate', () => {
 
   it('fails open on inference errors and a missing model, logging once', async () => {
     const warn = vi.fn();
-    const broken = { infer: vi.fn(async () => { throw new Error('ORT unavailable'); }) };
+    const broken = { infer: vi.fn<SpeechGateClient['infer']>(async() => { throw new Error('ORT unavailable'); }) };
     const gate = new SpeechChunkGate(broken, '/silero.onnx', () => true, warn);
     // risk: user messages — an unavailable optional gate must not lose speech.
     expect(await gate.shouldTranscribe(pcm)).toBe(true);
