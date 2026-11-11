@@ -54,7 +54,7 @@ export class AgentLivenessReconciler {
       const lastActivityAt = this.activity.project(job, task, taskIndex, checkin).lastActivityAt;
       if (!this.policy.isLost({ createdAt: job.createdAt, startedAt: task.startedAt ?? job.createdAt,
         lastActivityAt, hasCheckin: checkinAt !== null, now: this.clock(), hasLiveGraph: false,
-        isTab, isParked: task.status === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.clock()),
+        isTab, isParked: (task.status as string) === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.clock()),
         lostAfterMs: this.config.lostAfterMs })) continue;
       // RunActivity is process-local and intentionally absent from the repository CAS.
       // Re-read it at transition eligibility, then give Postgres only the durable
@@ -64,7 +64,7 @@ export class AgentLivenessReconciler {
       const latestActivityAt = this.activity.project(job, task, taskIndex, latestCheckin).lastActivityAt;
       if (!this.policy.isLost({ createdAt: job.createdAt, startedAt: task.startedAt ?? job.createdAt,
         lastActivityAt: latestActivityAt, hasCheckin: latestCheckinAt !== null, now: this.clock(),
-        hasLiveGraph: this.probe.graph(task), isTab, isParked: task.status === 'parked'
+        hasLiveGraph: this.probe.graph(task), isTab, isParked: (task.status as string) === 'parked'
           || (task.wakeAt !== undefined && task.wakeAt > this.clock()), lostAfterMs: this.config.lostAfterMs })) continue;
       // The repository CAS compares the latest durable check-in, then the
       // task start, then the job creation time. Keep this exact nullish
