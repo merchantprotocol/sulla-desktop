@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { SelfEchoFilter } from './SelfEchoFilter';
 import { VoiceBargeInPolicy } from './VoiceBargeInPolicy';
 import { createVoiceTurnAccumulator, TranscriptNoiseFilter } from './VoiceTurnAccumulator';
-import { TranscriptNoiseFilter } from './VoiceTurnAccumulator';
 
 describe('TranscriptNoiseFilter repetition handling', () => {
   const filter = new TranscriptNoiseFilter();
