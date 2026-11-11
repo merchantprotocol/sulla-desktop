@@ -124,7 +124,13 @@ export class AgentStateService {
 
   async descendants(parentThreadId: string): Promise<AgentJob[]> {
     await this.ready();
-    if (this.store.lineageForParentThread) return this.store.lineageForParentThread(parentThreadId, 100);
+    if (this.store.lineageForParentThread) {
+      const persisted = await this.store.lineageForParentThread(parentThreadId, 100);
+      const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
+      for (const job of jobs) this.cache.jobs.set(job.jobId, job);
+      this.trimTerminalCache();
+      return jobs;
+    }
     const jobs = await this.jobs(); const threadIds = new Set([parentThreadId]); const descendants: AgentJob[] = [];
     let added = true;
     while (added) { added = false; for (const job of jobs) {
