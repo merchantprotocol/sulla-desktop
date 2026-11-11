@@ -114,6 +114,8 @@ export class VoiceSessionAdapter {
   private interimId: MessageId | null = null;
   private recordingStartedAt = 0;
   private lastLevel = 0;
+  private utterancePeakMicLevel = 0;
+  private micLevelObserved = false;
   private lastSpeaking = false;
   private captureRequestedAt = 0;
   private voiceTurnId = '';
@@ -153,8 +155,16 @@ export class VoiceSessionAdapter {
       size:      typeof msg?.text === 'string' ? msg.text.length : 0,
       state:     msg?.event_type ?? 'unknown',
     });
+    if (msg?.event_type === 'transcript_turn' && this.micLevelObserved &&
+        this.noise.shouldDropShortNearNoiseFloor(String(msg.text ?? ''), this.utterancePeakMicLevel)) {
+      voiceTrace(this.voiceTurnId, 'stt_dropped', { reason: 'short_transcript_near_mic_noise_floor', size: String(msg.text ?? '').length });
+      this.turn.reset();
+      this.resetUtteranceMicLevel();
+      return;
+    }
     this.bargeInOnRealWords(msg);
     this.turn.handleEvent(msg);
+    if (msg?.event_type === 'transcript_turn' || msg?.event_type === 'utterance_end') this.resetUtteranceMicLevel();
   };
 
   /**
@@ -174,6 +184,8 @@ export class VoiceSessionAdapter {
 
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!this.capturing) return;
+    this.micLevelObserved = true;
+    this.utterancePeakMicLevel = Math.max(this.utterancePeakMicLevel, Math.max(0, Math.min(1, data.level)));
     if (data.speaking) this.turn.speechStarted();
     this.lastLevel = Math.max(0, Math.min(1, data.level));
     this.lastSpeaking = !!data.speaking;
@@ -197,6 +209,11 @@ export class VoiceSessionAdapter {
       speaking: this.lastSpeaking,
     });
   };
+
+  private resetUtteranceMicLevel(): void {
+    this.utterancePeakMicLevel = 0;
+    this.micLevelObserved = false;
+  }
 
   constructor(controller: ChatController, opts: VoiceSessionAdapterOptions = {}) {
     this.controller = controller;
@@ -318,6 +335,7 @@ export class VoiceSessionAdapter {
     this.capturing = true;
     this.turn.reset();
     this.lastLevel = 0;
+    this.resetUtteranceMicLevel();
     this.lastSpeaking = false;
     this.vadSpeaking = false;
     this.voiceTurnId = newVoiceTurnId();

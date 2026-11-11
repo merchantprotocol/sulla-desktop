@@ -107,4 +107,12 @@ describe('TranscriptNoiseFilter', () => {
     expect(f.isNoise('thank you for the update on the project')).toBe(false);
     expect(f.isNoise('so what time is it')).toBe(false);
   });
+
+  it('drops only very short final text when the whole utterance stayed at the mic noise floor', () => {
+    const f = new TranscriptNoiseFilter();
+    // risk: hallucinated user messages — a Whisper phrase below the measured mic floor is not sent as speech.
+    expect(f.shouldDropShortNearNoiseFloor("I'll take a couple.", 0.004)).toBe(true);
+    expect(f.shouldDropShortNearNoiseFloor('Can you hear me now', 0.004)).toBe(false);
+    expect(f.shouldDropShortNearNoiseFloor('I hear you', 0.006)).toBe(false);
+  });
 });

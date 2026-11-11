@@ -39,6 +39,11 @@ export class TranscriptNoiseFilter {
     'bye', 'okay', 'oh', 'um', 'uh', 'hmm', 'mm', 'so', '.', '...',
   ]);
 
+  shouldDropShortNearNoiseFloor(text: string, peakMicLevel: number, noiseFloor = 0.005): boolean {
+    const words = text.trim().match(/[a-z0-9']+/gi) ?? [];
+    return words.length > 0 && words.length <= 3 && peakMicLevel <= noiseFloor;
+  }
+
   isNoise(text: string): boolean {
     const clean = text.trim();
     if (!clean) return true;

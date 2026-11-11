@@ -87,6 +87,19 @@ let grokTranscriber: GrokTranscriber | null = null;
 class MicChunkGateState {
   gate: SpeechChunkGate | null = null;
   gating = false;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+
+  startDiagnostics(): void {
+    if (this.statsTimer || !this.gate) return;
+    this.statsTimer = setInterval(() => {
+      if (this.gate) log.info('WhisperTranscribe', 'Silero gate stats', this.gate.takeStats());
+    }, 10_000);
+  }
+
+  stopDiagnostics(): void {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = null;
+  }
 }
 const micChunkGate = new MicChunkGateState();
 
@@ -193,6 +206,7 @@ export function start(opts: {
 
   // Start periodic flush
   flushTimer = setInterval(() => flush(), SEGMENT_MS);
+  micChunkGate.startDiagnostics();
 
   // End-of-turn detection runs only in conversation mode (drives voice-chat turn
   // commit). Secretary mode keeps its own renderer-side turn accumulator.
@@ -213,6 +227,7 @@ export function configureSpeechChunkGate(gate: SpeechChunkGate): void {
 }
 
 export function stop(): void {
+  micChunkGate.stopDiagnostics();
   const elapsedMinutes = sessionStartedAt > 0 ? (Date.now() - sessionStartedAt) / 60000 : 0;
   if (elapsedMinutes > 0 && sessionId) {
     void MeterableUsageModel.accrue({
@@ -277,6 +292,7 @@ export async function finish(timeoutMs = 20_000): Promise<void> {
     clearInterval(endOfTurnTimer);
     endOfTurnTimer = null;
   }
+  micChunkGate.stopDiagnostics();
 
   const deadline = Date.now() + timeoutMs;
 
