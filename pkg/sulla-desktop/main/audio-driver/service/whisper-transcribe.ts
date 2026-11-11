@@ -83,8 +83,12 @@ let sessionStartedAt = 0;
 // IPC handler passes `grok` + a keyless vault callback when Grok STT is selected.
 let provider: SttProvider = 'whisper';
 let grokTranscriber: GrokTranscriber | null = null;
-let speechChunkGate: SpeechChunkGate | null = null;
-let gatingMic = false;
+// Holds the VAD gate and its in-flight flag on an instance, not as loose module lets.
+class MicChunkGateState {
+  gate: SpeechChunkGate | null = null;
+  gating = false;
+}
+const micChunkGate = new MicChunkGateState();
 
 // Per-channel PCM accumulators (raw s16le, 16kHz, mono)
 const micBuffer: Buffer[] = [];
@@ -184,8 +188,8 @@ export function start(opts: {
 
   // Clear buffers
   resetBuffers();
-  speechChunkGate?.reset();
-  gatingMic = false;
+  micChunkGate.gate?.reset();
+  micChunkGate.gating = false;
 
   // Start periodic flush
   flushTimer = setInterval(() => flush(), SEGMENT_MS);
@@ -205,7 +209,7 @@ export function start(opts: {
 
 /** Installed by the audio-driver composition root; inference starts only when mic audio arrives. */
 export function configureSpeechChunkGate(gate: SpeechChunkGate): void {
-  speechChunkGate = gate;
+  micChunkGate.gate = gate;
 }
 
 export function stop(): void {
@@ -222,7 +226,7 @@ export function stop(): void {
   }
   sessionStartedAt = 0;
   sessionId = '';
-  speechChunkGate?.reset();
+  micChunkGate.gate?.reset();
   if (flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
@@ -277,7 +281,7 @@ export async function finish(timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   // Let an in-flight partial finish so its PCM is not transcribed twice.
-  while ((transcribing || gatingMic) && Date.now() < deadline) {
+  while ((transcribing || micChunkGate.gating) && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 25));
   }
   while (transcribing && Date.now() < deadline) {
@@ -381,7 +385,7 @@ function resetBuffers(): void {
 }
 
 function flush(): void {
-  if (transcribing || gatingMic) return;
+  if (transcribing || micChunkGate.gating) return;
 
   // Grab and clear mic buffer
   if (micBytes > 0) {
@@ -392,7 +396,7 @@ function flush(): void {
 
     const processMic = (allowed: boolean) => {
       if (allowed) {
-        const preroll = provider === 'whisper' ? speechChunkGate?.takePreroll() : null;
+        const preroll = provider === 'whisper' ? micChunkGate.gate?.takePreroll() : null;
         const admittedPcm = preroll ? Buffer.concat([preroll, pcm]) : pcm;
         if (mode === 'conversation') {
           // Only admitted speech enters the authoritative end-of-turn buffer.
@@ -403,12 +407,12 @@ function flush(): void {
       }
       if (micBytes > 0) flush();
     };
-    if (provider === 'whisper' && speechChunkGate) {
-      gatingMic = true;
-      void speechChunkGate.shouldTranscribe(pcm)
+    if (provider === 'whisper' && micChunkGate.gate) {
+      micChunkGate.gating = true;
+      void micChunkGate.gate.shouldTranscribe(pcm)
         .catch(() => true)
         .then(processMic)
-        .finally(() => { gatingMic = false; if (micBytes > 0 && !transcribing) flush(); });
+        .finally(() => { micChunkGate.gating = false; if (micBytes > 0 && !transcribing) flush(); });
     } else processMic(true);
   }
 
@@ -429,7 +433,7 @@ function flush(): void {
  * `utterance_end` so the renderer can commit the whole turn as one message.
  */
 function checkEndOfTurn(): void {
-  if (mode !== 'conversation' || !utteranceOpen || gatingMic) return;
+  if (mode !== 'conversation' || !utteranceOpen || micChunkGate.gating) return;
 
   const silentFor = Date.now() - lastMicFedAt;
 
