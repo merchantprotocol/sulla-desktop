@@ -75,6 +75,8 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  /** Non-fatal renderer diagnostics sent to the main-process debug service. */
+  'debug:report': (source: string, error: { message?: string; stack?: string }) => void;
   /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
   'first-run:trace': (area: string, event: string, details?: Record<string, unknown>) => void;
   'support:open': (section?: string) => void;
