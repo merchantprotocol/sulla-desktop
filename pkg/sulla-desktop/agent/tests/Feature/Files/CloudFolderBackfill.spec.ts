@@ -55,7 +55,7 @@ class CloudFolderFixture {
   async collection():Promise<string> {
     const id = randomUUID();
     await this.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source)
-      VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE)`, [id, USER_ID]);
+      VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE)`, [id, `${ USER_ID }-${ id }`]); // one home collection per owner
     await this.pool.query("INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,'cloud')", [id]);
     return id;
   }
