@@ -246,9 +246,12 @@ export class UseCaseSuggestionIndex {
     this.logger.info(`[SuggestionIndex] reconciled catalog (${ this.items.size } rows)`);
   }
 
-  /** Rows indexed while the embedder was unavailable get vectors once it loads; queries never wait on it. */
+  /**
+   * Reload a lost embedder (failed load or a query-time embed error) once its
+   * retry is due, and give vectorless rows their vectors. Queries never wait on it.
+   */
   private scheduleVectorUpgrade(): void {
-    if (this.upgradeQueued || !this.missingVectors) return;
+    if (this.upgradeQueued || (this.embedder && !this.missingVectors)) return;
     if (!this.embedder && this.embedderUnavailable && this.now() < this.embedderRetryAt) return;
     this.upgradeQueued = true;
     void this.enqueue(() => this.upgradeVectors()).finally(() => { this.upgradeQueued = false; });
@@ -256,7 +259,7 @@ export class UseCaseSuggestionIndex {
 
   private async upgradeVectors(): Promise<void> {
     const embedder = await this.getEmbedder();
-    if (!embedder) return;
+    if (!embedder || !this.missingVectors) return;
     this.items = this.build([...this.items.values()].map(entry => entry.item), embedder, this.items);
   }
 

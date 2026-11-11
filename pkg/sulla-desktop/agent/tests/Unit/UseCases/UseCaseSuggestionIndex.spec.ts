@@ -90,6 +90,23 @@ describe('UseCaseSuggestionIndex relevance', () => {
     const rows = await index.suggest('schedule');
     expect(rows.map(row => [row.slug, row.reason])).toEqual([['calendar-skill', 'semantic match']]);
   });
+
+  it('recovers semantic ranking after a query-time embed error', async() => {
+    // risk: availability — one embed exception must not leave suggestions keyword-only forever.
+    const clock = { t: 0 };
+    let throwOnce = false;
+    class FlakyEmbedder extends TopicEmbedder { embed(text: string) { if (throwOnce) { throwOnce = false; throw new Error('embed crashed'); } return super.embed(text); } }
+    const loader = vi.fn(async() => new FlakyEmbedder());
+    const index = build(new FixtureCatalog([item('calendar-skill', 'calendar meetings')]), { clock, loader, tuning: { embedderRetryMs: 1000 } });
+    await index.warm();
+    throwOnce = true;
+    expect((await index.suggest('calendar')).at(0)?.reason).toBe('keyword match');
+    expect(index.mode).toBe('keyword');
+    clock.t = 1001;
+    await index.suggest('calendar'); await flush();
+    expect((await index.suggest('schedule')).map(row => [row.slug, row.reason])).toEqual([['calendar-skill', 'semantic match']]);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('UseCaseSuggestionIndex filters', () => {

@@ -27,3 +27,7 @@ await index.warm();
 const queries = Array.from({ length: 500 }, (_, i) => [`find a skill for ${['calendar meeting','mail inbox','database records','research','deploy'][i % 5]}`, `help me ${['schedule a meeting','organize email','query my data','summarize research','ship a service'][i % 5]}`, `what can automate ${['calendar','mail','records','research','deployment'][i % 5]}?`][i % 3]);
 for (const query of queries) await index.suggest(query, { limit: 8 });
 console.log(JSON.stringify({ mode: `${liveDb ? 'postgres' : 'synthetic'}-${real ? 'potion-real' : 'deterministic'}`, rows: index.rowCount, queries: queries.length, p50_ms: Object.fromEntries(Object.entries(samples).map(([k,v])=>[k, percentile(v,.5)])), p95_ms: Object.fromEntries(Object.entries(samples).map(([k,v])=>[k, percentile(v,.95)])), p99_ms: Object.fromEntries(Object.entries(samples).map(([k,v])=>[k, percentile(v,.99)])) }, null, 2));
+// Threshold calibration aid: compare top raw scores for on-topic vs unrelated text (minScore 0 shows everything).
+const unrelated = ['what is the capital of mongolia', 'my cat ate a sandwich', 'zebra quantum violin'];
+const topScore = async(text: string): Promise<number> => (await index.suggest(text, { limit: 1, minScore: 0 }))[0]?.score ?? 0;
+console.log(JSON.stringify({ mode: index.mode, thresholds: index.thresholds, related_top_scores: await Promise.all(queries.slice(0, 5).map(topScore)), unrelated_top_scores: await Promise.all(unrelated.map(topScore)) }, null, 2));
