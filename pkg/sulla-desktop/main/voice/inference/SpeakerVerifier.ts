@@ -22,9 +22,23 @@ export class SpeakerVerifier {
     this.store = new SpeakerEnrollmentStore(userDataPath, this.scorer);
     this.enrollment = new SpeakerEnrollment(this.store, this.scorer);
   }
+  private measureSpeechMs(pcm: Buffer): number {
+    const frameSamples = 320; // 20 ms at 16 kHz
+    let speechFrames = 0;
+    for (let offset = 0; offset + 1 < pcm.length; offset += frameSamples * 2) {
+      const end = Math.min(pcm.length, offset + frameSamples * 2);
+      const samples = Math.floor((end - offset) / 2);
+      if (!samples) continue;
+      let sum = 0;
+      for (let index = offset; index < end; index += 2) { const value = pcm.readInt16LE(index); sum += value * value; }
+      if (Math.sqrt(sum / samples) >= 50) speechFrames++;
+    }
+    return speechFrames * 20;
+  }
+
   async scoreTurn(pcm: Buffer, manualTurn: boolean): Promise<void> {
     const start = Date.now();
-    const speechMs = Math.floor(pcm.length / 32);
+    const speechMs = this.measureSpeechMs(pcm);
     if (speechMs < 1_500) return;
     try {
       const modelPath = await this.models.resolve('speaker-wespeaker-resnet34');
