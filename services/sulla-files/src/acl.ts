@@ -14,6 +14,14 @@ export interface CollectionAccess {
 
 export const ROLE_LEVEL:Record<string, number> = { view: 1, edit: 2, manage: 3 };
 
+/** Compares a caller's collection role with the level an action needs; an unknown role or right is refused. */
+export class CollectionRoleGate {
+  allows(role:string | undefined, right:string):boolean {
+    if (!role || !Object.hasOwn(ROLE_LEVEL, role) || !Object.hasOwn(ROLE_LEVEL, right)) return false;
+    return ROLE_LEVEL[role] >= ROLE_LEVEL[right];
+  }
+}
+
 export function organizationCollectionRole(roles:string[] = []):CollectionRole | undefined {
   if (roles.some(role => role === 'owner' || role === 'admin')) return 'manage';
   if (roles.includes('member')) return 'view';
