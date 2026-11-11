@@ -32,6 +32,19 @@ describe('SpeakerScorer', () => {
     expect(() => scorer.normalize([0, 0])).toThrow();
     expect(() => scorer.score([1], [1, 0], 2)).toThrow();
   });
+  // risk: ambient noise must not inflate the speech-duration threshold
+  it('ignores low-level room noise when measuring voiced duration', async() => {
+    const resolve = vi.fn();
+    const runner = { run: vi.fn() };
+    const logger = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn(), getLogDir: () => '', getLogPath: () => '' };
+    const verifier = new SpeakerVerifier({ resolve } as any, runner as any, '/tmp/speaker-noise-test', logger as any);
+    const pcm = Buffer.alloc(16_000 * 2 * 3);
+    for (let offset = 0; offset < pcm.length; offset += 2) pcm.writeInt16LE(100, offset);
+    await verifier.scoreTurn(pcm, false);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   // risk: availability of voice transcription when the speaker model is missing
   it('fails open and logs only once when the model cannot load', async() => {
     const warn = vi.fn();
