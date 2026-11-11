@@ -40,6 +40,12 @@ describe('UseCaseSuggestionIndex', () => {
     expect((await index.suggest('calendar planning')).some(row => row.slug === 'calendar-report')).toBe(false);
     expect(load).toHaveBeenCalledTimes(1);
   });
+  it('filters allowed slugs before applying the result limit and rejects malformed filters', async () => {
+    // risk: permissions — callers must never receive rows outside their allowed slug set.
+    const index = new UseCaseSuggestionIndex(async () => new FakeEmbedder(), new FixtureCatalog([item('calendar-a', 'calendar meeting'), item('calendar-b', 'calendar meeting')]), new LocalUseCaseChangeNotifier());
+    expect((await index.suggest('calendar', { allowedSlugs: ['calendar-b'], limit: 1 })).map(row => row.slug)).toEqual(['calendar-b']);
+    await expect(index.suggest('calendar', { allowedSlugs: ['bad slug'] })).rejects.toThrow('allowedSlugs');
+  });
   it('falls back to keyword ranking when the embedder cannot load', async () => {
     // risk: availability — retrieval should remain usable without model weights.
     const index = new UseCaseSuggestionIndex(async () => { throw new Error('weights missing'); }, new FixtureCatalog([item('calendar-helper', 'calendar meeting workflow'), item('mail-helper', 'mail inbox')]), new LocalUseCaseChangeNotifier());

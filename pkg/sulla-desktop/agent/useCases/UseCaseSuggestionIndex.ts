@@ -10,7 +10,8 @@ import { PostgresUseCaseCatalogSource, type SuggestionSqlClient } from './Postgr
 export type UseCaseType = 'skill' | 'agent' | 'workflow' | 'function' | 'recipe';
 export type UseCaseChange = 'published' | 'installed' | 'updated' | 'deleted';
 export interface UseCaseChangeEvent { type: UseCaseType; slug: string; change: UseCaseChange }
-export interface UseCaseSuggestion { type: UseCaseType; slug: string; title: string; description: string; score: number; reason: string }
+export interface UseCaseInput { name: string; type: string; required: boolean; description?: string; default?: string | number | boolean | null }
+export interface UseCaseSuggestion { type: UseCaseType; slug: string; title: string; description: string; score: number; reason: string; inputs?: UseCaseInput[] }
 export interface UseCaseCatalogItem extends Omit<UseCaseSuggestion, 'score' | 'reason'> { triggers?: string[]; tags?: string[] }
 export interface UseCaseCatalogSource { listPublished(): Promise<UseCaseCatalogItem[]>; findPublished(type: UseCaseType, slug: string): Promise<UseCaseCatalogItem | null> }
 export interface UseCaseChangeNotifier { subscribe(listener: (event: UseCaseChangeEvent) => void): () => void }
@@ -25,7 +26,7 @@ export class LocalUseCaseChangeNotifier implements UseCaseChangeNotifier {
 }
 
 interface IndexedItem { item: UseCaseCatalogItem; vector: Float32Array; tokens: Set<string> }
-export interface SuggestionOptions { types?: UseCaseType[]; limit?: number; minScore?: number }
+export interface SuggestionOptions { types?: UseCaseType[]; allowedSlugs?: string[]; limit?: number; minScore?: number }
 
 /** In-memory, incrementally maintained vector/lexical catalog. */
 export class UseCaseSuggestionIndex {
@@ -65,6 +66,7 @@ export class UseCaseSuggestionIndex {
 
   async suggest(text: string, options: SuggestionOptions = {}): Promise<UseCaseSuggestion[]> {
     const started = this.now();
+    const allowedSlugs = this.validateAllowedSlugs(options.allowedSlugs);
     if (!this.ready) await this.warm();
     const embedStart = this.now();
     let query: Float32Array | undefined;
@@ -75,7 +77,7 @@ export class UseCaseSuggestionIndex {
     const embedMs = this.now() - embedStart;
     const rankStart = this.now();
     const queryTokens = new Set(recallTokenize(text));
-    const candidates = [...this.items.values()].filter(({ item }) => !options.types || options.types.includes(item.type));
+    const candidates = [...this.items.values()].filter(({ item }) => (!options.types || options.types.includes(item.type)) && (!allowedSlugs || allowedSlugs.has(item.slug)));
     const vectorScores = candidates.map(({ vector }) => query && vector.length ? this.cosine(query, vector) : 0);
     const keywordScores = candidates.map(({ tokens }) => {
       let count = 0; for (const token of queryTokens) if (tokens.has(token)) count++;
@@ -95,6 +97,11 @@ export class UseCaseSuggestionIndex {
   }
 
   dispose(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
+  private validateAllowedSlugs(slugs?: string[]): Set<string> | undefined {
+    if (slugs === undefined) return undefined;
+    if (!Array.isArray(slugs) || slugs.length > 500 || slugs.some(slug => typeof slug !== 'string' || slug.length < 1 || slug.length > 128 || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(slug))) throw new Error('allowedSlugs must contain at most 500 valid slugs');
+    return new Set(slugs);
+  }
   private async applyChange(event: UseCaseChangeEvent): Promise<void> {
     try { await this.applyChangeSafely(event); } catch (error) { this.logger.info(`[SuggestionIndex] change event failed (${String(error)})`); }
   }
