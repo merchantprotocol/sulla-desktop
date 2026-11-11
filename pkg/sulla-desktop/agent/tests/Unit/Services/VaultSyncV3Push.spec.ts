@@ -7,19 +7,22 @@ const boundary = vi.hoisted(() => ({
   operations: [] as string[],
 }));
 
-class FakeVaultContainer {
-  status = boundary.status;
-  pull = boundary.pull;
-  prepare = boundary.prepare;
-  send = boundary.send;
-}
-
-vi.mock('@pkg/main/cloud/vaultSyncV3/containerClient', () => ({
-  VaultSyncContainer: new FakeVaultContainer(),
-  ContainerSyncError: class ContainerSyncError extends Error {
-    constructor(public readonly code: string, public readonly status: number, message?: string) { super(message || code); }
-  },
-}));
+vi.mock('@pkg/main/cloud/vaultSyncV3/containerClient', () => {
+  // Defined inside the factory: vi.mock is hoisted above top-level declarations, so a
+  // top-level class would still be in its temporal dead zone when the factory runs.
+  class FakeVaultContainer {
+    status = boundary.status;
+    pull = boundary.pull;
+    prepare = boundary.prepare;
+    send = boundary.send;
+  }
+  return {
+    VaultSyncContainer: new FakeVaultContainer(),
+    ContainerSyncError: class ContainerSyncError extends Error {
+      constructor(public readonly code: string, public readonly status: number, message?: string) { super(message || code); }
+    },
+  };
+});
 vi.mock('@pkg/main/cloud/cloudSettings', () => ({ getCloudPreferences: boundary.prefs }));
 vi.mock('@pkg/main/cloud/cloudFetch', () => ({ isCloudSignedIn: boundary.signedIn }));
 vi.mock('@pkg/main/sullaCloudAuth', () => ({ getCurrentUserId: boundary.userId }));
