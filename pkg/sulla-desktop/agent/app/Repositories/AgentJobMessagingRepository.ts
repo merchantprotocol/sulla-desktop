@@ -7,6 +7,7 @@ import { Repository } from '@sulla/foundation';
 
 import { AgentJobMessage as AgentJobMessageModel } from '../Models/AgentJobMessage';
 import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
+import type { CustodyTransactionClient } from '../Services/JobCustodyTypes';
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
@@ -62,6 +63,31 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     );
 
     return this.rowToMessage(rows[0]);
+  }
+
+  /** Selects eligible tasks and persists their messages while the custody lock is held. */
+  async queueMessagesWithClient(client: CustodyTransactionClient, jobId: string, requestedTaskIndex: number|undefined, message: string): Promise<Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>> {
+    return this.queueForTargetsWithClient(client, jobId, await this.openTargetsWithClient(client, jobId, requestedTaskIndex), () => message);
+  }
+
+  /** Open (queued/running/parked) task targets, read inside the caller's custody transaction. */
+  async openTargetsWithClient(client: CustodyTransactionClient, jobId: string, requestedTaskIndex: number|undefined): Promise<AgentJobTaskTarget[]> {
+    const selected = await client.query<any>(`SELECT j.job_id,j.status AS job_status,j.parent_channel,j.parent_thread_id,
+      task.ordinality-1 AS task_index,task.value->>'status' AS task_status,task.value->>'threadId' AS thread_id,task.value->>'label' AS label
+      FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
+      WHERE j.job_id=$1 AND ($2::int IS NULL OR task.ordinality-1=$2) AND task.value->>'status' IN ('queued','running','parked')
+      ORDER BY task.ordinality`,[jobId,requestedTaskIndex??null]);
+    return selected.rows.map(row => this.rowToTarget(row));
+  }
+
+  async queueForTargetsWithClient(client: CustodyTransactionClient, jobId: string, targets: AgentJobTaskTarget[], messageFor: (target: AgentJobTaskTarget) => string): Promise<Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>> {
+    const queued:Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>=[];
+    for(const target of targets){
+      const id=crypto.randomUUID();
+      const inserted=await client.query<any>(`INSERT INTO agent_job_messages(id,job_id,task_index,message) VALUES($1,$2,$3,$4) RETURNING *`,[id,jobId,target.taskIndex,messageFor(target)]);
+      queued.push({target,record:this.rowToMessage(inserted.rows[0])});
+    }
+    return queued;
   }
 
   async pendingMessagesForThread(threadId: string): Promise<AgentJobMessage[]> {

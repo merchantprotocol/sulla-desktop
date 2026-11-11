@@ -27,13 +27,13 @@ export type ConnectHandler = () => void;
  * Process-aware factory — returns IpcMessageBus (main) or IpcMessageBusRenderer (renderer).
  * All consumers import this function and get the IPC bus transparently.
  */
+import { IpcMessageBus } from './IpcMessageBus';
+
 export function getWebSocketClientService(): import('./IpcMessageBus').IpcMessageBus | import('./IpcMessageBusRenderer').IpcMessageBusRenderer {
-  const isMain = typeof process !== 'undefined' && (process as any).type === 'browser';
-  if (isMain) {
-    const { IpcMessageBus } = require('./IpcMessageBus');
-    return IpcMessageBus.getInstance();
-  } else {
+  const isRenderer = typeof process !== 'undefined' && (process as any).type === 'renderer';
+  if (isRenderer) {
     const { IpcMessageBusRenderer } = require('./IpcMessageBusRenderer');
     return IpcMessageBusRenderer.getInstance();
   }
+  return IpcMessageBus.getInstance();
 }

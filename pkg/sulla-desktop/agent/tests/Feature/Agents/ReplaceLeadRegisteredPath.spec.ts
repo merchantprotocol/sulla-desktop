@@ -1,0 +1,248 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import '../../Support/TestHomeEnv';
+import {tmpdir} from 'node:os';
+import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
+import {TestDatabase} from '../../Support/TestDatabase';
+import {CustodyTransactionBarrier} from '../../Support/ControlledAsyncBarrier';
+
+vi.setConfig({testTimeout:15_000,hookTimeout:30_000});
+vi.mock('electron',()=>({app:{getPath:()=>tmpdir(),getVersion:()=> '0.0.0-test',isPackaged:false},safeStorage:{}}));
+vi.mock('../../../services/DecisionService',()=>({decisionService:{requiresApproval:vi.fn(async()=>false)}}));
+
+class ReplacementRuntimeFixture {
+ readonly entries=new Map<string,any>();
+ failAfterPersist=false;
+ adoptDuringLaunch?:()=>Promise<void>;
+ replacementChannel?:string; replacementAgentId?:string;
+ reset(){this.entries.clear();this.failAfterPersist=false;this.adoptDuringLaunch=undefined;this.replacementChannel=undefined;this.replacementAgentId=undefined;}
+}
+const runtime=new ReplacementRuntimeFixture();
+vi.mock('../../../services/GraphRegistry',()=>({GraphRegistry:{get:(threadId:string)=>runtime.entries.get(threadId)??null}}));
+vi.mock('../../../tools/agents/spawn_agent',async()=>{
+ class ProcessBoundarySpawnAgentWorker {
+  async runValidated(input:any,state:any){
+   if(input.tasks[0].agentId!=='coding-manager-sol')return {successBoolean:false,responseString:'no enabled agent definition exists'};
+   const {postgresClient}=await import('../../../database/PostgresClient');
+   const label=String(input.tasks[0].label);const jobId=`replacement-${label.split(':').slice(-2).join('-')}`;
+   const rows=await postgresClient.query<any>(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks,launch_key) VALUES($1,'running',1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO NOTHING RETURNING job_id`,[jobId,state.metadata.wsChannel,state.metadata.threadId,state.metadata.agentId,JSON.stringify([{agentId:runtime.replacementAgentId??input.tasks[0].agentId,agentConfigChannel:runtime.replacementChannel??input.tasks[0].agentId,label,prompt:input.tasks[0].prompt,status:'running',threadId:`${jobId}-thread`}]),input.launchKey]);
+   const persisted=rows[0]?.job_id??(await postgresClient.query<any>('SELECT job_id FROM agent_jobs WHERE launch_key=$1',[input.launchKey]))[0]?.job_id;
+   await runtime.adoptDuringLaunch?.();
+   if(runtime.failAfterPersist)throw new Error('simulated process disconnect after persist');
+   return {successBoolean:true,responseString:'ok',result:{mode:'async',jobId:persisted,taskCount:1,parallel:true,message:'launched'}};
+  }
+ }
+ return {SpawnAgentWorker:ProcessBoundarySpawnAgentWorker};
+});
+
+const database=new TestDatabase();
+const suite=TestDatabase.available()?describe:process.env.CI?describe:describe.skip;
+const owner={channel:'sulla-desktop',threadId:'parent-thread',agentId:'coding-manager-sol'};
+const task=(label:string,threadId:string,status='running')=>({agentId:'codex-sol-worker',label,prompt:`work ${label}`,status,threadId});
+
+suite('agents/replace_lead registered production path',()=>{
+ let registry:any;
+ beforeAll(async()=>{
+  process.env.SULLA_DATABASE_POOL_MAX='4';await database.initialize();
+  process.env.SULLA_DATABASE_URL=database.appUrl();process.env.PGOPTIONS=`-csearch_path=${database.schema},public`;
+  const {postgresClient}=await import('../../../database/PostgresClient');await postgresClient.initialize();await postgresClient.query(`SET search_path TO "${database.schema}", public`);
+  await database.query(`INSERT INTO agent_definitions(id,slug,name,status,enabled) VALUES('test-coding-manager-sol','coding-manager-sol','Coding Manager Sol','production',TRUE) ON CONFLICT(slug) DO UPDATE SET status='production',enabled=TRUE`);
+  const {ToolRegistry}=await import('../../../tools/registry');const {agentToolManifests}=await import('../../../tools/agents/manifests');registry=new ToolRegistry();registry.registerManifests(agentToolManifests.filter((manifest:any)=>['replace_lead','reassign_job','return_result'].includes(manifest.name)));
+ },60_000);
+ beforeEach(async()=>{
+  runtime.reset();runtime.entries.set(owner.threadId,{state:{metadata:{wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}}});
+  await database.query('TRUNCATE agent_lead_replacements,agent_job_custody_audit,agent_job_custody,agent_job_checkins,agent_job_messages,agent_inbox_messages,agent_job_result_history,agent_jobs CASCADE');
+ });
+ afterAll(async()=>database.dispose());
+
+ async function seedLead(suffix:string,leadStatus='error',children=3,parent=owner){
+  const leadId=`lead-${suffix}`;const leadThread=`old-lead-${suffix}`;
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES($1,$2,1,$3,$4,$5,$6::jsonb)`,[leadId,leadStatus,parent.channel,parent.threadId,parent.agentId,JSON.stringify([task('Lead',leadThread,leadStatus)])]);
+  if(leadStatus==='running')await database.query(`INSERT INTO agent_task_execution_identities(job_id,task_index,generation,launch_state,identity,activated_at) VALUES($1,0,$2,'active',$3::jsonb,now())`,[leadId,`fixture-${leadId}`,JSON.stringify({kind:'container',generation:`fixture-${leadId}`,containerId:`fixture-${leadId}`,containerName:`fixture-${leadId}`,labels:{}})]);
+  for(let index=0;index<children;index++)await seedChild(suffix,index,leadThread);
+  return {leadId,leadThread};
+ }
+ async function seedChild(suffix:string,index:number,parentThread:string,status='running'){
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,restart_resume_count,tasks) VALUES($1,$2,1,$3,$4,'coding-manager-sol',$5,$6::jsonb)`,[`child-${suffix}-${index}`,status,owner.channel,parentThread,status==='parked'?1:0,JSON.stringify([task(`Worker ${index+1}`,`worker-${suffix}-${index}`,status)])]);
+ }
+ function confirmExternalTeardown(provider:any){provider.wrapUp.stops.teardownTask=async(jobId:string,taskIndex:number)=>{provider.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);return 'confirmed';};}
+ async function call(input:any,metadata:any={wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0}){const tool=await registry.createToolForCategory('agents','replace_lead');tool.setState({metadata});return tool.call(input);}
+ async function returnResult(threadId:string){const tool=await registry.createToolForCategory('agents','return_result');tool.setState({metadata:{wsChannel:owner.channel,threadId,agentId:'codex-sol-worker',subAgentDepth:2}});return tool.call({status:'completed',summary:'done',output:{head:'abc1234'}});}
+ async function callAgent(name:string,input:any,metadata:any){const tool=await registry.createToolForCategory('agents',name);tool.setState({metadata});return tool.call(input);}
+
+ it('H3 drains three real children and records their registered return_result contracts exactly once after reparenting',async()=>{
+  // risk: custody/result routing — a dead manager replacement must preserve every running worker.
+  const {leadId}=await seedLead('h3','error',3);const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
+  const replacement=(result as any).result.replacement;expect((result as any).result.prompt).toContain('Your team: 3 workers');
+  expect(await database.query<any>(`SELECT owner_channel,owner_thread_id,owner_agent_id FROM agent_job_custody WHERE job_id LIKE 'child-h3-%' ORDER BY job_id`)).toEqual(Array(3).fill({owner_channel:replacement.channel,owner_thread_id:replacement.threadId,owner_agent_id:replacement.agentId}));
+  for(let index=0;index<3;index++)await database.query(`UPDATE agent_jobs SET status='parked',restart_resume_count=1,tasks=jsonb_set(tasks,'{0,status}','\"parked\"') WHERE job_id=$1`,[`child-h3-${index}`]);
+  for(let index=0;index<3;index++)expect((await returnResult(`worker-h3-${index}`)).success).toBe(true);
+  expect(await database.query<any>(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'child-h3-%' AND tasks->0->>'returnedAt' IS NOT NULL ORDER BY job_id`)).toHaveLength(3);
+  const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');
+  expect(completionInboxStore.take(replacement.channel,replacement.threadId).map(item=>item.jobId).sort()).toEqual(['child-h3-0','child-h3-1','child-h3-2']);
+  expect((await returnResult('worker-h3-0')).success).toBe(false);
+  expect(await database.query<any>(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'child-h3-%' AND tasks->0->>'returnedAt' IS NOT NULL ORDER BY job_id`)).toHaveLength(3);
+ });
+
+ it('recovers a launch persisted before phase commit without creating a second lead',async()=>{
+  // risk: duplicate side effects — a process disconnect must reuse the production launch key lookup.
+  const {leadId}=await seedLead('retry','error',0);runtime.failAfterPersist=true;expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);
+  runtime.failAfterPersist=false;expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query(`SELECT job_id FROM agent_jobs WHERE job_id LIKE 'replacement-%'`)).toHaveLength(1);
+  expect(await database.query(`SELECT * FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
+ });
+
+ it('atomically reserves one replacement when two registered callers race',async()=>{
+  // risk: duplicate runners — database launch-key reservation, not process memory, chooses one winner.
+  const {leadId}=await seedLead('concurrent','error',0);
+  const [first,second]=await Promise.all([call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'}),call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})]);
+  expect(first.success).toBe(true);expect(second.success).toBe(true);
+  expect(await database.query(`SELECT job_id FROM agent_jobs WHERE launch_key=$1`,[`lead-replacement:${leadId}:0`])).toHaveLength(1);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
+ });
+
+ it('moves a child adopted after packet assembly before committing the zero-owner drain',async()=>{
+  // risk: stranded children — a child appearing during launch must be included in the drain.
+  const {leadId,leadThread}=await seedLead('adopted','error',0);runtime.adoptDuringLaunch=()=>seedChild('adopted',9,leadThread);
+  const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
+  const replacement=(result as any).result.replacement;
+  expect(await database.query<any>(`SELECT owner_thread_id FROM agent_job_custody WHERE job_id='child-adopted-9' AND task_index=0`)).toEqual([{owner_thread_id:replacement.threadId}]);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
+ });
+
+ it('redirects a registered incoming reparent after final zero and records its concurrent registered return once',async()=>{
+  // risk: stranded result — adoption that starts during final drain must land on the replacement with one durable return.
+  const {leadId,leadThread}=await seedLead('final-race','running',0);
+  const childId='child-final-race-9',childThread='worker-final-race-9',oldManager='incoming-manager-final-race';
+  runtime.entries.set(oldManager,{state:{metadata:{wsChannel:oldManager,threadId:oldManager,agentId:oldManager,subAgentDepth:0}}});
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,restart_resume_count,tasks) VALUES($1,'parked',1,$2,$2,$2,1,$3::jsonb)`,[childId,oldManager,JSON.stringify([task('Incoming worker',childThread,'parked')])]);
+  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');const repository=(agentJobProvider.custody as any).repository;const originalObserver=repository.observer;const barrier=new CustodyTransactionBarrier();barrier.hold('producer','committing');
+  runtime.adoptDuringLaunch=async()=>{repository.observer=barrier;};
+  const replacing=call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});await barrier.waitFor('producer','committing');
+  const reparenting=callAgent('reassign_job',{jobId:childId,taskIndex:0,to:leadThread,reason:'arrive at final drain'},{wsChannel:oldManager,threadId:oldManager,agentId:oldManager,subAgentDepth:1});
+  await barrier.waitFor('move','locked');
+  const returning=returnResult(childThread);expect(barrier.count('producer','locked')).toBe(1); // only replacement drain is locked; return waits on child custody
+  barrier.release('producer','committing');
+  const [replacementResult,reparentResult,returnResultReceipt]=await Promise.all([replacing,reparenting,returning]);repository.observer=originalObserver;
+  expect(replacementResult.success).toBe(true);expect(reparentResult.success).toBe(true);expect(returnResultReceipt.success).toBe(true);
+  const replacement=(replacementResult as any).result.replacement;
+  const currentOwner=await agentJobProvider.custody.resolveOwner(childId,0);
+  expect(currentOwner).toMatchObject({channel:'coding-manager-sol',threadId:replacement.threadId,agentId:'coding-manager-sol'});
+  expect(await database.query(`SELECT job_id FROM agent_job_result_history WHERE job_id=$1 AND task_index=0`,[childId])).toHaveLength(1);
+ });
+
+ it('preserves distinct replacement channel, thread, and agent identities through the post-drain redirect',async()=>{
+  // risk: custody routing — a channel is a transport destination, not an agent identity.
+  runtime.replacementChannel='replacement-transport';runtime.replacementAgentId='replacement-identity';
+  const {leadId,leadThread}=await seedLead('distinct-routing','running',0);
+  const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(result.success).toBe(true);
+  const incoming='distinct-incoming';await seedChild('distinct-incoming',0,'unrelated-owner');
+  const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  const actor=await agentJobProvider.custodyCallerVerifier.verify({wsChannel:owner.channel,threadId:owner.threadId,agentId:owner.agentId,subAgentDepth:0});
+  const moved=await agentJobProvider.custody.move({jobId:`child-${incoming}-0`,taskIndex:0,to:{channel:owner.channel,threadId:leadThread,agentId:'codex-sol-worker'},actor,reason:'post-drain adoption'});
+  expect(moved.ok).toBe(true);
+  expect(await agentJobProvider.custody.resolveOwner(`child-${incoming}-0`,0)).toMatchObject({channel:'replacement-transport',threadId:(result as any).result.replacement.threadId,agentId:'replacement-identity'});
+ });
+
+ it('uses wrap_up for a live lead and stale replay keeps one audit and one queued stop message',async()=>{
+  // risk: irreversible stop — replacement must request graceful wrap-up, never hard-stop a live lead.
+  const {leadId}=await seedLead('live','running',0);const first=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});expect(first.success).toBe(true);
+  expect((await database.query<any>(`SELECT status FROM agent_jobs WHERE job_id=$1`,[leadId]))[0].status).toBe('running');
+  expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
+  expect(await database.query<any>(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(0);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrap_requested'}]);
+ });
+
+ it('recovers a crash after wrap_up request with one effective stop and audit',async()=>{
+  // risk: irreversible stop — retry after the request commits must not duplicate the stop side effect.
+  const {leadId}=await seedLead('wrap-crash','running',0);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  const {agentJobProvider,AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  // Fault boundary: discard every process-local timer after the durable request commit.
+  const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
+  const restartedProvider=new AgentJobServiceProvider();confirmExternalTeardown(restartedProvider);await restartedProvider.start();await new Promise(resolve=>setTimeout(resolve,25));
+  expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,tasks->0->'stoppedBy' AS stopped_by,tasks->0->>'stopReason' AS stop_reason FROM agent_jobs WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',stopped_by:{agentId:owner.agentId,threadId:owner.threadId},stop_reason:expect.stringContaining('replaced by')});
+  expect(await database.query(`SELECT * FROM agent_job_wrap_up_requests WHERE job_id=$1 AND completed_at IS NOT NULL`,[leadId])).toHaveLength(1);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[leadId])).toHaveLength(1);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+  expect(await database.query<any>(`SELECT phase FROM agent_lead_replacements WHERE old_job_id=$1`,[leadId])).toEqual([{phase:'wrapped'}]);
+ });
+
+ it('fences an expired claimant before teardown and replays an unacknowledged terminal teardown',async()=>{
+  // risk: irreversible stop — two boot providers and a crash after the effect must produce one attributed stop/audit.
+  const {leadId}=await seedLead('wrap-claim-race','running',0);
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  const {agentJobProvider,AgentJobServiceProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+  const timers:Map<string,ReturnType<typeof setTimeout>>=(agentJobProvider.wrapUp as any).timers;
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
+  const first=new AgentJobServiceProvider();const second=new AgentJobServiceProvider();confirmExternalTeardown(first);confirmExternalTeardown(second);
+  const {JobAbortScope}=await import('../../../app/Services/JobAbortScope');
+  const staleScope=new JobAbortScope();let staleTeardowns=0;staleScope.taskSignal(0).addEventListener('abort',()=>staleTeardowns++);first.runtime.abortScopes.set(leadId,staleScope);
+  const winningScope=new JobAbortScope();let winningTeardowns=0;winningScope.taskSignal(0).addEventListener('abort',()=>winningTeardowns++);second.runtime.abortScopes.set(leadId,winningScope);
+  const repository=(first.wrapUp as any).persistence;const staleClaim=await repository.claim(leadId,0,30);
+  expect(staleClaim).toBeDefined();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[leadId]);
+  await second.wrapUp.recover();
+  expect(await repository.beginTeardown(staleClaim)).toBe(false);
+  expect(staleTeardowns).toBe(0);expect(winningTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT status,tasks->0->>'status' AS task_status,claim_version,teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[leadId]))[0]).toMatchObject({status:'stopped',task_status:'stopped',claim_version:'2',needed:true,acknowledged:true,completed:true});
+  expect((await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[leadId])).toHaveLength(1);
+
+  const crash=await seedLead('wrap-expired-after-effect','running',0);
+  expect((await call({jobId:crash.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[crash.leadId]);
+  const crashClaim=await repository.claim(crash.leadId,0,30);
+  expect(crashClaim).toBeDefined();
+  // Fault boundary: terminal state + durable teardown intent commit, process dies before AbortSignal.
+  expect(await repository.beginTeardown(crashClaim)).toBe(true);
+  expect((await database.query<any>(`SELECT status,teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at FROM agent_jobs JOIN agent_job_wrap_up_requests USING(job_id) WHERE job_id=$1`,[crash.leadId]))[0]).toMatchObject({status:'stopped',needed:true,teardown_acknowledged_at:null});
+  await database.query(`UPDATE agent_job_wrap_up_requests SET claim_expires_at=now()-interval '1 second' WHERE job_id=$1`,[crash.leadId]);
+  const freshOne=new AgentJobServiceProvider();const freshTwo=new AgentJobServiceProvider();confirmExternalTeardown(freshOne);confirmExternalTeardown(freshTwo);
+  const replayScope=new JobAbortScope();let replayTeardowns=0;replayScope.taskSignal(0).addEventListener('abort',()=>replayTeardowns++);freshOne.runtime.abortScopes.set(crash.leadId,replayScope);
+  await Promise.all([freshOne.wrapUp.recover(),freshTwo.wrapUp.recover()]);
+  expect(await repository.acknowledgeTeardown(crashClaim)).toBe(false);
+  expect(replayTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT claim_version,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[crash.leadId]))[0]).toEqual({claim_version:'2',acknowledged:true,completed:true});
+  expect((await call({jobId:crash.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  expect(await database.query(`SELECT id FROM agent_job_checkins WHERE job_id=$1 AND step='lead-replaced'`,[crash.leadId])).toHaveLength(1);
+
+  const normalRace=await seedLead('normal-stop-wrap-race','running',0);
+  expect((await call({jobId:normalRace.leadId,taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(true);
+  for(const handle of timers.values())clearTimeout(handle);timers.clear();
+  await database.query(`UPDATE agent_job_wrap_up_requests SET due_at=now()-interval '1 second' WHERE job_id=$1`,[normalRace.leadId]);
+  const sharedScope=new JobAbortScope();let effectiveTeardowns=0;sharedScope.taskSignal(0).addEventListener('abort',()=>effectiveTeardowns++);
+  first.runtime.abortScopes.set(normalRace.leadId,sharedScope);second.runtime.abortScopes.set(normalRace.leadId,sharedScope);
+  expect(await (first.wrapUp as any).stops.stopTask(normalRace.leadId,0,{kind:'agent',agentId:owner.agentId,threadId:owner.threadId},'normal stop won race')).toBe('stopped');
+  await second.wrapUp.recover();
+  expect(effectiveTeardowns).toBe(1);
+  expect((await database.query<any>(`SELECT teardown_needed_at IS NOT NULL AS needed,teardown_acknowledged_at IS NOT NULL AS acknowledged,completed_at IS NOT NULL AS completed FROM agent_job_wrap_up_requests WHERE job_id=$1`,[normalRace.leadId]))[0]).toEqual({needed:true,acknowledged:true,completed:true});
+ });
+
+ it('allows the owner, refuses a peer by owner name, and distinguishes missing task/job and disabled agent',async()=>{
+  // risk: authorization — only verified custody owners/ancestors may replace a live lead.
+  const {leadId}=await seedLead('auth','running',0);const peer=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'},{wsChannel:'peer',threadId:'peer-thread',agentId:'peer-agent',subAgentDepth:1});expect(peer.success).toBe(false);expect(JSON.stringify(peer.result??peer.error)).toContain('coding-manager-sol');
+  expect((await call({jobId:leadId,taskIndex:7,agentId:'coding-manager-sol'})).success).toBe(false);expect((await call({jobId:'missing',taskIndex:0,agentId:'coding-manager-sol'})).success).toBe(false);
+  const disabled=await call({jobId:leadId,taskIndex:0,agentId:'disabled-agent'});expect(disabled.success).toBe(false);expect(JSON.stringify(disabled.result??disabled.error)).toContain('enabled agent');
+ });
+
+ it('allows a verified custody ancestor to replace a descendant lead',async()=>{
+  // risk: recovery authority — a manager's manager must recover a failed descendant without peer privilege.
+  const middle={channel:'middle-manager',threadId:'middle-manager-thread',agentId:'middle-manager'};
+  await database.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_channel,parent_thread_id,parent_agent_id,tasks) VALUES('middle-manager-job','running',1,$1,$2,$3,$4::jsonb)`,[owner.channel,owner.threadId,owner.agentId,JSON.stringify([task('Middle manager',middle.threadId,'running')])]);
+  const {leadId}=await seedLead('ancestor','error',0,middle);
+  const result=await call({jobId:leadId,taskIndex:0,agentId:'coding-manager-sol'});
+  expect(result,JSON.stringify(result)).toMatchObject({success:true});
+ });
+});

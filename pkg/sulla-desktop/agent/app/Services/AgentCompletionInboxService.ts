@@ -58,6 +58,23 @@ export class AgentCompletionInboxService extends Service {
     return !duplicate;
   }
 
+  /**
+   * Re-addresses still-pending (untaken) completions for a job or task after a
+   * custody move. Taken/acknowledged entries are not touched, so a completion
+   * is never delivered to both the old and the new owner.
+   */
+  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex?: number): number {
+    const sourceKey = this.keyFor(fromChannel, fromThreadId);
+    const source = this.inboxes.get(sourceKey);
+    if (!source) return 0;
+    const selected = source.entries.filter(entry => entry.jobId === jobId && (taskIndex === undefined || entry.taskIndex === taskIndex));
+    if (selected.length === 0) return 0;
+    source.entries = source.entries.filter(entry => !selected.includes(entry));
+    if (source.entries.length === 0) this.inboxes.delete(sourceKey);
+    for (const entry of selected) this.enqueue(toChannel, toThreadId, entry);
+    return selected.length;
+  }
+
   notifyReady(channel: string, threadId: string): void {
     const inbox = this.inboxes.get(this.keyFor(channel, threadId));
     if (!inbox?.stopped && inbox?.entries.length) this.idleDispatcher.dispatch(channel, threadId);

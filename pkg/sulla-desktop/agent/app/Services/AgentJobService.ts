@@ -10,7 +10,7 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
 import { JobAbortScope } from './JobAbortScope';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
-import { JobStopService } from './JobStopService';
+import { JobStopService, type StopAuthorization } from './JobStopService';
 import { JobWrapUpService } from './JobWrapUpService';
 import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import { SpawnJobCreator } from './SpawnJobCreator';
@@ -66,7 +66,7 @@ releaseJobWatcher(jobId: string): void {
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
 abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
-async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }
+async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<StopAuthorization> { return this.stops.authorize(jobId, principal); }
 async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
 async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
   const job = await this.getJob(jobId); const task = job?.tasks[taskIndex]; if (task?.status !== 'stopped') return undefined;
@@ -149,6 +149,9 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
+  }, async next => {
+    await this.repository.updateTaskCompletions(jobId, taskIndex, next.tasks, next.results);
+    return true;
   });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */

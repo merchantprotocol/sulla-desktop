@@ -8,6 +8,8 @@ import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import type { AgentFleetProjectionService } from '../../app/Services/AgentFleetProjectionService';
 import { AgentFleetTreeFormatter } from '../../app/Formatters/AgentFleetTreeFormatter';
 import { PullRequestReferenceExtractor } from '../../app/Formatters/PullRequestReferenceExtractor';
+import { JobCustodyFormatter } from '../../app/Services/JobCustodyFormatter';
+import type { AgentJob } from './jobRegistry';
 
 export class CheckAgentJobsWorker extends BaseTool {
   name = '';
@@ -16,6 +18,8 @@ export class CheckAgentJobsWorker extends BaseTool {
   constructor(
     private readonly fleet: AgentFleetProjectionService = agentJobProvider.fleet,
     private readonly tree = new AgentFleetTreeFormatter(new PullRequestReferenceExtractor()),
+    private readonly custody = new JobCustodyFormatter(agentJobProvider.custody),
+    private readonly jobs: { job(jobId: string): Promise<AgentJob | undefined> } = agentJobProvider.states,
   ) { super(); }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
@@ -30,9 +34,12 @@ export class CheckAgentJobsWorker extends BaseTool {
         };
       }
       const results = Array.isArray(job.results) ? job.results as Array<{ status?: string }> : [];
+      // By-id lookups show who owns the job now and how custody moved (reassign/adopt/replace_lead).
+      const record = await this.jobs.job(jobId);
+      const custody = record ? await this.custody.format(record) : undefined;
       return {
         successBoolean: ['running', 'parked'].includes(String(job.status)) || (job.status === 'completed' && results.every(result => result.status === 'completed')),
-        responseString: JSON.stringify(job, null, 2),
+        responseString: JSON.stringify(custody ? { ...job, custody } : job, null, 2),
       };
     }
 

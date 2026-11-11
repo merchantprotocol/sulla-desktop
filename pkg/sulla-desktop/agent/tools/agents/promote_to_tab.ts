@@ -13,7 +13,7 @@ import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 /** Job-registry adapter for the promoter. Only the calls it needs. */
 const jobRegistryStore: PromotableJobStore = {
   getJob:           jobId => getJob(jobId),
-  authorize:        (jobId, principal) => authorizeJobStop(jobId, principal),
+  authorize:        async(jobId, principal) => (await authorizeJobStop(jobId, principal)).outcome,
   markTaskPromoted: (jobId, taskIndex) => markTaskPromoted(jobId, taskIndex),
 };
 

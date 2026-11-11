@@ -55,12 +55,14 @@ import {
 } from '../../database/models/AgentDelegationModel';
 import { combineAborts } from '../../services/AbortService';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
+import { taskExecutionIdentityScope } from '../../app/Services/TaskExecutionIdentityScope';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
-import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { HiddenAgentTaskRunner, type HiddenTaskExecution } from '../../services/HiddenAgentTaskRunner';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -135,6 +137,9 @@ interface TabPlan {
 // the downgrade is recorded on the response and the task, never silent.
 export class SpawnAgentWorker extends BaseTool {
   name = '';
+
+  /** Test seam at the process-start boundary; persistence and response stay production. */
+  protected taskRunner(execution: HiddenTaskExecution): HiddenAgentTaskRunner { return new HiddenAgentTaskRunner(execution); }
   description = '';
 
   /** Code-only switch for visible tabs. Agents can't set it: tool input never reaches it. */
@@ -466,9 +471,12 @@ export class SpawnAgentWorker extends BaseTool {
     const parentAgentId = resolveAgentIdentity((this.state as any)?.metadata) || undefined;
     const contracts: AgentContractSpec[] = tasks.map(task => normalizeContract(task.contract));
     const jobTasks: AgentJobTask[] = tasks.map((task, index) => {
-      const agentId = taskAgentSelector(task) || parentChannel;
+      const selector = taskAgentSelector(task);
+      const agentId = selector || parentChannel;
+      const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       return {
         agentId,
+        agentConfigChannel,
         label:      task.label || agentId || `task-${ index }`,
         prompt:     task.prompt,
         provider:   task.provider?.trim() || undefined,
@@ -481,6 +489,7 @@ export class SpawnAgentWorker extends BaseTool {
         ...(decisions[index]?.requestedVisibility ? { requestedVisibility: decisions[index].requestedVisibility, downgradeReason: decisions[index].downgradeReason } : {}),
         contract:   contracts[index],
         depth:      parentDepth + 1,
+        threadId:   `spawn-agent-${ threadSlug(task.label || agentId || `task-${ index }`) }-${ Date.now() }-${ index }`,
       };
     });
     const jobOptions = {
@@ -489,6 +498,7 @@ export class SpawnAgentWorker extends BaseTool {
       // Dedupe is intentionally per single-task call; multi-task batches are
       // never partially reused. An omitted label opts out completely.
       dedupeLabel: tasks.length === 1 ? tasks[0].label?.trim() : undefined,
+      launchKey: typeof input.launchKey==='string' ? input.launchKey.trim()||undefined : undefined,
     };
 
     // Abort signal for THIS job (set once the job is created below).
@@ -506,7 +516,7 @@ export class SpawnAgentWorker extends BaseTool {
       const threadId = input.threadId;
       const selector = taskAgentSelector(task);
       const label = task.label || selector || `task-${ index }`;
-      const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
+      const agentConfigChannel = input.task.agentConfigChannel || selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
       const taskAbortSignal = taskAbortSignals[index];
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
@@ -636,6 +646,7 @@ export class SpawnAgentWorker extends BaseTool {
             // A scheduled wait may exceed the container idle limit. Recreated
             // runtimes must resume the same workspace and provider home.
             persistenceKey: threadId,
+            executionIdentities: agentJobProvider.executionIdentities,
           });
           containerLifecycle = new ParkedContainerLifecycle(await createLifecycle(), createLifecycle);
         }
@@ -643,9 +654,10 @@ export class SpawnAgentWorker extends BaseTool {
         // Execute and settle every delegated turn through one policy loop.
         // The loop is intentionally re-entered after every wake/reminder so a
         // worker can schedule any number of waits on the same thread.
-        const executeGraph = () => containerLifecycle
-          ? containerLifecycle.execute(() => graph.execute(subState))
-          : graph.execute(subState);
+        const executeGraph = () => taskExecutionIdentityScope.run(
+          {jobId:activityJobId!,taskIndex:index,store:agentJobProvider.executionIdentities},
+          () => containerLifecycle ? containerLifecycle.execute(() => graph.execute(subState)) : graph.execute(subState),
+        );
         const acknowledgeCompletionInput = async(wakeInput: any) => {
           const entries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
           await Promise.all(entries.map((entry: any) => markTaskCompletionDelivered(
@@ -879,13 +891,13 @@ export class SpawnAgentWorker extends BaseTool {
       }
     };
 
-    const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
+    const taskRunner = this.taskRunner({ execute: executePersistedTask });
     const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
       return taskRunner.run({
         task: jobTasks[index],
         taskIndex: index,
-        threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
+        threadId: jobTasks[index].threadId!,
         generation: jobTasks[index].generation ?? 1,
       });
     };

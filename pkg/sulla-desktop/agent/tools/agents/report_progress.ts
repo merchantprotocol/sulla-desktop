@@ -43,7 +43,7 @@ export class ReportProgressWorker extends BaseTool {
         else await agentJobProvider.reviewItems.close(target.jobId, target.taskIndex, update.id, update.status, update.commit, update.reason, 'worker');
       }
     }
-    const result = await AgentJobMessagingModel.appendCheckin(threadId, {
+    const result = await agentJobProvider.blockerEscalation.record(threadId, {
       step,
       summary,
       filesTouched: Array.isArray(input.filesTouched) ? input.filesTouched.map(String) : [],

@@ -133,6 +133,12 @@ export class DatabaseManager {
       console.warn('[DB] SkillsRegistry warm initialization failed:', error);
     }
 
+    // Replay durable agent lifecycle requests only after their migrations exist.
+    // This is the process-start recovery path; ordinary service calls retain the
+    // same idempotent hydration guard as a fallback.
+    const { agentJobProvider } = await import('../app/Providers/AgentJobServiceProvider');
+    await agentJobProvider.start();
+
     this.initialized = true;
     console.log('[DB] Database fully initialized');
   }

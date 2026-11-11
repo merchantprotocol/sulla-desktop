@@ -129,6 +129,27 @@ export class AgentStateService {
     this.trimTerminalCache();
     return current;
   }
+  /**
+   * Runs a durable writer that updates agent_jobs itself (the wrap-up teardown
+   * outbox) inside this job's mutation queue, then refreshes the cache from the
+   * committed row. Queueing keeps a concurrent whole-row write from reverting it.
+   */
+  async applyExternalWrite(jobId: string, write: () => Promise<boolean>): Promise<boolean> {
+    const applied = await this.mutations.run(jobId, async() => {
+      const changed = await write();
+      if (changed) await this.loadJobUnqueued(jobId);
+      return changed;
+    });
+    if (applied) { this.pendingTerminalWrites.delete(jobId); this.emitChange(); }
+    return applied;
+  }
+  private async loadJobUnqueued(jobId: string): Promise<AgentJob | undefined> {
+    const persisted = await this.store.job(jobId);
+    if (!persisted) { this.cache.jobs.delete(jobId); return undefined; }
+    this.cache.jobs.set(jobId, persisted);
+    this.trimTerminalCache();
+    return persisted;
+  }
   /** Write-side lookup. Lifecycle writes must not wait for boot reconciliation. */
   async jobForWrite(jobId: string): Promise<AgentJob | undefined> {
     const cached = this.cache.jobs.get(jobId);
@@ -180,6 +201,11 @@ export class AgentStateService {
 
   async create(job: AgentJob): Promise<AgentJob> {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
+  }
+
+  /** Caches and publishes a job row that was inserted by a reservation write (spawn launch keys). */
+  remember(job: AgentJob): AgentJob {
+    const next = this.withDerivedStatus(job); this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
   }
 
   async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
@@ -239,7 +265,11 @@ export class AgentStateService {
     return Boolean(changed);
   }
 
-  async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped'): Promise<string[]> {
+  /**
+   * Stops a job tree. `persist` lets a caller write every row inside its own
+   * transaction (custody-locked stops); without it each row uses replaceState.
+   */
+  async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped', persist?: (next: AgentJob) => Promise<boolean>): Promise<string[]> {
     const jobs = await this.store.cascadeJobs(jobId);
     const finishedAt = Date.now(); const stoppedIds: string[] = [];
     for (const job of jobs) {
@@ -248,7 +278,7 @@ export class AgentStateService {
         return { ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, completionDeliveredAt: finishedAt,
           stoppedBy, stopReason: reason, tasks: current.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status)
             ? { ...task, status: 'stopped', finishedAt } : task) };
-      }, undefined, false);
+      }, persist, false);
       if (stopped) stoppedIds.push(job.jobId);
     }
     return stoppedIds;

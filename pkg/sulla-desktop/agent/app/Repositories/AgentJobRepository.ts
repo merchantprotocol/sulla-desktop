@@ -8,6 +8,7 @@ import { Repository } from '@sulla/foundation';
 
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
 import type { AgentJob, AgentJobResult, AgentJobTask, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
+import type { CustodyTransactionClient } from '../Services/JobCustodyTypes';
 
 export class AgentJobRepository extends Repository<AgentJobModel> {
   protected readonly model = AgentJobModel;
@@ -36,9 +37,24 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async sweepInterruptedJobs(): Promise<void> { /* recovery is driven by claimInterruptedJobs after channels subscribe */ }
 
 
+  async findByParentAndLabel(parentThreadId:string,label:string):Promise<AgentJob|undefined>{
+    const rows=await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id=$1 AND tasks -> 0 ->> 'label'=$2 ORDER BY created_at LIMIT 1`,[parentThreadId,label]);
+    return rows[0]?this.map(rows[0]):undefined;
+  }
+
   async insertJob(job: AgentJob): Promise<void> {
     await this.connection.run(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, created_at, tasks, visibility, parent_agent_id) VALUES ($1, 'running', $2, $4, $5, to_timestamp($3 / 1000.0), $6::jsonb, $7, $8) ON CONFLICT (job_id) DO NOTHING`,
       [job.jobId, job.taskCount, job.createdAt, job.parentChannel ?? null, job.parentThreadId ?? null, JSON.stringify(job.tasks), job.visibility ?? 'hidden', job.parentAgentId ?? null]);
+  }
+
+  async reserveSpawnJob(job:AgentJob,launchKey:string):Promise<{job:AgentJob;inserted:boolean}>{
+    const rows=await this.connection.select(`INSERT INTO agent_jobs (job_id,status,task_count,parent_channel,parent_thread_id,created_at,tasks,visibility,parent_agent_id,launch_key)
+      VALUES($1,'running',$2,$4,$5,to_timestamp($3 / 1000.0),$6::jsonb,$7,$8,$9)
+      ON CONFLICT (launch_key) WHERE launch_key IS NOT NULL DO UPDATE SET launch_key=EXCLUDED.launch_key
+      RETURNING *, (xmax=0) AS inserted`,
+    [job.jobId,job.taskCount,job.createdAt,job.parentChannel??null,job.parentThreadId??null,JSON.stringify(job.tasks),job.visibility??'hidden',job.parentAgentId??null,launchKey]);
+    if(!rows[0])throw new Error(`Unable to reserve spawn launch key ${launchKey}`);
+    return {job:this.map(rows[0]),inserted:Boolean(rows[0].inserted)};
   }
 
   async replaceState(job: AgentJob): Promise<void> {
@@ -63,6 +79,21 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     [job.jobId, job.status, JSON.stringify(job.tasks), JSON.stringify(job.results), job.error ?? null, job.finishedAt,
       job.waitingOnChildren ?? 0, taskIndex, observedActivity ?? job.createdAt]);
     return rows.length === 1;
+  }
+
+  /** replaceState inside a caller-owned custody transaction (owner check and write commit together). */
+  async replaceStateWithClient(client: CustodyTransactionClient, job: AgentJob): Promise<boolean> {
+    const result = await client.query(`UPDATE agent_jobs SET status = CASE WHEN status = 'stopped' THEN status ELSE $2 END, tasks = $3::jsonb, results = $4::jsonb,
+      error = $5, finished_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE to_timestamp($6 / 1000.0) END,
+      waiting_on_children = $7,
+      completion_delivered_at = CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END,
+      dismissed_at = CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9 / 1000.0) END,
+      restart_resume_count = $10, stopped_by = $11::jsonb, stop_reason = $12
+      WHERE job_id = $1 RETURNING job_id`, [job.jobId, job.status, JSON.stringify(job.tasks),
+      JSON.stringify(job.results), job.error ?? null, job.finishedAt, job.waitingOnChildren ?? 0,
+      job.completionDeliveredAt ?? null, job.dismissedAt ?? null, job.restartResumeCount ?? 0,
+      job.stoppedBy ? JSON.stringify(job.stoppedBy) : null, job.stopReason ?? null]);
+    return result.rows.length === 1;
   }
 
   async updateTasks(jobId: string, tasks: AgentJobTask[]): Promise<void> {
@@ -117,9 +148,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         COALESCE((tasks -> $2::int ->> 'reopenCount')::int, 0)
       FROM agent_jobs WHERE job_id = $1 AND (tasks -> $2::int) IS NOT NULL
       ON CONFLICT (job_id, task_index) DO NOTHING`, [jobId, taskIndex]);
-    const rows = await this.connection.select(`WITH current_task AS (
+    const rows = await this.connection.select(`WITH task_lock AS (SELECT pg_advisory_xact_lock(hashtext($1),$2)), current_task AS (
       SELECT job_id, tasks -> $2::int AS task
-      FROM agent_jobs WHERE job_id = $1 FOR UPDATE
+      FROM agent_jobs,task_lock WHERE job_id = $1 FOR UPDATE
     ), eligible AS (
       SELECT current_task.task, state.generation, state.reopen_count
       FROM current_task JOIN agent_job_task_reopens state ON state.job_id = $1 AND state.task_index = $2

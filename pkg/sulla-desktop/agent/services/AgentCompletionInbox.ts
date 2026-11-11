@@ -22,7 +22,15 @@ export { CompletionInboxStore as AgentCompletionInbox };
 export const completionInboxStore = {
   enqueue: (...args: Parameters<AgentCompletionInboxService['enqueue']>) => agentCompletionProvider.inbox.enqueue(...args),
   acknowledge: (...args: Parameters<AgentCompletionInboxService['acknowledge']>) => agentCompletionProvider.inbox.acknowledge(...args),
+  move: (...args: Parameters<AgentCompletionInboxService['move']>) => agentCompletionProvider.inbox.move(...args),
+  take: (...args: Parameters<AgentCompletionInboxService['take']>) => agentCompletionProvider.inbox.take(...args),
+  registerIdleDispatcher: (...args: Parameters<AgentCompletionInboxService['registerIdleDispatcher']>) => agentCompletionProvider.inbox.registerIdleDispatcher(...args),
+  clear: () => agentCompletionProvider.inbox.clear(),
+  requeue: (...args: Parameters<AgentCompletionInboxService['requeue']>) => agentCompletionProvider.inbox.requeue(...args),
 };
+
+/** The inbox operations job services depend on; satisfied by the live adapter and by any inbox instance. */
+export type CompletionInboxPort = Pick<AgentCompletionInboxService, 'enqueue' | 'acknowledge' | 'move'>;
 
 export const registerCompletionIdleDispatcher = (...args: Parameters<typeof agentCompletionProvider.inbox.registerIdleDispatcher>) =>
   agentCompletionProvider.inbox.registerIdleDispatcher(...args);

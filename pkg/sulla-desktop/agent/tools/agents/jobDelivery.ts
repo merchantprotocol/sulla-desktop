@@ -17,6 +17,7 @@ import { OrphanedChildRerouter } from '../../services/OrphanedChildRerouter';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
 
 import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
+import type { JobCustodyPort } from '../../app/Services/JobCustodyTypes';
 
 /** A returned contract as the job result the parent reads. */
 export function returnedJobResult(task: AgentJobTask, label: string, threadId: string): AgentJobResult {
@@ -163,7 +164,7 @@ export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
   private readonly orphanedChildRerouter: OrphanedChildRerouter;
 
-  constructor(jobs: OrphanedChildJobStore) {
+  constructor(jobs: OrphanedChildJobStore, private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'|'withOwner'>) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
     this.orphanedChildRerouter = new OrphanedChildRerouter();
   }
@@ -185,6 +186,12 @@ export class JobCompletionDelivery {
     // Intentional stops are audit state, not completions. Never notify or wake
     // the parent; the repository marks them consumed before runtime abort.
     if (terminal?.status === 'stopped' && terminal.stoppedBy) return true;
+    const movedDelivery=await this.custody?.withOwner(job.jobId,taskIndex,async(_client,owner)=>{
+      if(owner.version===0)return undefined;
+      await emitProactiveCompletion(owner.channel,job.jobId,results,failureReason,owner.threadId,terminal);
+      return wakeParentGraph(owner.channel,owner.threadId,job.jobId,results,failureReason,taskIndex,terminal);
+    });
+    if(movedDelivery!==undefined)return movedDelivery;
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
