@@ -78,6 +78,25 @@ describe('SelfEchoFilter', () => {
     expect(f.isEcho('you are right do not worry')).toBe(true);
   });
 
+  it('recognizes the two live Mac reply fixtures across short Whisper chunks', () => {
+    // risk: committed self-echo fragments that differ in casing, numbers, or contractions
+    const fixtures = [
+      {
+        spoken: "When the new voice ID code tagged it as voice 1, a new voice that it's not sure ...",
+        chunks: ['When the new voice ID code tagged it as voice one', "a new voice that it is not sure"],
+      },
+      {
+        spoken: "And the app transcribed them as if you had said that that's the end.",
+        chunks: ['And the app transcribed them', 'as if you had said that that is the end'],
+      },
+    ];
+    for (const fixture of fixtures) {
+      const f = new SelfEchoFilter();
+      f.recordSpoken(fixture.spoken);
+      for (const chunk of fixture.chunks) expect(f.isEcho(chunk)).toBe(true);
+    }
+  });
+
   it('matches casing and punctuation variants without changing the spoken words', () => {
     const f = new SelfEchoFilter();
     f.recordSpoken('Hello, WORLD!');
