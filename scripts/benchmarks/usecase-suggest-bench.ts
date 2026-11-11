@@ -2,7 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-import { UseCaseSuggestionIndex, LocalUseCaseChangeNotifier, potionSuggestionEmbedderLoader, type UseCaseCatalogItem } from '../../pkg/sulla-desktop/agent/useCases/UseCaseSuggestionIndex';
+import { UseCaseSuggestionIndex, LocalUseCaseChangeNotifier, type UseCaseCatalogItem } from '../../pkg/sulla-desktop/agent/useCases/UseCaseSuggestionIndex';
+import { potionSuggestionEmbedderLoader } from '../../pkg/sulla-desktop/agent/useCases/UseCaseSuggestionCompositionRoot';
 
 class SyntheticCatalog {
   readonly rows: UseCaseCatalogItem[] = Array.from({ length: 2000 }, (_, i) => ({ type: ['skill','agent','workflow','function','recipe'][i % 5] as UseCaseCatalogItem['type'], slug: `use-case-${i}`, title: `Use case ${i} ${['calendar','mail','database','research','deploy'][i % 5]}`, description: `Helps users ${['schedule meetings','manage inbox','query records','research topics','deploy services'][i % 5]} with examples and practical guidance.`, tags: ['productivity', 'automation'], triggers: ['help me', 'show how'] }));

@@ -40,7 +40,7 @@ describe('use-case suggestion IPC registrations', () => {
     const recall = await handlers.get('use-case-recall:query')!({}, 'deploy', { types: ['agent'], allowedSlugs: ['release-agent'] }) as AgentRecallSuggestionResponse;
 
     expect(composer.items.map(item => item.slug)).toContain('deploy-skill');
-    expect(composer.items.some(item => item.type === 'function')).toBe(false);
+    expect(composer.items.some(item => (item.type as string) === 'function')).toBe(false);
     expect(recall.items.map(item => item.slug)).toEqual(['release-agent']);
     expect(recall.items.every(item => item.type === 'skill' || item.type === 'agent')).toBe(true);
     expect(registrations).toEqual(['use-case-suggest:query', 'use-case-recall:query']);
