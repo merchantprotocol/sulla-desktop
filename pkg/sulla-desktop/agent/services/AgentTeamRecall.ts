@@ -3,58 +3,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * Per-turn team recall for lead agents — the subconscious "which agents fit
- * right now" step. Pure keyword ranking over the agent directory: no LLM call,
- * one table read, bounded size. It only suggests; the lead agent decides.
- *
- * A lead agent is one whose directory card has a non-empty can_call. Its turn
- * context gets a "Team directory" of the agents it may call, ranked by the
- * current situation (latest user message or sub-agent result), plus the shared
- * "Calling your team" section when the agent's own prompt doesn't carry it. Cards that match strongly are marked
- * "fits right now"; when nothing matches strongly, nothing is marked.
- */
-
-import { agentDefinitionService } from './AgentDefinitionService';
-import { TeamRecallDirectoryCache } from './TeamRecallDirectoryCache';
-import { formatCardLine, listAgentDirectory, scoreCard } from './AgentDirectoryService';
 import { callingYourTeamSection } from '../prompts/callingYourTeam';
 import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
-
+import type { UseCaseSuggestionQuery } from './UseCaseSuggestionQueryClient';
 import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
+import type { AgentDirectoryCard } from './AgentDirectoryService';
 
-/** A card needs at least this keyword score to be called a fit at all. */
-export const TEAM_FIT_MIN_SCORE = 5;
-/** ...and at least this share of the best card's score. */
-export const TEAM_FIT_RELATIVE = 0.5;
 export const TEAM_FIT_MAX = 2;
-/** Cap on the Team directory part of the block (the section is fixed size). */
 export const TEAM_DIRECTORY_MAX_CHARS = 3500;
-
 const FIT_MARK = '**fits right now** · ';
 const CALLING_YOUR_TEAM_HEADING = /^#{1,6}\s*Calling your team\b/im;
 
-/** Process-wide TTL cache for the two directory reads each lead turn makes. */
-const directoryCache = new TeamRecallDirectoryCache();
-export function invalidateTeamRecallDirectoryCache(): void { directoryCache.invalidate(); }
-
-/** True when the agent's stored prompt already includes the shared section. */
 export function promptHasCallingYourTeam(agent: AgentDefinition): boolean {
   return [agent.system_prompt, agent.prompt_content, ...Object.values(agent.prompt_files ?? {})]
     .some(text => CALLING_YOUR_TEAM_HEADING.test(String(text ?? '')));
 }
 
-export interface TeamRecallOptions {
-  /** The lead agent's slug (its agent identity). */
-  agentSlug: string;
-  /** Situation text to rank by. */
-  text:      string;
-  maxChars?: number;
-  /** This agent's own sub-agent depth, when known, for the budget line. */
-  depth?:    number;
-}
+export interface TeamRecallOptions { agentSlug: string; text: string; maxChars?: number; depth?: number }
 
-/** "You are at sub-agent depth N of 3; you can launch K more levels." */
 export function depthBudgetLine(depth: number): string {
   const remaining = Math.max(MAX_SUBAGENT_DEPTH - depth, 0);
   return remaining > 0
@@ -62,55 +28,79 @@ export function depthBudgetLine(depth: number): string {
     : `You are at sub-agent depth ${ depth } of ${ MAX_SUBAGENT_DEPTH }; you cannot launch sub-agents (max depth reached).`;
 }
 
-/**
- * The context block body for a lead agent, or '' when the agent calls no one
- * (or no one it may call is active).
- */
-export async function buildTeamRecallContext(opts: TeamRecallOptions): Promise<string> {
-  const slug = opts.agentSlug.trim();
-  if (!slug) return '';
-  const self = await directoryCache.get(`agent:${ slug }`, () => agentDefinitionService.findBySlug(slug));
-  if (!self || self.can_call.length === 0) return '';
+/** Team recall filters semantic suggestions through the lead's explicit can_call policy. */
+export class AgentTeamRecallService {
+  constructor(
+    private readonly suggestions: UseCaseSuggestionQuery,
+    private readonly findAgent: (slug: string) => Promise<AgentDefinition | null>,
+    private readonly listDirectory: (slugs: string[]) => Promise<AgentDirectoryCard[]>,
+    private readonly formatCard: (card: AgentDirectoryCard) => string,
+  ) {}
 
-  const cards = (await directoryCache.get(`directory:${ self.can_call.join('\0') }`, () => listAgentDirectory({ slugs: self.can_call }))).filter(card => card.slug !== slug);
-  if (cards.length === 0) return '';
+  async buildContext(opts: TeamRecallOptions): Promise<string> {
+    const slug = opts.agentSlug.trim();
+    if (!slug) return '';
+    const self = await this.findAgent(slug);
+    if (!self || self.can_call.length === 0) return '';
+    const canCall = new Set(self.can_call);
+    const wildcard = canCall.has('*');
+    // Policy: a callee is eligible when it is not the lead itself and is listed in can_call ('*' allows any slug).
+    const callable = (candidate: string): boolean => candidate !== slug && (wildcard || canCall.has(candidate));
 
-  // Keep the lead's own can_call order as the tie-break: it is the author's
-  // preference order when nothing in the situation points anywhere.
-  const order = new Map(self.can_call.map((callee, index) => [callee, index]));
-  const ranked = cards
-    .map(card => ({ card, score: opts.text.trim() ? scoreCard(card, opts.text) : 0 }))
-    .sort((a, b) => b.score - a.score || (order.get(a.card.slug) ?? 0) - (order.get(b.card.slug) ?? 0));
-  const top = ranked[0]?.score ?? 0;
-  const fits = new Set(ranked
-    .filter(entry => entry.score >= TEAM_FIT_MIN_SCORE && entry.score >= top * TEAM_FIT_RELATIVE)
-    .slice(0, TEAM_FIT_MAX)
-    .map(entry => entry.card.slug));
+    // Query the index first, restricted to can_call minus self; no slug restriction when can_call has '*'.
+    const allowedSlugs = self.can_call.filter(callee => callee !== '*' && callable(callee));
+    if (!wildcard && allowedSlugs.length === 0) return '';
+    const suggestions = await this.suggestions.query(opts.text, {
+      types: ['agent'], ...(wildcard ? {} : { allowedSlugs }), limit: 50,
+    });
+    const publishedSuggestions = suggestions.filter(item => callable(item.slug));
+    const matchedSlugs = [...new Set(publishedSuggestions.map(item => item.slug))];
+    if (matchedSlugs.length === 0) return '';
 
-  const header = [
-    '## Team directory',
-    ...(typeof opts.depth === 'number' ? [depthBudgetLine(opts.depth)] : []),
-    fits.size
-      ? 'Agents you can call, ranked for the current situation. "fits right now" is a keyword suggestion, not an order; you decide.'
-      : 'Agents you can call. Nothing in the current situation clearly points to one of them.',
-    'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; every child runs hidden (never open visible tabs). Full cards: `sulla agents/directory`.',
-  ].join('\n');
+    // Fetch cards only for the slugs the index returned, then re-apply the policy to the cards.
+    const publishedSlugs = new Set(matchedSlugs);
+    const cards = (await this.listDirectory(matchedSlugs))
+      .filter(card => publishedSlugs.has(card.slug) && callable(card.slug));
+    if (cards.length === 0) return '';
+    const scoreBySlug = new Map(publishedSuggestions.map(item => [item.slug, item.score]));
+    const order = new Map(self.can_call.map((callee, index) => [callee, index]));
+    const ranked = cards.map(card => ({ card, score: scoreBySlug.get(card.slug) ?? 0 }))
+      .sort((a, b) => b.score - a.score || (order.get(a.card.slug) ?? 0) - (order.get(b.card.slug) ?? 0));
+    const top = ranked[0]?.score ?? 0;
+    const fits = new Set(ranked.filter(entry => entry.score > 0 && entry.score >= top * 0.5).slice(0, TEAM_FIT_MAX).map(entry => entry.card.slug));
 
-  const maxChars = opts.maxChars ?? TEAM_DIRECTORY_MAX_CHARS;
-  const lines: string[] = [];
-  let size = header.length;
-  for (const [index, { card }] of ranked.entries()) {
-    // Full card for the fits; one line for everyone else (sulla agents/directory has the rest).
-    const full = formatCardLine(card);
-    const line = fits.has(card.slug) ? full.replace(/^- /, `- ${ FIT_MARK }`) : full.split('\n')[0];
-    if (size + line.length + 1 > maxChars) {
-      lines.push(`- …${ ranked.length - index } more: \`sulla agents/directory\``);
-      break;
+    const header = [
+      '## Team directory',
+      ...(typeof opts.depth === 'number' ? [depthBudgetLine(opts.depth)] : []),
+      fits.size
+        ? 'Agents you can call, ranked for the current situation. “fits right now” is a semantic suggestion, not an order; you decide.'
+        : 'Agents you can call. Nothing in the current situation clearly points to one of them.',
+      'Call: `sulla meta/spawn_agent \'{"tasks":[{"agentId":"<slug>","prompt":"<full brief>"}],"async":true}\'`; every child runs hidden (never open visible tabs). Full cards: `sulla agents/directory`.',
+    ].join('\n');
+
+    const maxChars = opts.maxChars ?? TEAM_DIRECTORY_MAX_CHARS;
+    const lines: string[] = [];
+    let size = header.length;
+    for (const [index, { card }] of ranked.entries()) {
+      const full = this.formatCard(card);
+      const line = fits.has(card.slug) ? full.replace(/^- /, `- ${ FIT_MARK }`) : full.split('\n')[0];
+      if (size + line.length + 1 > maxChars) { lines.push(`- …${ ranked.length - index } more: \`sulla agents/directory\``); break; }
+      lines.push(line); size += line.length + 1;
     }
-    lines.push(line);
-    size += line.length + 1;
+    const directory = [header, ...lines].join('\n');
+    return promptHasCallingYourTeam(self) ? directory : `${ callingYourTeamSection }\n\n${ directory }`;
   }
+}
 
-  const directory = [header, ...lines].join('\n');
-  return promptHasCallingYourTeam(self) ? directory : `${ callingYourTeamSection }\n\n${ directory }`;
+/** Compatibility entry point used by SubconsciousMiddleware. */
+export async function buildTeamRecallContext(opts: TeamRecallOptions, suggestions: UseCaseSuggestionQuery): Promise<string> {
+  const [{ agentDefinitionService }, { listAgentDirectory, formatCardLine }] = await Promise.all([
+    import('./AgentDefinitionService'), import('./AgentDirectoryService'),
+  ]);
+  return new AgentTeamRecallService(
+    suggestions,
+    slug => agentDefinitionService.findBySlug(slug),
+    slugs => listAgentDirectory({ slugs }),
+    formatCardLine,
+  ).buildContext(opts);
 }

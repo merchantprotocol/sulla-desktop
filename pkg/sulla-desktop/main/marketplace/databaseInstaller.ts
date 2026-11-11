@@ -36,7 +36,9 @@ class MarketplaceSuggestionChanges {
   announce(items: { kind: InstallableKind; slug: string }[], change: UseCaseChange): void {
     for (const item of items) {
       const type = this.typeFor(item.kind);
-      if (type) this.publisher.announce({ type, slug: item.slug, change });
+      if (!type) continue;
+      // The install is already committed; a throwing publisher must never turn it into a failure.
+      try { this.publisher.announce({ type, slug: item.slug, change }) } catch { /* reconcile repairs a lost hint */ }
     }
   }
 

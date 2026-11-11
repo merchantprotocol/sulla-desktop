@@ -48,11 +48,8 @@ export class UseCaseSuggestionQuery {
 type Register = (channel: typeof USE_CASE_SUGGEST_CHANNEL, handler: (event: unknown, text: unknown, options?: { limit?: unknown }) => Promise<UseCaseSuggestionResponse>) => void;
 
 /**
- * ─── WIRING POINT (S3 → S1) ───────────────────────────────────────────
- * Call once from main/sullaEvents.ts with the real UseCaseSuggestionIndex
- * (agent/useCases) after feat/usecase-suggest-index merges:
- *   registerUseCaseSuggestionQuery((ch, h) => ipcMainProxy.handle(ch, h), index);
- * Until then the channel is unregistered and the composer stays quiet.
+ * Startup registration lives in sullaFilesIpc and uses the watcher-owned
+ * composition root, so the composer and agent recall share one maintained index.
  */
 export function registerUseCaseSuggestionQuery(register: Register, suggester: UseCaseSuggester): UseCaseSuggestionQuery {
   const query = new UseCaseSuggestionQuery(suggester);

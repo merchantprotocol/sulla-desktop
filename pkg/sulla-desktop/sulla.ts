@@ -552,19 +552,6 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
  */
 export async function onMainProxyLoad(ipcMainProxy: any) {
   // Assume main process
-  const { registerUseCaseSuggestionQuery } = await import('@pkg/main/UseCaseSuggestionQuery');
-  registerUseCaseSuggestionQuery((channel, handler) => ipcMainProxy.handle(channel, handler), {
-    suggest: async(text, options) => {
-      // S1 adds this index-backed method to the Files watcher. Keep the seam
-      // structural so S3 can land independently; until then return no rows
-      // rather than leaving the renderer's IPC channel unhandled.
-      const filesModule = await import('@pkg/main/sullaFilesWatcher') as unknown as {
-        queryUseCaseSuggestions?: (query: string, options: { types?: string[]; limit?: number; minScore?: number }) => Promise<import('@pkg/main/UseCaseSuggestionQuery').IndexedUseCaseSuggestion[]>;
-      };
-      return filesModule.queryUseCaseSuggestions ? filesModule.queryUseCaseSuggestions(text, options) : [];
-    },
-  });
-
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
@@ -1669,12 +1656,12 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   // ── Vault: credential save & autofill IPC handlers ────────────────────────
-  const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+  const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
 
   ipcMainProxy.handle('vault:save-credential', async(_event: Electron.IpcMainInvokeEvent, data: { origin: string; username: string; password: string }) => {
     denyLegacyVaultIpc();
     try {
-      const service = getIntegrationService();
+      const service = getIS();
       await service.initialize();
 
       // Generate account ID from origin + username
@@ -1708,7 +1695,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:autofill', async(_event: Electron.IpcMainInvokeEvent, data: { tabId?: string; accountId: string }) => {
     denyLegacyVaultIpc();
     try {
-      const service = getIntegrationService();
+      const service = getIS();
       await service.initialize();
 
       // Get the saved credentials for this account

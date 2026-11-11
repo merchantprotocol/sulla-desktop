@@ -59,7 +59,13 @@ export class RedisUseCaseChangeTransport implements UseCaseChangeTransport {
       await subscriber.unsubscribe(channel).catch(() => undefined);
       subscriber.disconnect();
     };
-    try { await subscriber.subscribe(channel); } catch (error) { await dispose(); throw error; }
+    try {
+      await subscriber.subscribe(channel);
+    } catch (error) {
+      // Never await unsubscribe here: offline, it can hang forever. Disconnecting drops the subscription.
+      subscriber.disconnect();
+      throw error;
+    }
     return dispose;
   }
 }
