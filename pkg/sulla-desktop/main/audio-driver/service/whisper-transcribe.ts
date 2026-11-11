@@ -490,7 +490,7 @@ function finalizeUtterance(turnId?: string): void {
   utterancePcmBytes = 0;
 
   // Shadow scoring starts alongside the authoritative final transcription and is never awaited.
-  try { scoreCommittedTurn?.(pcm, holdToTalk, turnId || currentVoiceTurnId || undefined); } catch (error) { log.warn('SpeakerVerifier', 'Unable to schedule shadow score; voice continues', { error: String(error) }); }
+  try { scoreCommittedTurn?.(pcm, holdToTalk, turnId || currentVoiceTurnId || undefined); } catch (error) { log.warn('VoiceId', 'Unable to schedule voice identification; voice continues', { error: String(error) }); }
 
   // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
   // long utterance isn't truncated by the default 10s per-chunk timeout.
