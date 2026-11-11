@@ -61,12 +61,31 @@ function shortDescription(description: string): string {
 }
 
 /** The context block body, or '' when no installed skill fits the text. */
-export async function buildSkillRecallContext(text: string): Promise<string> {
+export class SkillRecallService {
+  private skills?: SkillDefinition[];
+  private loadedAt = 0;
+  constructor(private readonly loadSkills: () => Promise<SkillDefinition[]> = () => SkillDefinitionModel.list(), private readonly ttlMs = 60_000, private readonly now: () => number = Date.now) {}
+
+  async invalidate(): Promise<void> { this.skills = undefined; this.loadedAt = 0; }
+
+  private async catalog(): Promise<SkillDefinition[]> {
+    if (!this.skills || this.now() - this.loadedAt >= this.ttlMs) {
+      this.skills = await this.loadSkills();
+      this.loadedAt = this.now();
+    }
+    return this.skills;
+  }
+
+  async buildContext(text: string): Promise<string> {
   if (!text.trim()) return '';
-  const fits = rankSkills(await SkillDefinitionModel.list(), text);
+  const fits = rankSkills(await this.catalog(), text);
   if (fits.length === 0) return '';
   return [
     'Installed skills that may fit this turn (keyword match, not an order; you decide). Load one in full with `sulla skills/skill_get \'{"slug":"<slug>"}\'` before you use it.',
     ...fits.map(skill => `- [skill:${ skill.slug }] ${ skill.title }: ${ shortDescription(skill.description) }`),
   ].join('\n');
+  }
 }
+
+const skillRecall = new SkillRecallService();
+export async function buildSkillRecallContext(text: string): Promise<string> { return skillRecall.buildContext(text); }

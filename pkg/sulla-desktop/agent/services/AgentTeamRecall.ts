@@ -16,6 +16,7 @@
  */
 
 import { agentDefinitionService } from './AgentDefinitionService';
+import { TeamRecallDirectoryCache } from './TeamRecallDirectoryCache';
 import { formatCardLine, listAgentDirectory, scoreCard } from './AgentDirectoryService';
 import { callingYourTeamSection } from '../prompts/callingYourTeam';
 import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
@@ -32,6 +33,10 @@ export const TEAM_DIRECTORY_MAX_CHARS = 3500;
 
 const FIT_MARK = '**fits right now** · ';
 const CALLING_YOUR_TEAM_HEADING = /^#{1,6}\s*Calling your team\b/im;
+
+/** Process-wide TTL cache for the two directory reads each lead turn makes. */
+const directoryCache = new TeamRecallDirectoryCache();
+export function invalidateTeamRecallDirectoryCache(): void { directoryCache.invalidate(); }
 
 /** True when the agent's stored prompt already includes the shared section. */
 export function promptHasCallingYourTeam(agent: AgentDefinition): boolean {
@@ -64,10 +69,10 @@ export function depthBudgetLine(depth: number): string {
 export async function buildTeamRecallContext(opts: TeamRecallOptions): Promise<string> {
   const slug = opts.agentSlug.trim();
   if (!slug) return '';
-  const self = await agentDefinitionService.findBySlug(slug);
+  const self = await directoryCache.get(`agent:${ slug }`, () => agentDefinitionService.findBySlug(slug));
   if (!self || self.can_call.length === 0) return '';
 
-  const cards = (await listAgentDirectory({ slugs: self.can_call })).filter(card => card.slug !== slug);
+  const cards = (await directoryCache.get(`directory:${ self.can_call.join('\0') }`, () => listAgentDirectory({ slugs: self.can_call }))).filter(card => card.slug !== slug);
   if (cards.length === 0) return '';
 
   // Keep the lead's own can_call order as the tie-break: it is the author's

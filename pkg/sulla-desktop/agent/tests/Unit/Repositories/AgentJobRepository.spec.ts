@@ -49,6 +49,24 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
   });
 
+  it('loads only the requested thread lineage for the subagent directory', async() => {
+    // risk: subagent recall latency and cross-thread data leakage — do not scan unrelated agent jobs
+    const rootThread = 'preloop-lineage-root';
+    const childThread = 'preloop-lineage-child';
+    const direct = { ...job('preloop-lineage-direct'), parentThreadId: rootThread };
+    direct.tasks[0] = { ...direct.tasks[0], threadId: childThread };
+    const descendant = { ...job('preloop-lineage-descendant'), parentThreadId: childThread };
+    const unrelated = { ...job('preloop-lineage-unrelated'), parentThreadId: 'another-thread' };
+    await repository.insertJob(direct);
+    await repository.insertJob(descendant);
+    await repository.insertJob(unrelated);
+
+    const rows = await repository.lineageForParentThread(rootThread, 100);
+    expect(rows.map(row => row.jobId)).toEqual(expect.arrayContaining(['preloop-lineage-direct', 'preloop-lineage-descendant']));
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.jobId)).not.toContain(unrelated.jobId);
+  });
+
   it('refuses reopen claims for stopped, failed, over-limit, and actively leased tasks', async() => {
     // risk: replaying terminal work or running two generations concurrently
     const createSettled = async(id: string, taskStatus: 'completed' | 'blocked' | 'error' | 'stopped', jobStatus: AgentJob['status']) => {
