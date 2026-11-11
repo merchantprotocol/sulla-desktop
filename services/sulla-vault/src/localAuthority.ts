@@ -22,8 +22,6 @@ import {
   deriveMasterKey,
   encryptItem,
   encryptWithKey,
-  unwrapUserKey,
-  unwrapUserPrivateKey,
   type AgentAccessLevel,
   type AgentPolicy,
   type EncryptedEnvelope,
@@ -92,6 +90,7 @@ import { transportWrap } from './filesCloudEscrow.js';
 import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
 import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
+import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
   bootstrapChallengeProofInput,
@@ -621,6 +620,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly migrationRepository: PostgresVaultMigrationRepository = new PostgresVaultMigrationRepository(db),
     private readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
     private readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
+    private readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -934,13 +934,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         if (!verifyLoginHash(await deriveLoginHash(masterKey), account.login_hash_salt, account.login_hash_verifier)) {
           throw new LocalVaultError('invalid_credentials', 401, 'Unlock material did not match the vault');
         }
-        const userKey = await unwrapUserKey(account.encrypted_user_key, masterKey);
+        const userKey = (await this.keyEnvelopeReaderProvider.get()).unwrapUserKey(account.encrypted_user_key, masterKey);
         try {
           next = {
             userId: account.id,
             publicKey: account.public_key,
             userKey,
-            privateKey: await unwrapUserPrivateKey(account.encrypted_private_key, userKey),
+            privateKey: (await this.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(account.encrypted_private_key, userKey),
             legacyVmk,
           };
         } catch (error) {
@@ -1411,8 +1411,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
       const env=await this.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
-      const wrapped=await unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
-      privateKey=await unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
+      const wrapped=(await this.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
+      privateKey=(await this.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
       this.pendingVaultEnrollments.set(input.requestId,{expiresAt:Date.now()+60_000,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
       return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
     }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
@@ -1531,7 +1531,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (!verifyLoginHash(await deriveLoginHash(recovery.key), Buffer.from(metadata.verifier, 'base64url'), Buffer.from(row.recovery_verifier, 'base64url'))) {
         throw new LocalVaultError('invalid_credentials', 401, 'Recovery code is invalid');
       }
-      recoveredUserKey = await decryptWithKey(row.encrypted_user_key, recovery.key, 'sulla:recovery-user-key:v1');
+      recoveredUserKey = (await this.keyEnvelopeReaderProvider.get()).unwrapRecoveryUserKey(row.encrypted_user_key, recovery.key);
       const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
       const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
       await this.runTransaction(async client => {
