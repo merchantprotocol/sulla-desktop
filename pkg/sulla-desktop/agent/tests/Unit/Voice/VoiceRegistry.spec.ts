@@ -54,6 +54,36 @@ describe('VoiceRegistry', () => {
     await registry.forgetAll(); expect(await registry.list()).toEqual([]);
   });
 
+  // risk: stale hold counts can prevent a new owner after forgetting voices
+  it('recomputes owner eligibility after forget and forgetAll', async() => {
+    const { registry } = await make();
+    const old = await registry.assign([1, 0], true);
+    await registry.assign([1, 0], true);
+    const survivor = await registry.assign([-1, 0], true);
+    await registry.assign([-1, 0], true);
+    await registry.assign([-1, 0], true);
+    expect((await registry.list()).find(v => v.id === survivor.voice.id)?.isOwner).toBe(true);
+    await registry.forget(old.voice.id);
+    expect((await registry.list()).find(v => v.id === survivor.voice.id)?.isOwner).toBe(true);
+    await registry.forgetAll();
+    const fresh = await registry.assign([1, 0], true);
+    await registry.assign([1, 0], true);
+    await registry.assign([1, 0], true);
+    expect((await registry.list()).find(v => v.id === fresh.voice.id)?.isOwner).toBe(true);
+  });
+
+  // risk: corrupted local data must not disable voice IDs for the whole session
+  it('quarantines invalid JSON and starts with an empty registry', async() => {
+    const path = await mkdtemp(join(tmpdir(), 'voice-registry-'));
+    paths.push(path);
+    const file = join(path, 'voice-registry.json');
+    await writeFile(file, '{not json');
+    const registry = new VoiceRegistry(path, () => 12345);
+    expect((await registry.list())).toEqual([]);
+    expect((await registry.assign([1, 0], false)).voice.id).toBe('voice-1');
+    expect(await readFile(join(path, 'voice-registry.corrupt-12345.json'), 'utf8')).toBe('{not json');
+  });
+
   // risk: user privacy; registry data must remain private and confined to local storage
   it('writes local identity data with owner-only permissions', async() => {
     const { registry, path } = await make();

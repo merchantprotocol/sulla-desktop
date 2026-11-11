@@ -611,15 +611,25 @@ function registerIpcHandlers(): void {
     // asar-unpacked tree; development resolves from the repository root.
     const unpackedAppPath = `${ appPath }.unpacked`;
     const sherpaAppRoot = existsSync(path.join(unpackedAppPath, 'node_modules', 'sherpa-onnx-node')) ? unpackedAppPath : appPath;
-    const models = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
-    const voiceIdentifier = new VoiceIdentifier(models, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log,
-      assignment => broadcast('audio-driver:voice-id', assignment), async () => {
+    const voiceModels = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
+    let settingCachedAt = 0;
+    let settingCachedValue = true;
+    let settingRead: Promise<boolean> | undefined;
+    const readVoiceIdentificationEnabled = async(): Promise<boolean> => {
+      if (Date.now() - settingCachedAt < 3000 && settingRead) return settingRead;
+      settingRead = (async() => {
         try {
           const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
           const enabled = await SullaSettingsModel.get('voiceIdentificationEnabled', true);
           return enabled !== false && enabled !== 'false';
         } catch { return true; }
-      });
+      })();
+      try { settingCachedValue = await settingRead; } catch { settingCachedValue = true; }
+      settingCachedAt = Date.now();
+      return settingCachedValue;
+    };
+    const voiceIdentifier = new VoiceIdentifier(voiceModels, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log,
+      assignment => broadcast('audio-driver:voice-id', assignment), readVoiceIdentificationEnabled);
     whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk, turnId) => {
       setImmediate(() => voiceIdentifier.scoreTurn(pcm, holdToTalk, turnId));
     });
@@ -639,10 +649,14 @@ function registerIpcHandlers(): void {
       (message, stats) => log.info('WhisperTranscribe', message, stats),
     );
     whisperTranscribe.configureSpeechChunkGate(sileroGate);
-    void models.resolve('vad-silero-onnx').then(modelPath => {
+    void Promise.resolve(new ModelRepository(
+      () => app.getPath('userData'),
+      voiceModelManifest as any,
+      { fetch: (url, options) => fetch(url, options) },
+    )).then(models => models.resolve('vad-silero-onnx').then(modelPath => {
       log.info('WhisperTranscribe', 'Silero model resolve completed', { modelPath, ms: Date.now() - sileroStartedAt });
       return modelPath;
-    })
+    }))
       // ORT cold start/model session creation can exceed the 400 ms chunk
       // budget. Warm it before exposing the model to live audio; chunks remain
       // fail-open while download and warm-up run in the background.

@@ -16,7 +16,7 @@ export class VoiceIdentifier {
   private failed = false;
   constructor(private readonly models: ModelRepository, private readonly runner: SpeakerEmbeddingRunner, userDataPath: string,
     private readonly logger: Logger, private readonly onAssignment: (result: VoiceAssignment) => void = () => {},
-    private readonly readEnabled: () => Promise<boolean> = () => this.registry.isEnabled()) {
+    private readonly readEnabled: () => Promise<boolean> = async() => true) {
     this.registry = new VoiceRegistry(userDataPath);
   }
   private speechMs(pcm: Buffer): number {

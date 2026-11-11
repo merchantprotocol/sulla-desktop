@@ -10,20 +10,29 @@ export interface VoiceRecord {
   id: string; label: string; name?: string; centroid: number[]; turns: number;
   holdToTalkTurns: number; firstHeard: number; lastHeard: number; isOwner: boolean;
 }
-interface RegistryData { voices: VoiceRecord[]; nextId: number; holdToTalkTotal: number; enabled: boolean; }
+interface RegistryData { voices: VoiceRecord[]; nextId: number; }
 
 /** Local-only durable voice identities. Persists centroids, never audio. */
 export class VoiceRegistry {
   private readonly file: string;
-  private data: RegistryData = { voices: [], nextId: 1, holdToTalkTotal: 0, enabled: true };
+  private data: RegistryData = { voices: [], nextId: 1 };
   private loaded: Promise<void>;
   constructor(userDataPath: string, private readonly now: () => number = Date.now) {
     this.file = join(userDataPath, 'voice-registry.json');
     this.loaded = this.read();
   }
   private async read(): Promise<void> {
-    try { this.data = { ...this.data, ...(JSON.parse(await readFile(this.file, 'utf8')) as Partial<RegistryData>) }; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    let raw: string;
+    try { raw = await readFile(this.file, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    try {
+      const parsed = JSON.parse(raw) as Partial<RegistryData>;
+      this.data = { ...this.data, ...parsed, voices: Array.isArray(parsed.voices) ? parsed.voices : [], nextId: Number.isInteger(parsed.nextId) ? parsed.nextId! : 1 };
+    } catch (error) {
+      const corrupt = join(dirname(this.file), `voice-registry.corrupt-${this.now()}.json`);
+      try { await rename(this.file, corrupt); } catch { /* retain empty in-memory registry if quarantine fails */ }
+      console.warn('VoiceId registry is corrupt; starting with an empty registry', String(error));
+    }
   }
   private async persist(): Promise<void> {
     await mkdir(dirname(this.file), { recursive: true });
@@ -60,16 +69,18 @@ export class VoiceRegistry {
       best.centroid = this.norm(mean);
     }
     best.turns++; best.lastHeard = timestamp;
-    if (holdToTalk) { best.holdToTalkTurns++; this.data.holdToTalkTotal++; }
-    const owner = this.data.voices.filter(v => v.holdToTalkTurns >= 3 && v.holdToTalkTurns / Math.max(1, this.data.holdToTalkTotal) >= 0.6).sort((a, b) => b.holdToTalkTurns - a.holdToTalkTurns)[0];
-    for (const v of this.data.voices) v.isOwner = v === owner;
+    if (holdToTalk) best.holdToTalkTurns++;
+    this.updateOwner();
     await this.persist();
     return { voice: { ...best, centroid: [...best.centroid] }, score, isNew };
   }
+  private updateOwner(): void {
+    const holdToTalkTotal = this.data.voices.reduce((total, voice) => total + voice.holdToTalkTurns, 0);
+    const owner = this.data.voices.filter(v => v.holdToTalkTurns >= 3 && v.holdToTalkTurns / Math.max(1, holdToTalkTotal) >= 0.6).sort((a, b) => b.holdToTalkTurns - a.holdToTalkTurns)[0];
+    for (const v of this.data.voices) v.isOwner = v === owner;
+  }
   async list(): Promise<VoiceRecord[]> { await this.loaded; return this.data.voices.map(v => ({ ...v, centroid: [...v.centroid] })); }
-  async forget(id: string): Promise<void> { await this.loaded; this.data.voices = this.data.voices.filter(v => v.id !== id); await this.persist(); }
-  async forgetAll(): Promise<void> { await this.loaded; this.data.voices = []; await this.persist(); }
+  async forget(id: string): Promise<void> { await this.loaded; this.data.voices = this.data.voices.filter(v => v.id !== id); this.updateOwner(); await this.persist(); }
+  async forgetAll(): Promise<void> { await this.loaded; this.data.voices = []; this.updateOwner(); await this.persist(); }
   async setName(id: string, name: string): Promise<void> { await this.loaded; const v = this.data.voices.find(x => x.id === id); if (!v) throw new Error('Voice not found'); v.name = name; await this.persist(); }
-  async setEnabled(enabled: boolean): Promise<void> { await this.loaded; this.data.enabled = enabled; await this.persist(); }
-  async isEnabled(): Promise<boolean> { await this.loaded; return this.data.enabled; }
 }
