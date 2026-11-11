@@ -152,6 +152,8 @@ export default {
           if (request && /^ajv(\/|$)/.test(request) && /[\\/]@modelcontextprotocol[\\/]sdk[\\/]/.test(context ?? '')) {
             return callback();
           }
+          // sherpa-onnx-node stays external: its platform package includes native .node
+          // bindings and is resolved from the app / app.asar.unpacked at runtime.
           const external = [
             ...Object.keys(this.packageMeta.dependencies),
             'pg-native', 'ws', 'bufferutil', 'utf-8-validate',

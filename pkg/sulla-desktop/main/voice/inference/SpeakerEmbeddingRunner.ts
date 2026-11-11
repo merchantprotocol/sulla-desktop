@@ -6,7 +6,7 @@
 import { utilityProcess } from 'electron';
 
 interface Child {
-  postMessage(message: { id: number; modelPath: string; audio: Float32Array; sampleRate: number }): void;
+  postMessage(message: { id: number; modelPath: string; audio: Float32Array; sampleRate: number; appRoot: string }): void;
   on(event: 'message', callback: (message: { id: number; ok: boolean; embedding?: number[]; error?: string }) => void): void;
   on(event: 'exit', callback: (code: number) => void): void;
 }
@@ -16,14 +16,14 @@ export class SpeakerEmbeddingRunner {
   private child: Child | null = null;
   private nextId = 0;
   private readonly pending = new Map<number, { resolve: (value: number[]) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  constructor(private readonly entryPath: string, private readonly spawn: (entry: string) => Child = entry => utilityProcess.fork(entry, [], { serviceName: 'sulla-speaker-embedding' }) as unknown as Child) {}
+  constructor(private readonly entryPath: string, private readonly appRoot: string, private readonly spawn: (entry: string) => Child = entry => utilityProcess.fork(entry, [], { serviceName: 'sulla-speaker-embedding' }) as unknown as Child) {}
   run(modelPath: string, audio: Float32Array, sampleRate = 16_000): Promise<number[]> {
     const child = this.getChild();
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Speaker inference timed out')); }, 15_000);
       this.pending.set(id, { resolve, reject, timer });
-      try { child.postMessage({ id, modelPath, audio, sampleRate }); }
+      try { child.postMessage({ id, modelPath, audio, sampleRate, appRoot: this.appRoot }); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error as Error); }
     });
   }

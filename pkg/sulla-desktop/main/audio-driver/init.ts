@@ -34,6 +34,7 @@
 
 import { app, ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import crypto from 'crypto';
+import { existsSync } from 'node:fs';
 import path from 'path';
 
 import { MicrophoneDriverController } from './controller/MicrophoneDriverController';
@@ -88,6 +89,11 @@ export function initialize(): void {
     return;
   }
   initialized = true;
+  ipcMain.on('voice-trace', (_event, entry: { turnId?: unknown; stage?: unknown }) => {
+    if (entry?.stage === 'capture_start' && typeof entry.turnId === 'string' && entry.turnId.startsWith('vt_')) {
+      whisperTranscribe.setVoiceTurnId(entry.turnId);
+    }
+  });
   log.info('Init', 'Audio driver initializing within Sulla Desktop');
 
   // Wire speaker level/device-change callbacks — targeted to holder windows only
@@ -598,11 +604,18 @@ function registerIpcHandlers(): void {
     // background; until it completes the gate deliberately passes audio through.
     // The main bundle is ESM (no __dirname). webpack emits the ORT utility process as its own
     // entry next to background.js in dist/app (see scripts/lib/build-utils.ts).
-    const ortEntry = path.join(app.getAppPath(), 'dist', 'app', 'voiceInferenceProcess.js');
-    const speakerEntry = path.join(app.getAppPath(), 'dist', 'app', 'speakerEmbeddingProcess.js');
-    const speakerModels = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
-    const speakerVerifier = new SpeakerVerifier(speakerModels, new SpeakerEmbeddingRunner(speakerEntry), app.getPath('userData'), log);
-    whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk) => { void speakerVerifier.scoreTurn(pcm, holdToTalk); });
+    const appPath = app.getAppPath();
+    const ortEntry = path.join(appPath, 'dist', 'app', 'voiceInferenceProcess.js');
+    const speakerEntry = path.join(appPath, 'dist', 'app', 'speakerEmbeddingProcess.js');
+    // Match Kokoro's sidecar lookup: packaged native modules must resolve from the real
+    // asar-unpacked tree; development resolves from the repository root.
+    const unpackedAppPath = `${ appPath }.unpacked`;
+    const sherpaAppRoot = existsSync(path.join(unpackedAppPath, 'node_modules', 'sherpa-onnx-node')) ? unpackedAppPath : appPath;
+    const models = new ModelRepository(() => app.getPath('userData'), voiceModelManifest as any, { fetch: (url, options) => fetch(url, options) });
+    const speakerVerifier = new SpeakerVerifier(models, new SpeakerEmbeddingRunner(speakerEntry, sherpaAppRoot), app.getPath('userData'), log);
+    whisperTranscribe.configureSpeakerScoring((pcm, holdToTalk, turnId) => {
+      setImmediate(() => { void speakerVerifier.scoreTurn(pcm, holdToTalk, turnId); });
+    });
     const sileroStartedAt = Date.now();
     log.info('WhisperTranscribe', 'Silero model resolve started', { id: 'vad-silero-onnx', ortEntry });
     const sileroGate = new SpeechChunkGate(
@@ -619,11 +632,7 @@ function registerIpcHandlers(): void {
       (message, stats) => log.info('WhisperTranscribe', message, stats),
     );
     whisperTranscribe.configureSpeechChunkGate(sileroGate);
-    void Promise.resolve(new ModelRepository(
-      () => app.getPath('userData'),
-      voiceModelManifest as any,
-      { fetch: (url, options) => fetch(url, options) },
-    )).then(models => models.resolve('vad-silero-onnx').then(modelPath => {
+    void models.resolve('vad-silero-onnx').then(modelPath => {
       log.info('WhisperTranscribe', 'Silero model resolve completed', { modelPath, ms: Date.now() - sileroStartedAt });
       return modelPath;
     }))

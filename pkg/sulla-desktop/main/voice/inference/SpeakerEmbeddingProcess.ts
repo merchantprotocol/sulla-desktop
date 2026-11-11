@@ -6,7 +6,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-interface Request { id: number; modelPath: string; audio: Float32Array; sampleRate: number; }
+interface Request { id: number; modelPath: string; audio: Float32Array; sampleRate: number; appRoot: string; }
 interface Response { id: number; ok: boolean; embedding?: number[]; error?: string; }
 
 /** Utility-process entry; native sherpa inference stays off the main process. */
@@ -19,8 +19,7 @@ class SpeakerEmbeddingProcess {
   private async handle(request: Request): Promise<void> {
     try {
       if (!this.extractor || this.modelPath !== request.modelPath) {
-        const appRoot = process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar') : process.cwd();
-        const sherpa = createRequire(path.join(appRoot, 'package.json'))('sherpa-onnx-node');
+        const sherpa = createRequire(path.join(request.appRoot, 'package.json'))('sherpa-onnx-node');
         this.extractor = new sherpa.SpeakerEmbeddingExtractor(new sherpa.SpeakerEmbeddingExtractorConfig({ model: request.modelPath, numThreads: 1, debug: false, provider: 'cpu' }));
         this.modelPath = request.modelPath;
       }

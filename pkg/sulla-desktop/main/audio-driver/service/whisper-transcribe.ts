@@ -116,11 +116,16 @@ let utteranceOpen = false;
 // Push-to-talk: the user decides when the turn ends (key release), so silence
 // never ends it — pauses mid-thought stay in one message. finish() ends it.
 let manualTurn = false;
-let scoreCommittedTurn: ((pcm: Buffer, holdToTalk: boolean) => void) | null = null;
+let scoreCommittedTurn: ((pcm: Buffer, holdToTalk: boolean, turnId?: string) => void) | null = null;
+let currentVoiceTurnId = '';
 
 /** Installs a fail-open observer; scoring is deliberately never awaited by transcription. */
-export function configureSpeakerScoring(observer: (pcm: Buffer, holdToTalk: boolean) => void): void {
+export function configureSpeakerScoring(observer: (pcm: Buffer, holdToTalk: boolean, turnId?: string) => void): void {
   scoreCommittedTurn = observer;
+}
+
+export function setVoiceTurnId(turnId: string): void {
+  currentVoiceTurnId = turnId;
 }
 
 // Full-utterance PCM (conversation mode). Each 2s segment is transcribed live as a
@@ -469,7 +474,7 @@ function checkEndOfTurn(): void {
  * `utterance_end` so the renderer commits. Falls back to a bare `utterance_end`
  * when there's no buffered audio (e.g. only silence was captured).
  */
-function finalizeUtterance(): void {
+function finalizeUtterance(turnId?: string): void {
   const emitEnd = () => {
     if (onTranscript) onTranscript({ event_type: 'utterance_end', text: '', speaker: 'You', channel: 0 });
   };
@@ -485,7 +490,7 @@ function finalizeUtterance(): void {
   utterancePcmBytes = 0;
 
   // Shadow scoring starts alongside the authoritative final transcription and is never awaited.
-  try { scoreCommittedTurn?.(pcm, holdToTalk); } catch (error) { log.warn('SpeakerVerifier', 'Unable to schedule shadow score; voice continues', { error: String(error) }); }
+  try { scoreCommittedTurn?.(pcm, holdToTalk, turnId || currentVoiceTurnId || undefined); } catch (error) { log.warn('SpeakerVerifier', 'Unable to schedule shadow score; voice continues', { error: String(error) }); }
 
   // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
   // long utterance isn't truncated by the default 10s per-chunk timeout.
