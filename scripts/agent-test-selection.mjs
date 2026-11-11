@@ -9,8 +9,9 @@ const RELEVANT_WORKFLOW_FILE = '.github/workflows/agent-tests.yml';
 const GUEST_DISK_ROOTS = [
   'pkg/sulla-desktop/agent/tests/Characterization/DesktopRuntime/',
   'src/runtime-agent/',
-  'services/sulla-tools/',
 ];
+
+const GUEST_DISK_FILES = ['services/sulla-tools/Dockerfile'];
 
 export class AgentTestChangeClassifier {
   classify(files) {
@@ -31,6 +32,6 @@ export class AgentTestChangeClassifier {
 
   needsGuestDiskCoverage(file) {
     if (/guestDisk|GuestDisk/.test(file)) return true;
-    return GUEST_DISK_ROOTS.some(root => file.startsWith(root));
+    return GUEST_DISK_ROOTS.some(root => file.startsWith(root)) || GUEST_DISK_FILES.includes(file);
   }
 }
