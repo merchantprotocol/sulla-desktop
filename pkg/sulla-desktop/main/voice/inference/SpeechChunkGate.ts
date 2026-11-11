@@ -31,6 +31,22 @@ export class SpeechChunkGate {
 
   setModelPath(modelPath: string): void { this.modelPath = modelPath; }
 
+  /** Loads the ONNX session outside the per-chunk latency budget. */
+  async warmModel(modelPath: string): Promise<void> {
+    if (!this.exists(modelPath)) throw new Error('Silero model is missing');
+    const response = await this.client.infer({
+      operation: 'vad-chunk',
+      modelPath,
+      audio: new Float32Array(576),
+      state: new Float32Array(256),
+    }, undefined, 10_000);
+    if (!response.ok || !response.probabilities || !response.state) {
+      throw new Error(response.error || 'Silero warm-up returned incomplete output');
+    }
+    this.reset();
+    this.setModelPath(modelPath);
+  }
+
   takePreroll(): Buffer | null { const value = this.previousRejected; this.previousRejected = null; return value; }
 
   async shouldTranscribe(pcm: Buffer): Promise<boolean> {
