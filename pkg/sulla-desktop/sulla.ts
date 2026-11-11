@@ -552,13 +552,6 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
  */
 export async function onMainProxyLoad(ipcMainProxy: any) {
   // Assume main process
-  // S3 composer suggestions consume the main-process index owned by the Files watcher.
-  ipcMainProxy.handle('use-case-suggest:query', async(_event: unknown, text: unknown, options?: { limit?: unknown }) => {
-    const { queryUseCaseSuggestions } = await import('@pkg/main/sullaFilesWatcher');
-    const { UseCaseSuggestionQuery } = await import('@pkg/main/UseCaseSuggestionQuery');
-    return new UseCaseSuggestionQuery({ suggest: queryUseCaseSuggestions }).query(text, options);
-  });
-
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
