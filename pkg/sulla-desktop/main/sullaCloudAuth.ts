@@ -42,6 +42,8 @@ import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesCon
 import type { AccountKdf } from '@sulla/domain';
 
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
+import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
+import { FetchCloudRefreshHttp } from './cloud/session/ElectronCloudRefreshTransport';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
 import { readRecoveryKeyFromMacKeychain, recoveryKeyStorageStatus, saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
@@ -718,23 +720,6 @@ async function appleSignIn(identityToken: string, fullName?: string, email?: str
 
 // ── Public helpers ─────────────────────────────────────────
 
-/**
- * Parse the `exp` claim from a JWT without verifying its signature. We only
- * need the timestamp locally to decide whether to refresh. Returns 0 if
- * the token is malformed — callers treat that as "expired, refresh".
- */
-function readJwtExpSeconds(jwt: string): number {
-  try {
-    const parts = jwt.split('.');
-    if (parts.length !== 3) return 0;
-    const payloadJson = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
-    const payload = JSON.parse(payloadJson) as { exp?: number };
-    return typeof payload.exp === 'number' ? payload.exp : 0;
-  } catch {
-    return 0;
-  }
-}
-
 // Refresh is attempted from nearly every authenticated code path, so an
 // unreachable cloud produced thousands of identical warn lines per day
 // (observed: 4,084 in one background.log). Log the first failure, then
@@ -749,63 +734,47 @@ function warnRefreshFailure(message: string): void {
 }
 
 /**
- * Exchange the stored refresh token for a new access token. On success, the
- * session's accessToken (and refreshToken, if rotated) are written back to
- * storage. Returns the new access token, or empty string on failure — the
- * caller should surface a re-auth prompt at that point.
+ * Legacy / first-run Cloud session refresh, on the shared domain ClientSessionService (single-flight, sign-out safe,
+ * 5xx/429/network keep tokens). Storage keys and formats are unchanged: a pending first-run session is written back to
+ * the pending queue, anything else to the integration account, exactly as before.
  */
-async function refreshAccessToken(): Promise<string> {
-  const pendingSession = getPendingCredential(INTEGRATION_ID);
-  // In container-vault mode refresh and token rotation happen within the
-  // vault broker. Secret token egress into Electron is intentionally blocked.
-  if (usesContainerVaultAuthority() && !pendingSession) return '';
-  const session = await loadSession();
-  if (!session?.tokens.refreshToken) return '';
-
-  try {
-    const res = await cloudFetch('/auth/refresh', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ refreshToken: session.tokens.refreshToken }),
-    }, true);
-    if (!res.ok) {
-      warnRefreshFailure(`[sullaCloudAuth] Refresh failed: HTTP ${ res.status }`);
-      return '';
-    }
-    const data = await res.json() as { accessToken: string; refreshToken?: string };
-    const refreshed: CloudSession = {
-      ...session,
-      tokens: {
-        accessToken:  data.accessToken,
-        refreshToken: data.refreshToken ?? session.tokens.refreshToken,
-      },
-    };
-    if (pendingSession) {
+const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
+  {
+    load: loadSession,
+    async save(session: CloudSession): Promise<void> {
+      if (!getPendingCredential(INTEGRATION_ID)) {
+        await saveSession(session);
+        return;
+      }
       await queuePendingCredential({
         integrationId: INTEGRATION_ID,
-        accountId:     refreshed.userId,
+        accountId:     session.userId,
         activate:      true,
         values: {
-          access_token:         refreshed.tokens.accessToken,
-          refresh_token:        refreshed.tokens.refreshToken,
-          user_id:              refreshed.userId,
-          active_contractor_id: refreshed.activeContractorId,
-          contractors_json:     JSON.stringify(refreshed.contractors),
+          access_token:         session.tokens.accessToken,
+          refresh_token:        session.tokens.refreshToken,
+          user_id:              session.userId,
+          active_contractor_id: session.activeContractorId,
+          contractors_json:     JSON.stringify(session.contractors),
         },
       });
-    } else {
-      await saveSession(refreshed);
-    }
-    if (refreshFailCount > 1) {
-      console.log(`[sullaCloudAuth] Refresh recovered after ${ refreshFailCount } consecutive failures`);
-    }
-    refreshFailCount = 0;
-    return data.accessToken;
-  } catch (err: any) {
-    warnRefreshFailure(`[sullaCloudAuth] Refresh error: ${ err?.message || err }`);
-    return '';
-  }
-}
+    },
+  },
+  new FetchCloudRefreshHttp(refreshToken => cloudFetch('/auth/refresh', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ refreshToken }),
+  }, true)),
+  {
+    failed: warnRefreshFailure,
+    refreshed() {
+      if (refreshFailCount > 1) {
+        console.log(`[sullaCloudAuth] Refresh recovered after ${ refreshFailCount } consecutive failures`);
+      }
+      refreshFailCount = 0;
+    },
+  },
+);
 
 /**
  * Returns the currently-signed-in access token, or empty string if not
@@ -817,17 +786,7 @@ async function refreshAccessToken(): Promise<string> {
  */
 export async function getCurrentAccessToken(): Promise<string> {
   if (usesContainerVaultAuthority()) return '';
-  const session = await loadSession();
-  const current = session?.tokens.accessToken ?? '';
-  if (!current) return '';
-
-  const exp = readJwtExpSeconds(current);
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (exp === 0 || exp - nowSec <= 60) {
-    const refreshed = await refreshAccessToken();
-    return refreshed || current;
-  }
-  return current;
+  return legacySessions.currentAccessToken();
 }
 
 /** True when non-secret Sulla Cloud account metadata identifies an active session. */
@@ -1423,6 +1382,7 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
+    legacySessions.invalidate();
     clearPendingCloudMasterKey();
     await clearPendingCredential(INTEGRATION_ID);
     try {
