@@ -24,31 +24,30 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 interface HttpResult { status:number; body:any }
 
-/** Stands in for sulla-accounts: resolves a UI session token to an org identity with roles. */
+/**
+ * Stands in for sulla-accounts at its fetch boundary (agent specs stub global
+ * fetch): resolves a UI session token to an org identity with roles.
+ */
 class FakeAccountsService {
-  private server?:Server;
-  url = '';
+  readonly url = 'http://accounts.test';
+  private previousFetch?:typeof globalThis.fetch;
   constructor(private readonly sessions:Map<string, { subject:string; roles:string[] }>, private readonly organizationId:string) {}
 
   async start():Promise<void> {
-    this.server = createServer((request, response) => {
-      const chunks:Buffer[] = [];
-      request.on('data', chunk => chunks.push(Buffer.from(chunk)));
-      request.on('end', () => {
-        const { token } = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-        const session = this.sessions.get(token);
-        if (request.url !== '/v1/private/ui-sessions/resolve' || !session) { response.statusCode = 401; response.end('{}'); return }
-        response.setHeader('content-type', 'application/json');
-        response.end(JSON.stringify({ issuer:'https://idp.test', subject:session.subject, authorityId:'authority-1', organizationId:this.organizationId,
-          audience:'sulla-files', expiresAt:new Date(Date.now() + 3_600_000).toISOString(), roles:session.roles, groups:[] }));
-      });
-    });
-    await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve));
-    const address = this.server.address(); if (!address || typeof address === 'string') throw new Error('accounts fake did not bind');
-    this.url = `http://127.0.0.1:${ address.port }`;
+    this.previousFetch = globalThis.fetch;
+    const previous = this.previousFetch;
+    globalThis.fetch = async(input, init) => {
+      const target = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (target.origin !== this.url) return previous(input, init);
+      const { token } = JSON.parse(String(init?.body ?? '{}'));
+      const session = this.sessions.get(token);
+      if (target.pathname !== '/v1/private/ui-sessions/resolve' || !session) return new Response('{}', { status:401 });
+      return new Response(JSON.stringify({ issuer:'https://idp.test', subject:session.subject, authorityId:'authority-1', organizationId:this.organizationId,
+        audience:'sulla-files', expiresAt:new Date(Date.now() + 3_600_000).toISOString(), roles:session.roles, groups:[] }), { status:200, headers:{ 'content-type':'application/json' } });
+    };
   }
 
-  async stop():Promise<void> { if (this.server) await new Promise<void>(resolve => this.server!.close(() => resolve())) }
+  async stop():Promise<void> { if (this.previousFetch) globalThis.fetch = this.previousFetch }
 }
 
 class ServerModeFilesFixture {
