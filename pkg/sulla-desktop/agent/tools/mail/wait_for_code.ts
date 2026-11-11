@@ -5,11 +5,11 @@
 
 import { AgentMailTool } from './AgentMailTool';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
 /** mail/wait_for_code — block until a one-time code reaches the mailbox (default 120 s, max 300 s). */
 export class MailWaitForCodeWorker extends AgentMailTool {
-  protected run(client: AgentMailClient, input: Record<string, unknown>) {
-    return client.waitForCode({ to: input.to, since: input.since, timeout: input.timeout }, this.executionContext);
+  protected run(mail: AgentMailService, input: Record<string, unknown>) {
+    return mail.waitForCode(input, this.executionContext);
   }
 }

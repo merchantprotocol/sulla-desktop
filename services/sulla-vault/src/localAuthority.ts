@@ -98,6 +98,7 @@ import {
 import type { Database, Queryable } from './db.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
 import { PostgresSullaCloudRevocationRepository } from './repositories/PostgresSullaCloudRevocationRepository.js';
+import { AgentMailboxCloudLane } from './sullaCloudSession/AgentMailboxCloudLane.js';
 import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionManager.js';
 import { SullaCloudSessionManagerFactory } from './sullaCloudSession/SullaCloudSessionManagerFactory.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
@@ -595,6 +596,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly humanSessions = new Map<string, HumanSession>();
   private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
   private sullaCloudSessionManager: SullaCloudSessionManager | null = null;
+  private agentMailboxCloudLane: AgentMailboxCloudLane | null = null;
   private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
   private securityOperationTail: Promise<void> = Promise.resolve();
   private migrationState: LocalVaultState = 'locked';
@@ -2307,6 +2309,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
         return await this.executeOAuthMutation(input, serviceId, token);
       }
+      if (AgentMailboxCloudLane.handles(input.operation)) return await this.agentMailboxes().execute(input);
       const prepared = await this.prepareBrokerRequest(input, serviceId, token);
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
@@ -2467,6 +2470,25 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     relay.controller.abort(new Error('relay_closed'));
     this.relaySessions.delete(relayId);
     this.relayManager.close(relayId, 'caller_closed');
+  }
+
+  /** Agent mail on the owner's Cloud session: path-pinned, vault-refreshed, Bearer injected here only. */
+  private agentMailboxes(): AgentMailboxCloudLane {
+    this.agentMailboxCloudLane ??= new AgentMailboxCloudLane(SULLA_CLOUD_HOST, {
+      activeAccountId: async() => {
+        const keys = this.requireKeys();
+        const state = await this.integrationStateRepository.findActive<{ active_account_id: string }>(keys.userId, SULLA_CLOUD_INTEGRATION_ID);
+        return state.rows[0]?.active_account_id ?? null;
+      },
+      accessToken: request => this.freshSullaCloudAccessToken(request, true),
+    }, {
+      send: async(request, target, headers, secrets) => this.send(
+        await this.validateTarget(target.toString()), request.method, headers, request.body, 'json', secrets, this.generation, true,
+        MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, request.operation, SULLA_CLOUD_INTEGRATION_ID,
+      ),
+      audit: (request, item) => this.audit(request, item as ItemRow, false, null),
+    }, (code, status, message) => new LocalVaultError(code, status, message));
+    return this.agentMailboxCloudLane;
   }
 
   private sullaCloudSessions(): SullaCloudSessionManager {

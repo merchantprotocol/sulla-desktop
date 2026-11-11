@@ -5,11 +5,11 @@
 
 import { AgentMailTool } from './AgentMailTool';
 
-import type { AgentMailClient } from './AgentMailClient';
+import type { AgentMailService } from './AgentMailRouter';
 
 /** mail/mark_read — mark one message read. */
 export class MailMarkReadWorker extends AgentMailTool {
-  protected run(client: AgentMailClient, input: Record<string, unknown>) {
-    return client.markRead(input.id, this.executionContext);
+  protected run(mail: AgentMailService, input: Record<string, unknown>) {
+    return mail.markRead(input, this.executionContext);
   }
 }
