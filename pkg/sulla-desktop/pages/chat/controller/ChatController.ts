@@ -20,6 +20,7 @@
 */
 
 import { reactive, ref, computed, type Ref, type ComputedRef } from 'vue';
+import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
 import { nextRunState, type RunEvent } from './runStateMachine';
@@ -78,6 +79,10 @@ export interface SendOptions {
   inputSource?: 'voice';
   /** Content-free correlation id used only for voice lifecycle diagnostics. */
   voiceTurnId?: string;
+  /** Use case the user picked in the composer for this message. */
+  useCaseIntent?: UseCaseIntentMetadata;
+  /** Route this one message to an agent (an "Ask <agent>" chip). */
+  agentId?: string;
 }
 
 export type SendHandler = (
@@ -265,6 +270,8 @@ export class ChatController {
       attachments: [...attachments],
       queuedAt:    Date.now(),
       ...(opts.inputSource ? { inputSource: opts.inputSource } : {}),
+      ...(opts.useCaseIntent ? { useCaseIntent: opts.useCaseIntent } : {}),
+      ...(opts.agentId ? { agentId: opts.agentId } : {}),
     };
     this.queue.value = [...this.queue.value, q];
     this.persist();
@@ -288,7 +295,7 @@ export class ChatController {
       this.injectHandler(q.text, [...q.attachments]);
       return;
     }
-    this.send(q.text, [...q.attachments], { inputSource: q.inputSource });
+    this.send(q.text, [...q.attachments], { inputSource: q.inputSource, useCaseIntent: q.useCaseIntent, agentId: q.agentId });
   }
 
   removeQueuedMessage(id: QueuedId): void {

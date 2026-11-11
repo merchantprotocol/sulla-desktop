@@ -29,8 +29,22 @@
         <div class="composer-top">
           <QueueStrip />
           <AttachmentTray />
-          <div v-if="intent" class="usecase-intent" role="status">
-            <span>{{ intentLabel }}</span><button type="button" aria-label="Remove use-case intent" @mousedown.prevent @click="intent = null">×</button>
+          <div v-if="useCases.intent.value" class="usecase-intent">
+            <span class="usecase-chip" role="status">
+              <span :class="['usecase-type', useCases.intent.value.item.type]" aria-hidden="true" />
+              <span class="usecase-verb">{{ intentLabel.verb }}</span><b>{{ intentLabel.title }}</b>
+              <button type="button" class="usecase-chip-x" :aria-label="`Remove ${ intentLabel.title }`" title="Remove (⌫ on empty draft)" @mousedown.prevent @click="useCases.removeIntent()">×</button>
+            </span>
+            <div v-if="useCases.intent.value.fields.length" class="usecase-inputs">
+              <label
+                v-for="field in useCases.intent.value.fields"
+                :key="field.name"
+                :class="['usecase-field', { missing: field.required && !field.value.trim() }]"
+              >
+                <span>{{ field.label || field.name }}</span>
+                <input v-model="field.value" type="text" :placeholder="field.required ? 'required' : ''">
+              </label>
+            </div>
           </div>
 
           <!-- Live intent: what Reflex would run for this draft right now. -->
@@ -57,10 +71,29 @@
         <div :class="['composer', { recording: isRecording }]">
           <span class="glyph">—</span>
 
-          <div v-if="showUseCaseSuggestions" class="usecase-suggestions" role="listbox" aria-label="Use-case suggestions">
-            <button v-for="(item, index) in suggestions" :id="`usecase-option-${index}`" :key="`${item.type}:${item.slug}`" type="button" role="option" :aria-selected="selectedSuggestion === index" :class="{ selected: selectedSuggestion === index }" @mousedown.prevent @click="pickSuggestion(item)">
-              <span class="suggestion-kind">{{ item.type }}</span><span>{{ item.title }}</span><small>{{ item.description }}</small><kbd v-if="index < 5">⌘{{ index + 1 }}</kbd>
-            </button>
+          <div v-if="useCases.open.value" class="usecase-strip">
+            <div class="usecase-strip-hd">
+              <span class="usecase-lbl">Use cases</span>
+              <span>{{ useCases.strip.items.length }} {{ useCases.strip.items.length === 1 ? 'match' : 'matches' }}</span>
+              <span class="usecase-sp" />
+              <span v-if="useCases.strip.latencyMs" class="usecase-lat">{{ useCases.strip.latencyMs }} ms</span>
+              <button type="button" class="usecase-strip-x" tabindex="-1" aria-label="Hide suggestions" title="Hide until the topic changes (Esc)" @mousedown.prevent @click="useCases.dismiss()">×</button>
+            </div>
+            <ul id="usecase-list" class="usecase-list" role="listbox" aria-label="Suggested use cases" @mousedown.prevent>
+              <li
+                v-for="(item, index) in useCases.strip.items"
+                :id="`usecase-option-${ index }`"
+                :key="`${ item.type }:${ item.slug }`"
+                role="option"
+                :aria-selected="useCases.strip.active === index"
+                class="usecase-row"
+                @click="pickUseCase(item)"
+              >
+                <span :class="['usecase-type', item.type]">{{ USE_CASE_TYPE_LABEL[item.type] }}</span>
+                <span class="usecase-row-main"><span class="usecase-row-t">{{ item.title }}</span><span class="usecase-row-d">{{ item.description }}</span></span>
+                <span class="usecase-row-why"><em v-if="item.reason">{{ item.reason }}</em><kbd>{{ modKey }}{{ index + 1 }}</kbd></span>
+              </li>
+            </ul>
           </div>
 
           <!-- Text mode -->
@@ -69,7 +102,7 @@
             ref="inputRef"
             :model-value="draft"
             :placeholder="placeholder"
-            :active-descendant="selectedSuggestion >= 0 ? `usecase-option-${selectedSuggestion}` : undefined"
+            :active-descendant="useCases.open.value && useCases.strip.active >= 0 ? `usecase-option-${ useCases.strip.active }` : undefined"
             @update:modelValue="draft = $event"
             @send="onSend"
             @keydown="onKeydown"
@@ -127,6 +160,22 @@
             <span><kbd>⏎</kbd> run</span>
             <span><kbd>esc</kbd> close</span>
           </template>
+          <template v-else-if="useCases.intent.value">
+            <span><kbd>⏎</kbd> {{ intentSendHint }}</span>
+            <span><kbd>⌫</kbd> remove chip (empty draft)</span>
+            <span><kbd>⇧⏎</kbd> new line</span>
+          </template>
+          <template v-else-if="useCases.open.value && useCases.strip.active >= 0">
+            <span><kbd>↑↓</kbd> choose</span>
+            <span><kbd>⏎</kbd> pick</span>
+            <span><kbd>esc</kbd> back to typing</span>
+          </template>
+          <template v-else-if="useCases.open.value">
+            <span><kbd>⏎</kbd> send</span>
+            <span><kbd>↓</kbd> suggestions</span>
+            <span><kbd>{{ modKey }}1–5</kbd> pick</span>
+            <span><kbd>esc</kbd> hide</span>
+          </template>
           <template v-else-if="draft.trim()">
             <span><kbd>⏎</kbd> send</span>
             <span><kbd>⇧⏎</kbd> new line</span>
@@ -166,7 +215,8 @@ import { useReflexIntent } from '../../composables/useReflexIntent';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
-import type { SuggestedUseCase } from '../../../../main/UseCaseSuggestionQuery';
+import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
+import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 
@@ -192,30 +242,6 @@ function looksLikeUrl(input: string): boolean {
 }
 
 const draft        = ref('');
-const suggestions = ref<SuggestedUseCase[]>([]);
-const selectedSuggestion = ref(-1);
-const intent = ref<SuggestedUseCase | null>(null);
-const dismissedTopic = ref('');
-let suggestionTimer: ReturnType<typeof setTimeout> | undefined;
-let suggestionRequest = 0;
-const topicKey = computed(() => draft.value.trim().toLowerCase().split(/\s+/).slice(-4).join(' '));
-const showUseCaseSuggestions = computed(() => !isRecording.value && !controller.popover.value.open && !intent.value && suggestions.value.length > 0 && topicKey.value !== dismissedTopic.value);
-const intentLabel = computed(() => intent.value ? intent.value.type === 'skill' ? `Use skill: ${intent.value.title}` : intent.value.type === 'agent' ? `Ask ${intent.value.title}` : `Run ${intent.value.title}` : '');
-function pickSuggestion(item: SuggestedUseCase): void { intent.value = item; selectedSuggestion.value = -1; suggestions.value = []; }
-function onSuggestionInput(text: string): void {
-  selectedSuggestion.value = -1;
-  if (suggestionTimer) clearTimeout(suggestionTimer);
-  const request = ++suggestionRequest;
-  const query = text.trim();
-  if (query.length < 3) { suggestions.value = []; return; }
-  suggestionTimer = setTimeout(() => {
-    void ipcRenderer.invoke('use-case-suggest:query' as any, query, { limit: 5 }).then((result: { items?: SuggestedUseCase[] }) => {
-      if (request === suggestionRequest && Array.isArray(result?.items)) suggestions.value = result.items.filter(item => ['skill', 'agent', 'workflow', 'recipe'].includes(item.type)).slice(0, 5);
-    }).catch(() => { if (request === suggestionRequest) suggestions.value = []; });
-  }, 150);
-}
-watch(draft, value => { onSuggestionInput(value); if (topicKey.value !== dismissedTopic.value) dismissedTopic.value = ''; });
-onBeforeUnmount(() => { if (suggestionTimer) clearTimeout(suggestionTimer); });
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
 const filesMenuOpen = ref(false);
@@ -234,7 +260,7 @@ const placeholder = computed(() => {
     : 'Ask Sulla anything…';
 });
 
-const canSendDraft = computed(() => !filesImporting.value && (draft.value.trim().length > 0 || controller.staged.value.length > 0));
+const canSendDraft = computed(() => !filesImporting.value && (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 const contextLimit = computed(() => {
@@ -252,6 +278,29 @@ const usagePercent = computed(() => {
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
+
+// ─── Use-case suggestions (type-ahead strip + one intent chip) ─────
+const USE_CASE_TYPE_LABEL: Record<SuggestedUseCaseType, string> = { skill: 'Skill', agent: 'Agent', workflow: 'Workflow', recipe: 'Recipe' };
+const modKey = /mac/i.test(navigator.platform) ? '⌘' : 'Ctrl+';
+const useCases = useUseCaseSuggestions({
+  draft,
+  blocked:  computed(() => isRecording.value || controller.popover.value.open),
+  query:    (text, limit) => ipcRenderer.invoke('use-case-suggest:query', text, { limit }) as Promise<UseCaseSuggestionResponse>,
+  isNarrow: () => window.matchMedia?.('(max-width: 640px)').matches ?? false,
+});
+const intentLabel = computed(() => useCases.intent.value ? useCases.directive.label(useCases.intent.value) : { verb: '', title: '' });
+const intentSendHint = computed(() => {
+  const picked = useCases.intent.value?.item;
+  if (!picked) return 'send';
+  if (picked.type === 'agent') return `send to ${ picked.title }`;
+  if (picked.type === 'skill') return 'send with skill';
+
+  return `send + run ${ picked.title }`;
+});
+function pickUseCase(item: SuggestedUseCase): void {
+  useCases.pick(item);
+  inputRef.value?.focus();
+}
 const recStartedAt = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.startedAt : 0);
 const recLevel     = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.level    : 0);
 const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
@@ -412,21 +461,26 @@ function onSend(text: string): void {
     }
   }
 
-  if (!trimmed && controller.staged.value.length === 0) return;
-  const directive = intent.value ? `[Use-case intent: ${intentLabel.value}; type=${intent.value.type}; slug=${intent.value.slug}]\n` : '';
-  controller.send(`${directive}${trimmed || '(attached)'}`, [...controller.staged.value]);
+  const picked = useCases.intent.value;
+  if (!trimmed && controller.staged.value.length === 0 && !picked) return;
+  if (picked) {
+    controller.send(useCases.directive.compose(picked, trimmed), [...controller.staged.value], {
+      useCaseIntent: useCases.directive.metadata(picked),
+      ...(useCases.directive.routeAgentId(picked) ? { agentId: useCases.directive.routeAgentId(picked) } : {}),
+    });
+    useCases.reset();
+  } else {
+    controller.send(trimmed || '(attached)', [...controller.staged.value]);
+  }
   draft.value = '';
-  intent.value = null;
 }
 
 function onKeydown(e: KeyboardEvent): void {
   const p = controller.popover.value;
-  if (!p.open && showUseCaseSuggestions.value) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); selectedSuggestion.value = (selectedSuggestion.value + 1) % suggestions.value.length; return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); selectedSuggestion.value = selectedSuggestion.value <= 0 ? suggestions.value.length - 1 : selectedSuggestion.value - 1; return; }
-    if (e.key === 'Escape') { e.preventDefault(); if (selectedSuggestion.value >= 0) selectedSuggestion.value = -1; else dismissedTopic.value = topicKey.value; return; }
-    if ((e.metaKey || e.ctrlKey) && /^[1-5]$/.test(e.key)) { e.preventDefault(); const item = suggestions.value[Number(e.key) - 1]; if (item) pickSuggestion(item); return; }
-    if (e.key === 'Enter' && selectedSuggestion.value >= 0) { e.preventDefault(); const item = suggestions.value[selectedSuggestion.value]; if (item) pickSuggestion(item); return; }
+  if (!p.open) {
+    const el = e.target as HTMLTextAreaElement | null;
+    const caretAtEnd = !el || (el.selectionStart === el.selectionEnd && el.selectionEnd === el.value.length);
+    if (useCases.onKeydown(e, caretAtEnd)) return;
   }
   if (!p.open && reflexIntent.preview.value) {
     if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
@@ -933,5 +987,88 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 @media (prefers-reduced-motion: reduce) {
   .composer-card,
   .reflex-intent { animation: none; transition: none; }
+}
+/* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
+.usecase-strip {
+  width: 100%;
+  margin: 8px 8px 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-default);
+  animation: noir-reflex-in 0.18s cubic-bezier(.22, 1, .36, 1) both;
+}
+.usecase-strip-hd {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px 4px 14px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.usecase-lbl { font: 500 10.5px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.usecase-sp { flex: 1; }
+.usecase-lat { font: 11px var(--font-mono); color: var(--text-muted); }
+.usecase-strip-x, .usecase-chip-x {
+  width: 22px; height: 22px; border: 0; border-radius: 6px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1;
+}
+.usecase-strip-x:hover, .usecase-chip-x:hover { background: var(--accent-dim); color: var(--text-primary); }
+.usecase-list { list-style: none; margin: 0; padding: 2px 8px 8px; }
+.usecase-row {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  min-height: 38px; padding: 4px 8px; border-radius: 8px; cursor: pointer;
+}
+.usecase-row:hover { background: var(--accent-dim); }
+.usecase-row[aria-selected="true"] { background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.usecase-type {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 7px; width: max-content;
+  background: color-mix(in srgb, var(--border-default) 45%, transparent); color: var(--text-secondary);
+  font: 500 10.5px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase;
+}
+.usecase-row-main { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.usecase-row-t { font-weight: 500; font-size: 13.5px; white-space: nowrap; color: var(--text-primary); }
+.usecase-row-d { color: var(--text-secondary); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usecase-row-why { display: flex; align-items: center; gap: 8px; font: 11px var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.usecase-row-why em { font-style: normal; }
+.usecase-row-why kbd {
+  font: 500 10.5px/1 var(--font-mono); padding: 3px 5px; border-radius: 5px;
+  background: color-mix(in srgb, var(--border-default) 45%, transparent); color: var(--text-secondary);
+}
+.usecase-intent { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.usecase-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 4px 0 9px; border-radius: 15px;
+  width: max-content; max-width: 100%;
+  background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--text-primary); font-size: 12.5px;
+  animation: noir-reflex-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
+}
+.usecase-chip .usecase-type { display: none; }
+.usecase-verb { color: var(--accent-hover); }
+.usecase-chip b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usecase-inputs { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 2px; }
+.usecase-field {
+  display: inline-flex; align-items: center; height: 26px; border-radius: 8px; overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border-default); background: var(--bg-surface); font-size: 12px;
+}
+.usecase-field span {
+  display: flex; align-items: center; height: 100%; padding: 0 6px 0 8px;
+  font: 11px var(--font-mono); color: var(--text-secondary);
+  background: color-mix(in srgb, var(--border-default) 30%, transparent);
+}
+.usecase-field input {
+  border: 0 !important; outline: none; background: transparent !important; box-shadow: none !important;
+  height: 100%; padding: 0 8px !important; width: 140px; min-width: 64px;
+  font-size: 12.5px; color: var(--text-primary) !important;
+}
+.usecase-field:focus-within { box-shadow: inset 0 0 0 1px var(--accent-border); }
+.usecase-field.missing { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warning) 45%, transparent); }
+.usecase-field.missing span { color: var(--status-warning); background: var(--status-warning-soft); }
+@media (max-width: 640px) {
+  .usecase-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 6px 8px; }
+  .usecase-row .usecase-type { grid-column: 1; grid-row: 1; }
+  .usecase-row-main { grid-column: 1 / 3; grid-row: 2; flex-direction: column; align-items: stretch; gap: 0; }
+  .usecase-row-why { grid-column: 2; grid-row: 1; justify-self: end; }
+  .usecase-row-why em { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usecase-strip, .usecase-chip { animation: none; }
 }
 </style>
