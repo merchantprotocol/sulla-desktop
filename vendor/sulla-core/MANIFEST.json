@@ -5,6 +5,22 @@
   "packages": [
     {
       "package": "@sulla/foundation",
+      "version": "0.1.1",
+      "file": "sulla-foundation-0.1.1-7d4a6dd.tgz",
+      "sha256": "0af9c760c958ecb440829022c6f00faa9b2fd9c4110679d99cada5b9841d7d7c",
+      "sourceRef": "7d4a6dd8",
+      "source": "sulla-core main 7d4a6dd8 build (npm ci, npm run build, npm pack packages/foundation); bundling fix, foundation 0.1.1"
+    },
+    {
+      "package": "@sulla/domain",
+      "version": "0.2.5",
+      "file": "sulla-domain-0.2.5-7d4a6dd.tgz",
+      "sha256": "11ad742a63083d606a6ed6af3904a87d07bb350efa98082d8e82fe70e462630c",
+      "sourceRef": "7d4a6dd8",
+      "source": "sulla-core main 7d4a6dd8 build (npm ci, npm run build, npm pack packages/domain); depends on @sulla/foundation 0.1.1"
+    },
+    {
+      "package": "@sulla/foundation",
       "version": "0.1.0",
       "file": "sulla-foundation-0.1.0-2213270.tgz",
       "sha256": "9bf68774363077242b615c84fa0a78ef0f020ec0eae242ee5033a36978ccc9ca"
