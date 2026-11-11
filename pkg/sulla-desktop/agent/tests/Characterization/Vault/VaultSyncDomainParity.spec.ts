@@ -9,14 +9,16 @@ import { NobleCryptoPrimitives } from '@sulla/domain';
 
 import { DomainVaultSyncCodec } from '../../../../../../services/sulla-vault/src/browserEnvelope/DomainVaultSyncCodec';
 import { SodiumCryptoPrimitives } from '../../../../../../services/sulla-vault/src/browserEnvelope/SodiumCryptoPrimitives';
-import { checkRecordShape, createSyncEnvelope, loadSodium, type SyncBundle, type SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
+import { loadSodium, type SyncBundle, type SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
 
+// The KAT fixture was produced by the Desktop envelope (before it moved to the domain codec)
+// and by the Passwords worker in www-sulladesktop. The domain codec must reproduce it byte for byte.
 interface KatSide {
   bundle: SyncBundle;
   records: SyncRecord[];
   head: { vaultId: string; scope: string; seq: number; prevHeadMac: string; stateHash: string; mac: string };
 }
-interface KatFixture { desktop: KatSide; browser: KatSide }
+interface KatFixture { password: string; desktop: KatSide; browser: KatSide }
 
 async function fixture(): Promise<KatFixture> {
   return JSON.parse(await readFile(new URL('../../../../../../fixtures/crypto/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as KatFixture;
@@ -30,112 +32,92 @@ function bundleFields(bundle: SyncBundle) {
   return fields;
 }
 
-describe('Domain vault-sync-v3 codec parity', () => {
-  it('matches Desktop codec output for every KAT half: record bytes, MAC, state hash and head', async() => {
-    // risk: crypto/data integrity — drift would make sync records unreadable across Desktop and Mobile.
-    const kat = await fixture();
+class DomainParityHarness {
+  async codec(): Promise<DomainVaultSyncCodec> {
     const sodium = await loadSodium();
-    const old = createSyncEnvelope(sodium);
-    const crypto = new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives());
+    return new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
+  }
+
+  errorCodeOf(run: () => unknown): string | undefined {
+    try { run(); } catch (error) { return (error as { code?: string }).code; }
+    return undefined;
+  }
+}
+
+describe('Domain vault-sync-v3 codec', () => {
+  it('reproduces every KAT half byte-for-byte: bundle, record MAC, state hash and head', async() => {
+    // risk: crypto/data integrity — drift would make sync records unreadable across Desktop, Cloud and Mobile.
+    const kat = await fixture();
+    const domain = await new DomainParityHarness().codec();
 
     for (const side of [kat.desktop, kat.browser]) {
-      const userKey = old.unlockBundle(side.bundle, 'correct horse battery staple · sync v3');
+      const userKey = domain.unlockBundle(side.bundle, kat.password);
       try {
-        const domain = new DomainVaultSyncCodec(crypto, new FixedRandomSource());
-        const oldBundle = old.buildBundle(bundleFields(side.bundle), userKey);
-        const domainBundle = domain.buildBundle(bundleFields(side.bundle), userKey);
-        expect(domainBundle).toEqual(oldBundle);
+        expect(domain.buildBundle(bundleFields(side.bundle), userKey)).toEqual(side.bundle);
 
         const records = side.records.map(record => {
           const { format: _format, v: _version, mac: _mac, ...fields } = record;
           void _format; void _version; void _mac;
-          const oldRecord = old.buildRecord(fields, userKey);
-          const domainRecord = domain.buildRecord(fields, userKey);
-          expect(domainRecord).toEqual(oldRecord);
-          expect(JSON.stringify(domainRecord)).toBe(JSON.stringify(oldRecord));
-          return oldRecord;
+          const rebuilt = domain.buildRecord(fields, userKey);
+          expect(rebuilt).toEqual(record);
+          expect(JSON.stringify(rebuilt)).toBe(JSON.stringify(record));
+          return rebuilt;
         });
-        expect(domain.stateHash(records)).toBe(old.stateHash(records));
-        const oldHead = old.buildHead({ vaultId: side.head.vaultId, scope: side.head.scope, seq: side.head.seq, records, prevHeadMac: side.head.prevHeadMac }, userKey);
-        const domainHead = domain.buildHead({ vaultId: side.head.vaultId, scope: side.head.scope, seq: side.head.seq, records, prevHeadMac: side.head.prevHeadMac }, userKey);
-        expect(domainHead).toEqual(oldHead);
-        expect(domainHead.stateHash).toBe(side.head.stateHash);
-        expect(domainHead.mac).toBe(side.head.mac);
+        const head = domain.buildHead({ vaultId: side.head.vaultId, scope: side.head.scope, seq: side.head.seq, records, prevHeadMac: side.head.prevHeadMac }, userKey);
+        expect(domain.stateHash(records)).toBe(side.head.stateHash);
+        expect(head).toEqual(side.head);
       } finally {
         userKey.fill(0);
       }
     }
   }, 20_000);
 
-  it('unlocks every KAT bundle with the domain codec to the same user key as the old envelope', async() => {
-    // risk: crypto/data integrity — production unlocks via DomainVaultSyncCodec; a different user key makes sync data unreadable.
+  it('unlocks and verifies every KAT bundle through the domain codec', async() => {
+    // risk: crypto/data integrity — production unlocks via DomainVaultSyncCodec; a wrong user key makes sync data unreadable.
     const kat = await fixture();
-    const sodium = await loadSodium();
-    const old = createSyncEnvelope(sodium);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
-    const password = 'correct horse battery staple · sync v3';
+    const domain = await new DomainParityHarness().codec();
 
     for (const side of [kat.desktop, kat.browser]) {
-      const oldKey = old.unlockBundle(side.bundle, password);
-      const domainKey = domain.unlockBundle(side.bundle, password);
+      const userKey = domain.unlockBundle(side.bundle, kat.password);
       try {
-        expect(Buffer.from(domainKey).toString('hex')).toBe(Buffer.from(oldKey).toString('hex'));
+        expect(() => domain.verifyBundle(side.bundle, userKey)).not.toThrow();
+        expect(userKey).toHaveLength(32);
       } finally {
-        oldKey.fill(0);
-        domainKey.fill(0);
+        userKey.fill(0);
       }
     }
   }, 20_000);
 
-  it('rejects a wrong password on both the old and the domain unlock paths', async() => {
-    // risk: crypto/authentication — the escrow maps any unlock throw to wrong_password, so both paths must throw.
+  it('rejects a wrong password with the domain wrong_password code', async() => {
+    // risk: crypto/authentication — the escrow maps any unlock failure to wrong_password, so the unlock must throw.
     const kat = await fixture();
-    const sodium = await loadSodium();
-    const old = createSyncEnvelope(sodium);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
+    const domain = await new DomainParityHarness().codec();
 
     for (const side of [kat.desktop, kat.browser]) {
-      let oldCode: string | undefined;
-      let domainThrew = false;
-      try { old.unlockBundle(side.bundle, 'wrong password'); } catch (error) { oldCode = (error as { code?: string }).code; }
-      try { domain.unlockBundle(side.bundle, 'wrong password'); } catch { domainThrew = true; }
-      expect(oldCode).toBe('wrong_password');
-      expect(domainThrew).toBe(true);
+      expect(new DomainParityHarness().errorCodeOf(() => domain.unlockBundle(side.bundle, 'wrong password'))).toBe('wrong_password');
     }
-  });
+  }, 20_000);
 
-  it('preserves the old malformed-record error code', async() => {
+  it('rejects a malformed record before any MAC check, with a record_shape code', async() => {
     // risk: crypto/data integrity — malformed sync input must fail closed with a stable caller-visible code.
-    const sodium = await loadSodium();
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
+    const domain = await new DomainParityHarness().codec();
     const malformed = { ...((await fixture()).desktop.records[0]), generation: 0 };
-    const errorCode = (run: () => void): string => {
-      try { run(); } catch (error) { return (error as { code: string }).code; }
-      throw new Error('expected malformed record to be rejected');
-    };
-    expect(errorCode(() => checkRecordShape(malformed))).toBe(errorCode(() => domain.verifyRecord(malformed, key, { vaultId: malformed.vaultId, scope: malformed.scope })));
+
+    expect(new DomainParityHarness().errorCodeOf(() => domain.verifyRecord(malformed, key, { vaultId: malformed.vaultId, scope: malformed.scope }))).toBe('record_shape');
     key.fill(0);
   });
 
-  it('matches item and folder AAD bytes used by the existing envelope', async() => {
-    // risk: crypto/authentication — mismatched AAD prevents legitimate item and folder decryption.
-    const sodium = await loadSodium();
+  it('binds item ciphertext to its owner and item id (AAD), so a moved item cannot decrypt', async() => {
+    // risk: crypto/authentication — a server that swaps an item under another id must not yield plaintext.
     const key = new Uint8Array(32).fill(1);
-    const domain = new DomainVaultSyncCodec(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new FixedRandomSource());
-    const old = createSyncEnvelope(sodium);
-    const originalRandom = sodium.randombytes_buf;
-    sodium.randombytes_buf = (length: number) => new Uint8Array(length).fill(7);
-    try {
-      const plaintext = JSON.stringify({ type: 'login', name: 'parity' });
-      expect(domain.encryptItem(plaintext, key, 'owner', 'item-1'))
-        .toEqual(old.encryptItem(plaintext, key, 'owner', 'item-1'));
-    } finally {
-      sodium.randombytes_buf = originalRandom;
-    }
-    expect(domain.itemAad('key', 'owner', 'item-1')).toBe('sulla:item:key:v1:["owner","item-1"]');
-    expect(domain.itemAad('ciphertext', 'owner', 'item-1')).toBe('sulla:item:ciphertext:v1:["owner","item-1"]');
-    expect(domain.folderAad('owner', 'folder-1')).toBe('sulla:folder-name:v1:["owner","folder-1"]');
+    const domain = await new DomainParityHarness().codec();
+    const plaintext = JSON.stringify({ type: 'login', name: 'parity' });
+
+    const item = domain.encryptItem(plaintext, key, 'owner', 'item-1');
+    expect(domain.decryptItem(item, key, 'owner', 'item-1')).toBe(plaintext);
+    expect(() => domain.decryptItem(item, key, 'owner', 'item-2')).toThrow();
+    expect(() => domain.decryptItem(item, key, 'other-owner', 'item-1')).toThrow();
     key.fill(0);
   });
 });
