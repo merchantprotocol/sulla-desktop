@@ -125,6 +125,29 @@ describe('composer use-case suggestion interactions', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the composer quiet before the minimum query length and uses Escape/Tab without stealing normal behavior', async() => {
+    vi.useFakeTimers();
+    const query = vi.fn(async(): Promise<UseCaseSuggestionResponse> => ({ items: [report], ms: 1 }));
+    const harness = new SuggestionHarnessFactory().create(query);
+    harnesses.push(harness);
+    harness.draft.value = 'hi';
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(query).not.toHaveBeenCalled();
+
+    harness.draft.value = 'report this';
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.resolve();
+    await nextTick();
+    const key = (name: string) => ({ key: name, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, preventDefault: vi.fn() }) as unknown as KeyboardEvent;
+    expect(harness.api.onKeydown(key('Tab'), true)).toBe(false);
+    expect(harness.api.open.value).toBe(true);
+    expect(harness.api.onKeydown(key('Escape'), true)).toBe(true);
+    expect(harness.api.open.value).toBe(false);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('editing required workflow inputs clears missing fields and sends those values in metadata', async() => {
     // risk: workflow input values or required-field gaps can be lost when the user sends
     const harness = new SuggestionHarnessFactory().create(async() => ({ items: [], ms: 0 }));

@@ -20,7 +20,10 @@ export interface DeclaredUseCaseInput {
 
 export interface SuggestedUseCase {
   type:        SuggestedUseCaseType;
+  /** Canonical ids used by the runtime tools; these may differ from the Files listing slug. */
   slug:        string;
+  workflowId?: string;
+  extensionId?: string;
   title:       string;
   description: string;
   score:       number;
@@ -43,6 +46,8 @@ export interface UseCaseIntentMetadata {
   type:     SuggestedUseCaseType;
   slug:     string;
   title:    string;
+  workflowId?: string;
+  extensionId?: string;
   inputs?:  Record<string, string>;
   missing?: string[];
 }

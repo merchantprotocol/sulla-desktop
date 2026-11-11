@@ -280,6 +280,12 @@ export class ChatController {
   injectQueuedMessage(id: QueuedId): void {
     const q = this.queue.value.find(m => m.id === id);
     if (!q) return;
+
+    // The in-flight injection channel carries only text and attachments. A
+    // structured use-case intent or agent route must wait for a fresh send,
+    // otherwise those options are silently lost by injectHandler.
+    if (isRunning(this.runState.value) && (q.useCaseIntent || q.agentId)) return;
+
     this.queue.value = this.queue.value.filter(m => m.id !== id);
     this.persist();
 
@@ -337,7 +343,11 @@ export class ChatController {
     const [first, ...rest] = this.queue.value;
     if (!first) return;
     this.queue.value = rest;
-    this.send(first.text, [...first.attachments], { inputSource: first.inputSource });
+    this.send(first.text, [...first.attachments], {
+      inputSource: first.inputSource,
+      ...(first.useCaseIntent ? { useCaseIntent: first.useCaseIntent } : {}),
+      ...(first.agentId ? { agentId: first.agentId } : {}),
+    });
   }
 
   // ─── Run control ────────────────────────────────────────────────

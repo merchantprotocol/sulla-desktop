@@ -40,7 +40,7 @@ describe('UseCaseIntentDirective (routing on send)', () => {
       missing: ['recipient'],
     });
     const text = directive.directive(intent);
-    expect(text).toContain('execute_workflow (workflowId "weekly-lead-digest")');
+    expect(text).toContain('Available workflows');
     expect(text).toContain('{"sheet":"Sweeps Leads","period":"last 7 days"}');
     expect(text).toContain('Ask me for recipient before running it.');
 
@@ -49,8 +49,17 @@ describe('UseCaseIntentDirective (routing on send)', () => {
     expect(directive.directive(intent)).not.toContain('Ask me for');
   });
 
+  it('uses the canonical runtime workflow id when provided instead of the listing slug', () => {
+    const intent = factory.create(uc('workflow', { slug: 'files-slug', workflowId: 'exact-runtime-workflow' }), '');
+    expect(directive.directive(intent)).toContain('workflowId "exact-runtime-workflow"');
+    expect(directive.metadata(intent).workflowId).toBe('exact-runtime-workflow');
+  });
+
   it('starts recipes through the existing extension start path', () => {
-    expect(directive.directive(factory.create(uc('recipe', { slug: 'sweeps-pipeline' }), ''))).toContain(`sulla extensions/start_extension '{"id":"sweeps-pipeline"}'`);
+    const unresolved = directive.directive(factory.create(uc('recipe', { slug: 'sweeps-pipeline' }), ''));
+    expect(unresolved).toContain('list_installed_extensions');
+    expect(unresolved).not.toContain('"id":"sweeps-pipeline"');
+    expect(directive.directive(factory.create(uc('recipe', { slug: 'sweeps-pipeline', extensionId: 'docker.io/acme/sweeps' }), ''))).toContain('start_extension with id "docker.io/acme/sweeps"');
   });
 
   it('ignores declared inputs on skills and agents', () => {

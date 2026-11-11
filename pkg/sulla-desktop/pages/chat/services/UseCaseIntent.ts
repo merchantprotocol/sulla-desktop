@@ -57,6 +57,8 @@ export class UseCaseIntentDirective {
 
     return {
       type, slug, title,
+      ...(intent.item.workflowId ? { workflowId: intent.item.workflowId } : {}),
+      ...(intent.item.extensionId ? { extensionId: intent.item.extensionId } : {}),
       ...(intent.fields.length ? { inputs: this.values(intent) } : {}),
       ...(missing.length ? { missing } : {}),
     };
@@ -71,9 +73,13 @@ export class UseCaseIntentDirective {
     case 'agent':
       return `[Ask ${ title }] This message is addressed to the ${ json(slug) } agent.`;
     case 'workflow':
-      return `[Run ${ title }] Run workflow ${ json(slug) } with execute_workflow (workflowId ${ json(slug) })${ this.inputClause(intent) }`;
+      return intent.item.workflowId
+        ? `[Run ${ title }] Call execute_workflow with workflowId ${ json(intent.item.workflowId) }.${ this.inputClause(intent) }`
+        : `[Run ${ title }] Find this workflow's exact slug in Available workflows, then call execute_workflow with that workflowId; do not guess it from the Files listing slug.${ this.inputClause(intent) }`;
     case 'recipe':
-      return `[Run ${ title }] Start recipe ${ json(slug) } with \`sulla extensions/start_extension '${ json({ id: slug }) }'\`${ this.inputClause(intent) }`;
+      return intent.item.extensionId
+        ? `[Run ${ title }] Call start_extension with id ${ json(intent.item.extensionId) }.${ this.inputClause(intent) }`
+        : `[Run ${ title }] Resolve this recipe to its exact installed extension id using list_installed_extensions, then call start_extension with that id; do not assume the Files listing slug is the extension id.${ this.inputClause(intent) }`;
     }
   }
 
