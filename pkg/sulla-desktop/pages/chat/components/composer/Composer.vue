@@ -29,6 +29,9 @@
         <div class="composer-top">
           <QueueStrip />
           <AttachmentTray />
+          <div v-if="intent" class="usecase-intent" role="status">
+            <span>{{ intentLabel }}</span><button type="button" aria-label="Remove use-case intent" @mousedown.prevent @click="intent = null">×</button>
+          </div>
 
           <!-- Live intent: what Reflex would run for this draft right now. -->
           <div
@@ -54,12 +57,19 @@
         <div :class="['composer', { recording: isRecording }]">
           <span class="glyph">—</span>
 
+          <div v-if="showUseCaseSuggestions" class="usecase-suggestions" role="listbox" aria-label="Use-case suggestions">
+            <button v-for="(item, index) in suggestions" :id="`usecase-option-${index}`" :key="`${item.type}:${item.slug}`" type="button" role="option" :aria-selected="selectedSuggestion === index" :class="{ selected: selectedSuggestion === index }" @mousedown.prevent @click="pickSuggestion(item)">
+              <span class="suggestion-kind">{{ item.type }}</span><span>{{ item.title }}</span><small>{{ item.description }}</small><kbd v-if="index < 5">⌘{{ index + 1 }}</kbd>
+            </button>
+          </div>
+
           <!-- Text mode -->
           <ComposerInput
             v-if="!isRecording"
             ref="inputRef"
             :model-value="draft"
             :placeholder="placeholder"
+            :active-descendant="selectedSuggestion >= 0 ? `usecase-option-${selectedSuggestion}` : undefined"
             @update:modelValue="draft = $event"
             @send="onSend"
             @keydown="onKeydown"
@@ -156,6 +166,7 @@ import { useReflexIntent } from '../../composables/useReflexIntent';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
+import type { SuggestedUseCase } from '../../../../main/UseCaseSuggestionQuery';
 
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 
@@ -181,6 +192,30 @@ function looksLikeUrl(input: string): boolean {
 }
 
 const draft        = ref('');
+const suggestions = ref<SuggestedUseCase[]>([]);
+const selectedSuggestion = ref(-1);
+const intent = ref<SuggestedUseCase | null>(null);
+const dismissedTopic = ref('');
+let suggestionTimer: ReturnType<typeof setTimeout> | undefined;
+let suggestionRequest = 0;
+const topicKey = computed(() => draft.value.trim().toLowerCase().split(/\s+/).slice(-4).join(' '));
+const showUseCaseSuggestions = computed(() => !isRecording.value && !controller.popover.value.open && !intent.value && suggestions.value.length > 0 && topicKey.value !== dismissedTopic.value);
+const intentLabel = computed(() => intent.value ? intent.value.type === 'skill' ? `Use skill: ${intent.value.title}` : intent.value.type === 'agent' ? `Ask ${intent.value.title}` : `Run ${intent.value.title}` : '');
+function pickSuggestion(item: SuggestedUseCase): void { intent.value = item; selectedSuggestion.value = -1; suggestions.value = []; }
+function onSuggestionInput(text: string): void {
+  selectedSuggestion.value = -1;
+  if (suggestionTimer) clearTimeout(suggestionTimer);
+  const query = text.trim();
+  if (query.length < 3) { suggestions.value = []; return; }
+  const request = ++suggestionRequest;
+  suggestionTimer = setTimeout(() => {
+    void ipcRenderer.invoke('use-case-suggest:query' as any, query, { limit: 5 }).then((result: { items?: SuggestedUseCase[] }) => {
+      if (request === suggestionRequest && Array.isArray(result?.items)) suggestions.value = result.items.filter(item => ['skill', 'agent', 'workflow', 'recipe'].includes(item.type)).slice(0, 5);
+    }).catch(() => { if (request === suggestionRequest) suggestions.value = []; });
+  }, 150);
+}
+watch(draft, value => { onSuggestionInput(value); if (topicKey.value !== dismissedTopic.value) dismissedTopic.value = ''; });
+onBeforeUnmount(() => { if (suggestionTimer) clearTimeout(suggestionTimer); });
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
 const filesMenuOpen = ref(false);
@@ -378,12 +413,21 @@ function onSend(text: string): void {
   }
 
   if (!trimmed && controller.staged.value.length === 0) return;
-  controller.send(trimmed || '(attached)', [...controller.staged.value]);
+  const directive = intent.value ? `[Use-case intent: ${intentLabel.value}; type=${intent.value.type}; slug=${intent.value.slug}]\n` : '';
+  controller.send(`${directive}${trimmed || '(attached)'}`, [...controller.staged.value]);
   draft.value = '';
+  intent.value = null;
 }
 
 function onKeydown(e: KeyboardEvent): void {
   const p = controller.popover.value;
+  if (!p.open && showUseCaseSuggestions.value) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); selectedSuggestion.value = (selectedSuggestion.value + 1) % suggestions.value.length; return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); selectedSuggestion.value = selectedSuggestion.value <= 0 ? suggestions.value.length - 1 : selectedSuggestion.value - 1; return; }
+    if (e.key === 'Escape') { e.preventDefault(); if (selectedSuggestion.value >= 0) selectedSuggestion.value = -1; else dismissedTopic.value = topicKey.value; return; }
+    if ((e.metaKey || e.ctrlKey) && /^[1-5]$/.test(e.key)) { e.preventDefault(); const item = suggestions.value[Number(e.key) - 1]; if (item) pickSuggestion(item); return; }
+    if (e.key === 'Enter' && selectedSuggestion.value >= 0) { e.preventDefault(); const item = suggestions.value[selectedSuggestion.value]; if (item) pickSuggestion(item); return; }
+  }
   if (!p.open && reflexIntent.preview.value) {
     if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
