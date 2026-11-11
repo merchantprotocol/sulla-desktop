@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { Pool } from 'pg';
 
-import { migrate } from '../../../../../services/sulla-files/src/db.js';
+import { migrate } from '../../../../../../services/sulla-files/src/db.js';
 
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client:class {}, PutObjectCommand:class {}, GetObjectCommand:class {}, HeadObjectCommand:class {}, DeleteObjectCommand:class {}, ListObjectsV2Command:class {} }));
 vi.mock('@sulla/vault-crypto', () => ({}));
@@ -93,7 +93,7 @@ class ServerModeFilesFixture {
     this.collectionId = randomUUID();
     await this.pool.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,workspace_scope)
       VALUES($1,$2,'admin-user','Org Files','knowledge','synced','{}','{}','{}',TRUE,FALSE,'organization')`, [this.collectionId, this.organizationId]);
-    const appModulePath = '../../../../../services/sulla-files/src/app.js';
+    const appModulePath = '../../../../../../services/sulla-files/src/app.js';
     const { createApp } = await import(appModulePath);
     this.server = createServer(createApp(this.pool, config, undefined, this.pool));
     await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve));
