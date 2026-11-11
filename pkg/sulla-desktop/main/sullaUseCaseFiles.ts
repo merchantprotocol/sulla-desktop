@@ -235,7 +235,7 @@ export class SullaUseCaseFiles {
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
     });
-    this.notifier?.emit({ type: kind === 'routine' ? 'workflow' : kind, slug, change: 'published' });
+    if (kind !== 'integration') this.notifier?.emit({ type: kind === 'routine' ? 'workflow' : kind, slug, change: 'published' });
     if (kind === 'skill') {
       const raw = text(files['SKILL.md']);
       const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
