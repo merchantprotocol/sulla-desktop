@@ -475,7 +475,7 @@ export class CloudVaultSyncRunner {
          ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,bundle_sha=$4,last_push_at=now(),last_error=NULL,updated_at=now()`,
         [userId, vaultId, head.mac, wrapFingerprint(account, recovery)],
       );
-      for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null, false);
+      for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null);
     });
   }
 
