@@ -6,6 +6,7 @@
 import { recallTokenize } from '../memory/rankedRecall';
 import { PotionEmbedder } from '../memory/potionEmbedder';
 import { PostgresUseCaseCatalogSource, type SuggestionSqlClient } from './PostgresUseCaseCatalogSource';
+import { UseCaseChangeBus, type UseCaseChangeTransport } from './UseCaseChangeBus';
 
 export type UseCaseType = 'skill' | 'agent' | 'workflow' | 'function' | 'recipe';
 export type UseCaseChange = 'published' | 'installed' | 'updated' | 'deleted';
@@ -179,6 +180,20 @@ export class UseCaseSuggestionIndex {
     const rankMs = this.now() - rankStart;
     this.logger.info(`[SuggestionTiming] embedMs=${ embedMs } rankMs=${ rankMs } totalMs=${ this.now() - started } rows=${ considered } hits=${ results.length } mode=${ semantic ? 'semantic' : 'keyword' }`);
     return results;
+  }
+
+  /**
+   * Re-check the catalog now (fingerprint compare, then rebuild if changed).
+   * Queued behind any in-flight load, so it always runs against a snapshot
+   * that predates the call. Used once the change subscription is live, to
+   * catch writes whose events fired before anyone was listening.
+   */
+  refresh(): Promise<void> {
+    return this.enqueue(async() => {
+      if (!this.loaded) return;
+      if (this.source.fingerprint) { await this.reconcile(); return; }
+      this.items = this.build(await this.source.listPublished(), await this.getEmbedder(), this.items);
+    });
   }
 
   dispose(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
@@ -373,14 +388,26 @@ export const potionSuggestionEmbedderLoader = async(): Promise<PotionEmbedder> =
   return PotionEmbedder.load(dir);
 };
 
-/** Main-process composition root: owns the one notifier + index pair; callers receive it by injection. */
+/**
+ * Main-process composition root: owns the one bus + index pair. The bus
+ * hears writers in this process directly and every other writer (models,
+ * agent tools, other processes) over the injected transport.
+ */
 export class UseCaseSuggestionCompositionRoot {
-  readonly notifier = new LocalUseCaseChangeNotifier();
+  readonly notifier: UseCaseChangeBus;
   readonly index: UseCaseSuggestionIndex;
-  constructor(db: SuggestionSqlClient, builtinSkillSlugs: readonly string[] = []) {
-    const source = new PostgresUseCaseCatalogSource(db, builtinSkillSlugs);
-    this.index = new UseCaseSuggestionIndex(potionSuggestionEmbedderLoader, source, this.notifier);
+  constructor(db: SuggestionSqlClient, builtinSkillSlugs: readonly string[], transport: UseCaseChangeTransport, embedderLoader: () => Promise<SuggestionEmbedder> = potionSuggestionEmbedderLoader) {
+    this.notifier = new UseCaseChangeBus(transport);
+    this.index = new UseCaseSuggestionIndex(embedderLoader, new PostgresUseCaseCatalogSource(db, builtinSkillSlugs), this.notifier);
   }
-  start(): void { void this.index.warm(); }
-  stop(): void { this.index.dispose(); }
+  /**
+   * Warm immediately (suggestions must not wait on Redis), and refresh once the
+   * subscription is live: any write whose event fired before then is caught by
+   * that fingerprint check instead of waiting for the 15 s backstop.
+   */
+  start(): void {
+    void this.index.warm();
+    void this.notifier.start().then(() => this.index.refresh());
+  }
+  stop(): void { this.index.dispose(); void this.notifier.stop(); }
 }

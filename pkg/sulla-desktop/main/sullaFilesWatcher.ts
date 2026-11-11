@@ -23,6 +23,8 @@ import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 import { UseCaseSuggestionCompositionRoot, type SuggestionOptions, type UseCaseSuggestion } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import { getBuiltinSkillSpecs } from '@pkg/agent/builtinSkills';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { redisClient } from '@pkg/agent/database/RedisClient';
+import { RedisUseCaseChangeTransport } from '@pkg/agent/useCases/UseCaseChangeBus';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
@@ -154,7 +156,7 @@ class SullaFilesWatcher {
   private nativePollRunning = false;
   private nativePollDelayMs = NATIVE_POLL_ACTIVE_MS;
   private nativeNextPollAt = 0;
-  private readonly suggestionRoot = new UseCaseSuggestionCompositionRoot(postgresClient, getBuiltinSkillSpecs().map(skill => skill.slug));
+  private readonly suggestionRoot = new UseCaseSuggestionCompositionRoot(postgresClient, getBuiltinSkillSpecs().map(skill => skill.slug), new RedisUseCaseChangeTransport(redisClient));
   private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init), this.suggestionRoot.notifier);
   private nativeEnabled = false;
   private started = false;
@@ -438,7 +440,7 @@ class SullaFilesWatcher {
     }catch(error){const message=error instanceof Error?error.message:String(error);await state('error',0,message).catch(()=>undefined);throw error}
   }
 
-  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.badgeTimer) clearInterval(this.badgeTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.suggestionRoot.stop(); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.badgeTimer) clearInterval(this.badgeTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void {
     if (this.rescanTimer) clearTimeout(this.rescanTimer);
     this.rescanTimer = setTimeout(() => {
@@ -784,10 +786,6 @@ class SullaFilesWatcher {
   }
 
   async queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return this.suggestionRoot.index.suggest(text, options); }
-
-  notifyUseCaseChange(type:'skill'|'agent'|'workflow'|'function'|'recipe', slug:string, change:'published'|'installed'|'updated'|'deleted'):void {
-    this.suggestionRoot.notifier.emit({ type, slug, change });
-  }
 
   async folderForCollection(collectionId?:string):Promise<string> {
     if (!collectionId) return this.folder;
