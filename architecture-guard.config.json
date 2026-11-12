@@ -1,1 +1,12 @@
-{ "maxLines": 400 }
+{
+  "maxLines": 400,
+  "frozen": {
+    "services/sulla-vault/src/browserEnvelope/syncRunner.ts": {
+      "reason": "Today's v3 Cloud vault sync runner (SR). It stays in service until Replica replaces it (M3 desktop vault OOP); bug fixes only. New sync code goes in browserEnvelope/sync/ or the Replica, not here.",
+      "until": "Replica replaces CloudVaultSyncRunner (epic/vault-oop); then delete the file and this entry together.",
+      "maxLines": 517,
+      "exports": ["CloudSyncAuthority", "CloudSyncError", "CloudVaultSyncRunner", "SyncOp", "UnlockedUserKey"],
+      "exceptions": []
+    }
+  }
+}
