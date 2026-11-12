@@ -149,6 +149,12 @@ dbDescribe('AgentJobRepository', () => {
   it('backfills typed task ownership idempotently and projects ancestors without payload JSON', async() => {
     // risk: losing job/task ownership across migration restart or omitting a finished ancestor
     const base = Date.now();
+    const child = { ...job('projection-child', base), parentThreadId: 'projection-root-thread', tasks: [
+      { agentId: 'worker', label: 'active', prompt: 'synthetic', status: 'running' as const, threadId: 'projection-live-thread', visibility: 'tab' as const },
+      { agentId: 'worker-2', label: 'queued', prompt: 'synthetic', status: 'queued' as const, threadId: 'projection-live-thread-2' },
+    ] };
+    // Child is written before its parent ownership row; parent insertion must repair the relation.
+    await repository.insertJob(child);
     const ancestor = job('projection-ancestor', base - 3_000);
     ancestor.status = 'completed';
     ancestor.finishedAt = Date.now() - 60 * 60_000;
@@ -164,11 +170,13 @@ dbDescribe('AgentJobRepository', () => {
     await repository.insertJob(cycleB);
     await repository.complete({ ...cycleB, status: 'completed', finishedAt: Date.now() });
     await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '1 hour' WHERE job_id = $1`, [cycleB.jobId]);
-    const child = { ...job('projection-child', base), parentThreadId: 'projection-root-thread', tasks: [
-      { agentId: 'worker', label: 'active', prompt: 'synthetic', status: 'running' as const, threadId: 'projection-live-thread' },
-      { agentId: 'worker-2', label: 'queued', prompt: 'synthetic', status: 'queued' as const, threadId: 'projection-live-thread-2' },
-    ] };
-    await repository.insertJob(child);
+    const recentTerminal = job('projection-recent-terminal', base - 100);
+    await repository.insertJob(recentTerminal);
+    await repository.complete({ ...recentTerminal, status: 'completed', finishedAt: Date.now() });
+    const expired = job('projection-expired-unrelated', base - 3_600_000);
+    await repository.insertJob(expired);
+    await repository.complete({ ...expired, status: 'completed', finishedAt: Date.now() - 3_600_000 });
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '1 hour' WHERE job_id = $1`, [expired.jobId]);
 
     expect(await database.query(`SELECT job_id, task_index, task_status, thread_id FROM agent_job_tasks WHERE job_id = $1 ORDER BY task_index`, [child.jobId]))
       .toEqual([
@@ -182,9 +190,80 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([{ thread_id: 'projection-root-thread' }]);
 
     const projected = await repository.jobsForProjection(120_000);
-    expect(projected.map(item => item.jobId)).toEqual([ancestor.jobId, cycleA.jobId, cycleB.jobId, child.jobId]);
+    expect(projected.map(item => item.jobId)).toEqual([ancestor.jobId, cycleA.jobId, cycleB.jobId, recentTerminal.jobId, child.jobId]);
+    expect(projected.find(item => item.jobId === child.jobId)).toMatchObject({ parentJobId: ancestor.jobId, parentTaskIndex: 0 });
     expect(projected[0].tasks[0]).toMatchObject({ threadId: 'projection-root-thread', status: 'completed' });
+    expect(projected.find(item => item.jobId === child.jobId)?.tasks).toMatchObject([
+      { threadId: 'projection-live-thread', status: 'running', visibility: 'tab' },
+      { threadId: 'projection-live-thread-2', status: 'queued' },
+    ]);
+    expect(projected.map(item => item.jobId)).not.toContain(expired.jobId);
     expect(JSON.stringify(projected)).not.toContain('PRIVATE SYNTHETIC PAYLOAD');
+
+    await repository.replaceState({ ...ancestor, tasks: [{ ...ancestor.tasks[0], threadId: 'projection-root-thread-renamed' }] });
+    expect((await repository.job(child.jobId))?.parentJobId).toBeNull();
+    await repository.replaceState({ ...ancestor, tasks: ancestor.tasks });
+    expect((await repository.job(child.jobId))?.parentJobId).toBe(ancestor.jobId);
+  });
+
+
+  it('keeps the full completion status needed for job rollup and delivers markers without stale rows', async() => {
+    // risk: compact projection misreports settled task status or loses delivery freshness
+    const input = job('projection-completion-rollup');
+    const completion = { label: 'lane', status: 'completed' as const, output: 'synthetic', threadId: 'projection-completion-thread' };
+    input.tasks[0] = { ...input.tasks[0], status: 'error', completion };
+    await repository.insertJob(input);
+    await repository.updateTaskCompletions(input.jobId, 0, input.tasks, [completion]);
+    await repository.markTaskCompletionFirstDelivered(input.jobId, 0, 10);
+    await repository.markTaskCompletionDelivered(input.jobId, 0, 20);
+    const [projection] = await repository.jobsForProjection(120_000);
+    expect(projection.tasks[0]).toMatchObject({ status: 'error', completion: { status: 'completed' } });
+    expect(projection.results).toEqual([]); // state rollup reads task.completion.status; state projection never reads result payloads
+
+    await repository.updateTasks(input.jobId, [input.tasks[0], { ...input.tasks[0], status: 'queued' }]);
+    expect(await database.query(`SELECT task_index FROM agent_job_tasks WHERE job_id = $1 ORDER BY task_index`, [input.jobId]))
+      .toEqual([{ task_index: 0 }, { task_index: 1 }]);
+    await repository.updateTasks(input.jobId, [input.tasks[0]]);
+    expect(await database.query(`SELECT task_index FROM agent_job_tasks WHERE job_id = $1 ORDER BY task_index`, [input.jobId]))
+      .toEqual([{ task_index: 0 }]);
+  });
+
+  it('includes every ancestor beyond the old fixed recursion depth', async() => {
+    // risk: live descendants detach from deep managers when an arbitrary ancestry cap is reached
+    const base = Date.now() - 60 * 60_000;
+    let parentThreadId = 'projection-deep-root';
+    const ids: string[] = [];
+    for (let depth = 0; depth < 12; depth++) {
+      const current = job(`projection-deep-${ depth }`, base + depth);
+      current.parentThreadId = parentThreadId;
+      current.tasks[0] = { ...current.tasks[0], status: 'completed', threadId: `projection-deep-thread-${ depth }` };
+      await repository.insertJob(current);
+      await repository.complete({ ...current, status: 'completed', finishedAt: base + depth });
+      ids.push(current.jobId);
+      parentThreadId = `projection-deep-thread-${ depth }`;
+    }
+    const leaf = { ...job('projection-deep-live-leaf'), parentThreadId, tasks: [{
+      agentId: 'leaf', label: 'leaf', prompt: 'synthetic', status: 'running' as const, threadId: 'projection-deep-live-thread',
+    }] };
+    await repository.insertJob(leaf);
+    const result = await repository.jobsForProjection(0);
+    expect(result.map(item => item.jobId)).toEqual([...ids, leaf.jobId]);
+    expect(result[result.length - 1]).toMatchObject({ parentJobId: ids[ids.length - 1], parentTaskIndex: 0 });
+  });
+
+  it('cascades normalized task rows and detaches children when a job is deleted', async() => {
+    // risk: retention leaves orphaned typed rows or invalid parent identities
+    const parent = job('projection-delete-parent');
+    parent.tasks[0] = { ...parent.tasks[0], status: 'completed', threadId: 'projection-delete-parent-thread' };
+    await repository.insertJob(parent);
+    const child = job('projection-delete-child');
+    child.parentThreadId = 'projection-delete-parent-thread';
+    await repository.insertJob(child);
+    expect((await repository.job(child.jobId))?.parentJobId).toBe(parent.jobId);
+
+    await database.query(`DELETE FROM agent_jobs WHERE job_id = $1`, [parent.jobId]);
+    expect(await database.query(`SELECT task_index FROM agent_job_tasks WHERE job_id = $1`, [parent.jobId])).toEqual([]);
+    expect(await repository.job(child.jobId)).toMatchObject({ parentJobId: null, parentTaskIndex: null });
   });
 
   it('keeps normalized task status current through stop, reopen, park, resume, and completion writes', async() => {
@@ -203,6 +282,56 @@ dbDescribe('AgentJobRepository', () => {
     await repository.stop(input.jobId, [{ ...input.tasks[0], status: 'stopped' }], 'human', 'synthetic test');
     expect(await database.query(`SELECT task_status FROM agent_job_tasks WHERE job_id = $1`, [input.jobId]))
       .toEqual([{ task_status: 'stopped' }]);
+  });
+
+  it('mirrors every direct repository lifecycle/CAS write and rejects out-of-order task state', async() => {
+    // risk: a direct SQL write path bypasses normalized state, or a stale CAS resurrects it
+    const input = job('projection-all-write-paths');
+    input.parentThreadId = 'projection-write-path-root';
+    input.tasks[0] = { ...input.tasks[0], status: 'running', startedAt: input.createdAt, threadId: 'projection-write-path-thread', generation: 1 };
+    await repository.insertJob(input);
+    const taskRow = async() => (await database.query(`SELECT task_status, thread_id, parent_job_id, completion_status
+      FROM agent_job_tasks t LEFT JOIN agent_jobs j USING (job_id) WHERE t.job_id = $1 AND task_index = 0`, [input.jobId]))[0];
+    expect(await taskRow()).toMatchObject({ task_status: 'running', thread_id: 'projection-write-path-thread' });
+
+    const parked = { ...input, status: 'parked' as const, tasks: [{ ...input.tasks[0], status: 'parked' as const, waitReason: 'children' }] };
+    await repository.replaceState(parked);
+    expect(await taskRow()).toMatchObject({ task_status: 'parked', thread_id: 'projection-write-path-thread' });
+    const accepted = await repository.replaceStateIfActivityUnchanged({ ...parked, status: 'running', tasks: [{ ...parked.tasks[0], status: 'running' }] }, 0, input.createdAt);
+    expect(accepted).toBe(true);
+    const stale = await repository.replaceStateIfActivityUnchanged({ ...parked, status: 'running', tasks: [{ ...parked.tasks[0], status: 'queued', threadId: 'stale-thread' }] }, 0, input.createdAt - 1);
+    expect(stale).toBe(false);
+    expect(await taskRow()).toMatchObject({ task_status: 'running', thread_id: 'projection-write-path-thread' });
+
+    await repository.updateTasks(input.jobId, [{ ...input.tasks[0], status: 'queued' }]);
+    await repository.markTaskCompletionFirstDelivered(input.jobId, 0, 10);
+    await repository.markTaskCompletionDelivered(input.jobId, 0, 20);
+    const completion = { label: 'lane', status: 'completed' as const, output: 'synthetic', threadId: 'projection-write-path-thread' };
+    const completedTasks = [{ ...input.tasks[0], status: 'completed' as const, completion, returnedAt: Date.now(), finishedAt: Date.now() }];
+    await repository.updateTaskCompletions(input.jobId, 0, completedTasks, [completion]);
+    expect(await taskRow()).toMatchObject({ task_status: 'completed', completion_status: 'completed' });
+    await repository.complete({ ...input, status: 'completed', finishedAt: Date.now(), tasks: completedTasks, results: [completion] });
+    await repository.markCompletionDelivered(input.jobId);
+    const reopen = await repository.claimReopen(input.jobId, 0, 1);
+    expect(reopen?.generation).toBe(2);
+    expect(await taskRow()).toMatchObject({ task_status: 'running', completion_status: null });
+
+    await repository.park(input.jobId, [{ ...input.tasks[0], status: 'parked' }], 1, 'parked');
+    expect(await taskRow()).toMatchObject({ task_status: 'parked' });
+    await repository.resume(input.jobId, [{ ...input.tasks[0], status: 'running' }]);
+    expect(await taskRow()).toMatchObject({ task_status: 'running' });
+    await repository.dismissTasks(input.jobId, input.parentThreadId!, [{ ...input.tasks[0], status: 'running', dismissed: true }], false);
+    expect(await database.query(`SELECT dismissed FROM agent_job_tasks WHERE job_id = $1 AND task_index = 0`, [input.jobId]))
+      .toEqual([{ dismissed: true }]);
+    await repository.fail(input.jobId, 'synthetic failure', [{ ...input.tasks[0], status: 'error' }]);
+    expect(await taskRow()).toMatchObject({ task_status: 'error' });
+    await repository.stop(input.jobId, [{ ...input.tasks[0], status: 'stopped' }], 'human', 'synthetic stop');
+    expect(await taskRow()).toMatchObject({ task_status: 'stopped' });
+    await repository.saveStoppedResults(input.jobId, [], [{ ...input.tasks[0], status: 'stopped', summary: 'late result' }]);
+    expect(await taskRow()).toMatchObject({ task_status: 'stopped' });
+    await repository.replaceState({ ...input, status: 'failed', tasks: [{ ...input.tasks[0], status: 'error' }] });
+    expect((await repository.job(input.jobId))?.status).toBe('stopped');
+    expect(await taskRow()).toMatchObject({ task_status: 'error' });
   });
 
   it('detects queued or running children across multiple task threads', async() => {
