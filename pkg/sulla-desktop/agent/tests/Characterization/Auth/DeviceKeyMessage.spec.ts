@@ -92,6 +92,8 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
       expect(crypto.verify(null, new DeviceMessage(purpose, PARTS).toBytes(), publicKey, Buffer.from(exact, 'base64')), purpose).toBe(true);
 
       const { ts, signature } = await signDeviceMessage(purpose, PARTS);
+      // risk: the Workers verifier expects unix SECONDS; milliseconds fail its freshness window.
+      expect(Math.abs(ts - Math.floor(Date.now() / 1000)), purpose).toBeLessThanOrEqual(5);
       const signed = new DeviceMessage(purpose, [...PARTS, ts]).toBytes();
       expect(crypto.verify(null, signed, publicKey, Buffer.from(signature, 'base64')), purpose).toBe(true);
       expect(crypto.verify(null, new DeviceMessage(purpose, PARTS).toBytes(), publicKey, Buffer.from(signature, 'base64'))).toBe(false);

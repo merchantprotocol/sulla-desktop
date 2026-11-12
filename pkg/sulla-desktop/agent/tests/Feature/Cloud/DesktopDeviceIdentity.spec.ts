@@ -155,6 +155,8 @@ describe('Desktop device identity on the domain DeviceIdentityService', () => {
     for (const content of ['{not json', JSON.stringify({ v: 1, publicKey: 'x', privateKey: '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n' }),
       JSON.stringify({ v: 1, publicKey: 'x', privateKey: crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString() }), '']) {
       fs.writeFileSync(keyFile(), content);
+      // The port contract: a present-but-corrupt store throws; it never reads as "absent".
+      await expect(FileDeviceKeyStore.in(() => dir, new FixedClock(NOW)).read(), content.slice(0, 20)).rejects.toThrow();
       await expect(identity().publicKey(), content.slice(0, 20)).rejects.toBeInstanceOf(DeviceIdentityError);
       expect(fs.readFileSync(keyFile(), 'utf-8')).toBe(content);
     }
