@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { spawn } from 'child_process';
+import type { ChildProcess, SpawnOptions } from 'child_process';
 import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -16,6 +17,10 @@ export interface WslCommandResult {
 
 export type WslCommandRunner = (args: string[]) => Promise<WslCommandResult>;
 
+export interface WslProcessSpawner {
+  spawn(executable: string, args: string[], options: SpawnOptions): ChildProcess;
+}
+
 export interface WslDistribution {
   name: string;
   state: 'running' | 'stopped';
@@ -24,8 +29,11 @@ export interface WslDistribution {
 }
 
 export interface WslHostInspection {
-  available: boolean;
+  /** True means wsl.exe exists and can list distros, not that WSL2 is installed/enabled. */
+  cliAvailable: boolean;
   distributions: WslDistribution[];
+  /** True only when at least one registered distro is configured as WSL2 (running or stopped). */
+  hasWsl2Distro: boolean;
   error?: string;
 }
 
@@ -66,15 +74,18 @@ export class Wsl2Host {
   private readonly run: WslCommandRunner;
   private readonly verifyAsset: (file: string, expectedSha256: string) => Promise<void>;
   private readonly distributionName: string;
+  private readonly processSpawner: WslProcessSpawner;
 
   constructor(
     run: WslCommandRunner = runWslCommand,
     verifyAsset: (file: string, expectedSha256: string) => Promise<void> = verifyFileSha256,
     distributionName = SULLA_WSL_DISTRIBUTION,
+    processSpawner: WslProcessSpawner = { spawn },
   ) {
     this.run = run;
     this.verifyAsset = verifyAsset;
     this.distributionName = distributionName;
+    this.processSpawner = processSpawner;
   }
 
   async inspect(): Promise<WslHostInspection> {
@@ -82,9 +93,9 @@ export class Wsl2Host {
       const result = await this.run(['--list', '--verbose']);
       const distributions = parseWslDistributionList(result.stdout);
 
-      return { available: true, distributions };
+      return { cliAvailable: true, distributions, hasWsl2Distro: distributions.some(distro => distro.version === 2) };
     } catch (error) {
-      return { available: false, distributions: [], error: error instanceof Error ? error.message : String(error) };
+      return { cliAvailable: false, distributions: [], hasWsl2Distro: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -99,9 +110,9 @@ export class Wsl2Host {
     }
     if (!/^[a-f0-9]{64}$/i.test(rootfsSha256)) throw new Error('Invalid WSL rootfs SHA-256');
 
-    const { available, distributions, error } = await this.inspect();
+    const { cliAvailable, distributions, error } = await this.inspect();
 
-    if (!available) throw new Error(`Windows Subsystem for Linux is unavailable: ${ error ?? 'wsl.exe failed' }`);
+    if (!cliAvailable) throw new Error(`Windows Subsystem for Linux is unavailable: ${ error ?? 'wsl.exe failed' }`);
     if (distributions.some(distro => distro.name.toLowerCase() === this.distributionName.toLowerCase())) {
       throw new Error(`Refusing to replace existing WSL distribution "${ this.distributionName }"`);
     }
@@ -118,6 +129,15 @@ export class Wsl2Host {
     return this.run(['--distribution', this.distributionName, '--user', 'root', '--exec', command, ...args]);
   }
 
+  /** Spawn an argument-safe long-running guest command for runtime lifecycle ownership. */
+  spawnInDistribution(command: string, args: string[], options: SpawnOptions = {}): ChildProcess {
+    if (!command.trim() || /[\r\n\0]/.test(command)) throw new Error('Invalid WSL command');
+
+    return this.processSpawner.spawn(wslExecutablePath(), [
+      '--distribution', this.distributionName, '--user', 'root', '--exec', command, ...args,
+    ], { ...options, windowsHide: true });
+  }
+
   /** Stop only the named app-owned distro. Does not run `wsl --shutdown`. */
   async terminateDistribution(): Promise<void> {
     await this.run(['--terminate', this.distributionName]);
@@ -126,7 +146,7 @@ export class Wsl2Host {
 
 function runWslCommand(args: string[]): Promise<WslCommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('wsl.exe', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(wslExecutablePath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
 
@@ -140,6 +160,12 @@ function runWslCommand(args: string[]): Promise<WslCommandResult> {
       else reject(new Error(`wsl.exe exited with code ${ code }: ${ decodeWslOutput(result.stderr) }`));
     });
   });
+}
+
+function wslExecutablePath(): string {
+  const windowsRoot = process.env.WINDIR ?? process.env.SystemRoot ?? 'C:\\Windows';
+
+  return path.win32.join(windowsRoot, 'System32', 'wsl.exe');
 }
 
 export function verifyFileSha256(file: string, expectedSha256: string): Promise<void> {

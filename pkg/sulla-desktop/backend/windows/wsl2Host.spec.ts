@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { EventEmitter } from 'events';
+import path from 'path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { decodeWslOutput, parseWslDistributionList, SULLA_WSL_DISTRIBUTION, Wsl2Host } from './wsl2Host';
@@ -30,9 +33,19 @@ describe('WSL2 host adapter', () => {
     const run = vi.fn().mockRejectedValue(new Error('ENOENT'));
     const host = new Wsl2Host(run);
 
-    await expect(host.inspect()).resolves.toEqual({ available: false, distributions: [], error: 'ENOENT' });
+    await expect(host.inspect()).resolves.toEqual({ cliAvailable: false, distributions: [], hasWsl2Distro: false, error: 'ENOENT' });
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(['--list', '--verbose']);
+  });
+
+  it('distinguishes an available WSL CLI from actually observed WSL2 distro support', async() => {
+    const host = new Wsl2Host(async() => ({ stdout: 'NAME STATE VERSION\n  Ubuntu Stopped 1\n' }));
+
+    await expect(host.inspect()).resolves.toEqual({
+      cliAvailable: true,
+      distributions: [{ name: 'Ubuntu', state: 'stopped', version: 1, isDefault: false }],
+      hasWsl2Distro: false,
+    });
   });
 
   it('imports only a missing distro from absolute Windows asset paths with WSL2 forced', async() => {
@@ -82,5 +95,19 @@ describe('WSL2 host adapter', () => {
       [['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'root', '--exec', '/usr/local/bin/sulla-runtime', 'exec', '--', 'printf', '%s', 'value with spaces']],
       [['--terminate', SULLA_WSL_DISTRIBUTION]],
     ]);
+  });
+
+  it('spawns a long-running command in only the app distro without opening a Windows console', () => {
+    const child = new EventEmitter();
+    const processSpawner = { spawn: vi.fn(() => child as any) };
+    const host = new Wsl2Host(async() => ({ stdout: '' }), async() => {}, undefined, processSpawner);
+
+    host.spawnInDistribution('/usr/local/bin/sulla-runtime', ['start', '--data-disk', 'C:\\Users\\Jon\\Sulla Data\\disk.img'], { windowsHide: false });
+
+    expect(processSpawner.spawn).toHaveBeenCalledWith(
+      path.win32.join(process.env.WINDIR ?? process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe'),
+      ['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'root', '--exec', '/usr/local/bin/sulla-runtime', 'start', '--data-disk', 'C:\\Users\\Jon\\Sulla Data\\disk.img'],
+      { windowsHide: true },
+    );
   });
 });
