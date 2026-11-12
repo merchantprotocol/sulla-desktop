@@ -15,14 +15,20 @@ import { MobyClient } from '../containerClient/mobyClient';
 
 import { LinuxDockerHost, LinuxRuntimePaths, prepareLinuxRuntimePaths } from './dockerHost';
 import { LinuxContainerExecutor, NodeDockerCli } from './linuxContainerExecutor';
+import { LinuxManagedServices } from './linuxManagedServices';
+import { createDesktopLinuxManagedServices } from './linuxServicesWiring';
 import { LinuxPublishedPort, LinuxRuntimeComposeBuilder } from './linuxRuntimeCompose';
 
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 export const LINUX_PROJECT_NAME = 'sulla-desktop-linux';
 export const LINUX_CONTAINER_NAME = 'sulla-desktop-linux-runtime';
-/** Interim image: replace with the pinned Sulla guest image once it is published for Linux. */
-export const LINUX_DEFAULT_IMAGE = 'alpine:3.23';
+/**
+ * The runtime image is built from assets/runtime/guest/Dockerfile (target
+ * `linux-runtime`) by build-linux-runtime.sh. There is no silent fallback to a
+ * generic image: a missing image fails start() with the build instruction.
+ */
+export const LINUX_DEFAULT_IMAGE = 'sulla-desktop-linux-runtime:0.3.0';
 
 export interface LinuxBackendDependencies {
   host: LinuxDockerHost;
@@ -30,6 +36,8 @@ export interface LinuxBackendDependencies {
   executor: VMExecutor;
   preparePaths(appDataDirectory: string): Promise<LinuxRuntimePaths>;
   engineClientFactory(executor: VMExecutor, endpoint: string): ContainerEngineClient;
+  /** Managed Postgres/Redis/function-runtime services. When absent the backend reports managesSullaServices=false. */
+  services?: LinuxManagedServices;
 }
 
 export interface LinuxBackendOptions {
@@ -47,9 +55,11 @@ export interface LinuxBackendOptions {
 export class LinuxDockerBackend extends events.EventEmitter implements VMBackend {
   static create(options: LinuxBackendOptions): LinuxDockerBackend {
     const cli = new NodeDockerCli();
+    const host = new LinuxDockerHost();
 
     return new LinuxDockerBackend(options, {
-      host:                new LinuxDockerHost(),
+      host,
+      services:            createDesktopLinuxManagedServices(),
       composeBuilder:      new LinuxRuntimeComposeBuilder(),
       executor:            new LinuxContainerExecutor(cli, LINUX_CONTAINER_NAME),
       preparePaths:        prepareLinuxRuntimePaths,
@@ -64,7 +74,11 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
 
   readonly backend = 'linux-docker' as const;
   readonly executor: VMExecutor;
-  readonly managesSullaServices = false;
+  /** True only when the services seam is wired: background.ts then waits for 'sulla-managed-services-ready'. */
+  get managesSullaServices(): boolean {
+    return this.deps.services !== undefined;
+  }
+
   debug = false;
   noModalDialogs = false;
   progress: BackendProgress = { current: 0, max: 0 };
@@ -141,13 +155,18 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
         this.setProgress('Checking Docker Engine', 0);
         const inspection = await this.deps.host.assertReady();
 
+        this.lastCommand = 'verify runtime image';
+        const image = this.options.image ?? LINUX_DEFAULT_IMAGE;
+
+        await this.deps.host.assertImagePresent(image, 'Build it with assets/runtime/guest/build-linux-runtime.sh (docker buildx build --target linux-runtime).');
+
         this.lastCommand = 'prepare app-owned runtime paths';
         this.setProgress('Preparing runtime directories', 1);
         const paths = await this.deps.preparePaths(this.options.appDataDirectory);
 
         this.lastCommand = 'write compose file';
         const composeFile = await this.deps.composeBuilder.write(paths, {
-          image:         this.options.image ?? LINUX_DEFAULT_IMAGE,
+          image,
           containerName: LINUX_CONTAINER_NAME,
           cpus:          config.virtualMachine.numberCPUs,
           memoryMiB:     Math.round(config.virtualMachine.memoryInGB * 1024),
@@ -163,6 +182,15 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
         this.engineClient = this.deps.engineClientFactory(this.deps.executor, inspection.endpoint ?? '');
         this.setProgress('Runtime ready', 4);
         this.setState(State.STARTED);
+        if (this.deps.services) {
+          this.lastCommand = 'prepare Sulla managed services';
+          await this.deps.services.prepare(paths);
+          // Postgres/Redis are health-gated in the background, as on macOS; the
+          // first-run flow waits for 'sulla-managed-services-ready'.
+          void this.deps.services.run().catch((error) => {
+            this.lastError = error instanceof Error ? error.message : String(error);
+          });
+        }
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : String(error);
         this.engineClient = undefined;
@@ -182,6 +210,7 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
     try {
       const paths = await this.deps.preparePaths(this.options.appDataDirectory);
 
+      await this.deps.services?.stop();
       this.lastCommand = `docker compose down ${ LINUX_PROJECT_NAME }`;
       await this.deps.host.stopProject({ composeFile: path.join(paths.compose, 'docker-compose.json'), projectName: LINUX_PROJECT_NAME });
       this.engineClient = undefined;

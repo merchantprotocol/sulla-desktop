@@ -21,13 +21,14 @@ import { LinuxDockerBackend, LINUX_CONTAINER_NAME } from './linuxVmBackend';
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const config: any = { virtualMachine: { numberCPUs: 2, memoryInGB: 2 } };
 
-function setup(overrides: { rootless?: boolean; composeUp?: number } = {}) {
+function setup(overrides: { rootless?: boolean; composeUp?: number; services?: any; imageMissing?: boolean } = {}) {
   const calls: string[][] = [];
   const run = vi.fn(async(args: string[]) => {
     calls.push(args);
     if (args[0] === 'compose' && args[1] === 'version') return ok('2.30.0');
     if (args[0] === 'context') return ok('unix:///run/user/1000/docker.sock');
     if (args[0] === 'info') return ok(overrides.rootless === false ? '["name=seccomp"]' : '["name=rootless"]');
+    if (args[0] === 'image' && overrides.imageMissing) return { stdout: '', stderr: 'no such image', exitCode: 1 };
     if (args.includes('up')) return { stdout: '', stderr: '', exitCode: overrides.composeUp ?? 0 };
 
     return ok();
@@ -38,6 +39,7 @@ function setup(overrides: { rootless?: boolean; composeUp?: number } = {}) {
   const created: string[] = [];
   const backend = new LinuxDockerBackend({ appDataDirectory: appData }, {
     host:                new LinuxDockerHost(run),
+    services:            overrides.services,
     composeBuilder:      new LinuxRuntimeComposeBuilder(),
     executor:            new LinuxContainerExecutor(cli, LINUX_CONTAINER_NAME),
     preparePaths:        prepareLinuxRuntimePaths,
@@ -137,5 +139,55 @@ describe('LinuxDockerBackend', () => {
     const reason = await backend.getBackendInvalidReason();
 
     expect(os.platform() === 'linux' ? reason?.message : 'rootless').toMatch(/rootless/);
+  });
+});
+
+describe('LinuxDockerBackend managed services seam', () => {
+  const fakeServices = () => {
+    const order: string[] = [];
+
+    return {
+      order,
+      services: {
+        prepare: async() => { order.push('prepare') },
+        run:     async() => { order.push('run') },
+        stop:    async() => { order.push('stop') },
+      },
+    };
+  };
+
+  it('claims managesSullaServices only when the services seam is wired (risk: first-run hanging or falsely "ready")', () => {
+    expect(setup().backend.managesSullaServices).toBe(false);
+    expect(setup({ services: fakeServices().services }).backend.managesSullaServices).toBe(true);
+  });
+
+  it('start prepares then runs the services after the runtime container is up; stop tears services down before compose down', async() => {
+    const fake = fakeServices();
+    const { backend, calls } = setup({ services: fake.services });
+
+    await backend.start(config);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(fake.order).toEqual(['prepare', 'run']);
+    expect(backend.state).toBe(State.STARTED);
+    await backend.stop();
+    expect(fake.order).toEqual(['prepare', 'run', 'stop']);
+    expect(calls.some(a => a.includes('down'))).toBe(true);
+  });
+
+  it('a services preparation failure fails the start as ERROR', async() => {
+    const fake = fakeServices();
+    const { backend } = setup({ services: { ...fake.services, prepare: async() => { throw new Error('compose invalid') } } });
+
+    await expect(backend.start(config)).rejects.toThrow('compose invalid');
+    expect(backend.state).toBe(State.ERROR);
+    expect(fake.order).not.toContain('run');
+  });
+
+  it('a missing runtime image fails before any compose up with the build instruction (risk: silent generic-image fallback)', async() => {
+    const { backend, calls } = setup({ imageMissing: true });
+
+    await expect(backend.start(config)).rejects.toThrow(/sulla-desktop-linux-runtime.*build-linux-runtime\.sh/);
+    expect(backend.state).toBe(State.ERROR);
+    expect(calls.some(a => a.includes('up'))).toBe(false);
   });
 });

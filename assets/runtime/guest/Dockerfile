@@ -13,7 +13,7 @@ COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx docker-cli-compose \
       blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables openssl runc tini linux-lts cpio gzip \
       cifs-utils nfs-utils fuse3 \
-      shadow-uidmap fuse-overlayfs slirp4netns docker-rootless-extras \
+      shadow-subids fuse-overlayfs slirp4netns docker-rootless-extras \
       python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
       coreutils findutils grep sed gawk openssh-client \
     && addgroup -g 1000 sulla && adduser -D -u 1000 -G sulla -s /bin/bash sulla \
@@ -139,3 +139,28 @@ COPY --from=usr /out/ /
 FROM scratch AS wsl-import-rootfs
 COPY --from=image /image/wsl-rootfs.tar /rootfs.tar
 COPY --from=image /image/wsl-rootfs.sha256 /rootfs.tar.sha256
+
+# Linux desktop executor: `docker buildx build --target linux-runtime -t sulla-desktop-linux-runtime:<version> .`
+# (see build-linux-runtime.sh). This is NOT a VM image: it is the userspace the
+# app's single runtime container runs on the user's rootless Docker Engine. It
+# carries the same toolset models use in the macOS guest, minus kernel, init,
+# containerd/dockerd and rootless-engine packages (the engine is the host's).
+# The Docker CLI is here for scripts that expect `docker`; no engine socket is
+# mounted into this container, so it cannot reach any engine.
+FROM alpine:${ALPINE_VERSION} AS linux-runtime
+ARG ALPINE_VERSION
+ARG CLAUDE_CODE_VERSION=2.1.312
+ARG CODEX_VERSION=0.162.1
+RUN apk add --no-cache alpine-base busybox ca-certificates tini openssl iproute2 \
+      docker-cli docker-cli-buildx docker-cli-compose \
+      python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
+      coreutils findutils grep sed gawk openssh-client \
+    && addgroup -g 1000 sulla && adduser -D -u 1000 -G sulla -s /bin/bash sulla \
+    && mkdir -p /mnt/data /mnt/worktrees /mnt/sulla-files /mnt/backups /mnt/sulla-functions/catalog /mnt/sulla-functions/invocations \
+    && npm install --global --no-fund --no-audit --prefix /usr \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+    && test -x /usr/bin/claude && test -x /usr/bin/codex && rm -rf /root/.npm \
+    && printf 'sulla-linux-runtime=0.3.0\nalpine=%s\n' "$ALPINE_VERSION" > /etc/sulla-linux-runtime
+LABEL org.opencontainers.image.title="sulla-desktop-linux-runtime" org.opencontainers.image.version="0.3.0"
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["sleep", "infinity"]

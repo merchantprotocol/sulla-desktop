@@ -18,7 +18,7 @@ export default function factory(arch: Architecture, platform: NodeJS.Platform = 
   }
 
   if (platform !== 'darwin') {
-    throw new Error(`OS "${ platform }" is not supported; Sulla Desktop runs on macOS and Linux (Windows WSL2 is staged separately).`);
+    throw new Error(`OS "${ platform }" is not supported. Only macOS is a released platform; Linux is an unpackaged, experimental backend (rootless Docker required) and Windows WSL2 is staged separately.`);
   }
 
   return new SullaRuntimeBackend(arch);
