@@ -374,8 +374,16 @@ class Builder {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
       await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [target.uname], { stdio: 'inherit' });
     }
-    // Validate the actual prepared source assets and exact target binaries before
-    // signing-related checks, config writes, or electron-builder can consume them.
+    // Restore the externally supplied runtime into the real resource tree first,
+    // so pre-pack validation fingerprints and CPU-audits the bytes we will embed.
+    const runtimeArtifacts = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
+    if (runtimeArtifacts) {
+      await fs.promises.rm(path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true, force: true });
+      await fs.promises.cp(runtimeArtifacts, path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true });
+    }
+    // Fail on missing signing identity before asset fetches; reject bad target inputs
+    // before writing packaging config or invoking electron-builder.
+    await this.verifyMacSigningIdentity();
     const preparation = new PackageTargetPreparationService();
     const preparationProblems = await preparation.prepareAndRecord(
       process.cwd(), path.join(process.cwd(), 'resources'), target, new BundledPackageTargetAssetFetcher(),
@@ -385,7 +393,6 @@ class Builder {
       throw new Error(`The prepared ${ target.key } assets are invalid: ${ preparationProblems.join('; ') }`);
     }
     log.warn('Native ABI compatibility is not independently decoded; target Mach-O CPU and packaged dependency presence checks do not prove Node/Electron ABI compatibility.');
-    await this.verifyMacSigningIdentity();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');

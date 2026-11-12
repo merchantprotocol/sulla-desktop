@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
+import yaml from 'yaml';
 
 import {
   PackageTargetAssetManifest,
@@ -85,6 +88,50 @@ describe('package target integrity', () => {
 
     fs.executableFiles.delete(`/app/resources/${ PackageTargetAssetManifest.hostScripts[0] }`);
     expect(auditor.problems('/repo', '/app/resources', target)).toContain(`${ PackageTargetAssetManifest.hostScripts[0] } is not executable`);
+  });
+
+  it('keeps provenance stable across runtime signing but still detects guest-data mutation', () => {
+    // risk: runtime provenance — signing must not cause a false mismatch or allow guest payload drift.
+    const fs = new MemoryFileSystem();
+    const assets = new PackageTargetAssetManifest();
+    const provenance = new PackageTargetProvenance(fs);
+    const target = PackageTargetSpec.resolve('darwin', 'arm64');
+    for (const asset of PackageTargetAssetManifest.required) fs.files.set(`/resources/${ asset }`, `unsigned:${ asset }`);
+    const beforeSigning = assets.fingerprint('/resources', fs);
+    // External artifact directories are staged as resources before preparation; CPU validation must inspect that selected source.
+    fs.files.set('/external/darwin/sulla-runtime/sulla-runtime', 'external-runtime');
+    const externalRuntimeAuditor = new PackageTargetNativeBinaryAuditor({
+      read: file => file === '/external/darwin/sulla-runtime/sulla-runtime' ? ['arm64'] : null,
+    }, fs);
+    expect(externalRuntimeAuditor.problems('/repo', '/external', PackageTargetSpec.resolve('darwin', 'x64'))).toContain(
+      'darwin/sulla-runtime/sulla-runtime has CPU arm64, not x86_64',
+    );
+
+    provenance.write('/dist/package-target.json', target, beforeSigning);
+    fs.files.set('/resources/darwin/sulla-runtime/sulla-runtime', 'codesign-mutated-signature-bytes');
+    expect(assets.fingerprint('/resources', fs)).toBe(beforeSigning);
+    expect(provenance.problems('/dist/package-target.json', target, assets.fingerprint('/resources', fs))).toEqual([]);
+    fs.files.set('/resources/darwin/sulla-runtime/guest/usr.erofs', 'changed-guest-data');
+    expect(provenance.problems('/dist/package-target.json', target, assets.fingerprint('/resources', fs))).toContain(
+      'packaging target provenance does not match darwin-arm64',
+    );
+  });
+
+  it('requires the node-pty spawn helper in unpacked output and configures its prebuilds outside asar', () => {
+    // risk: terminal startup — node-pty must be able to execute spawn-helper from a real filesystem path.
+    const target = PackageTargetSpec.resolve('darwin', 'arm64');
+    const manifest = new PackageTargetNativeDependencyManifest();
+    const helper = 'node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper';
+    const fs = new MemoryFileSystem();
+    for (const dependency of target.nativeDependencyPaths) fs.files.set(`/unpacked/${ dependency.replace(/^node_modules\//, '') }`, 'binary');
+    fs.files.delete(`/unpacked/${ helper.replace(/^node_modules\//, '') }`);
+    expect(manifest.packagedProblems('/unpacked', target, fs)).toContain(
+      `${ helper } is missing from packaged asar-unpacked output for ${ target.key }`,
+    );
+    fs.files.set(`/unpacked/${ helper.replace(/^node_modules\//, '') }`, 'helper');
+    expect(manifest.packagedProblems('/unpacked', target, fs)).toEqual([]);
+    const config = yaml.parse(readFileSync(path.join(process.cwd(), 'packaging/electron-builder.yml'), 'utf8'));
+    expect(config.asarUnpack).toContain('node_modules/node-pty/prebuilds/**');
   });
 
   it('records immutable target-keyed provenance and rejects stale markers after a target switch', () => {

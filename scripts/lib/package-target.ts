@@ -115,6 +115,9 @@ export class PackageTargetAssetManifest {
   fingerprint(resourcesRoot: string, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string {
     const hash = createHash('sha256');
     for (const asset of PackageTargetAssetManifest.required) {
+      // The runtime is signed after packaging; codesign adds/rewrites its signature.
+      // Its selected-CPU policy is audited independently at both build boundaries.
+      if (asset === 'darwin/sulla-runtime/sulla-runtime') continue;
       const file = path.join(resourcesRoot, asset);
       if (!fileSystem.exists(file)) continue;
       hash.update(asset).update('\0').update(fileSystem.readBinary(file));
