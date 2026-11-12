@@ -69,7 +69,7 @@ export class Wsl2Host {
 
   constructor(
     run: WslCommandRunner = runWslCommand,
-    verifyAsset: (file: string, expectedSha256: string) => Promise<void> = verifySha256,
+    verifyAsset: (file: string, expectedSha256: string) => Promise<void> = verifyFileSha256,
     distributionName = SULLA_WSL_DISTRIBUTION,
   ) {
     this.run = run;
@@ -142,7 +142,7 @@ function runWslCommand(args: string[]): Promise<WslCommandResult> {
   });
 }
 
-function verifySha256(file: string, expectedSha256: string): Promise<void> {
+export function verifyFileSha256(file: string, expectedSha256: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
     const input = fs.createReadStream(file);
