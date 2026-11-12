@@ -7,13 +7,13 @@ import { execFile as nodeExecFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-export interface DockerHostCommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+import {
+  DockerComposeRuntime, DockerComposeProjectSpec, DockerComposeCommandResult, DockerComposeCommandRunner,
+} from '@pkg/backend/containerClient/dockerComposeRuntime';
 
-export type DockerHostCommandRunner = (args: string[], environment?: NodeJS.ProcessEnv) => Promise<DockerHostCommandResult>;
+export type DockerHostCommandResult = DockerComposeCommandResult;
+export type DockerHostCommandRunner = DockerComposeCommandRunner;
+export type LinuxComposeProject = DockerComposeProjectSpec;
 
 export interface LinuxDockerHostInspection {
   cliAvailable: boolean;
@@ -23,15 +23,6 @@ export interface LinuxDockerHostInspection {
   socketPath?: string;
   rootless: boolean;
   errors: string[];
-}
-
-export interface LinuxComposeProject {
-  /** Absolute path to the Linux-host compose file; callers must use app-owned mounts. */
-  composeFile: string;
-  /** Isolated Compose project namespace. This adapter never stops the daemon. */
-  projectName: string;
-  environment?: NodeJS.ProcessEnv;
-  readyTimeoutSeconds?: number;
 }
 
 export interface LinuxRuntimePaths {
@@ -45,7 +36,6 @@ export interface LinuxRuntimePaths {
   backups: string;
 }
 
-const PROJECT_NAME = /^sulla-desktop-[a-z0-9_-]{1,52}$/;
 const MIN_COMPOSE = [2, 17, 0];
 
 /** Create private, app-owned host paths for compose bind sources. */
@@ -92,11 +82,12 @@ export async function prepareLinuxRuntimePaths(appDataDirectory: string): Promis
  * daemon socket would grant service containers host-root access or cross-host
  * filesystem semantics.
  */
-export class LinuxDockerHost {
+export class LinuxDockerHost extends DockerComposeRuntime {
   private readonly run: DockerHostCommandRunner;
   private readonly socketPath: string;
 
   constructor(run: DockerHostCommandRunner = runDocker, socketPath = process.env.DOCKER_HOST ?? '') {
+    super(run);
     this.run = run;
     this.socketPath = socketPath;
   }
@@ -161,37 +152,24 @@ export class LinuxDockerHost {
   }
 
   /** Start only this app-owned Compose project and wait for running/healthy services. */
-  async startProject(project: LinuxComposeProject): Promise<void> {
+  override async startProject(project: LinuxComposeProject): Promise<void> {
     validateProject(project);
     await this.assertReady();
-    const timeout = Math.max(30, Math.min(900, Math.round(project.readyTimeoutSeconds ?? 300)));
-    const result = await this.run([
-      'compose', '--project-name', project.projectName, '--project-directory', path.dirname(project.composeFile),
-      '--file', project.composeFile, 'up', '--detach', '--wait', '--wait-timeout', String(timeout),
-    ], project.environment);
-
-    if (result.exitCode !== 0) throw new Error(`Docker Compose could not start project "${ project.projectName }" (exit ${ result.exitCode }).`);
+    await super.startProject(project);
   }
 
   /** Stop this project only. Named/anonymous volumes and the shared daemon are retained. */
-  async stopProject(project: LinuxComposeProject): Promise<void> {
+  override async stopProject(project: LinuxComposeProject): Promise<void> {
     validateProject(project);
     await this.assertReady();
-    const result = await this.run([
-      'compose', '--project-name', project.projectName, '--project-directory', path.dirname(project.composeFile),
-      '--file', project.composeFile, 'down', '--remove-orphans',
-    ], project.environment);
-
-    if (result.exitCode !== 0) throw new Error(`Docker Compose could not stop project "${ project.projectName }" (exit ${ result.exitCode }).`);
+    await super.stopProject(project);
   }
 }
 
 function validateProject(project: LinuxComposeProject): void {
-  if (!PROJECT_NAME.test(project.projectName)) throw new Error('Docker Compose project name must use the sulla-desktop- prefix.');
+  // The shared lifecycle checks the app namespace and endpoint overrides;
+  // Linux additionally requires the compose file to exist as a regular file.
   if (!path.isAbsolute(project.composeFile)) throw new Error('Docker Compose file path must be absolute.');
-  if (project.environment && ('DOCKER_HOST' in project.environment || 'DOCKER_CONTEXT' in project.environment)) {
-    throw new Error('Compose environment must not override the validated local Docker endpoint.');
-  }
   const file = fs.lstatSync(project.composeFile);
   if (!file.isFile() || file.isSymbolicLink()) throw new Error('Docker Compose file must be a regular file.');
 }

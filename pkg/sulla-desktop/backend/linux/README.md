@@ -17,6 +17,16 @@ package target until the service compose paths and executor have been adapted
 without exposing arbitrary host commands or user-home paths, then verified by
 a real Linux install/start/stop smoke.
 
+The platform-neutral `DockerComposeRuntime` in
+`backend/containerClient/dockerComposeRuntime.ts` is the shared compose
+lifecycle surface for Windows WSL2: its runner accepts `docker` argv plus an
+optional environment and returns `{ stdout, stderr, exitCode }`; its project
+spec uses an absolute Linux compose path and a `sulla-desktop-*` namespace.
+Windows can adapt `Wsl2Host.runInDistribution('docker', args)` to that runner,
+then use `startProject`/`stopProject`. The WSL wrapper must start the daemon and
+verify readiness before calling it; rootless enforcement belongs only to the
+native Linux host adapter.
+
 ## Windows WSL2 rootfs
 
 `assets/runtime/guest/build-wsl-rootfs.sh amd64 [output-directory]` builds the
