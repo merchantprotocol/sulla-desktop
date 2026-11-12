@@ -60,10 +60,11 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
     }
   });
 
-  it('signs the 6 other registry purposes with their real tag, never an empty one', () => {
+  it('signs every other registry purpose with its real tag, never an empty one', () => {
     // risk: before, these signed "\nuser-1..." (an empty tag) that Cloud could never verify.
+    // The registry grows additively (0.3.3 added replica-v1), so this checks each purpose, not a count.
     const others = ALL.filter(purpose => !(purpose in LegacyDeviceMessageBuilder.TAGS));
-    expect(others).toHaveLength(6);
+    expect(others.length).toBeGreaterThan(0);
     for (const purpose of others) {
       const message = deviceMessage(purpose, PARTS);
       expect(message.startsWith(`${ DeviceMessage.PURPOSE_TAGS[purpose] }\n`), purpose).toBe(true);
