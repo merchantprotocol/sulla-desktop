@@ -21,6 +21,8 @@ import webpack from 'webpack';
 
 import babelConfig from 'babel.config.cjs';
 
+import { EMITTED_NATIVE_NAME } from './foreign-arch-excludes';
+
 /**
  * A promise that is resolved when the child exits.
  */
@@ -164,7 +166,8 @@ export default {
       ],
       devtool:     this.isDevelopment ? 'source-map' : false,
       resolve:     {
-        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'sulla-desktop') },
+        // posix-node is only used on Linux; on macOS its addons would be bundled and signed for nothing.
+        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'sulla-desktop'), ...(process.platform === 'darwin' ? { 'posix-node': false } : {}) },
         extensions: ['.ts', '.js', '.json', '.node'],
         // ESM-style './x.js' imports of TypeScript sources (packages/vault-crypto).
         extensionAlias: { '.js': ['.ts', '.js'] },
@@ -205,7 +208,10 @@ export default {
           },
           {
             test: /\.node$/,
-            use:  { loader: 'node-loader' },
+            // Basename plus content hash (not the hash alone) so packaging can
+            // tell which CPU an emitted addon is for without two same-named
+            // addons colliding; see ForeignArchExcludes.
+            use:  { loader: 'node-loader', options: { name: EMITTED_NATIVE_NAME } },
           },
           {
             test: /(?:^|[/\\])assets[/\\]scripts[/\\]/,

@@ -125,6 +125,9 @@ export interface AgentJob {
   parentChannel?: string;
   parentThreadId?: string;
   parentAgentId?: string;
+  /** Normalized relational parent task identity populated by persistence. */
+  parentJobId?: string | null;
+  parentTaskIndex?: number | null;
   visibility?: AgentJobVisibility;
   projectTaskIds?: string[];
   completionDeliveredAt?: number | null;

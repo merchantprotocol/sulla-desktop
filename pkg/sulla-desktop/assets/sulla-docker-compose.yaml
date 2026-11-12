@@ -53,7 +53,7 @@ services:
       - -c
       - shared_preload_libraries=pg_stat_statements
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 2g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sulla"]
       interval: 10s

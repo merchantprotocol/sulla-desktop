@@ -41,6 +41,9 @@ export class AgentTaskActivityProjector {
   /** Derived from the task's own lifecycle only. The job's status is never inherited. */
   private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null): string {
     if (task.status === 'stopped') return 'stopped';
+    // A stale task error can outlive a successfully delivered completion result.
+    // Match AgentStateService's derived job status while keeping genuine errors terminal.
+    if (task.status === 'error' && task.completion?.status === 'completed') return 'done';
     if (task.status === 'error') return job.error?.startsWith('lost:') ? 'lost' : 'failed';
     if (task.status === 'lost') return 'lost';
     if (task.status === 'completed') return 'done';
