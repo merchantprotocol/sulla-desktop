@@ -153,6 +153,24 @@ describe('authoritative live agent state', () => {
     expect(snapshot.rows.find(row => row.jobId === 'child')).toMatchObject({ parentJobId: 'manager', parentTaskIndex: 0, rootThreadId: 'root-chat', depth: 1 });
   });
 
+  it('loads projection check-ins once and counts live children in linear time', async() => {
+    // risk: large live-agent graphs trigger per-task database reads and quadratic child scans
+    const manager = job('batch-manager', [task({ threadId: 'batch-manager-thread' })]);
+    const childA = job('batch-child-a', [task()], { parentThreadId: 'batch-manager-thread' });
+    const childB = job('batch-child-b', [task()], { parentThreadId: 'batch-manager-thread' });
+    const { states, store } = harness([manager, childA, childB]);
+    store.jobsForProjection = async() => [manager, childA, childB];
+    const telemetry = {
+      latest: vi.fn(async() => null),
+      latestForJobs: vi.fn(async() => ({ 'batch-manager': { 0: { createdAt: 1_500, summary: 'batch', blockers: [] } } })),
+    };
+    const snapshot = await new AgentStateProjector(states, telemetry, () => 10_000).snapshot();
+    expect(telemetry.latestForJobs).toHaveBeenCalledTimes(1);
+    expect(telemetry.latest).not.toHaveBeenCalled();
+    expect(snapshot.rows.find(row => row.jobId === 'batch-manager')?.waitingOnChildren).toBe(2);
+    expect(snapshot.rows.find(row => row.jobId === 'batch-manager')?.lastCheckinSummary).toBe('batch');
+  });
+
   it('shows a parked manager working for its wake turn then parked with live children', async() => {
     // risk: a woken manager disappears or lies parked while executing
     const manager = job('manager', [task({ agentId: 'manager', threadId: 'manager-thread', status: 'parked' })], { status: 'parked', parentThreadId: 'root-chat', waitingOnChildren: 1 });

@@ -214,18 +214,32 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
    * ever run, which parsed tens of MB on each state change.
    */
   async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`WITH RECURSIVE owner AS MATERIALIZED (
-      SELECT j.job_id, task->>'threadId' AS thread_id FROM agent_jobs j
-      CROSS JOIN LATERAL jsonb_array_elements(j.tasks) task WHERE task->>'threadId' IS NOT NULL
-    ), chain(job_id, parent_thread_id, depth) AS (
-      SELECT job_id, parent_thread_id, 0 FROM agent_jobs
-      WHERE status IN ('running', 'parked') OR COALESCE(finished_at, created_at) > now() - ($1::bigint * interval '1 millisecond')
+    const rows = await this.connection.select(`WITH RECURSIVE seeds AS (
+      SELECT job_id FROM agent_jobs WHERE status IN ('running', 'parked')
       UNION
-      SELECT o.job_id, p.parent_thread_id, c.depth + 1 FROM chain c
-      JOIN owner o ON o.thread_id = c.parent_thread_id
-      JOIN agent_jobs p ON p.job_id = o.job_id
-      WHERE c.depth < 8
-    ) SELECT j.* FROM agent_jobs j WHERE j.job_id IN (SELECT job_id FROM chain) ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
+      SELECT job_id FROM agent_jobs
+      WHERE finished_at > now() - ($1::bigint * interval '1 millisecond')
+        OR (finished_at IS NULL AND created_at > now() - ($1::bigint * interval '1 millisecond'))
+    ), related(job_id) AS (
+      SELECT job_id FROM seeds
+      UNION
+      SELECT owner.job_id FROM related child
+      JOIN agent_jobs child_job ON child_job.job_id = child.job_id
+      JOIN agent_job_tasks owner ON owner.thread_id = child_job.parent_thread_id
+      WHERE child_job.parent_thread_id IS NOT NULL
+    )
+    SELECT j.job_id, j.status, j.created_at, j.finished_at, j.task_count, j.error,
+      j.parent_channel, j.parent_thread_id, j.parent_agent_id, j.visibility, j.project_task_ids,
+      j.completion_delivered_at, j.waiting_on_children, j.restart_resume_count, j.dismissed_at,
+      j.stopped_by, j.stop_reason, j.orphaned_child_notices, '[]'::jsonb AS results,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'agentId', t.agent_id, 'label', t.label, 'status', t.task_status,
+        'threadId', t.thread_id, 'startedAt', t.started_at_ms, 'finishedAt', t.finished_at_ms,
+        'returnedAt', t.returned_at_ms, 'wakeAt', t.wake_at_ms, 'dismissed', t.dismissed,
+        'visibility', t.visibility, 'summary', t.summary, 'waitReason', t.wait_reason,
+        'stoppedBy', t.stopped_by, 'stopReason', t.stop_reason
+      ) ORDER BY t.task_index) FROM agent_job_tasks t WHERE t.job_id = j.job_id), '[]'::jsonb) AS tasks
+    FROM agent_jobs j JOIN related r ON r.job_id = j.job_id ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
     return rows.map(row => this.map(row));
   }
 

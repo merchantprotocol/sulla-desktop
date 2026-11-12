@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AgentJobRepository } from '../../../app/Repositories/AgentJobRepository';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { TestDatabase } from '../../Support/TestDatabase';
+import { up as normalizeTasks } from '../../../database/migrations/0155_normalize_agent_job_tasks';
 
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 
@@ -143,6 +144,65 @@ dbDescribe('AgentJobRepository', () => {
     expect(queryCount).toBe(1);
     expect(listed.filter(item => ['running', 'parked'].includes(item.status)).map(item => item.jobId)).toContain('bounded-active');
     expect(listed.filter(item => !['running', 'parked'].includes(item.status))).toHaveLength(25);
+  });
+
+  it('backfills typed task ownership idempotently and projects ancestors without payload JSON', async() => {
+    // risk: losing job/task ownership across migration restart or omitting a finished ancestor
+    const base = Date.now();
+    const ancestor = job('projection-ancestor', base - 3_000);
+    ancestor.status = 'completed';
+    ancestor.finishedAt = Date.now() - 60 * 60_000;
+    ancestor.tasks[0] = { ...ancestor.tasks[0], status: 'completed', threadId: 'projection-root-thread', prompt: 'PRIVATE SYNTHETIC PAYLOAD' };
+    await repository.insertJob(ancestor);
+    await repository.complete({ ...ancestor, status: 'completed', finishedAt: Date.now() });
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '1 hour' WHERE job_id = $1`, [ancestor.jobId]);
+    const cycleA = { ...job('projection-cycle-a', base - 2_000), parentThreadId: 'projection-cycle-b-thread' };
+    cycleA.tasks[0] = { ...cycleA.tasks[0], threadId: 'projection-cycle-a-thread' };
+    const cycleB = { ...job('projection-cycle-b', base - 1_000), parentThreadId: 'projection-cycle-a-thread' };
+    cycleB.tasks[0] = { ...cycleB.tasks[0], threadId: 'projection-cycle-b-thread' };
+    await repository.insertJob(cycleA);
+    await repository.insertJob(cycleB);
+    await repository.complete({ ...cycleB, status: 'completed', finishedAt: Date.now() });
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '1 hour' WHERE job_id = $1`, [cycleB.jobId]);
+    const child = { ...job('projection-child', base), parentThreadId: 'projection-root-thread', tasks: [
+      { agentId: 'worker', label: 'active', prompt: 'synthetic', status: 'running' as const, threadId: 'projection-live-thread' },
+      { agentId: 'worker-2', label: 'queued', prompt: 'synthetic', status: 'queued' as const, threadId: 'projection-live-thread-2' },
+    ] };
+    await repository.insertJob(child);
+
+    expect(await database.query(`SELECT job_id, task_index, task_status, thread_id FROM agent_job_tasks WHERE job_id = $1 ORDER BY task_index`, [child.jobId]))
+      .toEqual([
+        { job_id: child.jobId, task_index: 0, task_status: 'running', thread_id: 'projection-live-thread' },
+        { job_id: child.jobId, task_index: 1, task_status: 'queued', thread_id: 'projection-live-thread-2' },
+      ]);
+    await database.query(`DELETE FROM agent_job_tasks WHERE job_id = $1`, [ancestor.jobId]);
+    await database.query(normalizeTasks);
+    await database.query(normalizeTasks);
+    expect(await database.query(`SELECT thread_id FROM agent_job_tasks WHERE job_id = $1`, [ancestor.jobId]))
+      .toEqual([{ thread_id: 'projection-root-thread' }]);
+
+    const projected = await repository.jobsForProjection(120_000);
+    expect(projected.map(item => item.jobId)).toEqual([ancestor.jobId, cycleA.jobId, cycleB.jobId, child.jobId]);
+    expect(projected[0].tasks[0]).toMatchObject({ threadId: 'projection-root-thread', status: 'completed' });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE SYNTHETIC PAYLOAD');
+  });
+
+  it('keeps normalized task status current through stop, reopen, park, resume, and completion writes', async() => {
+    // risk: indexed task status diverges from the durable lifecycle record
+    const input = job('projection-lifecycle-sync');
+    input.tasks[0] = { ...input.tasks[0], status: 'completed', generation: 1 };
+    await repository.insertJob(input);
+    await repository.complete({ ...input, status: 'completed', finishedAt: Date.now() });
+    await repository.claimReopen(input.jobId, 0, 1);
+    expect(await database.query(`SELECT task_status FROM agent_job_tasks WHERE job_id = $1`, [input.jobId]))
+      .toEqual([{ task_status: 'running' }]);
+    await repository.park(input.jobId, [{ ...input.tasks[0], status: 'parked' }], 1, 'parked');
+    expect(await database.query(`SELECT task_status FROM agent_job_tasks WHERE job_id = $1`, [input.jobId]))
+      .toEqual([{ task_status: 'parked' }]);
+    await repository.resume(input.jobId, [{ ...input.tasks[0], status: 'running' }]);
+    await repository.stop(input.jobId, [{ ...input.tasks[0], status: 'stopped' }], 'human', 'synthetic test');
+    expect(await database.query(`SELECT task_status FROM agent_job_tasks WHERE job_id = $1`, [input.jobId]))
+      .toEqual([{ task_status: 'stopped' }]);
   });
 
   it('detects queued or running children across multiple task threads', async() => {
