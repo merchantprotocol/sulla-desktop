@@ -240,8 +240,11 @@ describe('authoritative live agent state', () => {
     store.jobsForProjection = async() => [completed];
     const [compactCompleted] = await states.jobsForProjection(120_000);
     expect(compactCompleted.status).toBe('completed');
-    expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot()).rows.find(row => row.jobId === 'completed-result'))
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot()).rows;
+    expect(rows.find(row => row.jobId === 'completed-result'))
       .toMatchObject({ state: 'done', canMessage: false, canStop: false });
+    expect(rows.find(row => row.jobId === 'failed-result'))
+      .toMatchObject({ state: 'failed', canMessage: false, canStop: false });
   });
 
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
