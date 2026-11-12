@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -42,8 +43,10 @@ export class NodeAbiElectronSource implements ElectronAbiSource {
   constructor(private readonly resolveFrom: string = process.cwd()) {}
 
   abiFor(electronVersion: string): number {
-    const builderEntry = require.resolve('electron-builder', { paths: [this.resolveFrom] });
-    const nodeAbi = require(require.resolve('node-abi', { paths: [path.dirname(builderEntry), this.resolveFrom] }));
+    // package.ts runs as native ESM under tsx, where `require` is undefined; anchor a CJS resolver at the project.
+    const projectRequire = createRequire(path.join(this.resolveFrom, 'noop.js'));
+    const builderEntry = projectRequire.resolve('electron-builder');
+    const nodeAbi = projectRequire(projectRequire.resolve('node-abi', { paths: [path.dirname(builderEntry), this.resolveFrom] }));
     const abi = Number(nodeAbi.getAbi(electronVersion, 'electron'));
 
     if (!Number.isInteger(abi) || abi <= 0) throw new Error(`Cannot determine the Node ABI of Electron ${ electronVersion }`);
