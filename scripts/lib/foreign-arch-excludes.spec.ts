@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import webpack from 'webpack';
 import yaml from 'yaml';
 
-import { EMITTED_NATIVE_DIR, EMITTED_NATIVE_NAME, ForeignArchExcludes } from './foreign-arch-excludes';
+import { EMITTED_NATIVE_DIR, EMITTED_NATIVE_NAME, ForeignArchExcludes, UnusedMacAddonExcludes } from './foreign-arch-excludes';
 import { MacBuildArchitecture, type MacBuildArch } from './mac-build-architecture';
 import { MachOArchitectureAudit } from './macho-architecture-audit';
 
@@ -73,9 +73,9 @@ class ElectronBuilderFilter {
   }
 
   /** The `files` list electron-builder gets: the real yml, merged like Builder.package(), plus our exclusions. */
-  static forPackage(target: MacBuildArch): ElectronBuilderFilter {
+  static forPackage(target: MacBuildArch, withUnusedMacAddons = false): ElectronBuilderFilter {
     const config = yaml.parse(fs.readFileSync(path.join(ROOT, 'packaging', 'electron-builder.yml'), 'utf-8'));
-    const files = [...config.files, ...config.mac.files, ...new ForeignArchExcludes().globsFor(target)]
+    const files = [...config.files, ...config.mac.files, ...new ForeignArchExcludes().globsFor(target), ...(withUnusedMacAddons ? new UnusedMacAddonExcludes().globs() : [])]
       .map((pattern: string) => pattern.replace('${platform}', 'darwin'));
 
     // dist/app is the bundle; node_modules is added by electron-builder's dependency collector.
@@ -154,7 +154,8 @@ function dualArchTree(): StagedTree {
       .add(`node_modules/node-pty/prebuilds/darwin-${ arch }/spawn-helper`, MachOBytes.thin(arch))
       .add(`node_modules/@napi-rs/xattr-darwin-${ arch }/xattr.darwin-${ arch }.node`, MachOBytes.thin(arch))
       .add(`node_modules/sherpa-onnx-darwin-${ arch }/sherpa-onnx.node`, MachOBytes.thin(arch))
-      .add(`node_modules/sherpa-onnx-node/node_modules/sherpa-onnx-darwin-${ arch }/libonnxruntime.dylib`, MachOBytes.thin(arch))
+      .add(`node_modules/sherpa-onnx-darwin-${ arch }/libonnxruntime.dylib`, MachOBytes.thin(arch))
+      .add(`node_modules/sherpa-onnx-darwin-${ arch }/libsherpa-onnx-c-api.dylib`, MachOBytes.thin(arch))
       .add(`node_modules/some-app/node_modules/node-pty/prebuilds/darwin-${ arch }/pty.node`, MachOBytes.thin(arch))
       .add(`node_modules/@scope/native/prebuilds/darwin-${ arch }/addon.node`, MachOBytes.thin(arch))
       .add(`node_modules/onnxruntime-node/bin/napi-v6/darwin/${ arch }/onnxruntime_binding.node`, MachOBytes.thin(arch))
@@ -181,7 +182,7 @@ describe('packaged tree for one Mac architecture', () => {
   // risk: an Intel release shipping arm64 Mach-O files (the 1.7.6 recovery found this)
   it('stages an x64 package with no arm64 binary and every x64 and neutral file', () => {
     tree = dualArchTree();
-    const kept = tree.stage(ElectronBuilderFilter.forPackage('x64'));
+    const kept = tree.stage(ElectronBuilderFilter.forPackage('x64', true));
 
     expect(new MachOArchitectureAudit().problems(tree.staged, 'x64')).toEqual([]);
     expect(kept.filter(file => /darwin-arm64|darwin\/arm64|aarch64-macos/.test(file))).toEqual([]);
@@ -193,19 +194,19 @@ describe('packaged tree for one Mac architecture', () => {
       'node_modules/@napi-rs/xattr-darwin-x64/xattr.darwin-x64.node',
       'node_modules/sherpa-onnx-darwin-x64/sherpa-onnx.node',
       'node_modules/onnxruntime-node/bin/napi-v6/darwin/x64/onnxruntime_binding.node',
-      'node_modules/posix-node/dist/x86_64-macos.node',
-      `dist/app/${ EMITTED_NATIVE_DIR }/x86_64-macos.0123456789abcdef0123456789abcdef.node`,
     ]));
+    // risk: a signed posix-node Mach-O that SIGILLs on load; nothing on a Mac calls it (Linux-only setpgid)
+    expect(kept.filter(file => /-macos/.test(file))).toEqual([]);
   });
 
   // risk: an Apple Silicon release shipping x64 Mach-O files
   it('stages an arm64 package with no x64 binary and every arm64 and neutral file', () => {
     tree = dualArchTree();
-    const kept = tree.stage(ElectronBuilderFilter.forPackage('arm64'));
+    const kept = tree.stage(ElectronBuilderFilter.forPackage('arm64', true));
 
     expect(new MachOArchitectureAudit().problems(tree.staged, 'arm64')).toEqual([]);
     expect(kept.filter(file => /darwin-x64|darwin\/x64|x86_64-macos/.test(file))).toEqual([]);
-    expect(kept).toContain(`dist/app/${ EMITTED_NATIVE_DIR }/aarch64-macos.0123456789abcdef0123456789abcdef.node`);
+    expect(kept.filter(file => /-macos/.test(file))).toEqual([]);
     expect(kept).toContain('node_modules/node-pty/prebuilds/darwin-arm64/pty.node');
   });
 

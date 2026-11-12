@@ -30,7 +30,8 @@ import yaml from 'yaml';
 
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
-import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
+import { ForeignArchExcludes, UnusedMacAddonExcludes } from './lib/foreign-arch-excludes';
+import { NativeAbiAudit, NodeAbiElectronSource, PackagedAppNativeGate, StaleRebuildMarkerRepair } from './lib/native-abi';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
   PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, RuntimeArtifactSourceValidator, StagedRuntimeInstaller,
@@ -231,6 +232,46 @@ class Builder {
     await this.embedSullaRuntime(context);
     await this.checkBundledAssets(context);
     this.checkNativeArchitectures(context);
+    this.checkNativeAbi(context);
+  }
+
+  /** Node ABI of the Electron being packaged; resolved once, before electron-builder rebuilds native modules. */
+  protected expectedNativeAbi = 0;
+
+  /**
+   * Every addon in the packaged app must match the Electron runtime's Node ABI.
+   * A Node-22 better-sqlite3 (ABI 127) is a valid x64 Mach-O that Electron 40
+   * (ABI 143) refuses to load, so the file-search worker dies at runtime.
+   */
+  protected checkNativeAbi(context: AfterPackContext): void {
+    if (context.electronPlatformName !== 'darwin') return;
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const audit = new NativeAbiAudit();
+    const problems = audit.packagedProblems(path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked'), this.expectedNativeAbi);
+
+    if (problems.length) throw new Error(`Native addons do not match Electron's Node ABI ${ this.expectedNativeAbi }: ${ problems.join('; ') }`);
+  }
+
+  /**
+   * Finishes the package gate on the FINAL (signed) app: loads every
+   * native addon inside the packaged Electron with ELECTRON_RUN_AS_NODE, so no
+   * window opens and the primary app is untouched.
+   */
+  protected checkSignedAppLoadsNativeAddons(target: PackageTargetSpec, productName: string): void {
+    const appPath = path.join(buildUtils.distDir, target.arch === 'arm64' ? 'mac-arm64' : 'mac', `${ productName }.app`);
+    const problems = new PackagedAppNativeGate().problems(appPath, productName, target.nativeDependencyPaths, this.expectedNativeAbi);
+
+    if (problems.length) throw new Error(`The signed ${ target.key } app fails the native gate: ${ problems.join('; ') }`);
+  }
+
+  /** Clears @electron/rebuild markers that disagree with the binary beside them, so the rebuild is real. */
+  protected async repairStaleRebuildMarkers(): Promise<void> {
+    const electronVersion = JSON.parse(await fs.promises.readFile(path.join('node_modules', 'electron', 'package.json'), 'utf8')).version as string;
+    this.expectedNativeAbi = new NodeAbiElectronSource().abiFor(electronVersion);
+    const repair = new StaleRebuildMarkerRepair();
+    const removed = repair.repair(repair.discover(path.join(process.cwd(), 'node_modules')), this.expectedNativeAbi);
+
+    for (const marker of removed) log.warn({ marker }, 'Removed a stale @electron/rebuild marker so the native module is rebuilt for Electron');
   }
 
   /**
@@ -471,7 +512,7 @@ class Builder {
 
     // Leave the other CPU's native prebuilds out of this architecture's app
     // (appended to the merged top-level list above).
-    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.arch)];
+    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.arch), ...new UnusedMacAddonExcludes().globs()];
 
     await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
@@ -495,7 +536,9 @@ class Builder {
       options[electronPlatform] = target.map(t => typeof t === 'string' ? t : t.target);
     }
 
+    await this.repairStaleRebuildMarkers();
     await build(options);
+    this.checkSignedAppLoadsNativeAddons(target, String(config.productName));
 
     return options;
   }
