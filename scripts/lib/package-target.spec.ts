@@ -17,8 +17,8 @@ import {
   PackageTargetPreparationService,
   PackageTargetProvenance,
   PackageTargetSpec,
-  installStagedRuntime,
-  runtimeArtifactSourceProblems,
+  RuntimeArtifactSourceValidator,
+  StagedRuntimeInstaller,
   type PackageTargetFileSystem,
 } from './package-target';
 
@@ -43,10 +43,10 @@ describe('package target integrity', () => {
         writeFileSync(path.join(source, relative), relative);
       }
       writeFileSync(external, 'outside');
-      expect(await runtimeArtifactSourceProblems(source)).toEqual([]);
+      expect(await new RuntimeArtifactSourceValidator().problems(source)).toEqual([]);
       rmSync(path.join(source, 'guest/usr.erofs'));
       symlinkSync(external, path.join(source, 'guest/usr.erofs'));
-      expect(await runtimeArtifactSourceProblems(source)).toContain('guest/usr.erofs must be a regular file, not a symlink or missing');
+      expect(await new RuntimeArtifactSourceValidator().problems(source)).toContain('guest/usr.erofs must be a regular file, not a symlink or missing');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -62,7 +62,7 @@ describe('package target integrity', () => {
       mkdirSync(staged, { recursive: true });
       writeFileSync(path.join(target, 'old'), 'previous');
       writeFileSync(path.join(staged, 'new'), 'replacement');
-      await installStagedRuntime(staged, target, stage);
+      await new StagedRuntimeInstaller().install(staged, target, stage);
       expect(readFileSync(path.join(target, 'new'), 'utf8')).toBe('replacement');
       expect(() => readFileSync(path.join(target, 'old'))).toThrow();
       expect(existsSync(stage)).toBe(false);
@@ -82,7 +82,7 @@ describe('package target integrity', () => {
       mkdirSync(staged, { recursive: true });
       writeFileSync(path.join(target, 'old'), 'previous');
       writeFileSync(path.join(staged, 'new'), 'replacement');
-      await expect(installStagedRuntime(staged, target, stage, {
+      await expect(new StagedRuntimeInstaller({
         rename: async(source, destination) => {
           if (source === staged && !failedInstall) {
             failedInstall = true;
@@ -92,7 +92,7 @@ describe('package target integrity', () => {
         },
         remove: targetPath => fs.promises.rm(targetPath, { recursive: true, force: true }),
         exists: targetPath => fs.promises.access(targetPath).then(() => true, () => false),
-      })).rejects.toThrow('injected replacement failure');
+      }).install(staged, target, stage)).rejects.toThrow('injected replacement failure');
       expect(readFileSync(path.join(target, 'old'), 'utf8')).toBe('previous');
       expect(existsSync(stage)).toBe(false);
     } finally {
@@ -152,7 +152,7 @@ describe('package target integrity', () => {
     }
     for (const file of PackageTargetAssetManifest.hostMachOBinaries) fs.files.set(`/app/resources/${ file }`, 'macho');
     const audited: string[] = [];
-    const auditor = new PackageTargetNativeBinaryAuditor({ read: file => { audited.push(file); return ['x86_64']; } }, fs);
+    const auditor = new PackageTargetNativeBinaryAuditor({ read: file => { audited.push(file); return ['x64']; } }, fs);
 
     expect(auditor.problems('/repo', '/app/resources', target)).toEqual([]);
     expect(audited).toEqual(PackageTargetAssetManifest.hostMachOBinaries.map(file => `/app/resources/${ file }`));
@@ -215,7 +215,7 @@ describe('package target integrity', () => {
       read: file => file === '/external/darwin/sulla-runtime/sulla-runtime' ? ['arm64'] : null,
     }, fs);
     expect(externalRuntimeAuditor.problems('/repo', '/external', PackageTargetSpec.resolve('darwin', 'x64'))).toContain(
-      'darwin/sulla-runtime/sulla-runtime has CPU arm64, not x86_64',
+      'darwin/sulla-runtime/sulla-runtime has CPU arm64, not x64',
     );
 
     provenance.write('/dist/package-target.json', target, beforeSigning);
@@ -272,7 +272,7 @@ describe('package target integrity', () => {
     const arm64 = PackageTargetSpec.resolve('darwin', 'arm64');
     const native = new PackageTargetNativeDependencyManifest();
     for (const file of PackageTargetAssetManifest.hostMachOBinaries) fs.files.set(`/repo/resources/${ file }`, 'x64-macho');
-    const auditor = new PackageTargetNativeBinaryAuditor({ read: () => ['x86_64'] }, fs);
+    const auditor = new PackageTargetNativeBinaryAuditor({ read: () => ['x64'] }, fs);
     const prep = new PackageTargetPreparationService(new PackageTargetAssetManifest(), native, fs, auditor);
     for (const asset of PackageTargetAssetManifest.required) fs.files.set(`/repo/resources/${ asset }`, `runtime-${ x64.key }`);
     for (const script of PackageTargetAssetManifest.hostScripts) fs.executableFiles.add(`/repo/resources/${ script }`);
@@ -282,7 +282,9 @@ describe('package target integrity', () => {
     expect(await prep.prepareAndRecord('/repo', '/repo/resources', x64, fetcher, '/dist/package-target.json', provenance)).toEqual([]);
     const priorMarker = fs.read('/dist/package-target.json');
     const problems = await prep.prepareAndRecord('/repo', '/repo/resources', arm64, fetcher, '/dist/package-target.json', provenance);
-    expect(problems).toContain('darwin/bin/sulla has CPU x86_64, not arm64');
+    // darwin/bin/sulla is a shell script (never CPU-audited); the real Mach-O host runtime is what must be rejected.
+    expect(problems).toContain('darwin/sulla-runtime/sulla-runtime has CPU x64, not arm64');
+    expect(problems.some(problem => problem.startsWith('darwin/bin/'))).toBe(false);
     expect(native.problems('/repo', arm64, fs)).toHaveLength(arm64.nativeDependencyPaths.length);
     // The real prepare-and-record sequence leaves the last verified marker intact on target-switch failure.
     expect(fs.read('/dist/package-target.json')).toBe(priorMarker);
@@ -308,5 +310,116 @@ describe('package target integrity', () => {
     for (const file of target.nativeDependencyPaths) fs.files.set(`/repo/${ file }`, 'unknown');
     const auditor = new PackageTargetNativeBinaryAuditor({ read: () => null }, fs);
     expect(auditor.problems('/repo', '/repo/resources', target)[0]).toContain('ABI/binary kind cannot be validated');
+  });
+
+  it('rejects a symlinked guest directory and a symlinked runtime binary in artifact sources', async() => {
+    // risk: packaging integrity — symlinks must not smuggle files from outside the artifact tree.
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-runtime-symlink-dir-'));
+    try {
+      const outside = path.join(root, 'outside');
+      mkdirSync(outside);
+      for (const name of ['vmlinuz', 'initramfs.img', 'usr.erofs']) writeFileSync(path.join(outside, name), name);
+      writeFileSync(path.join(root, 'real-runtime'), 'x');
+      const source = path.join(root, 'source');
+      mkdirSync(source);
+      symlinkSync(outside, path.join(source, 'guest'));
+      symlinkSync(path.join(root, 'real-runtime'), path.join(source, 'sulla-runtime'));
+      const problems = await new RuntimeArtifactSourceValidator().problems(source);
+      expect(problems).toContain('guest must be a real directory');
+      expect(problems).toContain('sulla-runtime must be a regular file, not a symlink or missing');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the old runtime intact when the first rename of an install fails and when the target is absent', async() => {
+    // risk: packaging integrity — a failed swap must never leave the runtime missing; first install has no backup.
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-runtime-first-'));
+    const stage = path.join(root, '.stage');
+    const target = path.join(root, 'resources/darwin/sulla-runtime');
+    const staged = path.join(stage, 'runtime');
+    try {
+      mkdirSync(staged, { recursive: true });
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(path.join(staged, 'new'), 'replacement');
+      await new StagedRuntimeInstaller().install(staged, target, stage);
+      expect(readFileSync(path.join(target, 'new'), 'utf8')).toBe('replacement');
+      expect(existsSync(stage)).toBe(false);
+
+      mkdirSync(path.join(stage, 'runtime'), { recursive: true });
+      await expect(new StagedRuntimeInstaller({
+        rename: async(source: string) => { if (source === target) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
+        remove: p => fs.promises.rm(p, { recursive: true, force: true }),
+        exists: p => fs.promises.access(p).then(() => true, () => false),
+      }).install(staged, target, stage)).rejects.toThrow('EACCES');
+      expect(readFileSync(path.join(target, 'new'), 'utf8')).toBe('replacement');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects real wrong-architecture Mach-O headers and a wrong-arch node-pty build/Release selection', () => {
+    // risk: native runtime — a real header of another CPU must fail, including node-pty's build/Release preferred path.
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-macho-real-'));
+    const header = (cpu: number) => { const b = Buffer.alloc(32); b.writeUInt32BE(0xcffaedfe, 0); b.writeUInt32LE(cpu, 4); return b; };
+    const X64 = 0x01000007;
+    const ARM64 = 0x0100000c;
+    try {
+      const target = PackageTargetSpec.resolve('darwin', 'arm64');
+      const resources = path.join(root, 'resources');
+      const runtime = path.join(resources, 'darwin/sulla-runtime/sulla-runtime');
+      mkdirSync(path.dirname(runtime), { recursive: true });
+      writeFileSync(runtime, header(X64));
+      for (const dependency of target.nativeDependencyPaths) {
+        const file = path.join(root, dependency);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, header(ARM64));
+        chmodSync(file, 0o755);
+      }
+      const auditor = new PackageTargetNativeBinaryAuditor();
+      expect(auditor.problems(root, resources, target)).toEqual(['darwin/sulla-runtime/sulla-runtime has CPU x64, not arm64']);
+      writeFileSync(runtime, header(ARM64));
+      expect(auditor.problems(root, resources, target)).toEqual([]);
+
+      // The same real x64 header passes for an x64 target (reader names must match the auditor's).
+      const x64Target = PackageTargetSpec.resolve('darwin', 'x64');
+      const x64Root = path.join(root, 'x64');
+      const x64Runtime = path.join(x64Root, 'resources/darwin/sulla-runtime/sulla-runtime');
+      mkdirSync(path.dirname(x64Runtime), { recursive: true });
+      writeFileSync(x64Runtime, header(X64));
+      for (const dependency of x64Target.nativeDependencyPaths) {
+        const file = path.join(x64Root, dependency);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, header(X64));
+      }
+      expect(auditor.problems(x64Root, path.join(x64Root, 'resources'), x64Target)).toEqual([]);
+
+      const releaseBinary = path.join(root, 'node_modules/node-pty/build/Release/pty.node');
+      const releaseHelper = path.join(root, 'node_modules/node-pty/build/Release/spawn-helper');
+      mkdirSync(path.dirname(releaseBinary), { recursive: true });
+      writeFileSync(releaseBinary, header(X64));
+      writeFileSync(releaseHelper, '#!/bin/sh');
+      chmodSync(releaseHelper, 0o755);
+      expect(auditor.problems(root, resources, target)).toEqual(['node_modules/node-pty/build/Release/pty.node has CPU x64, not arm64']);
+      chmodSync(releaseHelper, 0o644);
+      expect(auditor.problems(root, resources, target)).toContain('node_modules/node-pty/build/Release/spawn-helper is not executable');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('detects tampered provenance fields and a changed runtime fingerprint', () => {
+    // risk: provenance integrity — an edited marker or swapped runtime binary must not verify.
+    const fs = new MemoryFileSystem();
+    const provenance = new PackageTargetProvenance(fs);
+    const target = PackageTargetSpec.resolve('darwin', 'x64');
+    provenance.write('/p.json', target, 'fp', 'rt1');
+    expect(provenance.problems('/p.json', target, 'fp', 'rt1')).toEqual([]);
+    expect(provenance.problems('/p.json', target, 'fp', 'rt2')).toEqual(['packaging target provenance does not match darwin-x64']);
+    fs.files.set('/p.json', fs.read('/p.json').replace('"guestArch": "amd64"', '"guestArch": "arm64"'));
+    expect(provenance.problems('/p.json', target, 'fp', 'rt1')).toEqual(['packaging target provenance does not match darwin-x64']);
+    fs.files.set('/p.json', '{nope');
+    expect(provenance.problems('/p.json', target, 'fp')).toEqual(['packaging target provenance is invalid JSON']);
+    expect(provenance.problems('/missing.json', target, 'fp')).toEqual(['packaging target provenance is missing']);
   });
 });

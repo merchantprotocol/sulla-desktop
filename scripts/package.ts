@@ -33,7 +33,7 @@ import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
-  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, installStagedRuntime, runtimeArtifactSourceProblems,
+  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, RuntimeArtifactSourceValidator, StagedRuntimeInstaller,
   type PackageTargetAssetFetcher,
 } from './lib/package-target';
 
@@ -55,7 +55,7 @@ class Builder {
     if (sourceRealPath === targetPath || sourceRealPath.startsWith(`${ targetPath }${ path.sep }`) || targetPath.startsWith(`${ sourceRealPath }${ path.sep }`)) {
       throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be separate from resources/darwin/sulla-runtime.');
     }
-    const sourceProblems = await runtimeArtifactSourceProblems(sourcePath);
+    const sourceProblems = await new RuntimeArtifactSourceValidator().problems(sourcePath);
     if (sourceProblems.length) throw new Error(`Invalid SULLA_RUNTIME_ARTIFACTS_DIR: ${ sourceProblems.join('; ') }`);
     const parent = path.dirname(targetPath);
     const stage = await fs.promises.mkdtemp(path.join(parent, '.sulla-runtime-stage-'));
@@ -74,7 +74,7 @@ class Builder {
         throw new Error(`Runtime artifact does not match ${ target.key }: ${ architectureProblems.join('; ') }`);
       }
       installStarted = true;
-      await installStagedRuntime(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath, stage);
+      await new StagedRuntimeInstaller().install(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath, stage);
     } finally {
       // Earlier staging failures have no recovery backup to preserve.
       if (!installStarted) await fs.promises.rm(stage, { recursive: true, force: true });

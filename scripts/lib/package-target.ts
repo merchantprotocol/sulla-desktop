@@ -78,48 +78,50 @@ export interface RuntimeDirectoryOperations {
   exists(path: string): Promise<boolean>;
 }
 
-/** Install a validated staged runtime and always remove its backup after success. */
-export async function installStagedRuntime(
-  stagedRuntime: string,
-  targetRuntime: string,
-  stageDirectory: string,
-  operations: RuntimeDirectoryOperations = {
-    rename: (source, destination) => fs.promises.rename(source, destination),
-    remove: target => fs.promises.rm(target, { recursive: true, force: true }),
-    exists: async target => fs.promises.access(target).then(() => true, () => false),
-  },
-): Promise<void> {
-  const backup = path.join(stageDirectory, 'previous');
-  let movedOld = false;
-  let installedNew = false;
-  try {
-    await operations.rename(targetRuntime, backup).then(() => { movedOld = true; }, error => {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    });
-    await operations.rename(stagedRuntime, targetRuntime);
-    installedNew = true;
-  } catch (error) {
-    if (movedOld && !installedNew) await operations.rename(backup, targetRuntime);
-    throw error;
-  } finally {
-    // On rollback, backup has been restored and the staging tree can go. On
-    // successful install, remove both the old runtime backup and temp tree.
-    if (installedNew || !await operations.exists(backup)) await operations.remove(stageDirectory);
+/** Replaces the installed runtime with a validated staged one, rolling back on failure and always cleaning staging. */
+export class StagedRuntimeInstaller {
+  constructor(
+    private readonly operations: RuntimeDirectoryOperations = {
+      rename: (source, destination) => fs.promises.rename(source, destination),
+      remove: target => fs.promises.rm(target, { recursive: true, force: true }),
+      exists: async target => fs.promises.access(target).then(() => true, () => false),
+    },
+  ) {}
+
+  async install(stagedRuntime: string, targetRuntime: string, stageDirectory: string): Promise<void> {
+    const operations = this.operations;
+    const backup = path.join(stageDirectory, 'previous');
+    let movedOld = false;
+    let installedNew = false;
+    try {
+      await operations.rename(targetRuntime, backup).then(() => { movedOld = true; }, error => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      });
+      await operations.rename(stagedRuntime, targetRuntime);
+      installedNew = true;
+    } catch (error) {
+      if (movedOld && !installedNew) await operations.rename(backup, targetRuntime);
+      throw error;
+    } finally {
+      // On rollback, backup has been restored and the staging tree can go. On
+      // successful install, remove both the old runtime backup and temp tree.
+      if (installedNew || !await operations.exists(backup)) await operations.remove(stageDirectory);
+    }
   }
 }
 
 /** Required runtime files must be real files, not symlinks escaping the artifact tree. */
-export async function runtimeArtifactSourceProblems(sourceRoot: string): Promise<string[]> {
-  const problems: string[] = [];
-  for (const directory of ['guest']) {
-    const stat = await fs.promises.lstat(path.join(sourceRoot, directory)).catch(() => undefined);
-    if (!stat?.isDirectory()) problems.push(`${ directory } must be a real directory`);
+export class RuntimeArtifactSourceValidator {
+  async problems(sourceRoot: string): Promise<string[]> {
+    const problems: string[] = [];
+    const guest = await fs.promises.lstat(path.join(sourceRoot, 'guest')).catch(() => undefined);
+    if (!guest?.isDirectory()) problems.push('guest must be a real directory');
+    for (const file of ['sulla-runtime', 'guest/vmlinuz', 'guest/initramfs.img', 'guest/usr.erofs']) {
+      const stat = await fs.promises.lstat(path.join(sourceRoot, file)).catch(() => undefined);
+      if (!stat?.isFile()) problems.push(`${ file } must be a regular file, not a symlink or missing`);
+    }
+    return problems;
   }
-  for (const file of ['sulla-runtime', 'guest/vmlinuz', 'guest/initramfs.img', 'guest/usr.erofs']) {
-    const stat = await fs.promises.lstat(path.join(sourceRoot, file)).catch(() => undefined);
-    if (!stat?.isFile()) problems.push(`${ file } must be a regular file, not a symlink or missing`);
-  }
-  return problems;
 }
 
 /** Host Mach-O binaries are CPU-audited; shell scripts and Linux guest image files are intentionally excluded. */
@@ -286,7 +288,8 @@ export class PackageTargetNativeBinaryAuditor implements PackageTargetBinaryAudi
   ) {}
 
   problems(repositoryRoot: string, resourcesRoot: string, target: PackageTargetSpec): string[] {
-    const wanted = target.arch === 'x64' ? 'x86_64' : 'arm64';
+    // MachOArchitectureReader names CPUs with the Node arch ('x64'/'arm64'), not uname values.
+    const wanted: string = target.arch;
     const paths = [
       ...target.nativeDependencyPaths.map(relative => [relative, path.join(repositoryRoot, relative)] as const),
       ...['node_modules/node-pty/build/Release/pty.node'].flatMap(relative => {
