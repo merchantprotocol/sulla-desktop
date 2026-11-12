@@ -1,1 +1,6 @@
-{ "maxLines": 400 }
+{
+  "maxLines": 400,
+  "extra_ignore": [
+    "^scripts/vault-upgrade-smoke/run\\.mjs$"
+  ]
+}

@@ -35,3 +35,5 @@ Never hand-edit the allowlist to add entries. `--init` (rebuild from current cod
 
 ## Limits (by design: fast and dependency-free)
 It's a line and regex scan, not a type-aware parser. It can miss state that's mutated from another file, lowercase SQL, or unusually formatted code, and a string containing an apostrophe in JSX text can hide code that follows it. Reviewers still own architecture. Tighten the rules in `architecture-guard.config.json` (`maxLines`, `extra_ignore`, `extra_sqlAllowed`, `extra_proceduralExempt`, `extra_mutableStateExempt`).
+
+The synthetic `scripts/vault-upgrade-smoke/run.mjs` harness is intentionally ignored: it is an operational test utility that creates disposable Postgres data and issues SQL fixtures, not production application code. Keep production data access inside repositories and migrations.
