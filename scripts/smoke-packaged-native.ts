@@ -9,6 +9,7 @@
  * Checks every addon's Node ABI and loads each required addon inside the
  * packaged Electron with ELECTRON_RUN_AS_NODE (no window, bounded by a timeout).
  */
+import fs from 'fs';
 import path from 'path';
 
 import { NodeAbiElectronSource, PackagedAppNativeGate } from './lib/native-abi';
@@ -18,7 +19,7 @@ class SmokePackagedNativeCommand {
   run(argv: string[]): number {
     const appPath = argv.find(arg => arg.endsWith('.app'));
     const arch = (argv.find(arg => arg.startsWith('--arch=')) ?? '--arch=x64').slice('--arch='.length);
-    const electronVersion = argv.find(arg => arg.startsWith('--electron='))?.slice('--electron='.length) ?? require(path.resolve('node_modules', 'electron', 'package.json')).version;
+    const electronVersion = argv.find(arg => arg.startsWith('--electron='))?.slice('--electron='.length) ?? JSON.parse(fs.readFileSync(path.resolve('node_modules', 'electron', 'package.json'), 'utf8')).version;
 
     if (!appPath) throw new Error('usage: smoke-packaged-native.ts <App.app> [--arch=x64|arm64] [--electron=<version>]');
     const target = PackageTargetSpec.resolve('darwin', arch);

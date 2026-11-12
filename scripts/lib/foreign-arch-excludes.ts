@@ -58,15 +58,16 @@ export class ForeignArchExcludes {
 
 /**
  * posix-node is only called on Linux (background.ts puts Electron in its own
- * process group there). Its macOS addons are Zig-built Mach-O files that
- * SIGILL once codesign rewrites them, and nothing on a Mac ever loads them, so
- * a Mac package carries neither CPU's copy rather than a signed binary that
- * crashes if it is ever touched. Signing and architecture checks stay on.
+ * process group there; the Mac webpack build aliases it to `false`). The whole
+ * package stays out of a Mac app: its macOS addons are Zig-built Mach-O files
+ * that SIGILL once codesign rewrites them, and its Linux ELF addons are not
+ * Mach-O at all, so nothing on a Mac may load or ship either. Linux packaging
+ * never applies this list. Signing and architecture checks stay on.
  */
 export class UnusedMacAddonExcludes {
   globs(): string[] {
     return [
-      '!**/node_modules/posix-node/dist/*-macos.node',
+      '!**/node_modules/posix-node{,/**}',
       `!dist/app/${ EMITTED_NATIVE_DIR }/*-macos.+([0-9a-f]).node`,
     ];
   }
