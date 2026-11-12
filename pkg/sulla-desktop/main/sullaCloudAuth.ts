@@ -43,6 +43,7 @@ import type { AccountKdf } from '@sulla/domain';
 
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
+import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { FetchCloudLogoutHttp, FetchCloudRefreshHttp } from './cloud/session/ElectronCloudRefreshTransport';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
@@ -789,6 +790,14 @@ const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
   })),
 );
 
+/** `sulla-cloud:logout`: container vault unchanged; server mode clears locally, then revokes on Sulla Cloud. */
+const cloudSignOut = new DesktopCloudSignOut({
+  usesContainerVault:     usesContainerVaultAuthority,
+  clearPendingMasterKey:  clearPendingCloudMasterKey,
+  clearPendingCredential: () => clearPendingCredential(INTEGRATION_ID),
+  clearContainerSession:  clearSession,
+}, legacySessions);
+
 /**
  * Returns the currently-signed-in access token, or empty string if not
  * signed in. Automatically refreshes the token when it is within 60s of
@@ -1398,31 +1407,15 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    if (usesContainerVaultAuthority()) {
-      legacySessions.invalidate();
-      clearPendingCloudMasterKey();
-      await clearPendingCredential(INTEGRATION_ID);
-      try {
-        await clearSession();
-      } catch (err) {
-        console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-        // The broker clear is the authority. If it fails, keep Desktop paired
-        // and Cloud services running so both sides still describe one session.
-        return buildStatus(vaultSessionError(err, 'sign out'));
-      }
-    } else {
-      clearPendingCloudMasterKey();
-      try {
-        // Clears the local session first (inside the refresh lock), then revokes it on Sulla Cloud.
-        const result = await legacySessions.signOut();
-        if (!result.remoteRevoked) {
-          console.warn('[SullaCloudAuth] Signed out locally; Sulla Cloud could not revoke the session now, so it will expire on its own');
-        }
-      } catch (err) {
-        console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-        // Nothing was revoked and the refresh gate is open again: Desktop stays signed in and consistent.
-        return buildStatus(vaultSessionError(err, 'sign out'));
-      }
+    const outcome = await cloudSignOut.run();
+    if (!outcome.signedOut) {
+      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', outcome.error);
+      // The local clear is the authority. If it fails (nothing was revoked), keep
+      // Desktop paired and Cloud services running so both sides still describe one session.
+      return buildStatus(vaultSessionError(outcome.error, 'sign out'));
+    }
+    if (outcome.serverRevoked === false) {
+      console.warn('[SullaCloudAuth] Signed out locally; Sulla Cloud could not revoke the session now, so it will expire on its own');
     }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows

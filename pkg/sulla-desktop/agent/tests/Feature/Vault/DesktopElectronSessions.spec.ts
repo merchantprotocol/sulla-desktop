@@ -1,12 +1,13 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { InProcessRefreshLock } from '@sulla/domain';
+import { InProcessRefreshLock, type PendingRevocationQueue } from '@sulla/domain';
 import { describe, expect, it } from 'vitest';
 
 import { LegacyCloudSessionRefresher, PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
+import { DesktopCloudSignOut } from '@pkg/main/cloud/session/DesktopCloudSignOut';
 import type { CloudSessionStorage, StoredCloudSession } from '@pkg/main/cloud/session/DesktopTokenStores';
-import type { CloudRefreshHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
+import { type CloudLogoutHttp, type CloudRefreshHttp, FetchCloudLogoutHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
 
 const jwt = (secondsLeft: number, tag: string) => {
   const part = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -16,9 +17,15 @@ const jwt = (secondsLeft: number, tag: string) => {
 class MemoryStorage implements CloudSessionStorage<StoredCloudSession> {
   session: StoredCloudSession | null;
   writes = 0;
-  constructor(session: StoredCloudSession | null) { this.session = session; }
+  clearFails = false;
+  constructor(session: StoredCloudSession | null, private readonly log: string[] = []) { this.session = session; }
   async load() { return this.session ? { ...this.session, tokens: { ...this.session.tokens } } : null; }
   async save(session: StoredCloudSession) { this.writes += 1; this.session = session; }
+  async clear() {
+    if (this.clearFails) throw new Error('vault unavailable');
+    this.log.push('clear');
+    this.session = null;
+  }
 }
 
 class FakeCloud implements CloudRefreshHttp {
@@ -48,12 +55,34 @@ const expiring = (): StoredCloudSession => ({
   tokens: { accessToken: jwt(10, 'old'), refreshToken: 'rt-1' },
 });
 
-const rig = (session: StoredCloudSession | null = expiring()) => {
-  const storage = new MemoryStorage(session);
+/** Sulla Cloud /auth/logout. Records every POST in the shared log so tests can check it follows the local clear. */
+class FakeLogout implements CloudLogoutHttp {
+  calls: string[] = [];
+  behaviour: number | 'network' = 200;
+  constructor(private readonly log: string[]) {}
+  async post(refreshToken: string) {
+    this.calls.push(refreshToken);
+    this.log.push(`logout:${ refreshToken }`);
+    if (this.behaviour === 'network') throw new Error('ECONNREFUSED');
+    return { status: this.behaviour };
+  }
+}
+
+class SpyRevocations implements PendingRevocationQueue {
+  pushed: string[] = [];
+  async push(refreshToken: string) { this.pushed.push(refreshToken); }
+  async drain() { return [...this.pushed]; }
+  async remove(refreshToken: string) { this.pushed = this.pushed.filter(t => t !== refreshToken); }
+}
+
+const rig = (session: StoredCloudSession | null = expiring(), revocations?: PendingRevocationQueue) => {
+  const log: string[] = [];
+  const storage = new MemoryStorage(session, log);
   const cloud = new FakeCloud();
   const reporter = new Reporter();
-  const refresher = new LegacyCloudSessionRefresher(storage, cloud, reporter, new InProcessRefreshLock());
-  return { storage, cloud, reporter, refresher };
+  const logout = new FakeLogout(log);
+  const refresher = new LegacyCloudSessionRefresher(storage, cloud, reporter, new InProcessRefreshLock(), undefined, logout, revocations);
+  return { storage, cloud, reporter, refresher, logout, log };
 };
 
 describe('Desktop legacy Cloud session refresh on the domain ClientSessionService', () => {
@@ -167,5 +196,156 @@ describe('Desktop first-run pending Cloud session refresh', () => {
       expect(String(err.message)).toContain('needs refresh');
     }
     expect(e.values.refresh_token).toBe('rt-1');
+  });
+});
+
+describe('D-ID-4 server-mode sign-out revokes the Sulla Cloud session (domain SignOutService)', () => {
+  const fresh = (refreshToken = 'rt-1'): StoredCloudSession => ({ ...expiring(), tokens: { accessToken: jwt(900, 'fresh'), refreshToken } });
+
+  it('risk: session left alive. logout is POSTed exactly once with the current refresh token, after the local clear', async() => {
+    const { storage, refresher, logout, log } = rig(fresh());
+    const result = await refresher.signOut();
+    expect(logout.calls).toEqual(['rt-1']);
+    expect(log).toEqual(['clear', 'logout:rt-1']);
+    expect(storage.session).toBeNull();
+    expect(result).toEqual({ remoteRevoked: true, queued: false, failedSteps: [] });
+  });
+
+  it('risk: session left alive. a refresh in flight finishes first and the NEWEST token is revoked, never written back', async() => {
+    const { storage, cloud, refresher, logout, log } = rig();
+    let release!: () => void;
+    cloud.gate = new Promise<void>((resolve) => { release = resolve; });
+    const refreshing = refresher.currentAccessToken();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const signingOut = refresher.signOut();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(logout.calls).toHaveLength(0); // waits for the refresh lock
+    release();
+    await refreshing;
+    await signingOut;
+    expect(cloud.calls).toEqual(['rt-1']);
+    expect(logout.calls).toEqual(['rt-2']);
+    expect(log).toEqual(['clear', 'logout:rt-2']);
+    expect(storage.session).toBeNull();
+  });
+
+  it('risk: inconsistent sign-out. a failed local clear sends no logout, throws, and leaves refresh working', async() => {
+    const { storage, cloud, refresher, logout } = rig();
+    storage.clearFails = true;
+    await expect(refresher.signOut()).rejects.toThrow('vault unavailable');
+    expect(logout.calls).toHaveLength(0);
+    expect(storage.session?.tokens.refreshToken).toBe('rt-1');
+    await refresher.currentAccessToken(); // gate reopened: the still-signed-in session keeps refreshing
+    expect(cloud.calls).toEqual(['rt-1']);
+  });
+
+  it('risk: false revoke. a blank refresh token is never sent; the local session is still cleared', async() => {
+    const { storage, refresher, logout } = rig(fresh(''));
+    const result = await refresher.signOut();
+    expect(logout.calls).toHaveLength(0);
+    expect(storage.session).toBeNull();
+    expect(result.remoteRevoked).toBe(false);
+  });
+
+  it.each([[401], [403]])('risk: session left alive. logout %s means the server already refuses the token: revoked, nothing queued', async(status) => {
+    const revocations = new SpyRevocations();
+    const { storage, refresher, logout } = rig(fresh(), revocations);
+    logout.behaviour = status;
+    expect(await refresher.signOut()).toEqual({ remoteRevoked: true, queued: false, failedSteps: [] });
+    expect(revocations.pushed).toHaveLength(0);
+    expect(storage.session).toBeNull();
+  });
+
+  it.each([[500], [503], ['network' as const]])('risk: offline sign-out. logout failure %s still signs out locally and is not claimed as queued', async(failure) => {
+    const { storage, refresher, logout } = rig(fresh());
+    logout.behaviour = failure;
+    const result = await refresher.signOut();
+    expect(logout.calls).toEqual(['rt-1']);
+    expect(storage.session).toBeNull();
+    // No durable revocation store exists on Desktop, so nothing pretends to be queued.
+    expect(result).toEqual({ remoteRevoked: false, queued: false, failedSteps: [] });
+  });
+
+  it('risk: transient misread. an empty-body 200 from /auth/logout is a revoke, not a 502, and is never queued', async() => {
+    const storage = new MemoryStorage(fresh());
+    const revocations = new SpyRevocations();
+    const sent: string[] = [];
+    const http = new FetchCloudLogoutHttp(async(refreshToken) => { sent.push(refreshToken); return new Response(null, { status: 200 }) });
+    const refresher = new LegacyCloudSessionRefresher(storage, new FakeCloud(), new Reporter(), new InProcessRefreshLock(), undefined, http, revocations);
+    expect(await refresher.signOut()).toEqual({ remoteRevoked: true, queued: false, failedSteps: [] });
+    expect(sent).toEqual(['rt-1']);
+    expect(revocations.pushed).toHaveLength(0);
+  });
+
+  it('risk: transient misread. the status-only adapter reports 200 for an empty or non-JSON body and the real status otherwise', async() => {
+    const respond = (body: string | null, status: number) => new FetchCloudLogoutHttp(async() => new Response(body, { status }));
+    expect(await respond(null, 200).post('rt')).toEqual({ status: 200 });
+    expect(await respond('not json', 200).post('rt')).toEqual({ status: 200 });
+    expect(await respond(null, 204).post('rt')).toEqual({ status: 204 });
+    expect(await respond('{"error":"x"}', 401).post('rt')).toEqual({ status: 401 });
+  });
+
+  it('risk: dead session after re-sign-in. sign-out closes the refresh gate; a new sign-in reopens it', async() => {
+    const { storage, cloud, refresher } = rig(fresh());
+    await refresher.signOut();
+    storage.session = expiring(); // signed in again, token about to expire
+    await refresher.currentAccessToken();
+    expect(cloud.calls).toHaveLength(0); // gate still closed: the stale sign-out wins
+    refresher.adopted();
+    await refresher.currentAccessToken();
+    expect(cloud.calls).toEqual(['rt-1']);
+    expect(storage.session?.tokens.refreshToken).toBe('rt-2');
+  });
+});
+
+describe('D-ID-4 sulla-cloud:logout picks the sign-out path by vault mode', () => {
+  const ports = (containerVault: boolean, log: string[], clearFails = false) => ({
+    usesContainerVault: () => containerVault,
+    clearPendingMasterKey: () => { log.push('clearPendingMasterKey') },
+    clearPendingCredential: async() => { log.push('clearPendingCredential') },
+    clearContainerSession: async() => {
+      if (clearFails) throw new Error('vault locked');
+      log.push('clearContainerSession');
+    },
+  });
+  const sessions = (log: string[]) => ({
+    invalidate: () => { log.push('invalidate') },
+    signOut: async() => { log.push('signOut'); return { remoteRevoked: true, queued: false, failedSteps: [] } },
+  });
+
+  it('risk: regression. container-vault logout runs exactly the previous steps and never the server revoke', async() => {
+    const log: string[] = [];
+    expect(await new DesktopCloudSignOut(ports(true, log), sessions(log)).run()).toEqual({ signedOut: true, serverRevoked: null });
+    expect(log).toEqual(['invalidate', 'clearPendingMasterKey', 'clearPendingCredential', 'clearContainerSession']);
+  });
+
+  it('risk: inconsistent sign-out. a failed container-vault clear reports not signed out', async() => {
+    const log: string[] = [];
+    const outcome = await new DesktopCloudSignOut(ports(true, log, true), sessions(log)).run();
+    expect(outcome.signedOut).toBe(false);
+    expect(log).not.toContain('signOut');
+  });
+
+  it('risk: session left alive. server mode signs out through the domain SignOutService and reports the revoke', async() => {
+    const log: string[] = [];
+    expect(await new DesktopCloudSignOut(ports(false, log), sessions(log)).run()).toEqual({ signedOut: true, serverRevoked: true });
+    expect(log).toEqual(['clearPendingMasterKey', 'signOut']);
+  });
+
+  it('risk: session left alive. server mode end to end: one logout POST after the local clear', async() => {
+    const { storage, refresher, logout, log } = rig({ ...expiring(), tokens: { accessToken: jwt(900, 'fresh'), refreshToken: 'rt-9' } });
+    const outcome = await new DesktopCloudSignOut(ports(false, []), refresher).run();
+    expect(outcome).toEqual({ signedOut: true, serverRevoked: true });
+    expect(logout.calls).toEqual(['rt-9']);
+    expect(log).toEqual(['clear', 'logout:rt-9']);
+    expect(storage.session).toBeNull();
+  });
+
+  it('risk: inconsistent sign-out. a failed server-mode local clear reports not signed out and revokes nothing', async() => {
+    const { storage, refresher, logout } = rig();
+    storage.clearFails = true;
+    const outcome = await new DesktopCloudSignOut(ports(false, []), refresher).run();
+    expect(outcome.signedOut).toBe(false);
+    expect(logout.calls).toHaveLength(0);
   });
 });
