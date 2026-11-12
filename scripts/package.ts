@@ -32,11 +32,16 @@ import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
-  PackageTargetAssetManifest, PackageTargetNativeDependencyManifest, PackageTargetProvenance, PackageTargetSpec,
+  PackageTargetAssetManifest, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec,
+  type PackageTargetAssetFetcher,
 } from './lib/package-target';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
+
+class BundledPackageTargetAssetFetcher implements PackageTargetAssetFetcher {
+  async fetch(target: PackageTargetSpec): Promise<void> { await fetchBundledAssets(target.uname); }
+}
 
 class Builder {
   protected async verifyMacSigningIdentity() {
@@ -219,8 +224,10 @@ class Builder {
     const target = PackageTargetSpec.resolve('darwin', context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
     const resourcesRoot = path.join(appPath, 'Contents', 'Resources', 'resources');
     const targetProblems = new PackageTargetAssetManifest().problems(resourcesRoot);
+    const packagedFingerprint = new PackageTargetAssetManifest().fingerprint(resourcesRoot);
     const provenancePath = path.join(buildUtils.distDir, 'package-target-provenance.json');
-    targetProblems.push(...new PackageTargetProvenance().problems(provenancePath, target));
+    targetProblems.push(...new PackageTargetProvenance().problems(provenancePath, target, packagedFingerprint));
+    targetProblems.push(...new PackageTargetNativeDependencyManifest().packagedProblems(path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked', 'node_modules'), target));
     if (targetProblems.length) {
       throw new Error(`The packaged app does not match ${ target.key }: ${ targetProblems.join('; ') }`);
     }
@@ -358,13 +365,6 @@ class Builder {
     // Resolve the supported OS/CPU pair before signing, downloads, build scripts,
     // config writes, or electron-builder can produce target-specific side effects.
     const target = PackageTargetSpec.resolve(process.platform, buildUtils.arch);
-    const missingNative = new PackageTargetNativeDependencyManifest().problems(process.cwd(), target);
-    if (missingNative.length) {
-      throw new Error(`The ${ target.key } package is missing required native dependencies: ${ missingNative.join('; ') }`);
-    }
-
-    await this.verifyMacSigningIdentity();
-
     // Build the electron builder configuration to include the version data.
     // The version is sourced from package.json, which the CI workflow stamps
     // before packaging (tag pushes → clean semver; non-tag builds →
@@ -374,11 +374,18 @@ class Builder {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
       await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [target.uname], { stdio: 'inherit' });
     }
-    {
-      // Container images, whisper and the audio driver for this architecture
-      // (a no-op when resources/darwin/ is already up to date).
-      await fetchBundledAssets(target.uname);
+    // Validate the actual prepared source assets and exact target binaries before
+    // signing-related checks, config writes, or electron-builder can consume them.
+    const preparation = new PackageTargetPreparationService();
+    const preparationProblems = await preparation.prepareAndRecord(
+      process.cwd(), path.join(process.cwd(), 'resources'), target, new BundledPackageTargetAssetFetcher(),
+      path.join(buildUtils.distDir, 'package-target-provenance.json'), new PackageTargetProvenance(),
+    );
+    if (preparationProblems.length) {
+      throw new Error(`The prepared ${ target.key } assets are invalid: ${ preparationProblems.join('; ') }`);
     }
+    log.warn('Native ABI compatibility is not independently decoded; target Mach-O CPU and packaged dependency presence checks do not prove Node/Electron ABI compatibility.');
+    await this.verifyMacSigningIdentity();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
@@ -409,9 +416,6 @@ class Builder {
     config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.arch)];
 
     await this.configureMacProvisioning(config);
-    // This marker is outside dist/app (the only packaged app source) and binds
-    // post-pack validation to the selected host/guest asset pair.
-    new PackageTargetProvenance().write(path.join(buildUtils.distDir, 'package-target-provenance.json'), target);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
 

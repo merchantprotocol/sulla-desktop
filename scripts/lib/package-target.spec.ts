@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
   PackageTargetAssetManifest,
   PackageTargetNativeDependencyManifest,
+  PackageTargetNativeBinaryAuditor,
+  PackageTargetPreparationService,
   PackageTargetProvenance,
   PackageTargetSpec,
   type PackageTargetFileSystem,
@@ -17,6 +19,7 @@ class MemoryFileSystem implements PackageTargetFileSystem {
   readonly files = new Map<string, string>();
   exists(file: string): boolean { return this.files.has(file); }
   read(file: string): string { return this.files.get(file) ?? ''; }
+  readBinary(file: string): Buffer { return Buffer.from(this.files.get(file) ?? ''); }
   write(file: string, data: string): void { this.files.set(file, data); }
 }
 
@@ -43,7 +46,7 @@ describe('package target integrity', () => {
 
     target.nativeDependencyPaths.forEach(file => fs.files.set(`/repo/${ file }`, 'binary'));
     expect(manifest.problems('/repo', target, fs)).toEqual([]);
-    expect(manifest.problems('/repo', PackageTargetSpec.resolve('darwin', 'arm64'), fs)).toHaveLength(5);
+    expect(manifest.problems('/repo', PackageTargetSpec.resolve('darwin', 'arm64'), fs)).toHaveLength(target.nativeDependencyPaths.length);
     fs.files.delete(`/repo/${ target.nativeDependencyPaths[0] }`);
     expect(manifest.problems('/repo', target, fs)).toContain(`${ target.nativeDependencyPaths[0] } is missing for darwin-x64`);
   });
@@ -69,8 +72,52 @@ describe('package target integrity', () => {
     const x64 = PackageTargetSpec.resolve('darwin', 'x64');
     const arm64 = PackageTargetSpec.resolve('darwin', 'arm64');
 
-    provenance.write('/dist/package-target.json', x64);
-    expect(provenance.problems('/dist/package-target.json', x64)).toEqual([]);
-    expect(provenance.problems('/dist/package-target.json', arm64)).toEqual(['packaging target provenance does not match darwin-arm64']);
+    provenance.write('/dist/package-target.json', x64, 'x64-assets');
+    expect(provenance.problems('/dist/package-target.json', x64, 'x64-assets')).toEqual([]);
+    expect(provenance.problems('/dist/package-target.json', arm64, 'x64-assets')).toEqual(['packaging target provenance does not match darwin-arm64']);
+  });
+
+  it('does not bless a reused wrong-architecture asset tree when switching target before packaging', async() => {
+    // risk: cross-target native runtime — a stale cache cannot be relabelled for a new host CPU.
+    const fs = new MemoryFileSystem();
+    const x64 = PackageTargetSpec.resolve('darwin', 'x64');
+    const arm64 = PackageTargetSpec.resolve('darwin', 'arm64');
+    const native = new PackageTargetNativeDependencyManifest();
+    for (const file of PackageTargetAssetManifest.hostExecutables) fs.files.set(`/repo/resources/${ file }`, 'x64-macho');
+    const auditor = new PackageTargetNativeBinaryAuditor({ read: () => ['x86_64'] }, fs);
+    const prep = new PackageTargetPreparationService(new PackageTargetAssetManifest(), native, fs, auditor);
+    for (const asset of PackageTargetAssetManifest.required) fs.files.set(`/repo/resources/${ asset }`, `runtime-${ x64.key }`);
+    for (const file of x64.nativeDependencyPaths) fs.files.set(`/repo/${ file }`, 'x64-binary');
+    const fetcher = { fetch: async() => undefined };
+    const provenance = new PackageTargetProvenance(fs);
+    expect(await prep.prepareAndRecord('/repo', '/repo/resources', x64, fetcher, '/dist/package-target.json', provenance)).toEqual([]);
+    const priorMarker = fs.read('/dist/package-target.json');
+    const problems = await prep.prepareAndRecord('/repo', '/repo/resources', arm64, fetcher, '/dist/package-target.json', provenance);
+    expect(problems).toContain('darwin/bin/sulla has CPU x86_64, not arm64');
+    expect(native.problems('/repo', arm64, fs)).toHaveLength(arm64.nativeDependencyPaths.length);
+    // The real prepare-and-record sequence leaves the last verified marker intact on target-switch failure.
+    expect(fs.read('/dist/package-target.json')).toBe(priorMarker);
+    expect(provenance.problems('/dist/package-target.json', x64, prep.fingerprint('/repo/resources'))).toEqual([]);
+  });
+
+  it('rejects required native dependencies omitted from electron-builder packaged output', () => {
+    // risk: native runtime — electron-builder filtering must not silently strip a required addon.
+    const target = PackageTargetSpec.resolve('darwin', 'arm64');
+    const fs = new MemoryFileSystem();
+    const manifest = new PackageTargetNativeDependencyManifest();
+    target.nativeDependencyPaths.forEach(file => fs.files.set(`/app/unpacked/${ file.replace(/^node_modules\//, '') }`, 'binary'));
+    fs.files.delete(`/app/unpacked/${ target.nativeDependencyPaths[0].replace(/^node_modules\//, '') }`);
+    expect(manifest.packagedProblems('/app/unpacked', target, fs)).toContain(
+      `${ target.nativeDependencyPaths[0] } is missing from packaged asar-unpacked output for ${ target.key }`,
+    );
+  });
+
+  it('fails closed when native ABI or binary kind cannot be reliably identified', () => {
+    // risk: native runtime — unknown binary formats are not represented as fully ABI-validated.
+    const target = PackageTargetSpec.resolve('darwin', 'x64');
+    const fs = new MemoryFileSystem();
+    for (const file of target.nativeDependencyPaths) fs.files.set(`/repo/${ file }`, 'unknown');
+    const auditor = new PackageTargetNativeBinaryAuditor({ read: () => null }, fs);
+    expect(auditor.problems('/repo', '/repo/resources', target)[0]).toContain('ABI/binary kind cannot be validated');
   });
 });
