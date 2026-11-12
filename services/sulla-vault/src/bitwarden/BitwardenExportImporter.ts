@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { webcrypto } from 'node:crypto';
-
-import { BitwardenImportException, BitwardenImportService, WebCryptoRandomSource, type BitwardenImportResult } from '@sulla/domain';
+import { BitwardenImportException, type BitwardenImportResult } from '@sulla/domain';
 import type { VaultItemPlaintext } from '@sulla/vault-crypto';
+
+import { BitwardenImportServiceProvider } from './BitwardenImportServiceProvider.js';
 
 export type BitwardenExportFormat = 'json' | 'csv' | 'zip';
 
@@ -18,7 +18,9 @@ export interface BitwardenExportItems extends BitwardenImportPreview { items: Va
 
 /**
  * Desktop adapter over @sulla/domain BitwardenImportService, the only Bitwarden
- * parser (decryption, ZIP, CSV and item mapping all live there).
+ * parser (decryption, ZIP, CSV and item mapping all live there). The service is
+ * composed by BitwardenImportServiceProvider (libsodium/native crypto, ZIP
+ * attachment bytes kept).
  *
  * It only translates the Desktop upload (base64 ZIP) and keeps the stored item
  * shape Desktop has always written:
@@ -33,10 +35,10 @@ export interface BitwardenExportItems extends BitwardenImportPreview { items: Va
 export class BitwardenExportImporter {
   private static readonly provenanceFields = ['source', 'sourceId', 'folderId', 'organizationId', 'collectionIds', 'reprompt', 'createdAt', 'revisedAt', 'deletedAt', 'attachments'] as const;
 
-  constructor(private readonly service: BitwardenImportService = new BitwardenImportService(new WebCryptoRandomSource(webcrypto as unknown as Crypto))) {}
+  constructor(private readonly services: BitwardenImportServiceProvider = new BitwardenImportServiceProvider()) {}
 
-  read(upload: BitwardenExportUpload): BitwardenExportItems {
-    const result = this.parse(upload);
+  async read(upload: BitwardenExportUpload): Promise<BitwardenExportItems> {
+    const result = await this.parse(upload);
     const items = result.items.map(item => this.toDesktopItem(item as unknown as VaultItemPlaintext, upload.format));
     return { items, counts: result.counts, total: result.total, unmapped: result.unmapped, warnings: result.warnings };
   }
@@ -45,9 +47,10 @@ export class BitwardenExportImporter {
     return error instanceof BitwardenImportException;
   }
 
-  private parse(upload: BitwardenExportUpload): BitwardenImportResult {
-    if (upload.format === 'zip') return this.service.import(new Uint8Array(Buffer.from(upload.content, 'base64')), { format: 'zip', password: upload.password });
-    return this.service.import(upload.content, { format: upload.format === 'csv' ? 'csv' : 'json', password: upload.password });
+  private async parse(upload: BitwardenExportUpload): Promise<BitwardenImportResult> {
+    const service = await this.services.get();
+    if (upload.format === 'zip') return service.import(new Uint8Array(Buffer.from(upload.content, 'base64')), { format: 'zip', password: upload.password });
+    return service.import(upload.content, { format: upload.format === 'csv' ? 'csv' : 'json', password: upload.password });
   }
 
   private toDesktopItem(item: VaultItemPlaintext, format: BitwardenExportFormat): VaultItemPlaintext {

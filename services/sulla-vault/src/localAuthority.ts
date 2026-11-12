@@ -1117,7 +1117,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const maxContent = input.format === 'zip' ? 34 * 1024 * 1024 : 25 * 1024 * 1024;
     if (typeof input.content !== 'string' || Buffer.byteLength(input.content) > maxContent) throw new LocalVaultError('invalid_operation', 400, 'Bitwarden exports are limited to 25 MB');
     const keys = this.requireKeys(), generation = this.generation;
-    const mapped = this.readBitwardenExport(input);
+    const mapped = await this.readBitwardenExport(input);
     const rows = await this.itemRepository.listOwnedActiveForImport<ItemRow>([keys.userId]);
     const existing = new Set<string>();
     for (const row of rows.rows) {
@@ -1131,9 +1131,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   /** Parses through @sulla/domain; its failures become route errors ({ error: code }, 400). */
-  private readBitwardenExport(input: BitwardenExportUpload) {
+  private async readBitwardenExport(input: BitwardenExportUpload) {
     try {
-      return this.bitwardenImporter.read(input);
+      return await this.bitwardenImporter.read(input);
     } catch (error) {
       if (this.bitwardenImporter.isImportFailure(error)) throw new LocalVaultError(error.code, 400, error.message);
       throw error;

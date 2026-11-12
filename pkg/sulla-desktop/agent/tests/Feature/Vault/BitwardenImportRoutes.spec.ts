@@ -120,6 +120,41 @@ describe('Desktop vault Bitwarden import', () => {
     await expectKatItemsStored(fixture);
   });
 
+  // risk: data loss — a ZIP export's attachment files are stored inside the imported item, as the
+  // pre-domain Desktop importer did: attachment.data = base64 file bytes, attachment.zipPath = entry path.
+  it.each([
+    ['a password-protected', () => kat.argon2EncryptedExport],
+    ['an unencrypted', () => kat.expectedExport],
+  ])('inlines attachment bytes from %s ZIP export', async(_label, exported) => {
+    const bytes = new Uint8Array(4096).map((_, index) => (index * 31) % 251); // binary and compressible: stored deflated
+    const second = { id:'attachment-second', fileName:'second.bin', size:String(bytes.length) };
+    const data = structuredClone(exported());
+    if (!data.encrypted) data.items[0].attachments.push(second);
+    const content = Buffer.from(zipSync({
+      'export/data.json':strToU8(JSON.stringify(data)),
+      'attachments/login-synthetic/attachment-synthetic/synthetic.txt':strToU8('synthetic'),
+      'attachments/login-synthetic/attachment-second/second.bin':bytes,
+      'attachments/unrelated/readme.txt':strToU8('not referenced'),
+    })).toString('base64');
+    const fixture = new BitwardenImportFixture();
+    expect(await fixture.import({ content, format:'zip', password:kat.password })).toMatchObject({ imported:2 });
+    const [login, ssh] = await fixture.stored();
+    const attachments = (login.sourceMetadata as { attachments?:unknown[] }).attachments;
+    const expected = [{ id:'attachment-synthetic', fileName:'synthetic.txt', size:'9', data:Buffer.from('synthetic').toString('base64'), zipPath:'attachments/login-synthetic/attachment-synthetic/synthetic.txt' }];
+    if (!data.encrypted) expected.push({ ...second, data:Buffer.from(bytes).toString('base64'), zipPath:'attachments/login-synthetic/attachment-second/second.bin' });
+    expect(attachments).toEqual(expected);
+    expect((ssh.sourceMetadata as { attachments?:unknown }).attachments).toBeUndefined();
+  });
+
+  // risk: data accuracy — an attachment listed in the export but missing from the ZIP keeps its metadata only.
+  it('keeps metadata for an attachment the ZIP does not carry', async() => {
+    const content = Buffer.from(zipSync({ 'data.json':strToU8(JSON.stringify(kat.expectedExport)) })).toString('base64');
+    const fixture = new BitwardenImportFixture();
+    await fixture.import({ content, format:'zip' });
+    const [login] = await fixture.stored();
+    expect((login.sourceMetadata as { attachments?:unknown[] }).attachments).toEqual([{ id:'attachment-synthetic', fileName:'synthetic.txt', size:'9' }]);
+  });
+
   // risk: data accuracy — CSV columns and Desktop's `name:value` custom field lines.
   it('imports a Bitwarden CSV', async() => {
     const fixture = new BitwardenImportFixture();
