@@ -101,7 +101,7 @@ class ByoUsageSyncImpl {
     if (!userId) return;
     const body = JSON.stringify({ deviceId, events });
     const hash = crypto.createHash('sha256').update(body).digest('hex');
-    const proof = signDeviceMessage('sync-upload', [userId, deviceId, 'byo-usage', hash]);
+    const proof = await signDeviceMessage('sync-upload', [userId, deviceId, 'byo-usage', hash]);
     const response = await cloudRequest('POST', '/usage/byo-events', {
       headers: {
         'Content-Type': 'application/json',

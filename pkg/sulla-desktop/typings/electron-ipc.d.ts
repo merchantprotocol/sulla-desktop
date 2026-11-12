@@ -445,6 +445,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
   'sulla-cloud-chat:unlink': (linkId: string, deleteCloudCopy: boolean) => void;
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
+  'sulla-cloud-connection:relink-device':     () => import('@pkg/main/devicesCloudApi').DeviceRelinkResult;
   'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
