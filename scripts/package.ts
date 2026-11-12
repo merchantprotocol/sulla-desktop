@@ -190,15 +190,16 @@ class Builder {
   }
 
   /**
-   * Every Mach-O under the app's Resources must hold the CPU being packaged:
-   * a stale fixed-architecture tool or a prebuild the `files` exclusions
-   * missed fails the build here instead of shipping.
+   * Every Mach-O in the whole .app (main executable, Frameworks, helpers and
+   * Resources) must hold the CPU being packaged: a stale fixed-architecture
+   * tool or a prebuild the `files` exclusions missed fails the build here
+   * instead of shipping.
    */
   protected checkNativeArchitectures(context: AfterPackContext): void {
     if (context.electronPlatformName !== 'darwin') return;
     const target = MacBuildArchitecture.parse(context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
     const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
-    const problems = new MachOArchitectureAudit().problems(path.join(appPath, 'Contents', 'Resources'), target.node);
+    const problems = new MachOArchitectureAudit().problems(appPath, target.node);
 
     if (problems.length) {
       throw new Error(`The ${ target.node } app contains binaries for another CPU: ${ problems.join('; ') }`);

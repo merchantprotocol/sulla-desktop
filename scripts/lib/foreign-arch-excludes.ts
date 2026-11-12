@@ -8,11 +8,13 @@ import { MacBuildArchitecture, type MacBuildArch } from './mac-build-architectur
 /**
  * Where webpack's node-loader emits `.node` addons that get bundled into
  * `dist/app` (posix-node's per-CPU addons are bundled, not external). The
- * loader's default name is a content hash, which carries no architecture, so
- * build-utils names them `native/[name].[ext]` and the exclusions below can
- * match on the addon's own file name.
+ * loader's default name is only a content hash, which carries no architecture,
+ * so build-utils names them `native/[name].[contenthash].[ext]`: the addon's
+ * own basename (which names its CPU) plus the hash, so two addons with the
+ * same basename from different packages never collide on one emitted file.
  */
 export const EMITTED_NATIVE_DIR = 'native';
+export const EMITTED_NATIVE_NAME = `${ EMITTED_NATIVE_DIR }/[name].[contenthash].[ext]`;
 
 /**
  * Native packages ship one prebuild per CPU. `yarn install --ignore-platform`
@@ -48,7 +50,8 @@ export class ForeignArchExcludes {
       `!**/node_modules/sherpa-onnx-darwin-${ foreign }{,/**}`,
       `!**/node_modules/onnxruntime-node/bin/napi-v*/darwin/${ foreign }/**`,
       `!**/node_modules/posix-node/dist/${ posixName }-macos.node`,
-      `!dist/app/${ EMITTED_NATIVE_DIR }/${ posixName }-macos.node`,
+      // Emitted as `<zig arch>-macos.<hex content hash>.node` (EMITTED_NATIVE_NAME).
+      `!dist/app/${ EMITTED_NATIVE_DIR }/${ posixName }-macos.+([0-9a-f]).node`,
     ];
   }
 }
