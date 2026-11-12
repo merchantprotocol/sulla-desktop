@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { readFileSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'yaml';
 
 import {
+  NodePackageTargetFileSystem,
   PackageTargetAssetManifest,
   PackageTargetNativeDependencyManifest,
   PackageTargetNativeBinaryAuditor,
@@ -88,6 +90,36 @@ describe('package target integrity', () => {
 
     fs.executableFiles.delete(`/app/resources/${ PackageTargetAssetManifest.hostScripts[0] }`);
     expect(auditor.problems('/repo', '/app/resources', target)).toContain(`${ PackageTargetAssetManifest.hostScripts[0] } is not executable`);
+  });
+
+  it('classifies the spin launcher as a host script and audits it without the Mach-O reader', () => {
+    // risk: CLI availability — a shell launcher wrongly treated as Mach-O would fail every real build.
+    const target = PackageTargetSpec.resolve('darwin', 'arm64');
+    expect(PackageTargetAssetManifest.hostScripts).toContain('darwin/bin/spin');
+    expect(PackageTargetAssetManifest.hostMachOBinaries).not.toContain('darwin/bin/spin');
+    expect(PackageTargetAssetManifest.required).toContain('darwin/bin/spin');
+
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-target-spin-'));
+    try {
+      const fileSystem = new NodePackageTargetFileSystem();
+      // Real files and the real Mach-O reader: the synthetic launcher must not be parsed as a binary.
+      const auditor = new PackageTargetNativeBinaryAuditor(undefined, fileSystem);
+      for (const [index, shebang] of ['#!/bin/sh', '#!/bin/bash'].entries()) {
+        const resources = path.join(root, `resources-${ index }`);
+        for (const asset of PackageTargetAssetManifest.hostScripts) {
+          const file = path.join(resources, asset);
+          mkdirSync(path.dirname(file), { recursive: true });
+          writeFileSync(file, `${ shebang }\nset -eu\nexec true\n`);
+          chmodSync(file, 0o755);
+        }
+        expect(auditor.problems(root, resources, target)).toEqual([]);
+
+        chmodSync(path.join(resources, 'darwin/bin/spin'), 0o644);
+        expect(auditor.problems(root, resources, target)).toEqual(['darwin/bin/spin is not executable']);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps provenance stable across runtime signing but still detects guest-data mutation', () => {

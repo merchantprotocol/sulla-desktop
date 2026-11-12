@@ -365,6 +365,9 @@ class Builder {
     // Resolve the supported OS/CPU pair before signing, downloads, build scripts,
     // config writes, or electron-builder can produce target-specific side effects.
     const target = PackageTargetSpec.resolve(process.platform, buildUtils.arch);
+    // Cheap identity check first: fail on a missing signing identity before runtime
+    // builds, artifact restores, asset fetches, or config writes can run.
+    await this.verifyMacSigningIdentity();
     // Build the electron builder configuration to include the version data.
     // The version is sourced from package.json, which the CI workflow stamps
     // before packaging (tag pushes → clean semver; non-tag builds →
@@ -381,9 +384,7 @@ class Builder {
       await fs.promises.rm(path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true, force: true });
       await fs.promises.cp(runtimeArtifacts, path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true });
     }
-    // Fail on missing signing identity before asset fetches; reject bad target inputs
-    // before writing packaging config or invoking electron-builder.
-    await this.verifyMacSigningIdentity();
+    // Reject bad target inputs before writing packaging config or invoking electron-builder.
     const preparation = new PackageTargetPreparationService();
     const preparationProblems = await preparation.prepareAndRecord(
       process.cwd(), path.join(process.cwd(), 'resources'), target, new BundledPackageTargetAssetFetcher(),

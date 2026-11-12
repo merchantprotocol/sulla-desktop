@@ -77,10 +77,10 @@ export class PackageTargetAssetManifest {
   static readonly hostScripts = Object.freeze([
     'darwin/bin/sulla',
     'darwin/bin/sulla-daemon',
+    'darwin/bin/spin',
   ] as const);
 
   static readonly hostMachOBinaries = Object.freeze([
-    'darwin/bin/spin',
     'darwin/sulla-runtime/sulla-runtime',
   ] as const);
 
