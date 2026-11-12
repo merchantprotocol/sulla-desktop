@@ -13,11 +13,11 @@
     },
     {
       "package": "@sulla/domain",
-      "version": "0.3.1",
-      "file": "sulla-domain-0.3.1-c5f7154.tgz",
-      "sha256": "74b4f85278b4cc89b8b08c1d3fe18722d0e98718a3cee53ec77ce112c6d15d82",
-      "sourceRef": "c5f7154",
-      "source": "sulla-core main c5f7154 build (npm pack packages/domain); VaultSyncService full-state heads, missing_head, rollback, head_moved, CAS retries, commit caps, unit of work; depends on @sulla/foundation 0.1.1. Identical tarball to www-sulladesktop and sulla-mobile."
+      "version": "0.3.2-rc.1",
+      "file": "sulla-domain-0.3.2-rc.1-d7ff775.tgz",
+      "sha256": "6a4e76462ee2a80fb535469b50b598d989407eb2e00260ccabf7ee7e6e73faa1",
+      "sourceRef": "d7ff775",
+      "source": "sulla-core d7ff775 release candidate (npm pack packages/domain); BitwardenImportService (Argon2id/ZIP/PBKDF2/CSV parity, sulla-core PR #53). RC: replace with final 0.3.2 before the epic ships. Depends on @sulla/foundation 0.1.1."
     },
     {
       "package": "@sulla/foundation",

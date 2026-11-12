@@ -106,7 +106,7 @@
     "yjs": "13.6.33",
     "zod": "3.25.76",
     "@sulla/foundation": "file:vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz",
-    "@sulla/domain": "file:vendor/sulla-core/sulla-domain-0.3.1-c5f7154.tgz"
+    "@sulla/domain": "file:vendor/sulla-core/sulla-domain-0.3.2-rc.1-d7ff775.tgz"
   },
   "devDependencies": {
     "@babel/core": "7.29.0",

@@ -29,10 +29,10 @@
   resolved "https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz"
   integrity sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
 
-"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.3.1-c5f7154.tgz":
-  version "0.3.1"
-  resolved "file:vendor/sulla-core/sulla-domain-0.3.1-c5f7154.tgz#3a3b13263bab94f9e506226a766bba9999afb62c"
-  integrity sha512-4k3xV5VwXYZ7HwNDxtqG8R2vPclGbJC9hyE407NnAO0rFUDD3M3IRxzR5FiW8XxhFFt7FaBqBRw3AD9+70MEEg==
+"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.3.2-rc.1-d7ff775.tgz":
+  version "0.3.2-rc.1"
+  resolved "file:vendor/sulla-core/sulla-domain-0.3.2-rc.1-d7ff775.tgz#118fed05e9b08f4bf71f301adc3c95a5ee778e18"
+  integrity sha512-pZmGH3xlxd2+OAMVhntdv6eo0+dxxL8xxZldCplInp1vEZ4vgdbRn7FS/DKbwxwN3gzdmU8wioRC9Ms5XXamaA==
   dependencies:
     "@noble/ciphers" "^2.0.1"
     "@noble/curves" "^2.0.1"
