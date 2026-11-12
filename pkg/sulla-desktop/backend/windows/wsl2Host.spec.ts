@@ -97,6 +97,31 @@ describe('WSL2 host adapter', () => {
     ]);
   });
 
+  it('allows a validated unprivileged distro user while rejecting shell-shaped usernames', async() => {
+    const run = vi.fn().mockResolvedValue({ stdout: '' });
+    const host = new Wsl2Host(run);
+
+    await host.runInDistribution('/usr/bin/docker', ['info'], 'sulla');
+    await expect(host.runInDistribution('/usr/bin/docker', ['info'], 'sulla;id')).rejects.toThrow('Invalid WSL user');
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/docker', 'info']);
+  });
+
+  it('spawns a command as the requested validated Linux user', () => {
+    const child = new EventEmitter();
+    const processSpawner = { spawn: vi.fn(() => child as any) };
+    const host = new Wsl2Host(async() => ({ stdout: '' }), async() => {}, undefined, processSpawner);
+
+    host.spawnInDistribution('/usr/bin/dockerd-rootless.sh', [], {}, 'sulla');
+
+    expect(processSpawner.spawn).toHaveBeenCalledWith(
+      path.win32.join(process.env.WINDIR ?? process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe'),
+      ['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/dockerd-rootless.sh'],
+      { windowsHide: true },
+    );
+  });
+
   it('spawns a long-running command in only the app distro without opening a Windows console', () => {
     const child = new EventEmitter();
     const processSpawner = { spawn: vi.fn(() => child as any) };
