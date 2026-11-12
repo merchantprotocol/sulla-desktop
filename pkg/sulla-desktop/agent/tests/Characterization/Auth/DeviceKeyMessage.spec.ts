@@ -15,7 +15,7 @@ vi.mock('@pkg/utils/paths', () => ({ default: { get sullaConfig() { return proce
 
 import { _resetDeviceKeyCache, deviceMessage, getDevicePublicKey, signDeviceMessage, signDeviceMessageExact } from '../../../../main/cloud/deviceKey';
 
-/** The tag table the removed builder in deviceKey.ts used (10 of the 16 purposes). */
+/** The tag table the removed builder in deviceKey.ts used (10 of the registry purposes). */
 class LegacyDeviceMessageBuilder {
   static readonly TAGS: Record<string, string> = {
     'relay-desktop': 'sulla-relay-desktop-v1',
@@ -60,10 +60,11 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
     }
   });
 
-  it('signs the 6 other registry purposes with their real tag, never an empty one', () => {
+  it('signs every other registry purpose with its real tag, never an empty one', () => {
     // risk: before, these signed "\nuser-1..." (an empty tag) that Cloud could never verify.
     const others = ALL.filter(purpose => !(purpose in LegacyDeviceMessageBuilder.TAGS));
-    expect(others).toHaveLength(6);
+    // The registry grows with @sulla/domain (0.3.3 added replica-v1), so assert coverage, not a count.
+    expect(others).toEqual(expect.arrayContaining(['browser-pairing-approve', 'replica-v1']));
     for (const purpose of others) {
       const message = deviceMessage(purpose, PARTS);
       expect(message.startsWith(`${ DeviceMessage.PURPOSE_TAGS[purpose] }\n`), purpose).toBe(true);
