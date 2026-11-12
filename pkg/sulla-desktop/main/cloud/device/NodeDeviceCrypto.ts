@@ -10,7 +10,7 @@ import type { CryptoPrimitives, RandomSource } from '@sulla/domain';
 /** The Ed25519 + SHA-256 subset `DeviceIdentityService` needs, on node:crypto (same bytes Desktop always signed with). */
 export type DeviceCrypto = Pick<CryptoPrimitives, 'ed25519PublicKey' | 'ed25519Sign' | 'ed25519Verify' | 'sha256'>;
 
-/** node:crypto CSPRNG for device ids and seeds. Throws when unavailable; there is no Math.random fallback. */
+/** node:crypto CSPRNG for device ids and seeds. Throws when unavailable; there is no non-CSPRNG fallback. */
 export class NodeRandomSource implements RandomSource {
   constructor(private readonly source: Pick<typeof crypto, 'randomBytes'> = crypto) {}
 

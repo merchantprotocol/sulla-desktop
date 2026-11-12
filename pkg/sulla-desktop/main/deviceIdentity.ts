@@ -7,7 +7,7 @@
  * Desktop device id: thin delegates to the shared domain `DeviceIdentityService`
  * (`desktopDeviceIdentity()` in main/cloud/device/DesktopDeviceIdentity.ts), kept so existing callers don't change.
  * The id lives in ~/.sulla/device-id (outside Electron's userData, so it survives reinstalls); older installs are
- * migrated out of SullaSettings. New ids come only from the CSPRNG; there is no Math.random fallback.
+ * migrated out of SullaSettings. New ids come only from the CSPRNG; there is no non-CSPRNG fallback.
  */
 
 import { DesktopDeviceIdentity, desktopDeviceIdentity } from './cloud/device/DesktopDeviceIdentity';
