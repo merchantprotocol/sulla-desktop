@@ -36,8 +36,13 @@ jobs:
         run: node scripts/check-bundled-vault-parity.mjs
       - name: Bundled sulla-vault API parity tests
         run: node --test scripts/check-bundled-vault-parity.test.mjs
+      # A PR that changes the Vault image inputs cannot pin its own image (it
+      # is only published after merge), so the pin itself is checked on main
+      # and before local packaging (justfile `vault-pin-check`); PRs run the
+      # guard's tests only.
       - name: Bundled sulla-vault image freshness
-        run: node scripts/check-bundled-vault-image-freshness.mjs
+        if: github.event_name != 'pull_request'
+        run: node scripts/check-bundled-vault-image-freshness.mjs --registry
       - name: Bundled sulla-vault image freshness tests
         run: node --test scripts/check-bundled-vault-image-freshness.test.mjs
       - name: Fetch PR base (allowlist may only shrink)

@@ -64,13 +64,19 @@ runtime:
 # install. Only changed parts are downloaded. SULLA_BUNDLE_SKIP=all (or a
 # comma list of images,whisper,audio) skips them for quick dev builds. The
 # BlackHole installer is only embedded with SULLA_BUNDLE_BLACKHOLE=1 (license).
-assets:
+assets: vault-pin-check
     node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts
+
+# Refuse to bundle a sulla-vault image that is older than the Vault source on
+# this commit or that was never published to GHCR. Runs before every local
+# build and package; GitHub Actions is not a reliable gate for this.
+vault-pin-check:
+    node scripts/check-bundled-vault-image-freshness.mjs --registry
 
 build: runtime assets
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
 
-package: runtime
+package: vault-pin-check runtime
     yarn package
     
 # Rebuild without wiping VM (preserves cached images)
