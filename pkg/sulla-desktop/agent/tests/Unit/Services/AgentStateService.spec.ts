@@ -43,6 +43,14 @@ function harness(jobs: AgentJob[], now = 10_000) {
 }
 
 describe('authoritative live agent state', () => {
+  it('returns an empty snapshot when indexed history has no candidates', async() => {
+    // risk: empty-account state throws or fabricates an agent row
+    const { states, store } = harness([]);
+    store.jobsForProjection = async() => [];
+    expect(await states.jobsForProjection(120_000)).toEqual([]);
+    expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot()).rows).toEqual([]);
+  });
+
   it('uses point reads for mutation and on-demand job lookup without loading history', async() => {
     const { states, store, cache } = harness([job('worker', [task()])]);
     const history = vi.spyOn(store, 'allJobs');
@@ -147,10 +155,53 @@ describe('authoritative live agent state', () => {
   it('projects a grandchild under its manager with the root chat and depth one', async() => {
     // risk: orchestrator drawer omits workers launched by a manager
     const manager = job('manager', [task({ agentId: 'manager', threadId: 'manager-thread' })], { parentThreadId: 'root-chat' });
-    const worker = job('child', [task({ threadId: 'worker-thread' })], { parentThreadId: 'manager-thread' });
+    const worker = job('child', [task({ threadId: 'worker-thread' })], { parentThreadId: 'manager-thread', parentJobId: 'manager', parentTaskIndex: 0 });
     const { states } = harness([manager, worker]);
     const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot();
     expect(snapshot.rows.find(row => row.jobId === 'child')).toMatchObject({ parentJobId: 'manager', parentTaskIndex: 0, rootThreadId: 'root-chat', depth: 1 });
+  });
+
+  it('loads projection check-ins once and counts live children in linear time', async() => {
+    // risk: large live-agent graphs trigger per-task database reads and quadratic child scans
+    const manager = job('batch-manager', [task({ threadId: 'batch-manager-thread' })]);
+    const childA = job('batch-child-a', [task()], { parentThreadId: 'batch-manager-thread', parentJobId: 'batch-manager', parentTaskIndex: 0 });
+    const childB = job('batch-child-b', [task()], { parentThreadId: 'batch-manager-thread', parentJobId: 'batch-manager', parentTaskIndex: 0 });
+    const { states, store } = harness([manager, childA, childB]);
+    store.jobsForProjection = async() => [manager, childA, childB];
+    const telemetry = {
+      latest: vi.fn(async() => null),
+      latestForJobs: vi.fn(async() => ({ 'batch-manager': { 0: { createdAt: 1_500, summary: 'batch', blockers: [] } } })),
+    };
+    const snapshot = await new AgentStateProjector(states, telemetry, () => 10_000).snapshot();
+    expect(telemetry.latestForJobs).toHaveBeenCalledTimes(1);
+    expect(telemetry.latest).not.toHaveBeenCalled();
+    expect(snapshot.rows.find(row => row.jobId === 'batch-manager')?.waitingOnChildren).toBe(2);
+    expect(snapshot.rows.find(row => row.jobId === 'batch-manager')?.lastCheckinSummary).toBe('batch');
+  });
+
+  it('preserves parent action permissions and leaves expired terminal rows out of the visible snapshot', async() => {
+    // risk: relationship hydration must not weaken or misstate stop/message eligibility
+    const manager = job('permission-manager', [task({ status: 'parked', threadId: 'permission-manager-thread', finishedAt: undefined })], { status: 'parked' });
+    const child = job('permission-child', [task({ status: 'running', threadId: 'permission-child-thread' })], {
+      parentThreadId: 'permission-manager-thread', parentJobId: 'permission-manager', parentTaskIndex: 0,
+    });
+    const expired = job('permission-expired', [task({ status: 'completed', threadId: 'permission-expired-thread', finishedAt: 1 })], {
+      status: 'completed', finishedAt: 1,
+    });
+    const { states, store } = harness([manager, child, expired], 10_000);
+    store.jobsForProjection = async() => [manager, child, expired];
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { terminalTtlMs: 100 }).snapshot();
+    expect(snapshot.rows.map(row => row.jobId)).toEqual(['permission-manager', 'permission-child']);
+    expect(snapshot.rows.find(row => row.jobId === 'permission-manager')).toMatchObject({ canMessage: true, canStop: true });
+    const childRow = snapshot.rows.find(row => row.jobId === 'permission-child')!;
+    expect(childRow).toMatchObject({
+      parentJobId: 'permission-manager', parentTaskIndex: 0, canMessage: true, canStop: true,
+      rootThreadId: 'permission-manager-thread', depth: 1, threadId: 'permission-child-thread',
+      agentId: 'worker', label: 'Worker', visibility: 'hidden', state: 'working', stateReason: null,
+      killedByHuman: false, waitingOnChildren: 0, startedAt: new Date(1_000).toISOString(), endedAt: null,
+      lastActivityAt: new Date(1_000).toISOString(), lastCheckinAt: null, lastCheckinSummary: null, canOpen: true,
+    });
+    expect(childRow).not.toHaveProperty('results');
   });
 
   it('shows a parked manager working for its wake turn then parked with live children', async() => {
@@ -182,10 +233,16 @@ describe('authoritative live agent state', () => {
     const completedResult = { label: 'Worker', status: 'completed' as const, output: 'done', threadId: 'completed-thread' };
     const failed = job('failed-result', [task({ status: 'error', completion: failedResult })]);
     const completed = job('completed-result', [task({ status: 'error', completion: completedResult })]);
-    const { states } = harness([failed, completed]);
+    const { states, store } = harness([failed, completed]);
     const derived = await states.jobs();
     expect(derived.find(candidate => candidate.jobId === 'failed-result')?.status).toBe('failed');
     expect(derived.find(candidate => candidate.jobId === 'completed-result')?.status).toBe('completed');
+    store.jobsForProjection = async() => [completed];
+    const [compactCompleted] = await states.jobsForProjection(120_000);
+    expect(compactCompleted.status).toBe('completed');
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot()).rows;
+    expect(rows.find(row => row.jobId === 'completed-result'))
+      .toMatchObject({ state: 'done', canMessage: false, canStop: false });
   });
 
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
