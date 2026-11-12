@@ -20,6 +20,8 @@ export interface PasswordAuthResult {
   ok:          boolean;
   error?:      string;
   httpStatus?: number;
+  /** Cloud's machine `code` on a non-2xx (e.g. wrong_password, account_disabled), when the body had one. */
+  code?:       string;
   retryAfter?: number;
   data?:       CloudSignInResponse;
   masterKey?:  Uint8Array;
@@ -56,6 +58,10 @@ export class CloudPasswordSignIn {
   static readonly CLOUD_PROBLEM = 'Sulla Cloud had a problem, try again.';
   static readonly NEEDS_UPDATE = 'Sulla needs an update to sign in.';
   static readonly UNREACHABLE = 'Could not reach Sulla Cloud. Check your connection and try again.';
+  static readonly ACCOUNT_DISABLED = 'This Sulla Cloud account is disabled.';
+
+  /** Cloud's codes for a credential that did not match (AuthFailureClassifier). Any other code is not about the password. */
+  private static readonly CREDENTIAL_CODES: ReadonlySet<string> = new Set(['wrong_password', 'unknown_account', 'invalid_credentials']);
 
   constructor(
     private readonly transport: CloudAccountTransport,
@@ -71,8 +77,9 @@ export class CloudPasswordSignIn {
   }
 
   /**
-   * New accounts use NFC. Existing decomposed passwords still work once, unchanged. A 401/403 from Cloud reads
-   * "That password is not correct." whatever the server's own wording (BL-003); other failures keep the server's message.
+   * New accounts use NFC. Existing decomposed passwords still work once, unchanged (only after a credential rejection).
+   * A credential rejection reads "That password is not correct." whatever the server's own wording (BL-003); a
+   * disabled account says so; any other failure keeps the server's message.
    */
   async login(email: string, password: string, knownAccount?: PreloginAccount): Promise<PasswordAuthResult> {
     const normalized = password.normalize('NFC');
@@ -110,8 +117,9 @@ export class CloudPasswordSignIn {
       this.trace('account', 'existing account; sign-in answered', { ok: login.ok, httpStatus: login.httpStatus, error: login.error });
       if (login.httpStatus === 429) return CloudPasswordSignIn.throttled(login);
       if (!login.ok || !login.data) {
-        const error = CloudPasswordSignIn.rejected(login)
-          ? CloudPasswordSignIn.WRONG_PASSWORD
+        // login() already explained a 401/403: wrong password, disabled account, or Cloud's own message.
+        const error = login.httpStatus === 401 || login.httpStatus === 403
+          ? login.error || CloudPasswordSignIn.WRONG_PASSWORD
           : login.httpStatus && login.httpStatus >= 500
             ? CloudPasswordSignIn.CLOUD_PROBLEM
             : login.error || CloudPasswordSignIn.NEEDS_UPDATE;
@@ -143,18 +151,27 @@ export class CloudPasswordSignIn {
     } catch (error) {
       credential.masterKey.fill(0);
       if (error instanceof CloudAccountHttpError) {
-        return { ok: false, error: error.userMessage, httpStatus: error.status, retryAfter: error.retryAfter };
+        return { ok: false, error: error.userMessage, httpStatus: error.status, code: error.code, retryAfter: error.retryAfter };
       }
       throw error;
     }
   }
 
+  /** A 401/403 is a credential rejection only without a code (e.g. "Invalid legacy credential.") or with a credential code. */
   private static rejected(result: PasswordAuthResult): boolean {
-    return result.httpStatus === 401 || result.httpStatus === 403;
+    if (result.httpStatus !== 401 && result.httpStatus !== 403) return false;
+    return !result.code || CloudPasswordSignIn.CREDENTIAL_CODES.has(result.code);
+  }
+
+  /** The password was right but Cloud will not issue tokens to this account (issueTokens' account_disabled). */
+  private static disabled(result: PasswordAuthResult): boolean {
+    return (result.httpStatus === 401 || result.httpStatus === 403) && result.code === 'account_disabled';
   }
 
   private static explained(result: PasswordAuthResult): PasswordAuthResult {
-    return CloudPasswordSignIn.rejected(result) ? { ...result, error: CloudPasswordSignIn.WRONG_PASSWORD } : result;
+    if (CloudPasswordSignIn.rejected(result)) return { ...result, error: CloudPasswordSignIn.WRONG_PASSWORD };
+    if (CloudPasswordSignIn.disabled(result)) return { ...result, error: CloudPasswordSignIn.ACCOUNT_DISABLED };
+    return result;
   }
 
   private static throttled(result: PasswordAuthResult, accountExists = true): FirstRunAccountFailure {

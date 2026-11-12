@@ -30,6 +30,7 @@ class FakeSullaCloud {
   readonly requests: SeenRequest[] = [];
   readonly scripted = new Map<string, Reply[]>();
   private readonly accounts = new Map<string, { kdf: AccountKdf; authHash: string; id: string }>();
+  private readonly disabled = new Set<string>();
   private issued = 0;
 
   readonly http = new SullaCloudHttpClient(async(url, init) => this.handle(url, init), 'https://cloud.test', 20_000, 0);
@@ -40,6 +41,11 @@ class FakeSullaCloud {
 
   script(route: string, ...replies: Reply[]): void {
     this.scripted.set(route, replies);
+  }
+
+  /** An admin disabled the account: the password still verifies, but Cloud's issueTokens refuses to mint a session. */
+  disable(email: string): void {
+    this.disabled.add(email);
   }
 
   paths(): string[] {
@@ -69,13 +75,17 @@ class FakeSullaCloud {
       return json(200, { kdf: account?.kdf ?? new AccountKdfPolicy().issue(new Uint8Array(16).fill(9)), authVersion: 2 });
     }
     if (method === 'POST' && path === '/auth/email/register') {
-      if (account) return cloudError(409, 'An account with this email already exists');
+      if (account) return cloudError(409, 'An account with this email already exists.');
       const id = `contractor-${ this.accounts.size + 1 }`;
       this.accounts.set(email, { kdf: body.kdf as AccountKdf, authHash: String(body.authHash), id });
       return this.session(id, email, true);
     }
     if (method === 'POST' && path === '/auth/email/login') {
-      if (!account || account.authHash !== body.authHash) return cloudError(401, 'Invalid email or password');
+      // Workers AuthFailureClassifier: one generic message, the code says whether the email had an account.
+      if (!account || account.authHash !== body.authHash) {
+        return cloudError(401, 'Invalid email or credential.', { code: account ? 'wrong_password' : 'unknown_account' });
+      }
+      if (this.disabled.has(email)) return cloudError(401, 'Account disabled', { code: 'account_disabled' });
       return this.session(account.id, email, false);
     }
     return cloudError(404, 'Not found');
@@ -175,6 +185,87 @@ describe('Desktop email + password sign-in through ElectronCloudAccountTransport
     const result = await signIn.continueFirstRun('owner@example.test', 'right horse battery');
 
     expect(result).toEqual({ ok: false, accountExists: true, retryAfter: 42, error: 'Too many tries. Wait 42 seconds and try again.' });
+  });
+
+  it('risk: sign-in (BL-003). an unknown email gets the same wrong-password message, so it reveals nothing', async() => {
+    const result = await signInOver(new FakeSullaCloud()).login('nobody@example.test', 'any horse battery');
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 401, code: 'unknown_account', error: 'That password is not correct.' });
+  });
+
+  it('risk: sign-in (BL-003). a legacy v1 account whose old password Cloud refuses says the password is wrong', async() => {
+    const cloud = new FakeSullaCloud();
+    cloud.script('POST /auth/prelogin', json(200, { kdf: new AccountKdfPolicy().issue(new Uint8Array(16).fill(7)), authVersion: 1 }));
+    cloud.script('POST /auth/upgrade', cloudError(401, 'Invalid legacy credential.'));
+
+    const result = await signInOver(cloud).login('legacy@example.test', 'old horse battery');
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 401, error: 'That password is not correct.' });
+    expect(cloud.paths()).toEqual(['POST /auth/prelogin', 'POST /auth/upgrade']);
+  });
+
+  it('risk: sign-in. a disabled legacy v1 account upgrading is told it is disabled, not that its password is wrong', async() => {
+    const cloud = new FakeSullaCloud();
+    cloud.script('POST /auth/prelogin', json(200, { kdf: new AccountKdfPolicy().issue(new Uint8Array(16).fill(7)), authVersion: 1 }));
+    cloud.script('POST /auth/upgrade', cloudError(401, 'Account disabled', { code: 'account_disabled' }));
+
+    const result = await signInOver(cloud).login('legacy@example.test', 'cafe\u0301 horse battery');
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 401, code: 'account_disabled', error: 'This Sulla Cloud account is disabled.' });
+    expect(cloud.paths()).toEqual(['POST /auth/prelogin', 'POST /auth/upgrade']);
+  });
+
+  it('risk: sign-in. a disabled account is told it is disabled, not that its password is wrong, and is not retried', async() => {
+    const cloud = new FakeSullaCloud();
+    const signIn = signInOver(cloud);
+    // Decomposed "é": NFC differs from the typed bytes, so a credential rejection would trigger the legacy retry.
+    const typed = 'cafe\u0301 horse battery';
+    (await signIn.register('owner@example.test', typed)).masterKey!.fill(0);
+    cloud.disable('owner@example.test');
+    cloud.requests.length = 0;
+
+    const result = await signIn.login('owner@example.test', typed);
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 401, code: 'account_disabled', error: 'This Sulla Cloud account is disabled.' });
+    expect(result.masterKey).toBeUndefined();
+    expect(cloud.paths()).toEqual(['POST /auth/prelogin', 'POST /auth/email/login']);
+  });
+
+  it('risk: sign-in. a decomposed password from an older Desktop still signs in once through the legacy byte retry', async() => {
+    const cloud = new FakeSullaCloud();
+    const signIn = signInOver(cloud);
+    // An account created before NFC: Cloud holds the authHash of the decomposed bytes.
+    const typed = 'cafe\u0301 horse battery';
+    const credential = await (await credentials()).derive(typed);
+    credential.masterKey.fill(0);
+    await cloud.transport().register({ email: 'old@example.test', authHash: credential.authHash, kdf: credential.kdf, timezone: 'UTC' });
+    cloud.requests.length = 0;
+
+    const result = await signIn.login('old@example.test', typed);
+
+    expect(result.ok).toBe(true);
+    expect(cloud.paths()).toEqual(['POST /auth/prelogin', 'POST /auth/email/login', 'POST /auth/prelogin', 'POST /auth/email/login']);
+    result.masterKey!.fill(0);
+  });
+
+  it('risk: misleading error. a 401/403 with a non-credential code keeps Cloud\'s own message', async() => {
+    const cloud = new FakeSullaCloud();
+    cloud.script('POST /auth/email/login', cloudError(403, 'Recent authentication required.', { code: 'reauth_required' }));
+
+    const result = await signInOver(cloud).login('owner@example.test', 'right horse battery');
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 403, error: 'Recent authentication required.' });
+  });
+
+  it('risk: sign-in. first-run 409 then a disabled account says the account is disabled, not the password', async() => {
+    const cloud = new FakeSullaCloud();
+    const signIn = signInOver(cloud);
+    (await signIn.register('owner@example.test', 'right horse battery')).masterKey!.fill(0);
+    cloud.disable('owner@example.test');
+
+    const result = await signIn.continueFirstRun('owner@example.test', 'right horse battery');
+
+    expect(result).toEqual({ ok: false, accountExists: true, error: 'This Sulla Cloud account is disabled.' });
   });
 
   it('risk: misleading error. a Cloud outage during first run is a Cloud problem, not a wrong password', async() => {
