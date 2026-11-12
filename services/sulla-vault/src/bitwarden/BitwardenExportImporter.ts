@@ -33,6 +33,8 @@ export interface BitwardenExportItems extends BitwardenImportPreview { items: Va
  * password_required, wrong_password, account_restricted or invalid_export.
  */
 export class BitwardenExportImporter {
+  /** Desktop inlines ZIP attachment bytes (BitwardenZipAttachmentReader), so it keeps its own wording, not the domain's "bytes are not inlined". */
+  static readonly attachmentWarning = 'Attachment metadata is preserved. Attachment file bytes must be included in a Bitwarden ZIP export to import them.';
   private static readonly provenanceFields = ['source', 'sourceId', 'folderId', 'organizationId', 'collectionIds', 'reprompt', 'createdAt', 'revisedAt', 'deletedAt', 'attachments'] as const;
 
   constructor(private readonly services: BitwardenImportServiceProvider = new BitwardenImportServiceProvider()) {}
@@ -40,7 +42,8 @@ export class BitwardenExportImporter {
   async read(upload: BitwardenExportUpload): Promise<BitwardenExportItems> {
     const result = await this.parse(upload);
     const items = result.items.map(item => this.toDesktopItem(item as unknown as VaultItemPlaintext, upload.format));
-    return { items, counts: result.counts, total: result.total, unmapped: result.unmapped, warnings: result.warnings };
+    const warnings = result.warnings.map(warning => warning.startsWith('Attachment metadata is preserved.') ? BitwardenExportImporter.attachmentWarning : warning);
+    return { items, counts: result.counts, total: result.total, unmapped: result.unmapped, warnings };
   }
 
   isImportFailure(error: unknown): error is BitwardenImportException & { code: string } {

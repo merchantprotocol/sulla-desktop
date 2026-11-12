@@ -161,6 +161,8 @@ describe('Desktop vault Bitwarden import', () => {
       'attachments/unrelated/readme.txt':strToU8('not referenced'),
     })).toString('base64');
     const fixture = new BitwardenImportFixture();
+    // The preview must not tell the owner their attachment files were dropped.
+    expect((await fixture.preview({ content, format:'zip', password:kat.password })).warnings).toEqual(['Attachment metadata is preserved. Attachment file bytes must be included in a Bitwarden ZIP export to import them.']);
     expect(await fixture.import({ content, format:'zip', password:kat.password })).toMatchObject({ imported:2 });
     const [login, ssh] = await fixture.stored();
     const attachments = (login.sourceMetadata as { attachments?:unknown[] }).attachments;
