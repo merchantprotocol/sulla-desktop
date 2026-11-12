@@ -4,8 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /*
- * INTERIM (M3 S6) — replace with M4's device identity adapters (PR #2207) by changing the stores passed
- * to the domain `DeviceIdentityService` in DesktopVaultEnrollmentModule. Do not grow these.
+ * INTERIM (M3 S6) — M4 owns device identity. When `desktopDeviceIdentity()` (main/cloud/device/
+ * DesktopDeviceIdentity.ts, PR #2207) lands, pass it to `new DesktopVaultEnrollmentModule(...)` (the single
+ * swap point) and delete this file. Do not grow these.
  *
  * They read today's files and never overwrite one: the id comes from `getDesktopDeviceId()` (which keeps its
  * SullaSettings migration), the key from `~/.sulla/device-key.json` after `deviceKey.ts` has ensured it

@@ -22,7 +22,7 @@ import { ElectronEnrollmentApprovalGate } from './ElectronEnrollmentApprovalGate
 import { InterimDeviceIdStore, InterimDeviceKeyStore } from './InterimDeviceIdentityStores';
 import { EnrollmentRequestOpener } from './OpenEnrollmentRequest';
 import { VaultEnrollmentApprover } from './VaultEnrollmentApprover';
-import { VaultSyncRequestSigner } from './VaultSyncRequestSigner';
+import { VaultSyncRequestSigner, type VaultSyncDeviceIdentity } from './VaultSyncRequestSigner';
 
 class SignedInCloudUser implements EnrollmentUserSource {
   userId(): Promise<string> { return getCurrentUserId() }
@@ -40,16 +40,16 @@ export class DesktopVaultEnrollmentModule {
   readonly coordinator: DesktopEnrollmentCoordinator;
   readonly approver: VaultEnrollmentApprover;
 
-  constructor() {
+  /**
+   * DEVICE IDENTITY SEAM — the only place enrollment gets its device identity. M4 owns device identity:
+   * once its `desktopDeviceIdentity()` (pkg/sulla-desktop/main/cloud/device/DesktopDeviceIdentity.ts, PR #2207)
+   * lands, pass that domain DeviceIdentityService here (or change this default to it) and delete
+   * InterimDeviceIdentityStores.ts. Nothing else in enrollment touches the device id or key.
+   */
+  constructor(identity: VaultSyncDeviceIdentity = DesktopVaultEnrollmentModule.interimDeviceIdentity()) {
     const crypto = new NobleCryptoPrimitives();
     const random = WebCryptoRandomSource.fromGlobal();
     const clock = new SystemClock();
-    // Swap these two stores for M4's adapters once its device identity lands (see InterimDeviceIdentityStores).
-    const identity = new DeviceIdentityService(
-      new InterimDeviceIdStore(() => getDesktopDeviceId(), () => path.join(paths.sullaConfig, 'device-id')),
-      new InterimDeviceKeyStore(() => getDevicePublicKey(), () => path.join(paths.sullaConfig, 'device-key.json')),
-      crypto, random, clock,
-    );
     const http = new CloudVaultSyncHttpTransport({
       client: { request: (url, init) => cloudRequest(init?.method ?? 'GET', url, { headers: init?.headers as Record<string, string> | undefined, body: init?.body as BodyInit | undefined, responseType: 'json' }) },
       authHeaders: async() => ({}),
@@ -67,6 +67,15 @@ export class DesktopVaultEnrollmentModule {
       polling: DesktopEnrollmentCoordinator.POLLING,
     });
     this.approver = new VaultEnrollmentApprover(transport, new ElectronEnrollmentApprovalGate(), broker);
+  }
+
+  /** INTERIM default until M4's desktopDeviceIdentity() replaces it: today's ~/.sulla device-id and device-key.json. */
+  static interimDeviceIdentity(): DeviceIdentityService {
+    return new DeviceIdentityService(
+      new InterimDeviceIdStore(() => getDesktopDeviceId(), () => path.join(paths.sullaConfig, 'device-id')),
+      new InterimDeviceKeyStore(() => getDevicePublicKey(), () => path.join(paths.sullaConfig, 'device-key.json')),
+      new NobleCryptoPrimitives(), WebCryptoRandomSource.fromGlobal(), new SystemClock(),
+    );
   }
 }
 

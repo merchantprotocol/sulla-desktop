@@ -89,7 +89,7 @@ export class CloudEnrollmentTransport implements VaultEnrollmentPort {
   }
 
   /**
-   * sulla-workers has no enrollment deny route (checked on main 3e7f8cf), so a declined prompt sends
+   * sulla-workers has no enrollment deny route (re-checked on main 3e7f8cf, 2026-11-12), so a declined prompt sends
    * nothing and the request expires on Cloud. Desktop never calls this.
    */
   async denyEnrollmentRequest(_vaultId: string, _requestId: string, _request: EnrollmentDenyDto): Promise<void> {

@@ -8,6 +8,9 @@ import type { Clock } from '@sulla/foundation';
 
 import type { VaultSyncSignature } from '../vaultSyncV3/transport';
 
+/** What the signer needs from a device identity: a domain DeviceIdentityService satisfies it. */
+export type VaultSyncDeviceIdentity = Pick<DeviceIdentityService, 'deviceId' | 'signerFor'>;
+
 /**
  * Signs one vault-sync-v3 Cloud call: `sulla-vault-sync-v3 / user / device / vault / op / sha256(body) / ts`
  * (domain `DeviceSignaturePayload`), with the timestamp in unix SECONDS — sulla-workers rejects milliseconds —
@@ -19,7 +22,7 @@ export class VaultSyncRequestSigner {
   private readonly payload: DeviceSignaturePayload;
 
   constructor(
-    private readonly identity: Pick<DeviceIdentityService, 'deviceId' | 'signerFor'>,
+    private readonly identity: VaultSyncDeviceIdentity,
     crypto: Pick<CryptoPrimitives, 'sha256'>,
     private readonly clock: Clock,
   ) {

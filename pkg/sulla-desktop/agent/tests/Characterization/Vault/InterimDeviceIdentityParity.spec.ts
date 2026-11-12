@@ -86,4 +86,22 @@ describe('interim device identity stores under the domain DeviceIdentityService'
     const store = new InterimDeviceKeyStore(() => undefined, () => file);
     await expect(store.read()).rejects.toThrow();
   });
+
+  it('never overwrites an existing device-id file', async() => {
+    // risk: a second device id makes Cloud see this computer as a new, untrusted device
+    const file = path.join(keyDir.dir, 'device-id');
+    fs.writeFileSync(file, 'device-0001');
+    const store = new InterimDeviceIdStore(async() => 'device-0001', () => file);
+    await expect(store.createIfAbsent('device-9999')).resolves.toBe(false);
+    expect(fs.readFileSync(file, 'utf8')).toBe('device-0001');
+  });
+
+  it('signing through the service never rewrites the existing key file', async() => {
+    // risk: re-minting the key on read orphans this computer from Cloud
+    const file = path.join(keyDir.dir, 'device-key.json');
+    const before = fs.readFileSync(file, 'utf8');
+    await identity().sign('vault-sync-v3', ['user-0001', 'device-0001', 'v', 'enrollment-state', 'h']);
+    await identity().publicKey();
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
 });
