@@ -192,7 +192,8 @@ export class PackagedNativeLoadSmoke {
 
   constructor(
     private readonly runner: SmokeRunner = new SpawnSmokeRunner(),
-    private readonly timeoutMs = 20000,
+    // A freshly signed x64 app's first launch under Rosetta (translation + Gatekeeper assessment) exceeded 20s; later launches take ~1s.
+    private readonly timeoutMs = 120000,
   ) {}
 
   /** `electronBinary` is `<App>.app/Contents/MacOS/<name>`; `addons` are absolute paths inside the packaged app. */
