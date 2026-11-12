@@ -87,6 +87,11 @@ export class PackageTargetAssetManifest {
     'darwin/sulla-runtime/guest/usr.erofs',
   ] as const);
 
+  /** Opt-in assets that may be intentionally absent without invalidating the supported host target. */
+  static readonly optional = Object.freeze([
+    'darwin/audio-driver/BlackHole2ch-0.6.1.pkg',
+  ] as const);
+
   problems(resourcesRoot: string, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string[] {
     return PackageTargetAssetManifest.required
       .filter(asset => !fileSystem.exists(path.join(resourcesRoot, asset)))

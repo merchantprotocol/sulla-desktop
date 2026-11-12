@@ -57,6 +57,7 @@ describe('package target integrity', () => {
     expect(manifest.problems('/app/resources', fs)).toEqual([]);
     const hostExecutables = new Set<string>(PackageTargetAssetManifest.hostExecutables);
     expect(PackageTargetAssetManifest.guestImages.every(asset => !hostExecutables.has(asset))).toBe(true);
+    expect(PackageTargetAssetManifest.optional).toContain('darwin/audio-driver/BlackHole2ch-0.6.1.pkg');
     fs.files.delete(`/app/resources/${ PackageTargetAssetManifest.guestImages[0] }`);
     expect(manifest.problems('/app/resources', fs)).toContain(`${ PackageTargetAssetManifest.guestImages[0] } is missing`);
   });
