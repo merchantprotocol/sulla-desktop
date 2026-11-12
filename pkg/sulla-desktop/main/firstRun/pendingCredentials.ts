@@ -122,7 +122,7 @@ class PendingSessionExpiredError extends Error {}
 
 const pendingSessionRefresher = new PendingCloudSessionRefresher(
   // POST /auth/refresh {refreshToken}, one attempt, 20 s timeout (unchanged).
-  new ElectronCloudAccountTransport().singleAttemptRefreshHttp,
+  new ElectronCloudAccountTransport().withSingleAttemptRefresh(),
   () => new PendingSessionExpiredError('Cloud session expired'),
 );
 

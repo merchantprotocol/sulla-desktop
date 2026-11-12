@@ -14,6 +14,7 @@ import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
 import CloudConnectionCard from '@pkg/components/account/CloudConnectionCard.vue';
+import CloudDevicesPanel from '@pkg/components/account/CloudDevicesPanel.vue';
 import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { useAccountSettings } from '@pkg/composables/preferences/useAccountSettings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -446,6 +447,8 @@ onBeforeUnmount(() => {
         {{ cloudError }}
       </p>
     </PrefCard>
+
+    <CloudDevicesPanel v-if="cloudStatus.signedIn" />
 
     <PrefCard title="Accounts & servers">
       <template #actions>

@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { AccountKdf } from '@sulla/domain';
+import type { AccountKdf, CloudAccountTransport } from '@sulla/domain';
 
 import { CloudAccountCredentialService } from '../CloudAccountCredentialService';
 
-import { CloudAccountHttpError, type CloudSignInResponse, type ElectronCloudAccountTransport } from './ElectronCloudAccountTransport';
+import { CloudAccountHttpError, type CloudSignInResponse, ElectronCloudAccountTransport } from './ElectronCloudAccountTransport';
 
 /** The account's issued KDF and auth version, from /auth/prelogin. */
 export interface PreloginAccount {
@@ -58,7 +58,7 @@ export class CloudPasswordSignIn {
   static readonly UNREACHABLE = 'Could not reach Sulla Cloud. Check your connection and try again.';
 
   constructor(
-    private readonly transport: ElectronCloudAccountTransport,
+    private readonly transport: CloudAccountTransport,
     private readonly credentials: () => Promise<CloudAccountCredentialService> = () => CloudAccountCredentialService.forDesktop(),
     private readonly trace: SignInTraceSink = () => {},
     private readonly timezone: () => string = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -70,13 +70,16 @@ export class CloudPasswordSignIn {
     return { kdf: (await this.credentials()).parseIssuedKdf(account.kdf), authVersion: account.authVersion };
   }
 
-  /** New accounts use NFC. Existing decomposed passwords still work once, unchanged. */
+  /**
+   * New accounts use NFC. Existing decomposed passwords still work once, unchanged. A 401/403 from Cloud reads
+   * "That password is not correct." whatever the server's own wording (BL-003); other failures keep the server's message.
+   */
   async login(email: string, password: string, knownAccount?: PreloginAccount): Promise<PasswordAuthResult> {
     const normalized = password.normalize('NFC');
     const first = await this.loginOnce(email, normalized, knownAccount);
-    if (first.ok || normalized === password || (first.httpStatus !== 401 && first.httpStatus !== 403)) return first;
+    if (first.ok || normalized === password || !CloudPasswordSignIn.rejected(first)) return CloudPasswordSignIn.explained(first);
     this.trace('account', 'normalized password did not match; trying the legacy byte form');
-    return this.loginOnce(email, password, knownAccount);
+    return CloudPasswordSignIn.explained(await this.loginOnce(email, password, knownAccount));
   }
 
   /** Creates a v2 account with a fresh KDF salt. */
@@ -84,7 +87,7 @@ export class CloudPasswordSignIn {
     const credential = await (await this.credentials()).derive(password.normalize('NFC'));
     return this.withKey(credential, () => this.transport.register({
       email, authHash: credential.authHash, kdf: credential.kdf, name, timezone: this.timezone(),
-    }) as Promise<unknown> as Promise<CloudSignInResponse>);
+    }).then(ElectronCloudAccountTransport.signIn));
   }
 
   /**
@@ -107,7 +110,7 @@ export class CloudPasswordSignIn {
       this.trace('account', 'existing account; sign-in answered', { ok: login.ok, httpStatus: login.httpStatus, error: login.error });
       if (login.httpStatus === 429) return CloudPasswordSignIn.throttled(login);
       if (!login.ok || !login.data) {
-        const error = login.httpStatus === 401 || login.httpStatus === 403
+        const error = CloudPasswordSignIn.rejected(login)
           ? CloudPasswordSignIn.WRONG_PASSWORD
           : login.httpStatus && login.httpStatus >= 500
             ? CloudPasswordSignIn.CLOUD_PROBLEM
@@ -130,7 +133,7 @@ export class CloudPasswordSignIn {
     const credential = await (await this.credentials()).derive(password, account.kdf);
     return this.withKey(credential, () => (account.authVersion === 1
       ? this.transport.upgrade({ email, password, authHash: credential.authHash, kdf: credential.kdf })
-      : this.transport.emailLogin({ email, authHash: credential.authHash })) as Promise<unknown> as Promise<CloudSignInResponse>);
+      : this.transport.emailLogin({ email, authHash: credential.authHash })).then(ElectronCloudAccountTransport.signIn));
   }
 
   /** Runs the call. A non-2xx becomes a failed result; any failure zeroes the key; a network error is rethrown. */
@@ -144,6 +147,14 @@ export class CloudPasswordSignIn {
       }
       throw error;
     }
+  }
+
+  private static rejected(result: PasswordAuthResult): boolean {
+    return result.httpStatus === 401 || result.httpStatus === 403;
+  }
+
+  private static explained(result: PasswordAuthResult): PasswordAuthResult {
+    return CloudPasswordSignIn.rejected(result) ? { ...result, error: CloudPasswordSignIn.WRONG_PASSWORD } : result;
   }
 
   private static throttled(result: PasswordAuthResult, accountExists = true): FirstRunAccountFailure {

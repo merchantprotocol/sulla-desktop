@@ -4,20 +4,20 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import {
-  AuthSession, ClientSessionService, RefreshOutcomeClassifier, RefreshSchedule, TokenPair,
-  type CloudAccountTransport, type RefreshLock, type TokenStore,
+  ClientSessionService, RefreshOutcomeClassifier, RefreshSchedule,
+  type CloudAccountTransport, type RefreshLock,
 } from '@sulla/domain';
 import { EventDispatcher, SystemClock, type Clock } from '@sulla/foundation';
 
-import { DesktopRefreshLocks, NoListenerResolver } from './DesktopTokenStores';
+import { DesktopRefreshLocks, NoListenerResolver, PendingEntryTokenStore } from './DesktopTokenStores';
 
-/** A Sulla Cloud session Desktop stored before the container vault became the authority. */
-export interface LegacyCloudSession {
-  userId:             string;
-  activeContractorId: string;
+/** The legacy `sulla-cloud` integration row Desktop stored before the container vault became the authority (keys as stored). */
+export interface LegacyCloudSessionRow {
+  user_id:               string;
+  active_contractor_id?: string;
   /** May be missing in very old rows; only the refresh token is ever sent. */
-  accessToken?:       string;
-  refreshToken:       string;
+  access_token?:         string;
+  refresh_token:         string;
 }
 
 export type LegacyAdoptionOutcome =
@@ -25,40 +25,15 @@ export type LegacyAdoptionOutcome =
   /** Cloud answered 400/401/403: the legacy session is dead and the owner must sign in again. */
   | { kind: 'rejected' };
 
-/** The one legacy session being adopted, held in memory. A server rejection is remembered; nothing is written anywhere. */
-class AdoptionTokenStore implements TokenStore {
-  private rejectedByServer = false;
-
-  constructor(private session: AuthSession | null) {}
-
-  async read(): Promise<AuthSession | null> {
-    return this.session;
-  }
-
-  async compareAndSet(expected: AuthSession | null, next: AuthSession): Promise<boolean> {
-    if (!expected || !expected.matches(this.session)) return false;
-    this.session = next;
-    return true;
-  }
-
-  async clear(_expected?: AuthSession | null): Promise<boolean> {
-    this.rejectedByServer = true;
-    return true;
-  }
-
-  wasRejected(): boolean {
-    return this.rejectedByServer;
-  }
-}
-
 /**
- * Startup handoff of a legacy session into the container vault: the legacy refresh token is rotated once through the
- * shared domain `ClientSessionService` (single flight under the Desktop refresh lock, domain outcome rules: 400/401/403
- * reject, anything else is transient). A transient failure throws the domain `refresh_transient` IdentityError so the
- * caller retries later with the tokens untouched.
+ * Startup handoff of a legacy session into the container vault. A thin adapter: the row is wrapped in the existing
+ * in-memory `PendingEntryTokenStore` and rotated once through the shared domain `ClientSessionService` (single flight
+ * under the Desktop refresh lock; domain outcome rules: 400/401/403 reject, anything else is transient and throws the
+ * domain `refresh_transient` error so the caller retries later). Nothing is written anywhere; the caller hands the
+ * rotated pair to the vault.
  */
 export class LegacyCloudSessionAdopter {
-  /** Stands in for a missing legacy access token. Never sent: refresh only sends the refresh token. */
+  /** Stands in for a missing legacy access token so the store can hold the session. Never sent: refresh only sends the refresh token. */
   static readonly NO_ACCESS_TOKEN = 'legacy-session-without-access-token';
 
   constructor(
@@ -67,16 +42,21 @@ export class LegacyCloudSessionAdopter {
     private readonly clock: Clock = new SystemClock(),
   ) {}
 
-  async refresh(legacy: LegacyCloudSession): Promise<LegacyAdoptionOutcome> {
-    const seen = new AuthSession(
-      legacy.userId, legacy.activeContractorId,
-      new TokenPair(legacy.accessToken || LegacyCloudSessionAdopter.NO_ACCESS_TOKEN, legacy.refreshToken),
-    );
-    const store = new AdoptionTokenStore(seen);
+  async refresh(row: LegacyCloudSessionRow): Promise<LegacyAdoptionOutcome> {
+    const store = new PendingEntryTokenStore({
+      values: {
+        user_id:              row.user_id,
+        active_contractor_id: row.active_contractor_id || row.user_id,
+        access_token:         row.access_token || LegacyCloudSessionAdopter.NO_ACCESS_TOKEN,
+        refresh_token:        row.refresh_token,
+      },
+    });
     const sessions = new ClientSessionService(
       store, this.transport, this.lock, new RefreshSchedule(this.clock),
       new RefreshOutcomeClassifier(), new EventDispatcher(new NoListenerResolver()),
     );
+    const seen = await store.read();
+    if (!seen) return { kind: 'rejected' };
     const next = await sessions.refresh(seen);
     if (store.wasRejected() || !next) return { kind: 'rejected' };
     return { kind: 'rotated', tokens: { accessToken: next.tokens.accessToken, refreshToken: next.tokens.refreshToken } };
