@@ -32,7 +32,7 @@ export class DockerComposeRuntime {
   }
 
   async startProject(project: DockerComposeProjectSpec): Promise<void> {
-    validateProject(project);
+    assertDockerComposeProject(project);
     const timeout = Math.max(30, Math.min(900, Math.round(project.readyTimeoutSeconds ?? 300)));
     const result = await this.runDocker([
       'compose', '--project-name', project.projectName, '--project-directory', path.posix.dirname(project.composeFile),
@@ -44,7 +44,7 @@ export class DockerComposeRuntime {
 
   /** Stops only the named app project. The daemon and its volumes are preserved. */
   async stopProject(project: DockerComposeProjectSpec): Promise<void> {
-    validateProject(project);
+    assertDockerComposeProject(project);
     const result = await this.runDocker([
       'compose', '--project-name', project.projectName, '--project-directory', path.posix.dirname(project.composeFile),
       '--file', project.composeFile, 'down', '--remove-orphans',
@@ -56,7 +56,7 @@ export class DockerComposeRuntime {
 
 const PROJECT_NAME = /^sulla-desktop-[a-z0-9_-]{1,52}$/;
 
-function validateProject(project: DockerComposeProjectSpec): void {
+export function assertDockerComposeProject(project: DockerComposeProjectSpec): void {
   if (!PROJECT_NAME.test(project.projectName)) throw new Error('Docker Compose project name must use the sulla-desktop- prefix.');
   if (!path.posix.isAbsolute(project.composeFile)) throw new Error('Docker Compose file path must be absolute.');
   if (project.environment && ('DOCKER_HOST' in project.environment || 'DOCKER_CONTEXT' in project.environment)) {

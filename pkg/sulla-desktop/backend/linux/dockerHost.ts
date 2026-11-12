@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  DockerComposeRuntime, DockerComposeProjectSpec, DockerComposeCommandResult, DockerComposeCommandRunner,
+  DockerComposeRuntime, DockerComposeProjectSpec, assertDockerComposeProject, DockerComposeCommandResult, DockerComposeCommandRunner,
 } from '@pkg/backend/containerClient/dockerComposeRuntime';
 
 export type DockerHostCommandResult = DockerComposeCommandResult;
@@ -151,6 +151,13 @@ export class LinuxDockerHost extends DockerComposeRuntime {
     return inspection;
   }
 
+  /** The runtime image must already exist locally: Sulla never substitutes a generic image. */
+  async assertImagePresent(image: string, buildHint: string): Promise<void> {
+    const result = await this.run(['image', 'inspect', '--format', '{{.Id}}', image]);
+
+    if (result.exitCode !== 0) throw new Error(`The Sulla runtime image "${ image }" is not present. ${ buildHint }`);
+  }
+
   /** Start only this app-owned Compose project and wait for running/healthy services. */
   override async startProject(project: LinuxComposeProject): Promise<void> {
     validateProject(project);
@@ -167,6 +174,7 @@ export class LinuxDockerHost extends DockerComposeRuntime {
 }
 
 function validateProject(project: LinuxComposeProject): void {
+  assertDockerComposeProject(project);
   // The shared lifecycle checks the app namespace and endpoint overrides;
   // Linux additionally requires the compose file to exist as a regular file.
   if (!path.isAbsolute(project.composeFile)) throw new Error('Docker Compose file path must be absolute.');
@@ -196,9 +204,14 @@ export function dockerSocketPathFromEndpoint(endpoint: string): string {
   return socketPath;
 }
 
-async function runDocker(args: string[], env?: NodeJS.ProcessEnv): Promise<DockerHostCommandResult> {
+/** Host `docker` runner. Long operations (image pulls, compose up) pass a larger timeout. */
+export function dockerRunner(timeoutMs = 30_000): DockerHostCommandRunner {
+  return (args, env) => runDocker(args, env, timeoutMs);
+}
+
+async function runDocker(args: string[], env?: NodeJS.ProcessEnv, timeoutMs = 30_000): Promise<DockerHostCommandResult> {
   return new Promise((resolve, reject) => {
-    nodeExecFile('docker', args, { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...env } }, (error, stdout, stderr) => {
+    nodeExecFile('docker', args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1024 * 1024, env: { ...process.env, ...env } }, (error, stdout, stderr) => {
       if (!error) {
         resolve({ stdout, stderr, exitCode: 0 });
         return;
