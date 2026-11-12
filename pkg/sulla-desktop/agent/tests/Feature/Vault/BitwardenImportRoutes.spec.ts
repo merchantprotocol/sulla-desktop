@@ -166,12 +166,20 @@ describe('Desktop vault Bitwarden import', () => {
   });
 
   // risk: data loss — CSV rows carry no Bitwarden id, so different CSV files must never dedupe against each other by row position.
-  it('imports a second, different CSV in full and dedupes identical rows inside one CSV', async() => {
+  it('imports every row of a second, different CSV', async() => {
     const fixture = new BitwardenImportFixture();
     await fixture.import(csv(['Work,0,login,First,,,0,https://one.example.com,one@example.com,pw-one,']));
-    const second = await fixture.import(csv(['Work,0,login,Second,,,0,https://two.example.com,two@example.com,pw-two,', 'Work,0,login,Second,,,0,https://two.example.com,two@example.com,pw-two,']));
-    expect(second).toMatchObject({ total:2, duplicates:1, imported:1 });
-    expect((await fixture.stored()).map(item => item.name)).toEqual(['First', 'Second']);
+    const second = await fixture.import(csv(['Work,0,login,Second,,,0,https://two.example.com,two@example.com,pw-two,', 'Work,0,login,Third,,,0,https://three.example.com,three@example.com,pw-three,']));
+    expect(second).toMatchObject({ total:2, duplicates:0, imported:2 });
+    expect((await fixture.stored()).map(item => item.name)).toEqual(['First', 'Second', 'Third']);
+  });
+
+  // risk: duplicate writes — identical rows inside one CSV are imported once.
+  it('imports identical rows inside one CSV once', async() => {
+    const fixture = new BitwardenImportFixture();
+    const row = 'Work,0,login,Same,,,0,https://same.example.com,same@example.com,pw-same,';
+    expect(await fixture.import(csv([row, row]))).toMatchObject({ total:2, duplicates:1, imported:1 });
+    expect(fixture.items.rows).toHaveLength(1);
   });
 
   // risk: duplicate writes — an item Desktop already holds (same Bitwarden id) is skipped across formats.
