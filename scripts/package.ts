@@ -30,8 +30,10 @@ import yaml from 'yaml';
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
-import { MacBuildArchitecture } from './lib/mac-build-architecture';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
+import {
+  PackageTargetAssetManifest, PackageTargetNativeDependencyManifest, PackageTargetProvenance, PackageTargetSpec,
+} from './lib/package-target';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
@@ -197,12 +199,12 @@ class Builder {
    */
   protected checkNativeArchitectures(context: AfterPackContext): void {
     if (context.electronPlatformName !== 'darwin') return;
-    const target = MacBuildArchitecture.parse(context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
+    const target = PackageTargetSpec.resolve('darwin', context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
     const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
-    const problems = new MachOArchitectureAudit().problems(appPath, target.node);
+    const problems = new MachOArchitectureAudit().problems(appPath, target.arch);
 
     if (problems.length) {
-      throw new Error(`The ${ target.node } app contains binaries for another CPU: ${ problems.join('; ') }`);
+      throw new Error(`The ${ target.arch } app contains binaries for another CPU: ${ problems.join('; ') }`);
     }
   }
 
@@ -214,8 +216,16 @@ class Builder {
   protected async checkBundledAssets(context: AfterPackContext): Promise<void> {
     if (context.electronPlatformName !== 'darwin') return;
     const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const target = PackageTargetSpec.resolve('darwin', context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
+    const resourcesRoot = path.join(appPath, 'Contents', 'Resources', 'resources');
+    const targetProblems = new PackageTargetAssetManifest().problems(resourcesRoot);
+    const provenancePath = path.join(buildUtils.distDir, 'package-target-provenance.json');
+    targetProblems.push(...new PackageTargetProvenance().problems(provenancePath, target));
+    if (targetProblems.length) {
+      throw new Error(`The packaged app does not match ${ target.key }: ${ targetProblems.join('; ') }`);
+    }
     const skip = skippedParts();
-    const problems = bundledAssetProblems(path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin'), context.arch === Arch.x64 ? 'x86_64' : 'arm64', skip);
+    const problems = bundledAssetProblems(path.join(resourcesRoot, 'darwin'), target.assetHostArch, skip);
 
     if (problems.length) {
       throw new Error(`The app is missing bundled assets: ${ problems.join('; ') }. Run scripts/fetch-bundled-assets.ts for this architecture.`);
@@ -345,12 +355,13 @@ class Builder {
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
 
-    // Mac only, and only x64 or arm64: checked before any build step so an
-    // unsupported host or --arch value can never fall through to arm64.
-    if (process.platform !== 'darwin') {
-      throw new Error(`Packaging for ${ process.platform } is not supported`);
+    // Resolve the supported OS/CPU pair before signing, downloads, build scripts,
+    // config writes, or electron-builder can produce target-specific side effects.
+    const target = PackageTargetSpec.resolve(process.platform, buildUtils.arch);
+    const missingNative = new PackageTargetNativeDependencyManifest().problems(process.cwd(), target);
+    if (missingNative.length) {
+      throw new Error(`The ${ target.key } package is missing required native dependencies: ${ missingNative.join('; ') }`);
     }
-    const target = MacBuildArchitecture.parse(buildUtils.arch);
 
     await this.verifyMacSigningIdentity();
 
@@ -359,11 +370,11 @@ class Builder {
     // before packaging (tag pushes → clean semver; non-tag builds →
     // `<last-tag>-dev.<short-sha>`). Local dev builds use whatever is
     // committed in package.json.
-    if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
+    if (process.env.SULLA_RUNTIME_BUILD === '1') {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
       await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [target.uname], { stdio: 'inherit' });
     }
-    if (process.platform === 'darwin') {
+    {
       // Container images, whisper and the audio driver for this architecture
       // (a no-op when resources/darwin/ is already up to date).
       await fetchBundledAssets(target.uname);
@@ -374,7 +385,7 @@ class Builder {
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;
 
-    const electronPlatform = 'mac' as const;
+    const electronPlatform = target.builderPlatform;
 
     // When there are files (e.g., extraFiles or extraResources) specified at both
     // the top-level and platform-specific levels, we need to combine them
@@ -395,9 +406,12 @@ class Builder {
 
     // Leave the other CPU's native prebuilds out of this architecture's app
     // (appended to the merged top-level list above).
-    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.node)];
+    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.arch)];
 
     await this.configureMacProvisioning(config);
+    // This marker is outside dist/app (the only packaged app source) and binds
+    // post-pack validation to the selected host/guest asset pair.
+    new PackageTargetProvenance().write(path.join(buildUtils.distDir, 'package-target-provenance.json'), target);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
 
@@ -406,8 +420,8 @@ class Builder {
     const options: CliOptions = {
       config,
       publish: 'never',
-      arm64:   target.node === 'arm64',
-      x64:     target.node === 'x64',
+      arm64:   target.arch === 'arm64',
+      x64:     target.arch === 'x64',
     };
 
     if (process.argv.includes('--zip')) {
