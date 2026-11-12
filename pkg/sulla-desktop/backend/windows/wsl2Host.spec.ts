@@ -108,6 +108,16 @@ describe('WSL2 host adapter', () => {
     expect(run).toHaveBeenCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/docker', 'info']);
   });
 
+  it('forwards an abort signal to a bounded WSL command', async() => {
+    const run = vi.fn().mockResolvedValue({ stdout: '1000' });
+    const host = new Wsl2Host(run);
+    const signal = new AbortController().signal;
+
+    await host.runInDistribution('/usr/bin/id', ['-u'], 'sulla', signal);
+
+    expect(run).toHaveBeenCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/id', '-u'], signal);
+  });
+
   it('spawns a command as the requested validated Linux user', () => {
     const child = new EventEmitter();
     const processSpawner = { spawn: vi.fn(() => child as any) };

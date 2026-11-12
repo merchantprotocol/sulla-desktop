@@ -15,7 +15,7 @@ export interface WslCommandResult {
   stderr?: Buffer | string;
 }
 
-export type WslCommandRunner = (args: string[]) => Promise<WslCommandResult>;
+export type WslCommandRunner = (args: string[], signal?: AbortSignal) => Promise<WslCommandResult>;
 
 export interface WslProcessSpawner {
   spawn(executable: string, args: string[], options: SpawnOptions): ChildProcess;
@@ -121,13 +121,13 @@ export class Wsl2Host {
   }
 
   /** Spawn an argument-safe command in the app-owned distro; caller owns its lifecycle. */
-  runInDistribution(command: string, args: string[], user = 'root'): Promise<WslCommandResult> {
+  runInDistribution(command: string, args: string[], user = 'root', signal?: AbortSignal): Promise<WslCommandResult> {
     if (!command.trim() || /[\r\n\0]/.test(command)) {
       throw new Error('Invalid WSL command');
     }
     if (!/^[a-z_][a-z0-9_-]*[$]?$/.test(user)) throw new Error('Invalid WSL user');
 
-    return this.run(['--distribution', this.distributionName, '--user', user, '--exec', command, ...args]);
+    return this.run(['--distribution', this.distributionName, '--user', user, '--exec', command, ...args], signal);
   }
 
   /** Spawn an argument-safe long-running guest command for runtime lifecycle ownership. */
@@ -146,9 +146,9 @@ export class Wsl2Host {
   }
 }
 
-function runWslCommand(args: string[]): Promise<WslCommandResult> {
+function runWslCommand(args: string[], signal?: AbortSignal): Promise<WslCommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(wslExecutablePath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(wslExecutablePath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
 

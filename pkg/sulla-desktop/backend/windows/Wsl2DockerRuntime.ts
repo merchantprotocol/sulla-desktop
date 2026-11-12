@@ -5,11 +5,12 @@
 
 import type { ChildProcess, SpawnOptions } from 'child_process';
 
+import { decodeWslOutput } from './wsl2Host';
 import type { WslCommandResult } from './wsl2Host';
 
 /** WSL2 boundary consumed by the Windows runtime adapter. */
 export interface Wsl2RuntimeHost {
-  runInDistribution(command: string, args: string[], user?: string): Promise<WslCommandResult>;
+  runInDistribution(command: string, args: string[], user?: string, signal?: AbortSignal): Promise<WslCommandResult>;
   spawnInDistribution(command: string, args: string[], options?: SpawnOptions, user?: string): ChildProcess;
   terminateDistribution(): Promise<void>;
 }
@@ -30,6 +31,8 @@ export interface Wsl2DockerRuntimeOptions {
 }
 
 export type RuntimeSleep = (milliseconds: number) => Promise<void>;
+
+class Wsl2ReadinessTimeout extends Error {}
 
 /**
  * Starts rootless Docker inside only Sulla's WSL2 distro and exposes its
@@ -56,6 +59,36 @@ export class Wsl2DockerRuntime {
     return ['/usr/bin/env', [...assignments, '--', command, ...args]];
   }
 
+  private runProbe(command: string, args: string[], timeoutMs: number, description: string): Promise<WslCommandResult> {
+    const controller = new AbortController();
+    const [environmentCommand, environmentArgs] = this.withEnvironment(command, args);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        controller.abort();
+        reject(new Wsl2ReadinessTimeout(`${ description } timed out after ${ timeoutMs }ms`));
+      }, timeoutMs);
+      let probe: Promise<WslCommandResult>;
+
+      try {
+        probe = this.host.runInDistribution(environmentCommand, environmentArgs, this.options.user, controller.signal);
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+
+        return;
+      }
+
+      probe.then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      }, (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
   get running(): boolean {
     return this.started && !!this.child && this.child.exitCode === null && this.child.signalCode === null;
   }
@@ -64,10 +97,19 @@ export class Wsl2DockerRuntime {
     if (this.running) return;
     if (this.child) await this.stop();
 
+    const readyBy = Date.now() + (this.options.readyTimeoutMs ?? 60_000);
+    const userProbeTime = readyBy - Date.now();
+    if (userProbeTime <= 0) throw new Wsl2ReadinessTimeout('WSL runtime user check timed out before it started');
+    const userResult = await this.runProbe('/usr/bin/id', ['-u'], userProbeTime, 'WSL runtime user check');
+    const userId = decodeWslOutput(userResult.stdout).trim();
+
+    if (!/^[1-9][0-9]*$/.test(userId) || !Number.isSafeInteger(Number(userId))) {
+      throw new Error('Configured WSL2 runtime user must exist and have a non-root numeric UID');
+    }
+
     const [daemonCommand, daemonArgs] = this.withEnvironment(this.options.daemonCommand, this.options.daemonArgs ?? []);
     const child = this.host.spawnInDistribution(daemonCommand, daemonArgs, { windowsHide: true }, this.options.user);
     this.child = child;
-    const readyBy = Date.now() + (this.options.readyTimeoutMs ?? 60_000);
     const pollMs = this.options.pollIntervalMs ?? 500;
     let processError: Error | undefined;
 
@@ -80,18 +122,21 @@ export class Wsl2DockerRuntime {
           throw new Error(`Rootless Docker exited before becoming ready (${ child.signalCode ?? `code ${ child.exitCode }` })`);
         }
         try {
-          const [readinessCommand, readinessArgs] = this.withEnvironment(this.options.readinessCommand, this.options.readinessArgs);
-          await this.host.runInDistribution(readinessCommand, readinessArgs, this.options.user);
-        } catch {
+          await this.runProbe(this.options.readinessCommand, this.options.readinessArgs, readyBy - Date.now(), 'Rootless Docker readiness probe');
+        } catch (error) {
+          if (error instanceof Wsl2ReadinessTimeout) throw error;
           await this.sleep(Math.min(pollMs, Math.max(0, readyBy - Date.now())));
           continue;
         }
         if (processError) throw new Error(`Could not start rootless Docker: ${ processError.message }`);
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error(`Rootless Docker exited while the readiness probe completed (${ child.signalCode ?? `code ${ child.exitCode }` })`);
+        }
         this.started = true;
 
         return;
       }
-      throw new Error(`Rootless Docker did not become ready within ${ this.options.readyTimeoutMs ?? 60_000 }ms`);
+      throw new Wsl2ReadinessTimeout(`Rootless Docker did not become ready within ${ this.options.readyTimeoutMs ?? 60_000 }ms`);
     } catch (error) {
       await this.stop().catch(() => undefined);
       throw error;
@@ -110,17 +155,19 @@ export class Wsl2DockerRuntime {
 
     this.started = false;
     if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
       const timeoutMs = this.options.stopTimeoutMs ?? 10_000;
       await new Promise<void>(resolve => {
+        const onExit = () => {
+          clearTimeout(timer);
+          resolve();
+        };
         const timer = setTimeout(() => {
+          child.removeListener('exit', onExit);
           if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
           resolve();
         }, timeoutMs);
-        child.once('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
+        child.once('exit', onExit);
+        child.kill('SIGTERM');
       });
     }
     this.child = undefined;
