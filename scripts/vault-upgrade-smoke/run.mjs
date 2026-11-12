@@ -32,19 +32,16 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpsRequest } from 'node:https';
-import { hostname, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DockerCliRuntime, SullaToolRuntime } from './runtime.mjs';
+import { SyntheticPostgres } from './repositories/SyntheticPostgres.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PIN_FILE = 'packaging/bundled-images.yaml';
-const POSTGRES_IMAGE = 'postgres:16-alpine';
-const PG_PORT = 55432;
-const VAULT_PORT = 18787;
 const HUMAN_ORIGIN = 'https://127.0.0.1:30135';
 const CONTROL_SERVICE_ID = 'sulla-desktop-control';
 
@@ -60,150 +57,6 @@ class VaultPin {
 
   static onMain() {
     return VaultPin.parse(execFileSync('git', ['-C', REPO_ROOT, 'show', `origin/main:${ PIN_FILE }`], { encoding: 'utf8' }));
-  }
-}
-
-/** Docker CLI runtime. The anchor (postgres) container owns the network namespace and publishes the vault port. */
-class DockerCliRuntime {
-  name = 'docker';
-
-  docker(args, { capture = false } = {}) {
-    try {
-      const out = execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      return capture ? out.trim() : undefined;
-    } catch (error) {
-      // Only the first stderr line: docker argv can carry synthetic tokens and must not be echoed.
-      throw new Error(`docker ${ args[0] } failed: ${ String(error?.stderr ?? '').split('\n')[0] }`);
-    }
-  }
-
-  pull(image) { this.docker(['pull', '-q', image]); }
-
-  startAnchor(name, args, image) {
-    this.docker(['run', '-d', '--name', name, '-p', `127.0.0.1::${ VAULT_PORT }`, ...args, image]);
-    this.anchor = name;
-  }
-
-  networkArgs() { return ['--network', `container:${ this.anchor }`]; }
-
-  runDetached(name, args, image) { this.docker(['run', '-d', '--name', name, ...this.networkArgs(), ...args, image]); }
-
-  runOnce(args, image, command) {
-    return this.docker(['run', '--rm', ...this.networkArgs(), ...args, image, ...command], { capture: true });
-  }
-
-  vaultHostPort() {
-    return Number(this.docker(['port', this.anchor, `${ VAULT_PORT }/tcp`], { capture: true }).split('\n')[0].split(':').at(-1));
-  }
-
-  stop(name) { this.docker(['stop', name]); }
-
-  remove(name) { this.docker(['rm', '-f', name]); }
-
-  logs(name) { return this.docker(['logs', '--tail', '30', name], { capture: true }); }
-}
-
-/**
- * Sulla agent-container runtime: drives the VM's Docker daemon through the
- * `sulla docker/*` tools and joins every container to this agent container's
- * network namespace, so 127.0.0.1 reaches postgres and the vault directly.
- */
-class SullaToolRuntime {
-  name = 'sulla';
-
-  constructor() { this.anchor = hostname(); }
-
-  tool(name, input) {
-    let raw;
-    try {
-      raw = execFileSync('sulla', [`docker/${ name }`, JSON.stringify(input)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      throw new Error(`sulla docker/${ name } failed: ${ String(error?.stderr ?? '').split('\n')[0] }`);
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed.success) throw new Error(`sulla docker/${ name } failed: ${ String(parsed.error?.message ?? 'unknown').split('\n')[0] }`);
-    return String(parsed.result ?? '');
-  }
-
-  options(args) {
-    if (args.some(arg => /\s/.test(arg))) throw new Error('sulla runtime options cannot contain whitespace');
-    return args.join(' ');
-  }
-
-  pull(image) { this.tool('pull', { image }); }
-
-  startAnchor(name, args, image) { this.runDetached(name, args, image); }
-
-  networkArgs() { return ['--network', `container:${ this.anchor }`]; }
-
-  runDetached(name, args, image) {
-    this.tool('run', { image, name, options: this.options(['-d', ...this.networkArgs(), ...args]) });
-  }
-
-  runOnce(args, image, command) {
-    if (command.some(arg => /\s/.test(arg))) throw new Error('sulla runtime commands cannot contain whitespace');
-    const result = this.tool('run', { image, options: this.options(['--rm', ...this.networkArgs(), ...args]), command: command.join(' ') });
-    const marker = 'Container ID: ';
-    return result.includes(marker) ? result.slice(result.indexOf(marker) + marker.length).trim() : result.trim();
-  }
-
-  vaultHostPort() { return VAULT_PORT; }
-
-  stop(name) { this.tool('stop', { container: name }); }
-
-  remove(name) { this.tool('rm', { container: name, force: true }); }
-
-  logs(name) { return this.tool('logs', { container: name, tail: 30 }); }
-}
-
-/** Throwaway PostgreSQL holding only synthetic vault rows. SQL runs from files through a one-shot psql container. */
-class SyntheticPostgres {
-  constructor(runtime, name, workdir) {
-    this.runtime = runtime;
-    this.name = name;
-    this.sqlDir = join(workdir, 'sql');
-    this.password = randomBytes(18).toString('base64url');
-    this.counter = 0;
-    mkdirSync(this.sqlDir, { recursive: true, mode: 0o755 });
-    chmodSync(this.sqlDir, 0o755);
-  }
-
-  get url() { return `postgresql://smoke:${ this.password }@127.0.0.1:${ PG_PORT }/vault_smoke`; }
-
-  async start() {
-    this.runtime.startAnchor(this.name, [
-      '-e', 'POSTGRES_USER=smoke', '-e', `POSTGRES_PASSWORD=${ this.password }`,
-      '-e', 'POSTGRES_DB=vault_smoke', '-e', `PGPORT=${ PG_PORT }`,
-    ], POSTGRES_IMAGE);
-    for (let attempt = 0; attempt < 60; attempt++) {
-      try {
-        if (this.query('SELECT 1') === '1') return;
-      } catch { /* not accepting connections yet */ }
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 1000));
-    }
-    throw new Error('synthetic PostgreSQL did not become ready');
-  }
-
-  query(sql) {
-    const file = `q${ ++this.counter }.sql`;
-    writeFileSync(join(this.sqlDir, file), `${ sql };\n`, { mode: 0o644 });
-    return this.runtime.runOnce(
-      ['-v', `${ this.sqlDir }:/sql:ro`, '-e', `PGPASSWORD=${ this.password }`],
-      POSTGRES_IMAGE,
-      ['psql', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'smoke', '-d', 'vault_smoke', '-v', 'ON_ERROR_STOP=1', '-At', '-f', `/sql/${ file }`],
-    );
-  }
-
-  /** One line per item: id:sha256(full row text). */
-  itemRows() {
-    return this.query(`SELECT id::text || ':' || encode(sha256(convert_to(i::text, 'UTF8')), 'hex') FROM items i ORDER BY id`)
-      .split('\n').filter(Boolean);
-  }
-
-  /** The vault key row: id:sha256(full row text):xmin:ctid. */
-  keyRow() {
-    return this.query(`SELECT id::text || ':' || encode(sha256(convert_to(u::text, 'UTF8')), 'hex') || ':' || xmin::text || ':' || ctid::text FROM users u ORDER BY id`)
-      .split('\n').filter(Boolean);
   }
 }
 

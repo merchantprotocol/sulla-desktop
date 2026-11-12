@@ -52,16 +52,28 @@ For a stable "download the latest" link, read
    and uploads `releases/v<version>/latest.json` and `latest-mac.yml`.
 3. **Draft.** It creates a draft GitHub Release with generated notes and
    download links. No zips are attached.
-4. **Publish.** Publishing the draft runs the Update feed workflow
-   (`.github/workflows/update-feed.yaml`). It reads
+4. **Publish automatically.** Only after the matrix package job and release-file
+   upload/manifest verification succeed, the final Package job publishes the
+   draft. Version tags containing a hyphen (for example `v1.8.0-rc.1` or
+   `v1.8.0-nightly.1`) are marked as prereleases; they never update the stable
+   channel. Stable releases dispatch Update feed and npx publish explicitly,
+   because a release published with `GITHUB_TOKEN` does not emit another
+   workflow-triggering release event.
+5. **Promote.** Update feed reads the already verified
    `releases/v<version>/latest.json`, checks every zip again, adds the GitHub
    release notes, refuses to replace a newer version, and writes
-   `channels/latest/latest.json` and then `channels/latest/latest-mac.yml`. It then
-   fetches the live channel and downloads every advertised zip to recompute and
-   compare its sha512. The feed goes last, so the app never sees a feed that points at a missing
-   file. Prereleases are not promoted.
+   `channels/latest/latest.json` followed by `channels/latest/latest-mac.yml`.
+   It then fetches the live channel and downloads every advertised zip to
+   recompute and compare its sha512. The feed goes last, so clients never see a
+   feed pointing at a missing or corrupt file. The workflow dispatch skips
+   rehashing by default for this automated path; manually dispatched runs retain
+   the `rehash` option for rebuilding a missing or incorrect manifest.
 
-Until step 4, nothing users see changes. Installed apps pick the new version up
+A failed package leg, upload, or verification prevents the final publish job
+from running. Re-running the workflow is safe: publishing an already published
+release is idempotent, and feed promotion accepts the same version without
+replacing a newer one. Until the final publish job succeeds, nothing users see
+changes. Installed apps pick the new version up
 on their next check (every 6 hours, or **Check for updates**).
 
 ### By hand

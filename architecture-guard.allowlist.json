@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1102,
+  "entries": 1101,
   "files": {
     "background.ts": {
       "rules": {
@@ -4237,8 +4237,7 @@
     },
     "services/sulla-files/src/acl.ts": {
       "rules": {
-        "raw-sql": 2,
-        "procedural-module": 3
+        "raw-sql": 2
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },

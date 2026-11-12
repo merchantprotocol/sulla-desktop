@@ -333,6 +333,6 @@ jobs:
           exit 0
         fi
         gh release edit "$TAG" --draft=false --latest
-        gh workflow run update-feed.yaml --ref main -f "tag=$TAG"
+        gh workflow run update-feed.yaml --ref main -f "tag=$TAG" -f "rehash=false"
         gh workflow run npx-publish.yaml --ref main -f "version=${TAG#v}"
         echo "Published $TAG and dispatched Update feed and npx publish."
