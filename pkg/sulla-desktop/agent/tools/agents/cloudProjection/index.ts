@@ -19,6 +19,11 @@ export interface CloudAgentProjection {
 export class CloudAgentStateProjection {
   constructor(private readonly projector = new AgentStateProjector(agentJobProvider.states, {
     latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
+    latestForJobs: async(jobIds) => {
+      const telemetry = await agentJobProvider.messaging.latestTelemetryForJobs(jobIds);
+      return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) => [jobId,
+        Object.fromEntries(Object.entries(tasks).map(([taskIndex, value]) => [taskIndex, value.latestCheckin]))]));
+    },
   }, Date.now, {}, agentJobProvider.activity)) {}
 
   async build(deviceId = ''): Promise<CloudAgentProjection[]> {
