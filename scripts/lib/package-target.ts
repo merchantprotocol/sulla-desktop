@@ -28,7 +28,6 @@ export class PackageTargetSpec {
     this.assetHostArch = arch === 'x64' ? 'x86_64' : arch;
     this.uname = this.assetHostArch;
     this.guestArch = arch === 'x64' ? 'amd64' : 'arm64';
-    const zigArch = arch === 'x64' ? 'x86_64' : 'aarch64';
     this.nativeDependencyPaths = Object.freeze([
       `node_modules/node-pty/prebuilds/darwin-${ arch }/pty.node`,
       `node_modules/node-pty/prebuilds/darwin-${ arch }/spawn-helper`,
@@ -38,7 +37,6 @@ export class PackageTargetSpec {
       `node_modules/sherpa-onnx-darwin-${ arch }/libonnxruntime.dylib`,
       `node_modules/sherpa-onnx-darwin-${ arch }/libsherpa-onnx-c-api.dylib`,
       `node_modules/onnxruntime-node/bin/napi-v6/darwin/${ arch }/onnxruntime_binding.node`,
-      `node_modules/posix-node/dist/${ zigArch }-macos.node`,
     ]);
     Object.freeze(this);
   }
