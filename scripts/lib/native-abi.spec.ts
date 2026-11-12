@@ -10,7 +10,7 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  NativeAbiAudit, NativeAddonAbiReader, PackagedNativeLoadSmoke, SpawnSmokeRunner, StaleRebuildMarkerRepair,
+  NativeAbiAudit, NativeAddonAbiReader, PackagedAppNativeGate, PackagedNativeLoadSmoke, SpawnSmokeRunner, StaleRebuildMarkerRepair,
   type SmokeProcess, type SmokeRunner,
 } from './native-abi';
 
@@ -166,5 +166,26 @@ describe('PackagedNativeLoadSmoke', () => {
     expect(smoke.problems(process.execPath, [], abi)).toEqual([]);
     expect(smoke.problems(process.execPath, [], abi + 1)).toEqual([`packaged Electron reports Node ABI ${ abi }, expected ${ abi + 1 }`]);
     expect(smoke.problems(process.execPath, [notAddon], abi)[0]).toContain(`${ notAddon } failed to load`);
+  });
+});
+
+describe('PackagedAppNativeGate', () => {
+  // risk: the Intel app shipped with an ABI-127 better-sqlite3 and a crashing posix-node addon, both "valid" x64 Mach-O
+  it('fails an app whose better-sqlite3 is for the wrong ABI and reports each unloadable addon', () => {
+    const files = new AddonFiles();
+    const app = path.join(files.root, 'Sulla Desktop.app');
+
+    files.add('Sulla Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node', ['node_register_module_v127']);
+    files.add('Sulla Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-x64/pty.node', ['napi_register_module_v1']);
+    const runner: SmokeRunner = {
+      run: (_c, args) => args[args.length - 1].includes('better_sqlite3')
+        ? { status: 1, signal: null, stdout: '', stderr: 'ERR_DLOPEN_FAILED' }
+        : { status: 0, signal: null, stdout: args[args.length - 1] === '--abi' ? '143' : 'ok', stderr: '' },
+    };
+    const problems = new PackagedAppNativeGate(new NativeAbiAudit(), new PackagedNativeLoadSmoke(runner)).problems(app, 'Sulla Desktop', ['node_modules/node-pty/prebuilds/darwin-x64/pty.node', 'node_modules/node-pty/prebuilds/darwin-x64/spawn-helper'], 143);
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('built for Node ABI 127 but Electron needs 143');
+    expect(problems[1]).toContain('better_sqlite3.node failed to load');
   });
 });

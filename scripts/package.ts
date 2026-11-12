@@ -31,7 +31,7 @@ import yaml from 'yaml';
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes, UnusedMacAddonExcludes } from './lib/foreign-arch-excludes';
-import { NativeAbiAudit, NodeAbiElectronSource, PackagedNativeLoadSmoke, StaleRebuildMarkerRepair } from './lib/native-abi';
+import { NativeAbiAudit, NodeAbiElectronSource, PackagedAppNativeGate, StaleRebuildMarkerRepair } from './lib/native-abi';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
   PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, RuntimeArtifactSourceValidator, StagedRuntimeInstaller,
@@ -258,14 +258,10 @@ class Builder {
    * window opens and the primary app is untouched.
    */
   protected checkSignedAppLoadsNativeAddons(target: PackageTargetSpec, productName: string): void {
-    const appName = `${ productName }.app`;
-    const appPath = path.join(buildUtils.distDir, target.arch === 'arm64' ? 'mac-arm64' : 'mac', appName);
-    const unpacked = path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked');
-    const addons = new NativeAbiAudit().addonsUnder(unpacked);
-    const binary = path.join(appPath, 'Contents', 'MacOS', path.basename(appName, '.app'));
-    const problems = new PackagedNativeLoadSmoke().problems(binary, addons, this.expectedNativeAbi);
+    const appPath = path.join(buildUtils.distDir, target.arch === 'arm64' ? 'mac-arm64' : 'mac', `${ productName }.app`);
+    const problems = new PackagedAppNativeGate().problems(appPath, productName, target.nativeDependencyPaths, this.expectedNativeAbi);
 
-    if (problems.length) throw new Error(`The signed ${ target.key } app fails the native load smoke: ${ problems.join('; ') }`);
+    if (problems.length) throw new Error(`The signed ${ target.key } app fails the native gate: ${ problems.join('; ') }`);
   }
 
   /** Clears @electron/rebuild markers that disagree with the binary beside them, so the rebuild is real. */

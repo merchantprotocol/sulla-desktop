@@ -221,3 +221,24 @@ export class PackagedNativeLoadSmoke {
     return [run.signal ? `signal ${ run.signal }` : `exit ${ run.status }`, detail.slice(0, 200)].filter(Boolean).join(': ');
   }
 }
+
+/**
+ * The whole native gate for one packaged, signed `.app`: ABI of every addon in
+ * app.asar.unpacked, then a real load of each addon the app needs inside its
+ * own Electron. `requiredAddons` are paths relative to node_modules.
+ */
+export class PackagedAppNativeGate {
+  constructor(
+    private readonly audit: NativeAbiAudit = new NativeAbiAudit(),
+    private readonly smoke: PackagedNativeLoadSmoke = new PackagedNativeLoadSmoke(),
+  ) {}
+
+  problems(appPath: string, executableName: string, requiredAddons: readonly string[], expectedAbi: number): string[] {
+    const unpacked = path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked');
+    const abiProblems = this.audit.packagedProblems(unpacked, expectedAbi);
+    const toLoad = [...new Set([...NativeAbiAudit.REQUIRED_ADDONS, ...requiredAddons].filter(rel => rel.endsWith('.node')))]
+      .map(rel => path.join(unpacked, 'node_modules', rel.replace(/^node_modules\//, '')));
+
+    return [...abiProblems, ...this.smoke.problems(path.join(appPath, 'Contents', 'MacOS', executableName), toLoad, expectedAbi)];
+  }
+}
