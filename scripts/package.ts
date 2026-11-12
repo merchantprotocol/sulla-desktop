@@ -29,6 +29,7 @@ import yaml from 'yaml';
 
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
+import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
@@ -367,6 +368,10 @@ class Builder {
       config[key] = items.concat(overrideItems);
       delete section[key];
     }
+
+    // Leave the other CPU's native prebuilds out of this architecture's app
+    // (appended to the merged top-level list above).
+    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(buildUtils.arch === 'x64' ? 'x64' : 'arm64')];
 
     await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
