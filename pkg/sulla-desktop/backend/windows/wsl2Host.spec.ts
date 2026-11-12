@@ -91,8 +91,9 @@ describe('WSL2 host adapter', () => {
     await host.runInDistribution('/usr/local/bin/sulla-runtime', ['exec', '--', 'printf', '%s', 'value with spaces']);
     await host.terminateDistribution();
 
+    // Contract: run(args, signal). No signal was supplied, so the second argument is undefined.
     expect(run.mock.calls).toEqual([
-      [['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'root', '--exec', '/usr/local/bin/sulla-runtime', 'exec', '--', 'printf', '%s', 'value with spaces']],
+      [['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'root', '--exec', '/usr/local/bin/sulla-runtime', 'exec', '--', 'printf', '%s', 'value with spaces'], undefined],
       [['--terminate', SULLA_WSL_DISTRIBUTION]],
     ]);
   });
@@ -105,7 +106,7 @@ describe('WSL2 host adapter', () => {
     await expect(host.runInDistribution('/usr/bin/docker', ['info'], 'sulla;id')).rejects.toThrow('Invalid WSL user');
 
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/docker', 'info']);
+    expect(run).toHaveBeenCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'sulla', '--exec', '/usr/bin/docker', 'info'], undefined);
   });
 
   it('forwards an abort signal to a bounded WSL command', async() => {
@@ -144,5 +145,32 @@ describe('WSL2 host adapter', () => {
       ['--distribution', SULLA_WSL_DISTRIBUTION, '--user', 'root', '--exec', '/usr/local/bin/sulla-runtime', 'start', '--data-disk', 'C:\\Users\\Jon\\Sulla Data\\disk.img'],
       { windowsHide: true },
     );
+  });
+
+  // risk: privilege escalation / shell injection through the --user argument
+  it('accepts login names and non-root numeric UIDs but rejects root-equivalent or shell-shaped users', async() => {
+    const run = vi.fn().mockResolvedValue({ stdout: '' });
+    const host = new Wsl2Host(run);
+
+    for (const user of ['sulla', '_svc', 'build-user$', '1000', '2147483647']) {
+      await host.runInDistribution('/usr/bin/id', ['-u'], user);
+      expect(run).toHaveBeenLastCalledWith(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', user, '--exec', '/usr/bin/id', '-u'], undefined);
+    }
+    const accepted = run.mock.calls.length;
+
+    for (const user of ['0', '00', '0123', '-1', '1000;id', '1 0', '2147483648', '99999999999', '', 'Root', '$(id)', '1e3']) {
+      await expect(host.runInDistribution('/usr/bin/id', ['-u'], user)).rejects.toThrow('Invalid WSL user');
+      expect(() => host.spawnInDistribution('/usr/bin/id', ['-u'], {}, user)).toThrow('Invalid WSL user');
+    }
+    expect(run).toHaveBeenCalledTimes(accepted);
+  });
+
+  it('spawns a long-running command as a numeric UID', () => {
+    const processSpawner = { spawn: vi.fn(() => new EventEmitter() as any) };
+    const host = new Wsl2Host(async() => ({ stdout: '' }), async() => {}, undefined, processSpawner);
+
+    host.spawnInDistribution('/usr/bin/dockerd-rootless.sh', [], {}, '1000');
+
+    expect(processSpawner.spawn.mock.calls[0][1]).toEqual(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', '1000', '--exec', '/usr/bin/dockerd-rootless.sh']);
   });
 });

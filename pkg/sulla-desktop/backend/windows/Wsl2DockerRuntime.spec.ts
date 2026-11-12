@@ -65,21 +65,32 @@ describe('Wsl2DockerRuntime', () => {
     ], 'sulla');
   });
 
-  it('refuses runtime commands before start and kills the app-owned process on readiness timeout', async() => {
-    const child = new FakeProcess();
-    const host: Wsl2RuntimeHost = {
-      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockRejectedValue(new Error('not ready')),
-      spawnInDistribution: vi.fn(() => child as any),
-      terminateDistribution: vi.fn().mockResolvedValue(undefined),
-    };
-    const runtime = new Wsl2DockerRuntime(host, { ...options, readyTimeoutMs: 10 }, async() => undefined);
+  it('refuses runtime commands before start and kills the app-owned process when the readiness deadline passes', async() => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeProcess();
+      const host: Wsl2RuntimeHost = {
+        runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockRejectedValue(new Error('not ready')),
+        spawnInDistribution: vi.fn(() => child as any),
+        terminateDistribution: vi.fn().mockResolvedValue(undefined),
+      };
+      // Deterministic clock: each poll sleep advances fake time instead of racing real time.
+      const runtime = new Wsl2DockerRuntime(host, { ...options, readyTimeoutMs: 10, pollIntervalMs: 5 }, async ms => { vi.advanceTimersByTime(ms); });
 
-    await expect(runtime.run('docker', ['ps'])).rejects.toThrow('not running');
-    await expect(runtime.start()).rejects.toThrow(/Rootless Docker readiness probe timed out/);
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
-    expect(host.terminateDistribution).toHaveBeenCalledTimes(1);
-    expect(runtime.running).toBe(false);
+      await expect(runtime.run('docker', ['ps'])).rejects.toThrow('not running');
+      const started = expect(runtime.start()).rejects.toThrow(/Rootless Docker did not become ready within 10ms/);
+
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.runAllTimersAsync();
+      await started;
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(host.terminateDistribution).toHaveBeenCalledTimes(1);
+      expect(runtime.running).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports an early daemon exit and does not mistake it for an available runtime', async() => {

@@ -37,6 +37,27 @@ export interface WslHostInspection {
   error?: string;
 }
 
+/**
+ * Validates the WSL `--user` argument. Accepts a Linux login name or a
+ * non-root numeric UID (1..2147483647, no leading zeros). Root is only ever
+ * reachable through the literal name `root`, which callers use for explicit
+ * administrative actions; numeric 0 is refused so a UID cannot smuggle root.
+ */
+export class WslUserValidator {
+  private static readonly NAME = /^[a-z_][a-z0-9_-]*[$]?$/;
+  private static readonly UID = /^[1-9][0-9]{0,9}$/;
+
+  isValid(user: string): boolean {
+    if (WslUserValidator.NAME.test(user)) return true;
+
+    return WslUserValidator.UID.test(user) && Number(user) <= 2_147_483_647;
+  }
+
+  assertValid(user: string): void {
+    if (!this.isValid(user)) throw new Error('Invalid WSL user');
+  }
+}
+
 export const SULLA_WSL_DISTRIBUTION = 'Sulla Desktop';
 
 /** Decode WSL's list output, which has shipped as either UTF-8 or UTF-16LE. */
@@ -75,6 +96,7 @@ export class Wsl2Host {
   private readonly verifyAsset: (file: string, expectedSha256: string) => Promise<void>;
   private readonly distributionName: string;
   private readonly processSpawner: WslProcessSpawner;
+  private readonly userValidator = new WslUserValidator();
 
   constructor(
     run: WslCommandRunner = runWslCommand,
@@ -121,11 +143,11 @@ export class Wsl2Host {
   }
 
   /** Spawn an argument-safe command in the app-owned distro; caller owns its lifecycle. */
-  runInDistribution(command: string, args: string[], user = 'root', signal?: AbortSignal): Promise<WslCommandResult> {
+  async runInDistribution(command: string, args: string[], user = 'root', signal?: AbortSignal): Promise<WslCommandResult> {
     if (!command.trim() || /[\r\n\0]/.test(command)) {
       throw new Error('Invalid WSL command');
     }
-    if (!/^[a-z_][a-z0-9_-]*[$]?$/.test(user)) throw new Error('Invalid WSL user');
+    this.userValidator.assertValid(user);
 
     return this.run(['--distribution', this.distributionName, '--user', user, '--exec', command, ...args], signal);
   }
@@ -133,7 +155,7 @@ export class Wsl2Host {
   /** Spawn an argument-safe long-running guest command for runtime lifecycle ownership. */
   spawnInDistribution(command: string, args: string[], options: SpawnOptions = {}, user = 'root'): ChildProcess {
     if (!command.trim() || /[\r\n\0]/.test(command)) throw new Error('Invalid WSL command');
-    if (!/^[a-z_][a-z0-9_-]*[$]?$/.test(user)) throw new Error('Invalid WSL user');
+    this.userValidator.assertValid(user);
 
     return this.processSpawner.spawn(wslExecutablePath(), [
       '--distribution', this.distributionName, '--user', user, '--exec', command, ...args,
