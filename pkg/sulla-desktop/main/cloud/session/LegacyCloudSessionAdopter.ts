@@ -57,8 +57,9 @@ export class LegacyCloudSessionAdopter {
     );
     const seen = await store.read();
     if (!seen) return { kind: 'rejected' };
+    // ClientSessionService answers null when Cloud rejected the token (400/401/403); a transient failure throws.
     const next = await sessions.refresh(seen);
-    if (store.wasRejected() || !next) return { kind: 'rejected' };
+    if (!next) return { kind: 'rejected' };
     return { kind: 'rotated', tokens: { accessToken: next.tokens.accessToken, refreshToken: next.tokens.refreshToken } };
   }
 }
