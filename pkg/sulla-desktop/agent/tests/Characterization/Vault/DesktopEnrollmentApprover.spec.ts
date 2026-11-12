@@ -50,8 +50,10 @@ let broker: FakeVaultBroker;
 let subject: DesktopEnrollmentHarness;
 
 const sha = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
+/** A well-formed raw P-256 point (65 bytes, base64url), as Cloud's validEnrollmentKey requires. */
+const publicKeyFor = (id: string) => Buffer.concat([Buffer.from([4]), crypto.createHash('sha256').update(`${ id }x`).digest(), crypto.createHash('sha256').update(`${ id }y`).digest()]).toString('base64url');
 const request = (id: string) => ({
-  id, requesterType: 'desktop', requesterId: `requester-${ id }`, publicKey: `BPK-${ id }`, nonce: 'nonce', expiresAt: '2026-11-12T00:05:00Z', createdAt: '2026-11-12T00:00:00Z',
+  id, requesterType: 'desktop', requesterId: `requester-${ id }`, publicKey: publicKeyFor(id), nonce: 'nonce', expiresAt: '2026-11-12T00:05:00Z', createdAt: '2026-11-12T00:00:00Z',
 });
 
 /** Yields in real time until `done()` holds (the poll runs on real promises under fake timers). */
@@ -105,7 +107,7 @@ describe('vault enrollment approver', () => {
     expect(order.slice(5)).toEqual(['wrap', 'cloud:POST respond']);
 
     expect(broker.wrapCalls).toEqual([{
-      requestId: 'req-a', vaultId: VAULT, vaultEpoch: 3, publicKey: 'BPK-req-a',
+      requestId: 'req-a', vaultId: VAULT, vaultEpoch: 3, publicKey: publicKeyFor('req-a'),
       bundle: { epoch: 3, mac: 'bundle-mac' }, head: { mac: 'head-mac', vaultId: VAULT }, records: [{ id: 'r1' }], approved: true,
     }]);
     const [respond] = cloud.callsTo('/respond');
