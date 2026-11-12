@@ -43,7 +43,8 @@ import type { AccountKdf } from '@sulla/domain';
 
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
-import { FetchCloudRefreshHttp } from './cloud/session/ElectronCloudRefreshTransport';
+import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
+import { FetchCloudLogoutHttp, FetchCloudRefreshHttp } from './cloud/session/ElectronCloudRefreshTransport';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
 import { readRecoveryKeyFromMacKeychain, recoveryKeyStorageStatus, saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
@@ -759,6 +760,11 @@ const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
         },
       });
     },
+    /** Server-mode sign-out: drop the first-run copy and the stored account. Throws when the account could not be removed. */
+    async clear(): Promise<void> {
+      await clearPendingCredential(INTEGRATION_ID);
+      await clearSession();
+    },
   },
   new FetchCloudRefreshHttp(refreshToken => cloudFetch('/auth/refresh', {
     method:  'POST',
@@ -774,7 +780,23 @@ const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
       refreshFailCount = 0;
     },
   },
+  undefined,
+  undefined,
+  // Logout is POSTed once (no retry): the refresh token is revoked server-side whatever the response body holds.
+  new FetchCloudLogoutHttp(refreshToken => cloudFetch('/auth/logout', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ refreshToken }),
+  })),
 );
+
+/** `sulla-cloud:logout`: container vault unchanged; server mode clears locally, then revokes on Sulla Cloud. */
+const cloudSignOut = new DesktopCloudSignOut({
+  usesContainerVault:     usesContainerVaultAuthority,
+  clearPendingMasterKey:  clearPendingCloudMasterKey,
+  clearPendingCredential: () => clearPendingCredential(INTEGRATION_ID),
+  clearContainerSession:  clearSession,
+}, legacySessions);
 
 /**
  * Returns the currently-signed-in access token, or empty string if not
@@ -1018,6 +1040,8 @@ export function initSullaCloudAuthEvents(): void {
     const session = responseToSession(data);
     try {
       await saveSession(session);
+      // A sign-out closed the refresh gate; this new session must refresh again.
+      legacySessions.adopted();
     } catch (err) {
       if (!usesContainerVaultAuthority()) throw err;
       const error = vaultSessionError(err, 'sign in');
@@ -1066,6 +1090,7 @@ export function initSullaCloudAuthEvents(): void {
         contractors_json:    JSON.stringify(session.contractors),
       },
     });
+    legacySessions.adopted();
     let mayStartCloudServices = false;
     try {
       mayStartCloudServices = await checkEnrollmentAfterCloudSignIn();
@@ -1382,16 +1407,15 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    legacySessions.invalidate();
-    clearPendingCloudMasterKey();
-    await clearPendingCredential(INTEGRATION_ID);
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-      // The broker clear is the authority. If it fails, keep Desktop paired
-      // and Cloud services running so both sides still describe one session.
-      return buildStatus(vaultSessionError(err, 'sign out'));
+    const outcome = await cloudSignOut.run();
+    if (!outcome.signedOut) {
+      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', outcome.error);
+      // The local clear is the authority. If it fails (nothing was revoked), keep
+      // Desktop paired and Cloud services running so both sides still describe one session.
+      return buildStatus(vaultSessionError(outcome.error, 'sign out'));
+    }
+    if (outcome.serverRevoked === false) {
+      console.warn('[SullaCloudAuth] Signed out locally; Sulla Cloud could not revoke the session now, so it will expire on its own');
     }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows
