@@ -10,6 +10,8 @@
 //   long-file        a file over the line limit (default 400) that is not on the allowlist
 //   procedural-module a file that exports free functions doing I/O or business logic and no class,
 //                    that is not on the allowlist
+//   domain-owned     a local copy of logic that the shared @sulla/domain package owns (config
+//                    `domainOwned`). Never allowlisted: call the domain service instead.
 //
 // Today's offenders live in architecture-guard.allowlist.json. The allowlist may only shrink:
 //   - a file's recorded count for mutable-state / raw-sql may not go up
@@ -29,7 +31,7 @@ const ROOT = process.cwd();
 const CONFIG_PATH = path.join(ROOT, 'architecture-guard.config.json');
 const ALLOWLIST_NAME = 'architecture-guard.allowlist.json';
 const ALLOWLIST_PATH = path.join(ROOT, ALLOWLIST_NAME);
-const RULES = ['mutable-state', 'raw-sql', 'long-file', 'procedural-module'];
+const RULES = ['mutable-state', 'raw-sql', 'long-file', 'procedural-module', 'domain-owned'];
 
 const DEFAULT_CONFIG = {
   maxLines: 400,
@@ -48,6 +50,18 @@ const DEFAULT_CONFIG = {
   proceduralExempt: ['\\.(vue|tsx|jsx)$', '(^|/)[^/]*\\.config\\.[cm]?[jt]s$', '(^|/)scripts/'],
   // Paths exempt from the mutable-state rule (Vue SFC <script setup> state is per instance).
   mutableStateExempt: ['\\.vue$'],
+  // Logic owned by @sulla/domain. A production file whose code or string literals (comments are
+  // ignored) match `pattern` re-implements it. `existing` lists pre-domain copies still being
+  // migrated; that list may only shrink.
+  domainOwned: [
+    {
+      id: 'bitwarden-import',
+      owner: '@sulla/domain BitwardenImportService (services/sulla-vault/src/bitwarden/BitwardenExportImporter.ts)',
+      // Bitwarden export field names every parser of its JSON, CSV or encrypted format must touch.
+      pattern: '\\b(?:encKeyValidation_DO_NOT_EDIT|login_username|login_password|fido2Credentials|cardholderName)\\b',
+      existing: ['^pkg/sulla-desktop/sulla\\.ts$'],
+    },
+  ],
 };
 
 function loadConfig() {
@@ -58,6 +72,9 @@ function loadConfig() {
     cfg[key] = [...(user[key] || DEFAULT_CONFIG[key]), ...(user[`extra_${key}`] || [])];
     cfg[`${key}Re`] = cfg[key].map((p) => new RegExp(p));
   }
+  cfg.domainOwned = (user.domainOwned || DEFAULT_CONFIG.domainOwned).map((d) => ({
+    ...d, patternRe: new RegExp(d.pattern), existingRe: (d.existing || []).map((p) => new RegExp(p)),
+  }));
   return cfg;
 }
 
@@ -162,7 +179,25 @@ function analyze(file, cfg) {
     const fnExports = (code.match(/^export\s+(default\s+)?(async\s+)?function\b|^export\s+const\s+[\w$]+\s*(?::[^=\n]+)?=\s*(async\s+)?(\([^)]*\)|[\w$]+)\s*(:[^=\n]+)?=>|^export\s+const\s+[\w$]+\s*=\s*(async\s+)?function\b/gm) || []).length;
     if (!exportsClass && fnExports > 0 && IO_RE.test(code)) found['procedural-module'] = fnExports;
   }
+
+  // domain-owned
+  const owned = domainOwnedCopies(file, code, strings, cfg);
+  if (owned.length) found['domain-owned'] = owned.length;
   return found;
+}
+
+/** Domain-owned rules this file re-implements (code and string literals; comments are ignored). */
+function domainOwnedCopies(file, code, strings, cfg) {
+  const text = `${code}\n${strings.map((s) => s.text).join('\n')}`;
+  if (file.startsWith('scripts/architecture-guard/')) return []; // the rule's own patterns
+  return cfg.domainOwned.filter((d) => !d.existingRe.some((re) => re.test(file)) && d.patternRe.test(text));
+}
+
+function domainOwnedMessage(file, cfg) {
+  let src = readFileSync(path.join(ROOT, file), 'utf8');
+  if (file.endsWith('.vue')) src = vueScript(src);
+  const { code, strings } = stripCommentsAndStrings(src);
+  return domainOwnedCopies(file, code, strings, cfg).map((d) => `${d.id}: use ${d.owner}`).join('; ');
 }
 
 function readAllowlist(text) {
@@ -213,6 +248,8 @@ function main() {
   if (mode === 'init') {
     const out = {};
     for (const [f, r] of Object.entries(results)) {
+      delete r['domain-owned']; // never allowlisted
+      if (!Object.keys(r).length) continue;
       out[f] = { rules: r, reason: Object.keys(r).map((k) => REASON[k]).join('; ') };
     }
     const total = writeAllowlist(out);
@@ -227,7 +264,9 @@ function main() {
   for (const [f, r] of Object.entries(results)) {
     for (const [rule, value] of Object.entries(r)) {
       const entry = allow[f]?.rules?.[rule];
-      if (entry === undefined) {
+      if (rule === 'domain-owned') {
+        errors.push(`${f}: [domain-owned] re-implements logic owned by the shared domain package (${domainOwnedMessage(f, cfg)}). Call the domain service; this rule cannot be allowlisted.`);
+      } else if (entry === undefined) {
         const what = {
           'mutable-state': `${value} top-level mutable declaration(s) (top-level let/var or a module-scope Map/Set/array/object that is mutated). Put state in a class instance.`,
           'raw-sql': `${value} raw SQL string(s) / db client call(s) outside a repository/model/migration folder. Move data access into a Repository.`,

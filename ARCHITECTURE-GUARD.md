@@ -21,6 +21,7 @@ Only production code is checked. Tests, fixtures, `node_modules`, build output, 
 | `raw-sql` | SQL strings (`SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`, `DELETE FROM`, `CREATE/ALTER/DROP TABLE`), `sql` tagged templates, or `db/pool/client/…​.query/prepare/exec/…(` calls outside `Repositories/`, `Models/` or `migrations/` folders | move the data access into a Repository |
 | `long-file` | a file over 400 lines that isn't on the allowlist | split it into classes |
 | `procedural-module` | a file that exports free functions doing I/O or business logic (await, fetch, fs, IPC, storage, db calls) and exports no class. UI components (`.vue/.tsx/.jsx`), `*.config.*` and `scripts/` are exempt | make it a Service, Repository or other class |
+| `domain-owned` | a local copy of logic the shared `@sulla/domain` package owns (config `domainOwned`; today: Bitwarden export parsing, matched by Bitwarden field names in code or strings). Comments, tests and fixtures are ignored. Never allowlisted | call the domain service (for Bitwarden: `services/sulla-vault/src/bitwarden/BitwardenExportImporter.ts`) |
 
 ## The allowlist only shrinks
 `architecture-guard.allowlist.json` lists today's offenders (file → rule counts + reason). The check fails when:
