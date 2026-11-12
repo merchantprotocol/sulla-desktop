@@ -13,8 +13,11 @@ COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx docker-cli-compose \
       blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables openssl runc tini linux-lts cpio gzip \
       cifs-utils nfs-utils fuse3 \
+      shadow-uidmap fuse-overlayfs slirp4netns docker-rootless-extras \
       python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
       coreutils findutils grep sed gawk openssh-client \
+    && addgroup -g 1000 sulla && adduser -D -u 1000 -G sulla -s /bin/bash sulla \
+    && printf 'sulla:100000:65536\n' > /etc/subuid && printf 'sulla:100000:65536\n' > /etc/subgid \
     && for dir in dev proc sys run tmp var/lib var/log var/tmp mnt/data mnt/worktrees; do mkdir -p "/image/rootfs/$dir"; done \
     && ln -s ../run /image/rootfs/var/run \
     && chmod 1777 /image/rootfs/tmp \
@@ -102,6 +105,8 @@ RUN set -eu; \
     rm -f /image/wsl-rootfs/lib/modules; \
     rm -rf /image/wsl-rootfs/lib/sulla-boot-modules /image/wsl-rootfs/usr/lib/modules; \
     mkdir -p /image/wsl-rootfs/run /image/wsl-rootfs/tmp; \
+    test -x /image/wsl-rootfs/usr/bin/newuidmap; test -x /image/wsl-rootfs/usr/bin/rootlesskit; \
+    grep -q '^sulla:x:1000:' /image/wsl-rootfs/etc/passwd; grep -q '^sulla:' /image/wsl-rootfs/etc/subuid; \
     chmod 1777 /image/wsl-rootfs/tmp; \
     tar --numeric-owner -C /image/wsl-rootfs -cf /image/wsl-rootfs.tar .; \
     sha256sum /image/wsl-rootfs.tar | awk '{ print $1 "  rootfs.tar" }' > /image/wsl-rootfs.sha256

@@ -7,15 +7,36 @@ daemon. `LinuxDockerHost` owns only a `sulla-desktop-*` Compose project and its
 `down` operation never removes volumes. Runtime state directories are private
 (0700) under Electron's app-data directory.
 
-`LinuxDockerHost` currently supplies the prerequisite probe, safe app-project
-lifecycle, socket discovery and path preparation. `MobyClient` can use the
-system Docker CLI and `docker compose` v2 plugin on Linux. This is **not yet a
-launchable Linux Desktop backend**: the application factory remains macOS-only
-and `SullaRuntimeBackend` still assumes the macOS Virtualization.framework
-guest for its `VMExecutor`, data paths and compose binds. Do not enable a Linux
-package target until the service compose paths and executor have been adapted
-without exposing arbitrary host commands or user-home paths, then verified by
-a real Linux install/start/stop smoke.
+## Backend (implemented)
+
+`LinuxDockerBackend` (`linuxVmBackend.ts`) is the `VMBackend` the factory returns
+on `linux` (`backend === 'linux-docker'`, never `sulla-runtime`). `start()`
+verifies the rootless prerequisites, prepares the private app-data paths, writes
+`docker-compose.json` (`LinuxRuntimeComposeBuilder`) and runs the shared
+`compose up --detach --wait`; `stop()` runs `down --remove-orphans` without
+volumes. Lifecycle calls are serialized and failures leave state `ERROR` with
+`getFailureDetails()` data.
+
+`LinuxContainerExecutor` (`linuxContainerExecutor.ts`) is the `VMExecutor`:
+`execCommand`/`spawn` use `docker exec` in the single `sulla-desktop-*`
+runtime container; `readFile`/`writeFile` stream through stdin/stdout (atomic
+write, requested mode); `copyFileIn/Out` use `docker cp`. Env values are passed
+by name so they never appear in the host process list.
+
+Persistent mounts (host app-data -> container): `state`->`/mnt/data`,
+`files`->`/mnt/sulla-files`, function catalog/invocations ->
+`/mnt/sulla-functions/*`, `backups`->`/mnt/backups`, and a named `worktrees`
+volume ->`/mnt/worktrees`. Only paths under the app-owned runtime root can be
+bind-mounted; the Docker socket, privileged mode, host namespaces and non-loopback
+ports are never configured, and capabilities are dropped to the file-writing set.
+
+Explicitly unsupported on Linux: `reset()` (throws; Sulla never removes volumes
+automatically) and `del()` only removes the container (data is kept).
+`ipAddress` is `127.0.0.1` while running. The default runtime image
+(`alpine:3.23`) is interim; replace with the pinned Sulla guest image once it is
+published. **Not done / not claimed:** `SullaRuntimeBackend`'s managed-services
+orchestration (`managesSullaServices` is false here), a real-engine smoke test,
+and the Linux package target.
 
 The platform-neutral `DockerComposeRuntime` in
 `backend/containerClient/dockerComposeRuntime.ts` is the shared compose
