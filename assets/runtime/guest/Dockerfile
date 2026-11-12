@@ -130,7 +130,7 @@ RUN --mount=type=bind,from=image,source=/image,target=/image \
     ls -l; \
     sha256sum vmlinuz initramfs.img usr.erofs VERSION > SHA256SUMS
 
-FROM scratch
+FROM scratch AS guest-export
 COPY --from=usr /out/ /
 
 # `docker buildx build --target wsl-import-rootfs --output type=local,dest=...`
