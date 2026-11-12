@@ -34,7 +34,9 @@ export class PackageTargetSpec {
       `node_modules/node-pty/prebuilds/darwin-${ arch }/spawn-helper`,
       `node_modules/@napi-rs/xattr-darwin-${ arch }/xattr.darwin-${ arch }.node`,
       `node_modules/sherpa-onnx-darwin-${ arch }/sherpa-onnx.node`,
-      `node_modules/sherpa-onnx-node/node_modules/sherpa-onnx-darwin-${ arch }/libonnxruntime.dylib`,
+      // sherpa-onnx.node resolves its dylibs through @loader_path, so they must sit beside it (yarn hoists the per-arch package).
+      `node_modules/sherpa-onnx-darwin-${ arch }/libonnxruntime.dylib`,
+      `node_modules/sherpa-onnx-darwin-${ arch }/libsherpa-onnx-c-api.dylib`,
       `node_modules/onnxruntime-node/bin/napi-v6/darwin/${ arch }/onnxruntime_binding.node`,
       `node_modules/posix-node/dist/${ zigArch }-macos.node`,
     ]);
