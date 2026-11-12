@@ -14,6 +14,7 @@
 'use strict';
 
 import fs from 'fs';
+import { createHash } from 'crypto';
 import os from 'os';
 import * as path from 'path';
 
@@ -29,11 +30,58 @@ import yaml from 'yaml';
 
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
+import { ForeignArchExcludes, UnusedMacAddonExcludes } from './lib/foreign-arch-excludes';
+import { NativeAbiAudit, NodeAbiElectronSource, PackagedAppNativeGate, StaleRebuildMarkerRepair } from './lib/native-abi';
+import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
+import {
+  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, RuntimeArtifactSourceValidator, StagedRuntimeInstaller,
+  type PackageTargetAssetFetcher,
+} from './lib/package-target';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
 
+class BundledPackageTargetAssetFetcher implements PackageTargetAssetFetcher {
+  async fetch(target: PackageTargetSpec): Promise<void> { await fetchBundledAssets(target.uname); }
+}
+
 class Builder {
+  protected async replaceRuntimeArtifacts(source: string, target: PackageTargetSpec): Promise<void> {
+    const sourcePath = path.resolve(source);
+    const requestedTarget = path.resolve(process.cwd(), 'resources', 'darwin', 'sulla-runtime');
+    if (!(await fs.promises.stat(sourcePath).then(stat => stat.isDirectory(), () => false))) throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be an existing directory.');
+    const sourceRealPath = await fs.promises.realpath(sourcePath);
+    const targetPathCandidate = path.join(await fs.promises.realpath(path.dirname(requestedTarget)), path.basename(requestedTarget));
+    const targetPath = await fs.promises.realpath(targetPathCandidate).catch(() => targetPathCandidate);
+    if (sourceRealPath === targetPath || sourceRealPath.startsWith(`${ targetPath }${ path.sep }`) || targetPath.startsWith(`${ sourceRealPath }${ path.sep }`)) {
+      throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be separate from resources/darwin/sulla-runtime.');
+    }
+    const sourceProblems = await new RuntimeArtifactSourceValidator().problems(sourcePath);
+    if (sourceProblems.length) throw new Error(`Invalid SULLA_RUNTIME_ARTIFACTS_DIR: ${ sourceProblems.join('; ') }`);
+    const parent = path.dirname(targetPath);
+    const stage = await fs.promises.mkdtemp(path.join(parent, '.sulla-runtime-stage-'));
+    const staged = path.join(stage, 'runtime');
+    let installStarted = false;
+    try {
+      await fs.promises.cp(sourcePath, staged, { recursive: true });
+      const stagedRoot = path.join(stage, 'resources');
+      await fs.promises.mkdir(path.join(stagedRoot, 'darwin'), { recursive: true });
+      await fs.promises.rename(staged, path.join(stagedRoot, 'darwin', 'sulla-runtime'));
+      for (const relative of ['darwin/sulla-runtime/sulla-runtime', 'darwin/sulla-runtime/guest/vmlinuz', 'darwin/sulla-runtime/guest/initramfs.img', 'darwin/sulla-runtime/guest/usr.erofs']) {
+        if (!await fs.promises.stat(path.join(stagedRoot, relative)).then(stat => stat.isFile(), () => false)) throw new Error(`Invalid staged runtime: missing ${ relative }`);
+      }
+      const architectureProblems = new PackageTargetNativeBinaryAuditor().problems(process.cwd(), stagedRoot, target);
+      if (architectureProblems.some(problem => problem.includes('darwin/sulla-runtime/sulla-runtime'))) {
+        throw new Error(`Runtime artifact does not match ${ target.key }: ${ architectureProblems.join('; ') }`);
+      }
+      installStarted = true;
+      await new StagedRuntimeInstaller().install(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath, stage);
+    } finally {
+      // Earlier staging failures have no recovery backup to preserve.
+      if (!installStarted) await fs.promises.rm(stage, { recursive: true, force: true });
+    }
+  }
+
   protected async verifyMacSigningIdentity() {
     if (process.platform !== 'darwin') {
       return;
@@ -183,6 +231,64 @@ class Builder {
     await this.buildMacNativeExtensions(context);
     await this.embedSullaRuntime(context);
     await this.checkBundledAssets(context);
+    this.checkNativeArchitectures(context);
+    this.checkNativeAbi(context);
+  }
+
+  /** Node ABI of the Electron being packaged; resolved once, before electron-builder rebuilds native modules. */
+  protected expectedNativeAbi = 0;
+
+  /**
+   * Every addon in the packaged app must match the Electron runtime's Node ABI.
+   * A Node-22 better-sqlite3 (ABI 127) is a valid x64 Mach-O that Electron 40
+   * (ABI 143) refuses to load, so the file-search worker dies at runtime.
+   */
+  protected checkNativeAbi(context: AfterPackContext): void {
+    if (context.electronPlatformName !== 'darwin') return;
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const audit = new NativeAbiAudit();
+    const problems = audit.packagedProblems(path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked'), this.expectedNativeAbi);
+
+    if (problems.length) throw new Error(`Native addons do not match Electron's Node ABI ${ this.expectedNativeAbi }: ${ problems.join('; ') }`);
+  }
+
+  /**
+   * Finishes the package gate on the FINAL (signed) app: loads every
+   * native addon inside the packaged Electron with ELECTRON_RUN_AS_NODE, so no
+   * window opens and the primary app is untouched.
+   */
+  protected checkSignedAppLoadsNativeAddons(target: PackageTargetSpec, productName: string): void {
+    const appPath = path.join(buildUtils.distDir, target.arch === 'arm64' ? 'mac-arm64' : 'mac', `${ productName }.app`);
+    const problems = new PackagedAppNativeGate().problems(appPath, productName, target.nativeDependencyPaths, this.expectedNativeAbi);
+
+    if (problems.length) throw new Error(`The signed ${ target.key } app fails the native gate: ${ problems.join('; ') }`);
+  }
+
+  /** Clears @electron/rebuild markers that disagree with the binary beside them, so the rebuild is real. */
+  protected async repairStaleRebuildMarkers(): Promise<void> {
+    const electronVersion = JSON.parse(await fs.promises.readFile(path.join('node_modules', 'electron', 'package.json'), 'utf8')).version as string;
+    this.expectedNativeAbi = new NodeAbiElectronSource().abiFor(electronVersion);
+    const repair = new StaleRebuildMarkerRepair();
+    const removed = repair.repair(repair.discover(path.join(process.cwd(), 'node_modules')), this.expectedNativeAbi);
+
+    for (const marker of removed) log.warn({ marker }, 'Removed a stale @electron/rebuild marker so the native module is rebuilt for Electron');
+  }
+
+  /**
+   * Every Mach-O in the whole .app (main executable, Frameworks, helpers and
+   * Resources) must hold the CPU being packaged: a stale fixed-architecture
+   * tool or a prebuild the `files` exclusions missed fails the build here
+   * instead of shipping.
+   */
+  protected checkNativeArchitectures(context: AfterPackContext): void {
+    if (context.electronPlatformName !== 'darwin') return;
+    const target = PackageTargetSpec.resolve('darwin', context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const problems = new MachOArchitectureAudit().problems(appPath, target.arch);
+
+    if (problems.length) {
+      throw new Error(`The ${ target.arch } app contains binaries for another CPU: ${ problems.join('; ') }`);
+    }
   }
 
   /**
@@ -193,8 +299,19 @@ class Builder {
   protected async checkBundledAssets(context: AfterPackContext): Promise<void> {
     if (context.electronPlatformName !== 'darwin') return;
     const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const target = PackageTargetSpec.resolve('darwin', context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
+    const resourcesRoot = path.join(appPath, 'Contents', 'Resources', 'resources');
+    const targetProblems = new PackageTargetAssetManifest().problems(resourcesRoot);
+    const packagedFingerprint = new PackageTargetAssetManifest().fingerprint(resourcesRoot);
+    targetProblems.push(...new PackageTargetAssetManifest().packagedScriptProblems(resourcesRoot));
+    const provenancePath = path.join(buildUtils.distDir, 'package-target-provenance.json');
+    targetProblems.push(...new PackageTargetProvenance().problems(provenancePath, target, packagedFingerprint));
+    targetProblems.push(...new PackageTargetNativeDependencyManifest().packagedProblems(path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked', 'node_modules'), target));
+    if (targetProblems.length) {
+      throw new Error(`The packaged app does not match ${ target.key }: ${ targetProblems.join('; ') }`);
+    }
     const skip = skippedParts();
-    const problems = bundledAssetProblems(path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin'), context.arch === Arch.x64 ? 'x86_64' : 'arm64', skip);
+    const problems = bundledAssetProblems(path.join(resourcesRoot, 'darwin'), target.assetHostArch, skip);
 
     if (problems.length) {
       throw new Error(`The app is missing bundled assets: ${ problems.join('; ') }. Run scripts/fetch-bundled-assets.ts for this architecture.`);
@@ -219,11 +336,24 @@ class Builder {
     const target = path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin', 'sulla-runtime');
     const source = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
 
+    // External artifacts were validated and safely staged before electron-builder.
+    // Refuse to use an unmaterialized/mismatched source rather than replacing output here.
     if (source) {
-      await fs.promises.rm(target, { recursive: true, force: true });
-      await fs.promises.cp(source, target, { recursive: true });
+      const sourceBinary = path.join(path.resolve(source), 'sulla-runtime');
+      const targetBinary = path.join(target, 'sulla-runtime');
+      const [sourceBytes, targetBytes] = await Promise.all([fs.promises.readFile(sourceBinary), fs.promises.readFile(targetBinary)]);
+      if (!sourceBytes.equals(targetBytes)) throw new Error('Packaged runtime differs from SULLA_RUNTIME_ARTIFACTS_DIR.');
     }
     const binary = path.join(target, 'sulla-runtime');
+    // Compare the copied packaged bytes with the pre-sign source. The signature
+    // changes these bytes, so this must happen before codesign below.
+    const sourceBinary = path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime', 'sulla-runtime');
+    const sourceDigest = createHash('sha256').update(await fs.promises.readFile(sourceBinary)).digest('hex');
+    const packagedDigest = createHash('sha256').update(await fs.promises.readFile(binary)).digest('hex');
+    const provenance = JSON.parse(await fs.promises.readFile(path.join(buildUtils.distDir, 'package-target-provenance.json'), 'utf8'));
+    if (!sourceDigest || sourceDigest !== packagedDigest || provenance.runtimeFingerprint !== sourceDigest) {
+      throw new Error('Packaged runtime bytes do not match the pre-sign source and recorded runtime provenance.');
+    }
     const required = [binary, ...['vmlinuz', 'initramfs.img', 'usr.erofs'].map(file => path.join(target, 'guest', file))];
     const missing: string[] = [];
 
@@ -324,32 +454,44 @@ class Builder {
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
 
+    // Resolve the supported OS/CPU pair before signing, downloads, build scripts,
+    // config writes, or electron-builder can produce target-specific side effects.
+    const target = PackageTargetSpec.resolve(process.platform, buildUtils.arch);
+    // Cheap identity check first: fail on a missing signing identity before runtime
+    // builds, artifact restores, asset fetches, or config writes can run.
     await this.verifyMacSigningIdentity();
-
     // Build the electron builder configuration to include the version data.
     // The version is sourced from package.json, which the CI workflow stamps
     // before packaging (tag pushes → clean semver; non-tag builds →
     // `<last-tag>-dev.<short-sha>`). Local dev builds use whatever is
     // committed in package.json.
-    if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
+    if (process.env.SULLA_RUNTIME_BUILD === '1') {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
-      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [buildUtils.arch === 'x64' ? 'x86_64' : 'arm64'], { stdio: 'inherit' });
+      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [target.uname], { stdio: 'inherit' });
     }
-    if (process.platform === 'darwin') {
-      // Container images, whisper and the audio driver for this architecture
-      // (a no-op when resources/darwin/ is already up to date).
-      await fetchBundledAssets(buildUtils.arch === 'x64' ? 'x86_64' : 'arm64');
+    // Restore the externally supplied runtime into the real resource tree first,
+    // so pre-pack validation fingerprints and CPU-audits the bytes we will embed.
+    const runtimeArtifacts = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
+    if (runtimeArtifacts) {
+      await this.replaceRuntimeArtifacts(runtimeArtifacts, target);
     }
+    // Reject bad target inputs before writing packaging config or invoking electron-builder.
+    const preparation = new PackageTargetPreparationService();
+    const preparationProblems = await preparation.prepareAndRecord(
+      process.cwd(), path.join(process.cwd(), 'resources'), target, new BundledPackageTargetAssetFetcher(),
+      path.join(buildUtils.distDir, 'package-target-provenance.json'), new PackageTargetProvenance(),
+    );
+    if (preparationProblems.length) {
+      throw new Error(`The prepared ${ target.key } assets are invalid: ${ preparationProblems.join('; ') }`);
+    }
+    log.warn('Native ABI compatibility is not independently decoded; target Mach-O CPU and packaged dependency presence checks do not prove Node/Electron ABI compatibility.');
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;
 
-    if (process.platform !== 'darwin') {
-      throw new Error(`Packaging for ${ process.platform } is not supported`);
-    }
-    const electronPlatform = 'mac' as const;
+    const electronPlatform = target.builderPlatform;
 
     // When there are files (e.g., extraFiles or extraResources) specified at both
     // the top-level and platform-specific levels, we need to combine them
@@ -368,6 +510,10 @@ class Builder {
       delete section[key];
     }
 
+    // Leave the other CPU's native prebuilds out of this architecture's app
+    // (appended to the merged top-level list above).
+    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.arch), ...new UnusedMacAddonExcludes().globs()];
+
     await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
@@ -377,8 +523,8 @@ class Builder {
     const options: CliOptions = {
       config,
       publish: 'never',
-      arm64:   buildUtils.arch === 'arm64',
-      x64:     buildUtils.arch === 'x64',
+      arm64:   target.arch === 'arm64',
+      x64:     target.arch === 'x64',
     };
 
     if (process.argv.includes('--zip')) {
@@ -390,7 +536,9 @@ class Builder {
       options[electronPlatform] = target.map(t => typeof t === 'string' ? t : t.target);
     }
 
+    await this.repairStaleRebuildMarkers();
     await build(options);
+    this.checkSignedAppLoadsNativeAddons(target, String(config.productName));
 
     return options;
   }
