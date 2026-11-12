@@ -73,6 +73,12 @@ assets: vault-pin-check
 vault-pin-check:
     node scripts/check-bundled-vault-image-freshness.mjs --registry
 
+# Synthetic upgrade smoke: OLD vault pin (origin/main) -> NEW pin on a throwaway
+# Postgres; proves item rows and the key row survive and the vault still unlocks.
+# Needs Docker. Override the pair with VAULT_SMOKE_OLD_IMAGE / VAULT_SMOKE_NEW_IMAGE.
+vault-upgrade-smoke:
+    node scripts/vault-upgrade-smoke/run.mjs
+
 build: runtime assets
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
 
