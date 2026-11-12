@@ -21,6 +21,8 @@ import webpack from 'webpack';
 
 import babelConfig from 'babel.config.cjs';
 
+import { EMITTED_NATIVE_DIR } from './foreign-arch-excludes';
+
 /**
  * A promise that is resolved when the child exits.
  */
@@ -205,7 +207,9 @@ export default {
           },
           {
             test: /\.node$/,
-            use:  { loader: 'node-loader' },
+            // Deterministic name (not the default content hash) so packaging can
+            // tell which CPU an emitted addon is for; see ForeignArchExcludes.
+            use:  { loader: 'node-loader', options: { name: `${ EMITTED_NATIVE_DIR }/[name].[ext]` } },
           },
           {
             test: /(?:^|[/\\])assets[/\\]scripts[/\\]/,
