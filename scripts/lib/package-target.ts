@@ -55,6 +55,7 @@ export interface PackageTargetFileSystem {
   exists(file: string): boolean;
   read(file: string): string;
   readBinary(file: string): Buffer;
+  isExecutable(file: string): boolean;
   write(file: string, data: string): void;
 }
 
@@ -62,17 +63,23 @@ export class NodePackageTargetFileSystem implements PackageTargetFileSystem {
   exists(file: string): boolean { return fs.existsSync(file); }
   read(file: string): string { return fs.readFileSync(file, 'utf8'); }
   readBinary(file: string): Buffer { return fs.readFileSync(file); }
+  isExecutable(file: string): boolean {
+    try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; }
+  }
   write(file: string, data: string): void {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, data, 'utf8');
   }
 }
 
-/** Host executables are audited as Mach-O; the Linux guest image files are data and intentionally excluded. */
+/** Host Mach-O binaries are CPU-audited; shell scripts and Linux guest image files are intentionally excluded. */
 export class PackageTargetAssetManifest {
-  static readonly hostExecutables = Object.freeze([
+  static readonly hostScripts = Object.freeze([
     'darwin/bin/sulla',
     'darwin/bin/sulla-daemon',
+  ] as const);
+
+  static readonly hostMachOBinaries = Object.freeze([
     'darwin/bin/spin',
     'darwin/sulla-runtime/sulla-runtime',
   ] as const);
@@ -197,14 +204,19 @@ export class PackageTargetNativeBinaryAuditor implements PackageTargetBinaryAudi
     const wanted = target.arch === 'x64' ? 'x86_64' : 'arm64';
     const paths = [
       ...target.nativeDependencyPaths.map(relative => [relative, path.join(repositoryRoot, relative)] as const),
-      ...PackageTargetAssetManifest.hostExecutables.map(relative => [relative, path.join(resourcesRoot, relative)] as const),
+      ...PackageTargetAssetManifest.hostMachOBinaries.map(relative => [relative, path.join(resourcesRoot, relative)] as const),
     ];
-    return paths.flatMap(([relative, file]) => {
+    const scriptProblems = PackageTargetAssetManifest.hostScripts.flatMap(relative => {
+      const file = path.join(resourcesRoot, relative);
+      if (!this.fileSystem.exists(file)) return [];
+      return this.fileSystem.isExecutable(file) ? [] : [`${ relative } is not executable`];
+    });
+    return [...scriptProblems, ...paths.flatMap(([relative, file]) => {
       if (!this.fileSystem.exists(file)) return [];
       const archs = this.reader.read(file);
       return !archs ? [`${ relative } is not a recognized Mach-O binary; ABI/binary kind cannot be validated`] :
         archs.includes(wanted) ? [] : [`${ relative } has CPU ${ archs.join('+') }, not ${ wanted }`];
-    });
+    })];
   }
 }
 

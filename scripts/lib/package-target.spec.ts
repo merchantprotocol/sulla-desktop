@@ -17,9 +17,11 @@ import {
 
 class MemoryFileSystem implements PackageTargetFileSystem {
   readonly files = new Map<string, string>();
+  readonly executableFiles = new Set<string>();
   exists(file: string): boolean { return this.files.has(file); }
   read(file: string): string { return this.files.get(file) ?? ''; }
   readBinary(file: string): Buffer { return Buffer.from(this.files.get(file) ?? ''); }
+  isExecutable(file: string): boolean { return this.executableFiles.has(file); }
   write(file: string, data: string): void { this.files.set(file, data); }
 }
 
@@ -58,11 +60,31 @@ describe('package target integrity', () => {
 
     for (const asset of PackageTargetAssetManifest.required) fs.files.set(`/app/resources/${ asset }`, 'fixture');
     expect(manifest.problems('/app/resources', fs)).toEqual([]);
-    const hostExecutables = new Set<string>(PackageTargetAssetManifest.hostExecutables);
-    expect(PackageTargetAssetManifest.guestImages.every(asset => !hostExecutables.has(asset))).toBe(true);
+    const hostBinaries = new Set<string>(PackageTargetAssetManifest.hostMachOBinaries);
+    expect(PackageTargetAssetManifest.guestImages.every(asset => !hostBinaries.has(asset))).toBe(true);
     expect(PackageTargetAssetManifest.optional).toContain('darwin/audio-driver/BlackHole2ch-0.6.1.pkg');
     fs.files.delete(`/app/resources/${ PackageTargetAssetManifest.guestImages[0] }`);
     expect(manifest.problems('/app/resources', fs)).toContain(`${ PackageTargetAssetManifest.guestImages[0] } is missing`);
+  });
+
+  it('checks shell-script assets for executability without parsing them as Mach-O', () => {
+    // risk: packaged CLI availability — required host scripts must ship executable, while CPU checks apply only to native binaries.
+    const target = PackageTargetSpec.resolve('darwin', 'x64');
+    const fs = new MemoryFileSystem();
+    for (const file of PackageTargetAssetManifest.hostScripts) {
+      const fullPath = `/app/resources/${ file }`;
+      fs.files.set(fullPath, '#!/bin/sh\n');
+      fs.executableFiles.add(fullPath);
+    }
+    for (const file of PackageTargetAssetManifest.hostMachOBinaries) fs.files.set(`/app/resources/${ file }`, 'macho');
+    const audited: string[] = [];
+    const auditor = new PackageTargetNativeBinaryAuditor({ read: file => { audited.push(file); return ['x86_64']; } }, fs);
+
+    expect(auditor.problems('/repo', '/app/resources', target)).toEqual([]);
+    expect(audited).toEqual(PackageTargetAssetManifest.hostMachOBinaries.map(file => `/app/resources/${ file }`));
+
+    fs.executableFiles.delete(`/app/resources/${ PackageTargetAssetManifest.hostScripts[0] }`);
+    expect(auditor.problems('/repo', '/app/resources', target)).toContain(`${ PackageTargetAssetManifest.hostScripts[0] } is not executable`);
   });
 
   it('records immutable target-keyed provenance and rejects stale markers after a target switch', () => {
@@ -83,10 +105,11 @@ describe('package target integrity', () => {
     const x64 = PackageTargetSpec.resolve('darwin', 'x64');
     const arm64 = PackageTargetSpec.resolve('darwin', 'arm64');
     const native = new PackageTargetNativeDependencyManifest();
-    for (const file of PackageTargetAssetManifest.hostExecutables) fs.files.set(`/repo/resources/${ file }`, 'x64-macho');
+    for (const file of PackageTargetAssetManifest.hostMachOBinaries) fs.files.set(`/repo/resources/${ file }`, 'x64-macho');
     const auditor = new PackageTargetNativeBinaryAuditor({ read: () => ['x86_64'] }, fs);
     const prep = new PackageTargetPreparationService(new PackageTargetAssetManifest(), native, fs, auditor);
     for (const asset of PackageTargetAssetManifest.required) fs.files.set(`/repo/resources/${ asset }`, `runtime-${ x64.key }`);
+    for (const script of PackageTargetAssetManifest.hostScripts) fs.executableFiles.add(`/repo/resources/${ script }`);
     for (const file of x64.nativeDependencyPaths) fs.files.set(`/repo/${ file }`, 'x64-binary');
     const fetcher = { fetch: async() => undefined };
     const provenance = new PackageTargetProvenance(fs);
