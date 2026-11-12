@@ -8,14 +8,16 @@
 // replaced, through their constructor ports. The encrypted fixture is the
 // synthetic KAT shipped by @sulla/domain (sulla-core PR #53), copied verbatim.
 
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, createHmac, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { DEFAULT_AGENT_POLICY, decryptItemText, type VaultItemPlaintext } from '@sulla/vault-crypto';
 import { strToU8, zipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
+import { NobleBitwardenCryptoPrimitives } from '@sulla/domain';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { NativeBitwardenCryptoPrimitives } from '../../../../../../services/sulla-vault/src/bitwarden/NativeBitwardenCryptoPrimitives';
 import { LocalVaultAuthority, LocalVaultError } from '../../../../../../services/sulla-vault/src/localAuthority';
 
 const kat = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/bitwarden-encrypted-kat.json'), 'utf8'));
@@ -78,6 +80,28 @@ class BitwardenImportFixture {
       return { code:(error as { code:string }).code, status:(error as { status?:number }).status, routed:error instanceof LocalVaultError };
     }
     throw new Error('import was accepted');
+  }
+}
+
+/**
+ * Writes a password-protected Bitwarden JSON export the way Bitwarden does (Argon2id over
+ * SHA-256(salt), HKDF-expand enc/mac keys, AES-256-CBC + HMAC-SHA256 cipher strings), with
+ * the domain's reference (noble) Argon2id, so the importer's own primitives are cross-checked.
+ */
+class BitwardenArgon2ExportWriter {
+  private readonly reference = new NobleBitwardenCryptoPrimitives();
+  constructor(private readonly password:string, private readonly kdf:{ iterations:number; memoryMiB:number; parallelism:number }) {}
+
+  write(exported:unknown):string {
+    const salt = 'writer@example.invalid';
+    const key = this.reference.argon2id13(new TextEncoder().encode(this.password), this.reference.sha256(new TextEncoder().encode(salt)), this.kdf.iterations, this.kdf.memoryMiB * 1024, this.kdf.parallelism);
+    const expand = (info:string) => createHmac('sha256', key).update(info).update(Buffer.from([1])).digest();
+    const seal = (text:string) => {
+      const iv = randomBytes(16), cipher = createCipheriv('aes-256-cbc', expand('enc'), iv);
+      const ciphertext = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+      return `2.${iv.toString('base64')}|${ciphertext.toString('base64')}|${createHmac('sha256', expand('mac')).update(iv).update(ciphertext).digest('base64')}`;
+    };
+    return JSON.stringify({ encrypted:true, passwordProtected:true, salt, kdfType:1, kdfIterations:this.kdf.iterations, kdfMemory:this.kdf.memoryMiB, kdfParallelism:this.kdf.parallelism, encKeyValidation_DO_NOT_EDIT:seal(randomBytes(8).toString('hex')), data:seal(JSON.stringify(exported)) });
   }
 }
 
@@ -223,5 +247,42 @@ describe('Desktop vault Bitwarden import', () => {
     await fixture.import(plainJson());
     expect(await fixture.import(argon2Json())).toMatchObject({ duplicates:2, imported:0 });
     expect(fixture.items.rows).toHaveLength(2);
+  });
+});
+
+describe('Bitwarden export crypto composition', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // risk: availability — the vault importer derives export keys on the native primitives, not the
+  // domain's pure-JS default that holds the vault event loop several times longer.
+  it.each([
+    ['PBKDF2', () => pbkdf2Json(), 'pbkdf2Sha256'],
+    ['Argon2id', () => argon2Json(), 'argon2id13'],
+    ['Argon2id ZIP', () => zip(), 'argon2id13'],
+  ] as const)('decrypts a %s export on the native primitives', async(_label, input, kdf) => {
+    const native = vi.spyOn(NativeBitwardenCryptoPrimitives.prototype, kdf);
+    const decrypt = vi.spyOn(NativeBitwardenCryptoPrimitives.prototype, 'aes256CbcDecrypt');
+    const fixture = new BitwardenImportFixture();
+    expect(await fixture.import(input())).toMatchObject({ imported:2 });
+    expect(native).toHaveBeenCalledTimes(1);
+    expect(decrypt).toHaveBeenCalled();
+    await expectKatItemsStored(fixture);
+  });
+
+  // risk: data accuracy — Bitwarden's default Argon2id uses parallelism 4 (libsodium can only do 1);
+  // such an export must still decrypt to the same items, and a wrong password must still be refused.
+  it('imports a parallelism-4 Argon2id export and refuses its wrong password', async() => {
+    const content = new BitwardenArgon2ExportWriter('p4-password', { iterations:1, memoryMiB:8, parallelism:4 }).write(kat.expectedExport);
+    const fixture = new BitwardenImportFixture();
+    expect(await fixture.failure({ content, format:'json', password:'not-it' })).toEqual({ code:'wrong_password', status:400, routed:true });
+    expect(await fixture.import({ content, format:'json', password:'p4-password' })).toMatchObject({ imported:2 });
+    await expectKatItemsStored(fixture);
+  });
+
+  // risk: data accuracy — native Argon2id (when the runtime has it) and the pure-JS fallback derive identical keys.
+  it.each([1, 4])('derives the reference Argon2id key at parallelism %i', parallelism => {
+    const reference = new NobleBitwardenCryptoPrimitives(), password = new TextEncoder().encode('kdf-password'), salt = reference.sha256(new TextEncoder().encode('kdf@example.invalid'));
+    const expected = reference.argon2id13(password, salt, 2, 256, parallelism);
+    expect(Buffer.from(new NativeBitwardenCryptoPrimitives(reference).argon2id13(password, salt, 2, 256, parallelism)).toString('hex')).toBe(Buffer.from(expected).toString('hex'));
   });
 });
