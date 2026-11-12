@@ -1,0 +1,64 @@
+{
+  "password": "synthetic-bitwarden-password",
+  "encryptedExport": {
+    "encrypted": true,
+    "passwordProtected": true,
+    "salt": "synthetic@example.invalid",
+    "kdfType": 0,
+    "kdfIterations": 5000,
+    "data": "2.ABEiM0RVZneImaq7zN3u/w==|QAW7dAFfmFrFlKq15jQbBGrFBCQUHIOAbDtQ/9TMqn9+BwQQMlq6TwuWDKbiTnbxzJrgZjgwGystOlS8YAGLqs2F93rG6fauBWIhyiemJIQ61S1MvTvwu3weJO0JNG4Y8HzfJJi78EfYUXnS3eXtin2gMaEeEl+mbPbYAEt1hw6tJsnE2rRbWoRWgiUAkJMtgFsUh46A3zCIBkcC/EJJhYUDOczL3LFFj0acWK0DL4fCC2U6XZuSQvjrdJw7eJmpjubAo1WK5xNQskqzO3NdOEeykGayx5H0vWOv7vzrZ8Rz8FIPBmymcVVF7sHrnCugsArBvZ5HKlNK6Yt87PgibRzLRJi5Pk+HlaaLD88VE6hrZED4MG+gwQrvFCvTd9VX0nfxEAcrCLdu2RR2fXDyaJ3Or90bbV1GXYP1dE+Klnp4wVH8YwmmlMIdtQOC6sgY0Ctlvy+VJF+G1TSlfWeceFLbBtRaRAmnPqK++k0tRgPYy5bYmFavJFb+AWkqNGhWtaWx1khAm4/iYkbFOEWK9JnAFeZJuHKxmEp8lP2bkb15uAAFVUTqKhvz+sUJYAzsf37WIU6bI2tleSnnJLTrx37esgNtpt4ByxFmtdgPuPygwm6ZwiTIobnbcwZYvl4WqeWNgQSCqEA6fzqtBOBFeDStZO+k39aVRU5SdDZ0wiRJs8XKIZ166NNVTuGRB4pp9w2WlEn5i5TPpOdRWb4jow==|wTtpHqnHqnHyNvScdgR4zoTZN9KY2HODPXOo5EZ2mj0="
+  },
+  "argon2EncryptedExport": {
+    "encrypted": true,
+    "passwordProtected": true,
+    "salt": "synthetic@example.invalid",
+    "kdfType": 1,
+    "kdfIterations": 1,
+    "kdfMemory": 8,
+    "kdfParallelism": 1,
+    "data": "2.ABEiM0RVZneImaq7zN3u/w==|axeYqyLwtj4Ua9xbaAt/A9J4VMgEDM/uWj0Iej4oknDeFQ53J0v6UIekH2W48i24lpZFuZyYDgg0VyqZzTrYxDQAJ/zvMz/e3ety1IKNofmLqZLQrW5mGeS8FiqLz7m/9ID8J7JQ0h3D5ZfYq8ZhiCFjLy/9r4yybI/c7S9fR92HJKaI2YL0Qu94h2GM8kq3d69qLpkzZuEWM14YQDIwGhOR4qreLiCmhf5ze5U5YqOZ+CQgRk8sefhOOYp2+MnfKSJaGDeptSbv7IVZHj1+nxDTZ3OmnBLG7TzQxKIdTTLToI7kEa5lXikccAiFZXegNHh4ypMm2tBzELtwE55EPdQPDY4925uV8eNPV+JNE2cJ5riGZVf2FQwYgfMWL2qhfb/WBgjIJnA6lzFKi2KXDiTLz74oMonD1MXAyUCCe7kulnuXmQT5SlvL/83JNCRB2leBju9CxjModv1aRFX8QXHJXa9s3qzlT/1sHmSvPmsGvg6Vy56jeX0XCDzj29x+6FpvtJqokqe/FFjqvno+3AjsuJ9iBrXmv6nz+D6R3yXdwIRTq16zgm042ouv7S8p8mYaX87+GgTmAhfSZSJ1tXlkls05z9j3/o8rJeSJHsFad2Mckpc6cGigQ6iU4NsU3qGKCwDmGV3SwGGiRgjWk9SOx+Uq/OWDHZhPKWxUeSKdjEyrNgBw2BxttfPJlqKVw45VyojLi29eS4MADKUalg==|mTPr/Fa0Q9hcIhjijM8Y1T7K/MERCKfnvHpiZ4GvRkM="
+  },
+  "expectedExport": {
+    "folders": [
+      {
+        "id": "folder-synthetic",
+        "name": "Synthetic"
+      }
+    ],
+    "items": [
+      {
+        "id": "login-synthetic",
+        "type": 1,
+        "name": "Synthetic Login",
+        "folderId": "folder-synthetic",
+        "login": {
+          "username": "synthetic-user",
+          "password": "synthetic-password",
+          "uris": [
+            {
+              "uri": "https://example.invalid",
+              "match": 3
+            }
+          ]
+        },
+        "attachments": [
+          {
+            "id": "attachment-synthetic",
+            "fileName": "synthetic.txt",
+            "size": "9"
+          }
+        ]
+      },
+      {
+        "id": "ssh-synthetic",
+        "type": 5,
+        "name": "Synthetic SSH",
+        "sshKey": {
+          "privateKey": "SYNTHETIC PRIVATE KEY",
+          "publicKey": "ssh-ed25519 SYNTHETIC",
+          "keyFingerprint": "SHA256:SYNTHETIC"
+        }
+      }
+    ]
+  }
+}

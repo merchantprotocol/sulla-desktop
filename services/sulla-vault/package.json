@@ -17,7 +17,6 @@
     "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz",
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
     "express": "5.2.1",
-    "hash-wasm": "4.12.0",
     "jsonwebtoken": "9.0.3",
     "libsodium-wrappers-sumo": "0.8.4",
     "pg": "8.18.0",
