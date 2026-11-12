@@ -266,6 +266,21 @@ dbDescribe('AgentJobRepository', () => {
     expect(await repository.job(child.jobId)).toMatchObject({ parentJobId: null, parentTaskIndex: null });
   });
 
+  it('projects completion status separately from a stale task error status', async() => {
+    // risk: a successfully completed task is rolled up as failed after compact projection
+    const input = job('projection-completion-status');
+    input.tasks[0] = { ...input.tasks[0], status: 'error', completion: {
+      label: 'lane', status: 'completed', output: 'synthetic success', threadId: 'projection-completion-thread',
+    } };
+    await repository.insertJob(input);
+    await repository.complete({ ...input, status: 'completed', finishedAt: Date.now() });
+
+    const [projected] = await repository.jobsForProjection(120_000);
+    expect(projected.tasks[0]).toMatchObject({
+      status: 'error', completion: { status: 'completed' },
+    });
+  });
+
   it('keeps normalized task status current through stop, reopen, park, resume, and completion writes', async() => {
     // risk: indexed task status diverges from the durable lifecycle record
     const input = job('projection-lifecycle-sync');
