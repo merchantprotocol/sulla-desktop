@@ -197,6 +197,8 @@ describe('packaged tree for one Mac architecture', () => {
     ]));
     // risk: a signed posix-node Mach-O that SIGILLs on load; nothing on a Mac calls it (Linux-only setpgid)
     expect(kept.filter(file => /-macos/.test(file))).toEqual([]);
+    // risk: a Linux ELF and the unused JS wrapper of posix-node riding in a Mac bundle
+    expect(kept.filter(file => /posix-node/.test(file))).toEqual([]);
   });
 
   // risk: an Apple Silicon release shipping x64 Mach-O files
@@ -207,6 +209,7 @@ describe('packaged tree for one Mac architecture', () => {
     expect(new MachOArchitectureAudit().problems(tree.staged, 'arm64')).toEqual([]);
     expect(kept.filter(file => /darwin-x64|darwin\/x64|x86_64-macos/.test(file))).toEqual([]);
     expect(kept.filter(file => /-macos/.test(file))).toEqual([]);
+    expect(kept.filter(file => /posix-node/.test(file))).toEqual([]);
     expect(kept).toContain('node_modules/node-pty/prebuilds/darwin-arm64/pty.node');
   });
 
