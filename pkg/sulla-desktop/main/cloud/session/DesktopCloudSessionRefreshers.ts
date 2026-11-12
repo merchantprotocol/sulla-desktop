@@ -5,11 +5,10 @@
 
 import {
   ClientSessionService, IdentityError, RefreshOutcomeClassifier, RefreshSchedule, SignOutService,
-  type PendingRevocationQueue, type RefreshLock, type SignOutResult,
+  type CloudAccountTransport, type PendingRevocationQueue, type RefreshLock, type SignOutResult,
 } from '@sulla/domain';
 import { EventDispatcher, SystemClock, type Clock } from '@sulla/foundation';
 
-import { type CloudLogoutHttp, type CloudRefreshHttp, ElectronCloudRefreshTransport } from './ElectronCloudRefreshTransport';
 import {
   DesktopRefreshLocks, LegacySignOutTokenStore, LegacyTokenStore, NoListenerResolver, PendingEntryTokenStore, UnavailableRevocationQueue,
   type CloudSessionStorage, type StoredCloudSession,
@@ -24,7 +23,8 @@ export interface RefreshReporter {
 /**
  * Desktop's legacy Sulla Cloud session refresh on the shared domain `ClientSessionService`: one network call for any
  * number of concurrent callers, the stored session re-read inside the lock, and a refresh that finishes after sign-out
- * discarded. A 5xx, 429, timeout or network failure keeps the tokens.
+ * discarded. A 5xx, 429, timeout or network failure keeps the tokens. Refresh and logout go through the one Desktop
+ * `CloudAccountTransport` (ElectronCloudAccountTransport).
  */
 export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
   private readonly store: LegacyTokenStore<S>;
@@ -34,16 +34,14 @@ export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
 
   constructor(
     private readonly storage: CloudSessionStorage<S>,
-    http: CloudRefreshHttp,
+    transport: CloudAccountTransport,
     private readonly reporter: RefreshReporter,
     lock: RefreshLock = DesktopRefreshLocks.shared,
     clock: Clock = new SystemClock(),
-    logoutHttp: CloudLogoutHttp | null = null,
     revocations: PendingRevocationQueue = new UnavailableRevocationQueue(),
   ) {
     this.store = new LegacyTokenStore(storage);
     this.schedule = new RefreshSchedule(clock);
-    const transport = new ElectronCloudRefreshTransport(http, logoutHttp);
     const events = new EventDispatcher(new NoListenerResolver());
     this.sessions = new ClientSessionService(this.store, transport, lock, this.schedule, new RefreshOutcomeClassifier(), events);
     this.signOutService = new SignOutService(
@@ -96,7 +94,7 @@ export class PendingCloudSessionRefresher {
   private readonly schedule: RefreshSchedule;
 
   constructor(
-    private readonly http: CloudRefreshHttp,
+    private readonly transport: CloudAccountTransport,
     private readonly expired: () => Error,
     private readonly lock: RefreshLock = DesktopRefreshLocks.shared,
     clock: Clock = new SystemClock(),
@@ -109,7 +107,7 @@ export class PendingCloudSessionRefresher {
   async refreshIfExpiring(entry: { values: Record<string, string> }): Promise<void> {
     const store = new PendingEntryTokenStore(entry);
     const sessions = new ClientSessionService(
-      store, new ElectronCloudRefreshTransport(this.http), this.lock, this.schedule,
+      store, this.transport, this.lock, this.schedule,
       new RefreshOutcomeClassifier(), new EventDispatcher(new NoListenerResolver()),
     );
     const seen = await store.read();

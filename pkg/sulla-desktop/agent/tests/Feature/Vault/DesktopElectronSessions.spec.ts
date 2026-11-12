@@ -9,9 +9,11 @@ import { DesktopCloudSignOut } from '@pkg/main/cloud/session/DesktopCloudSignOut
 import {
   type CloudSessionStorage, LegacySignOutTokenStore, LegacyTokenStore, type StoredCloudSession,
 } from '@pkg/main/cloud/session/DesktopTokenStores';
-import {
-  type CloudLogoutHttp, type CloudRefreshHttp, ElectronCloudRefreshTransport, FetchCloudLogoutHttp,
-} from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
+import { type CloudLogoutHttp, type CloudRefreshHttp, FetchCloudLogoutHttp } from '@pkg/main/cloud/account/CloudTokenHttp';
+import { ElectronCloudAccountTransport } from '@pkg/main/cloud/account/ElectronCloudAccountTransport';
+
+/** The one Desktop CloudAccountTransport over fake Sulla Cloud refresh/logout endpoints. */
+const transportOver = (refreshHttp: CloudRefreshHttp, logoutHttp?: CloudLogoutHttp) => new ElectronCloudAccountTransport({ refreshHttp, logoutHttp });
 
 const jwt = (secondsLeft: number, tag: string) => {
   const part = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -85,7 +87,7 @@ const rig = (session: StoredCloudSession | null = expiring(), revocations?: Pend
   const cloud = new FakeCloud();
   const reporter = new Reporter();
   const logout = new FakeLogout(log);
-  const refresher = new LegacyCloudSessionRefresher(storage, cloud, reporter, new InProcessRefreshLock(), undefined, logout, revocations);
+  const refresher = new LegacyCloudSessionRefresher(storage, transportOver(cloud, logout), reporter, new InProcessRefreshLock(), undefined, revocations);
   return { storage, cloud, reporter, refresher, logout, log };
 };
 
@@ -167,7 +169,7 @@ describe('Desktop first-run pending Cloud session refresh', () => {
   class Expired extends Error {}
   const pendingRig = () => {
     const cloud = new FakeCloud();
-    return { cloud, refresher: new PendingCloudSessionRefresher(cloud, () => new Expired('expired'), new InProcessRefreshLock()) };
+    return { cloud, refresher: new PendingCloudSessionRefresher(transportOver(cloud), () => new Expired('expired'), new InProcessRefreshLock()) };
   };
 
   it('risk: token rotation. an expiring pending session is refreshed once, even when two flushes race, and adopted', async() => {
@@ -275,7 +277,7 @@ describe('D-ID-4 server-mode sign-out revokes the Sulla Cloud session (domain Si
     const revocations = new SpyRevocations();
     const sent: string[] = [];
     const http = new FetchCloudLogoutHttp(async(refreshToken) => { sent.push(refreshToken); return new Response(null, { status: 200 }) });
-    const refresher = new LegacyCloudSessionRefresher(storage, new FakeCloud(), new Reporter(), new InProcessRefreshLock(), undefined, http, revocations);
+    const refresher = new LegacyCloudSessionRefresher(storage, transportOver(new FakeCloud(), http), new Reporter(), new InProcessRefreshLock(), undefined, revocations);
     expect(await refresher.signOut()).toEqual({ remoteRevoked: true, queued: false, failedSteps: [] });
     expect(sent).toEqual(['rt-1']);
     expect(revocations.pushed).toHaveLength(0);
@@ -359,14 +361,14 @@ describe('D-ID-4 /auth/logout transport and the sign-out token store', () => {
 
   it('risk: false revoke. the transport refuses a blank refresh token and never POSTs it', async() => {
     const logout = new FakeLogout([]);
-    const transport = new ElectronCloudRefreshTransport(new FakeCloud(), logout);
+    const transport = transportOver(new FakeCloud(), logout);
     await expect(transport.logout({ refreshToken: '' })).rejects.toThrow('without a refresh token');
     expect(logout.calls).toHaveLength(0);
   });
 
   it('risk: session left alive. the transport resolves on 2xx and rejects with the HTTP status otherwise, or with no status when offline', async() => {
     const logout = new FakeLogout([]);
-    const transport = new ElectronCloudRefreshTransport(new FakeCloud(), logout);
+    const transport = transportOver(new FakeCloud(), logout);
     logout.behaviour = 204;
     await expect(transport.logout({ refreshToken: 'rt-1' })).resolves.toBeUndefined();
     logout.behaviour = 401;
