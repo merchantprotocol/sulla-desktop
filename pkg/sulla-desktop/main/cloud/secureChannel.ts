@@ -134,7 +134,7 @@ export class SecureDesktopChannel {
       this.deviceId = await getDesktopDeviceId();
       this.userId = userId;
 
-      const proof = signDeviceMessage('relay-desktop', [userId, this.deviceId]);
+      const proof = await signDeviceMessage('relay-desktop', [userId, this.deviceId]);
       const res = await cloudRequest('POST', '/desktop-channel/tickets', {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ deviceId: this.deviceId, role: 'desktop', ts: proof.ts, signature: proof.signature }),

@@ -129,7 +129,7 @@ class DesktopObjectSyncImpl {
       const deviceId = await getDesktopDeviceId();
       const bytes = Buffer.from(built.body, 'utf8');
       const sha = crypto.createHash('sha256').update(bytes).digest('hex');
-      const proof = signDeviceMessage('sync-upload', [userId, deviceId, kind, sha]);
+      const proof = await signDeviceMessage('sync-upload', [userId, deviceId, kind, sha]);
       const res = await cloudRequest('PUT', `/desktop-sync/${ encodeURIComponent(deviceId) }/${ kind }`, {
         headers: {
           'Content-Type':             'application/json',

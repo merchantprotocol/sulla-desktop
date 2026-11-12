@@ -4,110 +4,48 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
- * Desktop device key — the Ed25519 identity this install uses to prove to
- * Sulla Cloud that a request really comes from THIS machine.
+ * Desktop device key: the Ed25519 identity this install uses to prove to Sulla Cloud that a request really comes from
+ * THIS machine. Thin async delegates to the shared domain `DeviceIdentityService` (`desktopDeviceIdentity()`), kept so
+ * the signers don't change shape. The bytes signed are the domain `DeviceMessage` (purpose tag + parts, ts in unix
+ * SECONDS last for `signDeviceMessage`), the same bytes the sulla-workers verifier checks.
  *
- * Generated locally on first use and stored next to the device id in
- * ~/.sulla (0600). Only the public key is ever sent to the cloud (enrolled
- * via /devices/register). The cloud then requires a signature from it
- * before it will:
- *   - admit this machine to the secure desktop channel as role=desktop, and
- *   - accept an upload of this machine's vault/projects copy.
- *
- * So a stolen Sulla Cloud access token can't impersonate the desktop.
+ * Stored in ~/.sulla/device-key.json (v1: base64 raw public key + PKCS#8 PEM, 0600, dir 0700). Only the public key is
+ * sent to Cloud (/devices/register). A stolen access token can't impersonate the desktop without it.
  */
 
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-
-import paths from '@pkg/utils/paths';
 import { DeviceMessage, type DevicePurpose } from '@sulla/domain';
 
-interface StoredKey {
-  v:          1;
-  publicKey:  string; // base64 raw 32-byte Ed25519 key
-  privateKey: string; // PKCS#8 PEM
-  createdAt:  string;
-}
+import { DesktopDeviceIdentity, desktopDeviceIdentity } from './device/DesktopDeviceIdentity';
 
-let cached: { publicKey: string; key: crypto.KeyObject } | null = null;
+export type { DevicePurpose };
 
-function keyPath(): string {
-  return path.join(paths.sullaConfig, 'device-key.json');
-}
-
-/** Raw 32-byte public key, base64 — the format the cloud stores. */
-export function rawPublicKeyB64(pub: crypto.KeyObject): string {
-  const jwk = pub.export({ format: 'jwk' }) as { x?: string };
-  if (!jwk.x) throw new Error('not an Ed25519 public key');
-  return Buffer.from(jwk.x, 'base64url').toString('base64');
-}
-
-function load(): { publicKey: string; key: crypto.KeyObject } {
-  if (cached) return cached;
-  const file = keyPath();
-  try {
-    const stored = JSON.parse(fs.readFileSync(file, 'utf-8')) as StoredKey;
-    if (stored.v === 1 && stored.privateKey && stored.publicKey) {
-      const key = crypto.createPrivateKey(stored.privateKey);
-      // Recompute rather than trust the stored copy.
-      const publicKey = rawPublicKeyB64(crypto.createPublicKey(key));
-      cached = { publicKey, key };
-      return cached;
-    }
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw new Error(`[deviceKey] unreadable ${ file }: ${ err?.message || err }`);
-  }
-
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
-  const stored: StoredKey = {
-    v:          1,
-    publicKey:  rawPublicKeyB64(publicKey),
-    privateKey: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
-    createdAt:  new Date().toISOString(),
-  };
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  // Write-then-rename so a crash can't leave a half-written key behind.
-  const tmp = `${ file }.${ process.pid }.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(stored), { mode: 0o600 });
-  fs.renameSync(tmp, file);
-  cached = { publicKey: stored.publicKey, key: privateKey };
-  return cached;
-}
-
-export function getDevicePublicKey(): string {
-  return load().publicKey;
+/** Raw 32-byte public key, base64: the format the cloud stores. */
+export async function getDevicePublicKey(): Promise<string> {
+  return desktopDeviceIdentity().publicKey();
 }
 
 /** Short fingerprint shown in Settings so the owner can match it to the dashboard. */
-export function getDeviceKeyFingerprint(): string {
-  const hex = crypto.createHash('sha256').update(getDevicePublicKey()).digest('hex').slice(0, 16);
-  return hex.replace(/(.{4})(?!$)/g, '$1-');
+export async function getDeviceKeyFingerprint(): Promise<string> {
+  return (await desktopDeviceIdentity().signingKey()).fingerprint();
 }
-
-// The purpose registry (tag per purpose) is the shared domain DeviceMessage; it matches the sulla-workers
-// verifier. An unknown purpose or a newline in a part throws instead of signing the wrong bytes.
-export type { DevicePurpose };
 
 export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
   return new DeviceMessage(purpose, parts).toString();
 }
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
-export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return crypto.sign(null, Buffer.from(new DeviceMessage(purpose, parts).toBytes()), load().key).toString('base64');
+export async function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): Promise<string> {
+  return desktopDeviceIdentity().signExact(purpose, parts);
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
-export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
-  const ts = Math.floor(Date.now() / 1000);
-  const message = new DeviceMessage(purpose, [...parts, ts]);
-  const signature = crypto.sign(null, Buffer.from(message.toBytes()), load().key).toString('base64');
+export async function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): Promise<{ ts: number; signature: string }> {
+  const { ts, signature } = await desktopDeviceIdentity().sign(purpose, parts);
+
   return { ts, signature };
 }
 
-/** Test seam. */
+/** Test seam: the next call rebuilds the identity from paths. */
 export function _resetDeviceKeyCache(): void {
-  cached = null;
+  DesktopDeviceIdentity.useInstance(null);
 }

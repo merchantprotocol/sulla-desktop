@@ -21,17 +21,17 @@ const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 function transport(): CloudVaultSyncHttpTransport {
  return new CloudVaultSyncHttpTransport({ client:{request:(url,init)=>cloudRequest(init?.method ?? 'GET',url,{headers:init?.headers as Record<string,string>|undefined,body:init?.body as BodyInit|undefined,responseType:'json'})}, authHeaders:async()=>({}) });
 }
-function signature(vaultId:string, op:string, body:unknown, deviceId:string, userId:string):VaultSyncSignature {
+async function signature(vaultId:string, op:string, body:unknown, deviceId:string, userId:string):Promise<VaultSyncSignature> {
  const bytes=body===undefined?Buffer.alloc(0):Buffer.from(JSON.stringify(body));
  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
- const proof=signDeviceMessage('vault-sync-v3',[userId,deviceId,vaultId,op,hash]);
+ const proof=await signDeviceMessage('vault-sync-v3',[userId,deviceId,vaultId,op,hash]);
  return {deviceId,timestamp:proof.ts,signature:proof.signature};
 }
 async function state():Promise<State>{
  const deviceId=await getDesktopDeviceId();
  const status=await transport().getStatus(deviceId);
  if(!status.enabled||!status.vaultId)return{state:'no_vault'};
- return transport().getEnrollmentState(status.vaultId, signature(status.vaultId,'enrollment-state',undefined,deviceId,await getCurrentUserId()));
+ return transport().getEnrollmentState(status.vaultId, await signature(status.vaultId,'enrollment-state',undefined,deviceId,await getCurrentUserId()));
 }
 async function openRequest(s:State):Promise<void>{
  const vaultId=s.vaultId!,epoch=s.epoch!, deviceId=await getDesktopDeviceId(), userId=await getCurrentUserId();
@@ -42,7 +42,7 @@ async function openRequest(s:State):Promise<void>{
  const nonce=crypto.randomBytes(16).toString('base64url');
  const body={publicKey,nonce};
  try {
-  const created=await transport().openEnrollmentRequest(vaultId,body,signature(vaultId,'enrollment-request',body,deviceId,userId));
+  const created=await transport().openEnrollmentRequest(vaultId,body,await signature(vaultId,'enrollment-request',body,deviceId,userId));
   activeRequest={...created, vaultId, epoch, privateKeyJwk};
  } catch(error) {
   if(!(error instanceof VaultSyncHttpError) || error.status!==409)throw error;
@@ -55,11 +55,11 @@ async function enroll(s:State,masterKey:Uint8Array,cloudUserId:string):Promise<E
  const deviceId=await getDesktopDeviceId();
  for(let attempt=0;attempt<60;attempt++){
   await sleep(5_000);
-  let consumed; try { consumed=await transport().consumeEnrollmentRequest(vaultId,request.id,signature(vaultId,`enrollment-consume:${request.id}`,{},deviceId,cloudUserId)); } catch(error) { if(error instanceof VaultSyncHttpError && error.status===409)continue; throw error; }
+  let consumed; try { consumed=await transport().consumeEnrollmentRequest(vaultId,request.id,await signature(vaultId,`enrollment-consume:${request.id}`,{},deviceId,cloudUserId)); } catch(error) { if(error instanceof VaultSyncHttpError && error.status===409)continue; throw error; }
   const {wrappedUserKey}=consumed;
   const client=getConfiguredApprovalClient(); if(!client)throw new Error('vault enrollment service unavailable');
   const proof=await client.adoptVaultEnrollment({requestId:request.id,vaultId,vaultEpoch:epoch,privateKeyJwk:request.privateKeyJwk,wrappedUserKey,masterKey:Buffer.from(masterKey).toString('base64url'),cloudUserId});
-  await transport().confirmEnrollmentRequest(vaultId,request.id,proof,signature(vaultId,`enrollment-confirm:${request.id}`,proof,deviceId,cloudUserId));
+  await transport().confirmEnrollmentRequest(vaultId,request.id,proof,await signature(vaultId,`enrollment-confirm:${request.id}`,proof,deviceId,cloudUserId));
   await client.commitVaultEnrollment(request.id);
   const { onVaultUnlocked }=await import('@pkg/sulla'); await onVaultUnlocked(); activeRequest=null; return'adopted';
  }
