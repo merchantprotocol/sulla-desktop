@@ -304,3 +304,35 @@ jobs:
         draft: true
         generate_release_notes: true
         body_path: release-header.md
+
+  # Every asset is built, signed, uploaded and verified at this point (the
+  # `release` job only finishes after the public size checks pass), so the draft
+  # must not wait for a human. Publish it, then start the workflows that react to
+  # a published release. Events made with GITHUB_TOKEN never start other
+  # workflows, so those are dispatched explicitly.
+  publish:
+    name: Publish GitHub release
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+    - name: Publish the draft release
+      run: |
+        set -euo pipefail
+        if [[ "$TAG" == *-* ]]; then
+          gh release edit "$TAG" --draft=false --prerelease
+          echo "Published $TAG as a prerelease (the update feed does not promote prereleases)."
+          exit 0
+        fi
+        gh release edit "$TAG" --draft=false --latest
+        gh workflow run update-feed.yaml --ref main -f "tag=$TAG"
+        gh workflow run npx-publish.yaml --ref main -f "version=${TAG#v}"
+        echo "Published $TAG and dispatched Update feed and npx publish."
