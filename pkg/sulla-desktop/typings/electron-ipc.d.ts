@@ -455,6 +455,11 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
   'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
 
+  // Settings → Account → Devices (see main/cloud/devices/devicesPanelIpc.ts).
+  'sulla-cloud-devices:list':   () => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
+  'sulla-cloud-devices:rename': (id: string, name: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDeviceView>;
+  'sulla-cloud-devices:remove': (id: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
+
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
   'desktop-relay:set-paired-user-id': (userId: string) => { pairedUserId: string; connected: boolean; lastError?: string };
