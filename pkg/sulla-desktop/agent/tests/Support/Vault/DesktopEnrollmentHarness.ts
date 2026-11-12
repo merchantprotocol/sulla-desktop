@@ -10,20 +10,20 @@
  */
 export class DesktopEnrollmentHarness {
   private constructor(
-    private readonly requester: typeof import('../../../../main/cloud/vaultEnrollment'),
+    private readonly requester: typeof import('../../../../main/cloud/enrollment/DesktopVaultEnrollmentModule'),
     private readonly approver: typeof import('../../../../main/cloud/vaultDeviceApproval'),
   ) {}
 
   static async load(): Promise<DesktopEnrollmentHarness> {
     return new DesktopEnrollmentHarness(
-      await import('../../../../main/cloud/vaultEnrollment'),
+      await import('../../../../main/cloud/enrollment/DesktopVaultEnrollmentModule'),
       await import('../../../../main/cloud/vaultDeviceApproval'),
     );
   }
 
-  gate(): Promise<string> { return this.requester.gateVaultCreation() }
+  gate(): Promise<string> { return this.requester.DesktopVaultEnrollment.coordinator.gate() }
 
-  complete(masterKey: Uint8Array, cloudUserId: string): Promise<string> { return this.requester.completeVaultEnrollment(masterKey, cloudUserId) }
+  complete(masterKey: Uint8Array, cloudUserId: string): Promise<string> { return this.requester.DesktopVaultEnrollment.coordinator.complete(masterKey, cloudUserId) }
 
   startApprover(): void { this.approver.VaultDeviceApproval.start() }
 
