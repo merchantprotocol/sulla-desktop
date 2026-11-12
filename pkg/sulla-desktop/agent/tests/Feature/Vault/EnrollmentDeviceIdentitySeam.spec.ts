@@ -42,8 +42,7 @@ afterEach(() => { vi.useRealTimers() });
 describe('DesktopVaultEnrollmentModule device identity seam', () => {
   it('signs every Cloud enrollment call with the injected identity, not the interim stores', async() => {
     // risk: after the M4 swap enrollment would still sign with a different key and Cloud would reject it
-    const { DesktopVaultEnrollmentModule } = await import('../../../../main/cloud/enrollment/DesktopVaultEnrollmentModule')
-      .catch(() => { throw new Error('module failed to load') });
+    const { DesktopVaultEnrollmentModule } = await import('../../../../main/cloud/enrollment/DesktopVaultEnrollmentModule');
     const identity = new InjectedIdentity();
     const module = new DesktopVaultEnrollmentModule(identity as never);
     await module.coordinator.gate();
