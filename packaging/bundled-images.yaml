@@ -12,17 +12,17 @@
 # Adding an image is one line. `onDemand: true` images load the first time
 # they are needed instead of before the services start.
 images:
-  - { name: sulla-postgres, source: ghcr.io/merchantprotocol/sulla-postgres:latest }
+  - { name: sulla-postgres, source: ghcr.io/merchantprotocol/sulla-postgres:sha-0d3b8b5560c706fb1c1e80b479891e3183a0f11a }
   - { name: redis, source: redis:7-alpine }
   - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:latest }
   - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-7f7e5a9fd4d5e3f0df8d4c7dd38c0c9789e312fb }
-  - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:latest }
-  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-490ab46ce47f1f3ddc9bf93578b09d132aa7fafa }
-  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:latest }
-  - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-ed97e311ef57d26e06608dd1bd12872fe92735c8 }
+  - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:sha-141a6ef024e6d95d49c6008765c4bc9574b10816 }
+  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-e400156a5c932923aaa7a09c5d841f382f3a7dc0 }
+  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-0d3b8b5560c706fb1c1e80b479891e3183a0f11a }
+  - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-9b4775e653b0e618009828b782769e4f10976d99 }
   - { name: sulla-workflows, source: ghcr.io/merchantprotocol/sulla-workflows:latest }
   - { name: sulla-threat-proxy, source: ghcr.io/merchantprotocol/sulla-threat-proxy:latest }
   - { name: sulla-python-runtime, source: ghcr.io/merchantprotocol/sulla-python-runtime:latest }
   - { name: sulla-shell-runtime, source: ghcr.io/merchantprotocol/sulla-shell-runtime:latest }
   - { name: sulla-node-runtime, source: ghcr.io/merchantprotocol/sulla-node-runtime:latest }
-  - { name: sulla-agent, source: ghcr.io/merchantprotocol/sulla-agent:latest, onDemand: true }
+  - { name: sulla-agent, source: ghcr.io/merchantprotocol/sulla-agent:sha-ace86d8794907e73a82e2b74523a52de0d99ee30, onDemand: true }
