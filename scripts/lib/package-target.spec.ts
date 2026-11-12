@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import fs, { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
@@ -17,6 +17,8 @@ import {
   PackageTargetPreparationService,
   PackageTargetProvenance,
   PackageTargetSpec,
+  installStagedRuntime,
+  runtimeArtifactSourceProblems,
   type PackageTargetFileSystem,
 } from './package-target';
 
@@ -31,6 +33,73 @@ class MemoryFileSystem implements PackageTargetFileSystem {
 }
 
 describe('package target integrity', () => {
+  it('rejects symlinked required runtime assets in external artifact sources', async() => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-runtime-source-'));
+    const source = path.join(root, 'source');
+    const external = path.join(root, 'external.img');
+    try {
+      mkdirSync(path.join(source, 'guest'), { recursive: true });
+      for (const relative of ['sulla-runtime', 'guest/vmlinuz', 'guest/initramfs.img', 'guest/usr.erofs']) {
+        writeFileSync(path.join(source, relative), relative);
+      }
+      writeFileSync(external, 'outside');
+      expect(await runtimeArtifactSourceProblems(source)).toEqual([]);
+      rmSync(path.join(source, 'guest/usr.erofs'));
+      symlinkSync(external, path.join(source, 'guest/usr.erofs'));
+      expect(await runtimeArtifactSourceProblems(source)).toContain('guest/usr.erofs must be a regular file, not a symlink or missing');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('removes the previous runtime and staging tree after a successful replacement', async() => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-runtime-swap-'));
+    const stage = path.join(root, '.sulla-runtime-stage-1');
+    const target = path.join(root, 'resources/darwin/sulla-runtime');
+    const staged = path.join(stage, 'resources/darwin/sulla-runtime');
+    try {
+      mkdirSync(target, { recursive: true });
+      mkdirSync(staged, { recursive: true });
+      writeFileSync(path.join(target, 'old'), 'previous');
+      writeFileSync(path.join(staged, 'new'), 'replacement');
+      await installStagedRuntime(staged, target, stage);
+      expect(readFileSync(path.join(target, 'new'), 'utf8')).toBe('replacement');
+      expect(() => readFileSync(path.join(target, 'old'))).toThrow();
+      expect(existsSync(stage)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('restores the previous runtime and removes staging when replacement fails', async() => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'pkg-runtime-rollback-'));
+    const stage = path.join(root, '.sulla-runtime-stage-1');
+    const target = path.join(root, 'resources/darwin/sulla-runtime');
+    const staged = path.join(stage, 'resources/darwin/sulla-runtime');
+    let failedInstall = false;
+    try {
+      mkdirSync(target, { recursive: true });
+      mkdirSync(staged, { recursive: true });
+      writeFileSync(path.join(target, 'old'), 'previous');
+      writeFileSync(path.join(staged, 'new'), 'replacement');
+      await expect(installStagedRuntime(staged, target, stage, {
+        rename: async(source, destination) => {
+          if (source === staged && !failedInstall) {
+            failedInstall = true;
+            throw new Error('injected replacement failure');
+          }
+          await fs.promises.rename(source, destination);
+        },
+        remove: targetPath => fs.promises.rm(targetPath, { recursive: true, force: true }),
+        exists: targetPath => fs.promises.access(targetPath).then(() => true, () => false),
+      })).rejects.toThrow('injected replacement failure');
+      expect(readFileSync(path.join(target, 'old'), 'utf8')).toBe('previous');
+      expect(existsSync(stage)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts only built macOS CPU targets and maps host, guest, builder, and artifact values', () => {
     // risk: packaging integrity — prevents publishing artifacts for an unbuilt OS/CPU combination.
     const x64 = PackageTargetSpec.resolve('darwin', 'x64');

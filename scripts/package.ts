@@ -33,7 +33,7 @@ import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
-  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec,
+  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, installStagedRuntime, runtimeArtifactSourceProblems,
   type PackageTargetAssetFetcher,
 } from './lib/package-target';
 
@@ -55,16 +55,12 @@ class Builder {
     if (sourceRealPath === targetPath || sourceRealPath.startsWith(`${ targetPath }${ path.sep }`) || targetPath.startsWith(`${ sourceRealPath }${ path.sep }`)) {
       throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be separate from resources/darwin/sulla-runtime.');
     }
-    for (const relative of ['sulla-runtime', 'guest/vmlinuz', 'guest/initramfs.img', 'guest/usr.erofs']) {
-      if (!await fs.promises.stat(path.join(sourcePath, relative)).then(stat => stat.isFile(), () => false)) {
-        throw new Error(`SULLA_RUNTIME_ARTIFACTS_DIR is missing required file: ${ relative }`);
-      }
-    }
+    const sourceProblems = await runtimeArtifactSourceProblems(sourcePath);
+    if (sourceProblems.length) throw new Error(`Invalid SULLA_RUNTIME_ARTIFACTS_DIR: ${ sourceProblems.join('; ') }`);
     const parent = path.dirname(targetPath);
     const stage = await fs.promises.mkdtemp(path.join(parent, '.sulla-runtime-stage-'));
     const staged = path.join(stage, 'runtime');
-    const backup = path.join(stage, 'previous');
-    let movedOld = false;
+    let installStarted = false;
     try {
       await fs.promises.cp(sourcePath, staged, { recursive: true });
       const stagedRoot = path.join(stage, 'resources');
@@ -77,13 +73,11 @@ class Builder {
       if (architectureProblems.some(problem => problem.includes('darwin/sulla-runtime/sulla-runtime'))) {
         throw new Error(`Runtime artifact does not match ${ target.key }: ${ architectureProblems.join('; ') }`);
       }
-      await fs.promises.rename(targetPath, backup).then(() => { movedOld = true; }, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
-      await fs.promises.rename(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath);
-    } catch (error) {
-      if (movedOld) await fs.promises.rename(backup, targetPath);
-      throw error;
+      installStarted = true;
+      await installStagedRuntime(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath, stage);
     } finally {
-      if (!await fs.promises.access(backup).then(() => true, () => false)) await fs.promises.rm(stage, { recursive: true, force: true });
+      // Earlier staging failures have no recovery backup to preserve.
+      if (!installStarted) await fs.promises.rm(stage, { recursive: true, force: true });
     }
   }
 
