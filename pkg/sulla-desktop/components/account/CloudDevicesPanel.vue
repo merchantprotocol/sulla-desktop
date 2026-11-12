@@ -11,7 +11,7 @@
   main/cloud/devices/DevicesPanelService.ts.
 -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import PrefCard from '@pkg/components/settings/PrefCard.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -42,6 +42,29 @@ const renamingId = ref('');
 const draftName = ref('');
 const confirmingId = ref('');
 const pendingId = ref('');
+// Cloud refused this computer's key (device_key_mismatch): offer the re-link path.
+const relinkRequired = ref(false);
+const relinking = ref(false);
+const relinkError = ref('');
+
+function readDeviceStatus(status: any) {
+  relinkRequired.value = status?.device?.relinkRequired === true;
+}
+
+async function relink() {
+  relinking.value = true;
+  relinkError.value = '';
+  const res = await ipcRenderer.invoke('sulla-cloud-connection:relink-device').catch(() => null);
+  relinking.value = false;
+  if (!res?.ok) {
+    relinkError.value = `Couldn’t re-link this computer${ res?.error ? ` (${ res.error })` : '' }.`;
+
+    return;
+  }
+  relinkRequired.value = false;
+  notice.value = 'This computer is linked again. Approve it for vault sync from another device if asked.';
+  void load();
+}
 
 async function load() {
   loading.value = true;
@@ -112,7 +135,16 @@ function seen(device: DeviceRow): string {
   return `Last seen ${ new Date(at).toLocaleDateString() }`;
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  ipcRenderer.invoke('sulla-cloud-connection:get-status').then(readDeviceStatus).catch(() => undefined);
+  ipcRenderer.on('sulla-cloud-connection:status-changed', onStatusChanged);
+});
+onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-changed', onStatusChanged));
+
+function onStatusChanged(_event: unknown, status: any) {
+  readDeviceStatus(status);
+}
 </script>
 
 <template>
@@ -132,6 +164,26 @@ onMounted(load);
     </template>
 
     <div class="set col">
+      <div
+        v-if="relinkRequired"
+        class="k"
+      >
+        <span class="badc">Sulla Cloud doesn’t recognize this computer’s key any more. Re-link it to sync again.</span>
+        <button
+          type="button"
+          class="btn sm"
+          :disabled="relinking"
+          @click="relink"
+        >
+          {{ relinking ? 'Re-linking…' : 'Re-link' }}
+        </button>
+      </div>
+      <div
+        v-if="relinkError"
+        class="badc"
+      >
+        {{ relinkError }}
+      </div>
       <div
         v-if="loadError"
         class="k"

@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import crypto from 'node:crypto';
 import os from 'node:os';
 
-import type { DevicePurpose } from '@sulla/domain';
+import { DeviceIdentityService } from '@sulla/domain';
+import { SystemClock } from '@sulla/foundation';
 
-import type { DeviceIdentityHealth, KeyOrigin, KeyRotateProof, LegacyDeviceIdSource } from './DeviceIdentityPorts';
-import { DeviceIdentityService } from './DeviceIdentityService';
-import { FileDeviceIdStore } from './FileDeviceIdStore';
+import { FileDeviceIdStore, type LegacyDeviceIdSource } from './FileDeviceIdStore';
 import { FileDeviceKeyStore } from './FileDeviceKeyStore';
-import { NodeCryptoRandomSource, NodeEd25519Primitives } from './NodeDeviceCrypto';
+import { NodeDeviceCrypto, NodeRandomSource } from './NodeDeviceCrypto';
+
+import paths from '@pkg/utils/paths';
 
 export interface DesktopDeviceMetadata {
   deviceId:   string;
@@ -82,58 +82,61 @@ export class SettingsLegacyDeviceIdSource implements LegacyDeviceIdSource {
 
     return existing || null;
   }
+}
 
-  async write(id: string): Promise<void> {
-    const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
-    await SullaSettingsModel.set(SettingsLegacyDeviceIdSource.KEY, id, 'string');
+/**
+ * Composition root for this install's device identity. The identity itself is the shared domain
+ * `DeviceIdentityService` (@sulla/domain); this class only wires the Desktop adapters into it (files in ~/.sulla,
+ * node:crypto, the CSPRNG, the system clock) and adds the Desktop-only bits (register metadata, a sync id peek).
+ * One instance per process, created on first use.
+ */
+export class DesktopDeviceIdentity {
+  private static shared: DesktopDeviceIdentity | null = null;
+
+  constructor(readonly service: DeviceIdentityService, private readonly ids: FileDeviceIdStore, private readonly host: DesktopHostInfo) {}
+
+  static forDirectory(directory: () => string, appVersion: () => Promise<string | null> | string | null, legacy: LegacyDeviceIdSource | null): DesktopDeviceIdentity {
+    const clock = new SystemClock();
+    const ids = FileDeviceIdStore.in(directory, legacy);
+
+    return new DesktopDeviceIdentity(
+      new DeviceIdentityService(ids, FileDeviceKeyStore.in(directory, clock), new NodeDeviceCrypto(), new NodeRandomSource(), clock),
+      ids,
+      new DesktopHostInfo(os, appVersion),
+    );
+  }
+
+  /** The process-wide instance (lazy). */
+  static current(): DesktopDeviceIdentity {
+    DesktopDeviceIdentity.shared ??= DesktopDeviceIdentity.forDirectory(
+      () => paths.sullaConfig,
+      async() => (await import('@pkg/utils/version')).getProductionVersion(),
+      new SettingsLegacyDeviceIdSource(),
+    );
+
+    return DesktopDeviceIdentity.shared;
+  }
+
+  /** Test seam: swap the process-wide instance (null = rebuild from paths on next use). */
+  static useInstance(instance: DesktopDeviceIdentity | null): void {
+    DesktopDeviceIdentity.shared = instance;
+  }
+
+  async metadata(): Promise<DesktopDeviceMetadata> {
+    return this.host.metadata((await this.service.deviceId()).value);
+  }
+
+  /** The device id if this install already has one; never creates one or touches the database. */
+  readExistingDeviceId(): string | null {
+    return this.ids.readExisting();
   }
 }
 
 /**
- * This install's device identity: the only object the app uses for the Cloud device id,
- * the Ed25519 device key, signatures and the register-time key-rotate proof.
- * `main/deviceIdentity.ts` and `main/cloud/deviceKey.ts` are thin delegates to it.
+ * THE accessor for this install's device identity: one process-wide domain `DeviceIdentityService`.
+ * Device id, signing key, purpose-bound signatures, the /devices/register key-rotation proof and
+ * `signerFor(purpose)` (vault enrollment) all come from here.
  */
-export class DesktopDeviceIdentity {
-  constructor(private readonly service: DeviceIdentityService, private readonly host: DesktopHostInfo) {}
-
-  /** Production wiring: files in ~/.sulla (resolved lazily), node:crypto, app settings migration. */
-  static forDirectory(directory: () => string, appVersion: () => Promise<string | null> | string | null, legacyIds: LegacyDeviceIdSource | null, logger: { warn(message: string): void } = console): DesktopDeviceIdentity {
-    return new DesktopDeviceIdentity(new DeviceIdentityService({
-      ids:    FileDeviceIdStore.in(directory),
-      keys:   FileDeviceKeyStore.in(directory),
-      legacyIds,
-      crypto: new NodeEd25519Primitives(),
-      random: new NodeCryptoRandomSource(),
-      clock:  { nowSeconds: () => Math.floor(Date.now() / 1000), nowIso: () => new Date().toISOString() },
-      logger,
-    }), new DesktopHostInfo(os, appVersion));
-  }
-
-  async deviceId(): Promise<string> { return this.service.loadOrCreateId() }
-
-  readExistingDeviceId(): string | null { return this.service.readExistingId() }
-
-  async metadata(): Promise<DesktopDeviceMetadata> { return this.host.metadata(await this.service.loadOrCreateId()) }
-
-  publicKey(): string { return this.service.publicKey() }
-
-  /** First 16 hex of SHA-256(base64 public key), grouped; identical to Cloud's KeyFingerprint. */
-  keyFingerprint(): string {
-    const hex = crypto.createHash('sha256').update(this.publicKey()).digest('hex').slice(0, 16);
-
-    return hex.replace(/(.{4})(?!$)/g, '$1-');
-  }
-
-  keyOrigin(): KeyOrigin | null { return this.service.keyOrigin() }
-
-  health(): DeviceIdentityHealth { return this.service.identityHealth() }
-
-  signExact(purpose: DevicePurpose, parts: (string | number)[]): string { return this.service.signExact(purpose, parts) }
-
-  sign(purpose: DevicePurpose, parts: (string | number)[]): KeyRotateProof { return this.service.sign(purpose, parts) }
-
-  keyRotateProof(userId: string): Promise<KeyRotateProof> { return this.service.keyRotateProof(userId) }
-
-  resetCache(): void { this.service.resetCache() }
+export function desktopDeviceIdentity(): DeviceIdentityService {
+  return DesktopDeviceIdentity.current().service;
 }

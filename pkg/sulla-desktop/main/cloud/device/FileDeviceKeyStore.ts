@@ -3,67 +3,53 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import crypto from 'node:crypto';
+import type { Clock } from '@sulla/foundation';
+import type { DeviceKeyStore } from '@sulla/domain';
 
-import { DeviceIdentityError, type DeviceKeyStore, type StoredDeviceKey } from './DeviceIdentityPorts';
-import { NodeEd25519Primitives } from './NodeDeviceCrypto';
+import { NodeDeviceCrypto } from './NodeDeviceCrypto';
 import { PrivateFile } from './PrivateFile';
 
-/** The on-disk v1 format, unchanged so existing installs keep their key. */
+/** The on-disk v1 format, unchanged so existing installs keep their exact key. */
 interface DeviceKeyFileV1 {
   v:          1;
-  publicKey:  string; // base64 raw 32-byte Ed25519 key
+  publicKey:  string; // base64 raw 32-byte Ed25519 key (informational; always recomputed from the private key)
   privateKey: string; // PKCS#8 PEM
   createdAt:  string;
 }
 
-/** `~/.sulla/device-key.json`. A file that exists but can't be read or parsed throws (fails closed). */
+/**
+ * `~/.sulla/device-key.json` (0600, dir 0700). Implements the domain `DeviceKeyStore` by converting the stored
+ * PKCS#8 PEM to and from the raw 32-byte Ed25519 seed, so no stored file changes. Null only when the file does not
+ * exist; an unreadable or corrupt file throws (fails closed: a replaced key orphans the device in Cloud).
+ */
 export class FileDeviceKeyStore implements DeviceKeyStore {
   static readonly FILE_NAME = 'device-key.json';
 
-  constructor(private readonly file: PrivateFile) {}
+  constructor(private readonly file: PrivateFile, private readonly clock: Clock, private readonly crypto: NodeDeviceCrypto = new NodeDeviceCrypto()) {}
 
-  static in(directory: () => string): FileDeviceKeyStore {
-    return new FileDeviceKeyStore(new PrivateFile(directory, FileDeviceKeyStore.FILE_NAME));
+  static in(directory: () => string, clock: Clock): FileDeviceKeyStore {
+    return new FileDeviceKeyStore(new PrivateFile(directory, FileDeviceKeyStore.FILE_NAME), clock);
   }
 
-  read(): StoredDeviceKey | null {
-    let text: string | null;
-    try {
-      text = this.file.read();
-    } catch (error) {
-      throw this.unreadable(error);
-    }
+  async read(): Promise<Uint8Array | null> {
+    const text = this.file.read();
     if (text === null) return null;
-    try {
-      const stored = JSON.parse(text) as DeviceKeyFileV1;
-      if (stored?.v !== 1 || !stored.privateKey || !stored.publicKey) throw new Error('not a v1 device key file');
-
-      return {
-        publicKey: stored.publicKey,
-        seed:      NodeEd25519Primitives.seedFromPrivateKey(crypto.createPrivateKey(stored.privateKey)),
-        createdAt: stored.createdAt,
-      };
-    } catch (error) {
-      throw this.unreadable(error);
+    const stored = JSON.parse(text) as DeviceKeyFileV1;
+    if (stored?.v !== 1 || typeof stored.privateKey !== 'string' || !stored.privateKey) {
+      throw new Error(`[deviceKey] ${ this.file.path } is not a v1 device key file`);
     }
+
+    return NodeDeviceCrypto.seedFromPem(stored.privateKey);
   }
 
-  write(key: StoredDeviceKey): void {
+  async createIfAbsent(seed: Uint8Array): Promise<boolean> {
     const stored: DeviceKeyFileV1 = {
       v:          1,
-      publicKey:  key.publicKey,
-      privateKey: NodeEd25519Primitives.privateKeyFromSeed(key.seed).export({ format: 'pem', type: 'pkcs8' }).toString(),
-      createdAt:  key.createdAt,
+      publicKey:  Buffer.from(this.crypto.ed25519PublicKey(seed)).toString('base64'),
+      privateKey: NodeDeviceCrypto.pemFromSeed(seed),
+      createdAt:  this.clock.now().toISOString(),
     };
-    try {
-      this.file.write(JSON.stringify(stored));
-    } catch (error) {
-      throw new DeviceIdentityError('device_key_not_saved', `[deviceKey] could not save ${ this.file.path }: ${ error instanceof Error ? error.message : String(error) }`);
-    }
-  }
 
-  private unreadable(error: unknown): DeviceIdentityError {
-    return new DeviceIdentityError('device_key_unreadable', `[deviceKey] unreadable ${ this.file.path }: ${ error instanceof Error ? error.message : String(error) }`);
+    return this.file.createExclusive(JSON.stringify(stored));
   }
 }
