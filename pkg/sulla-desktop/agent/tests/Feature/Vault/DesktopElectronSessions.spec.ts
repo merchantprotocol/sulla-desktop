@@ -6,8 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 import { LegacyCloudSessionRefresher, PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
 import { DesktopCloudSignOut } from '@pkg/main/cloud/session/DesktopCloudSignOut';
-import type { CloudSessionStorage, StoredCloudSession } from '@pkg/main/cloud/session/DesktopTokenStores';
-import { type CloudLogoutHttp, type CloudRefreshHttp, FetchCloudLogoutHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
+import {
+  type CloudSessionStorage, LegacySignOutTokenStore, LegacyTokenStore, type StoredCloudSession,
+} from '@pkg/main/cloud/session/DesktopTokenStores';
+import {
+  type CloudLogoutHttp, type CloudRefreshHttp, ElectronCloudRefreshTransport, FetchCloudLogoutHttp,
+} from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
 
 const jwt = (secondsLeft: number, tag: string) => {
   const part = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -347,5 +351,55 @@ describe('D-ID-4 sulla-cloud:logout picks the sign-out path by vault mode', () =
     const outcome = await new DesktopCloudSignOut(ports(false, []), refresher).run();
     expect(outcome.signedOut).toBe(false);
     expect(logout.calls).toHaveLength(0);
+  });
+});
+
+describe('D-ID-4 /auth/logout transport and the sign-out token store', () => {
+  const fresh = (refreshToken = 'rt-1'): StoredCloudSession => ({ ...expiring(), tokens: { accessToken: jwt(900, 'fresh'), refreshToken } });
+
+  it('risk: false revoke. the transport refuses a blank refresh token and never POSTs it', async() => {
+    const logout = new FakeLogout([]);
+    const transport = new ElectronCloudRefreshTransport(new FakeCloud(), logout);
+    await expect(transport.logout({ refreshToken: '' })).rejects.toThrow('without a refresh token');
+    expect(logout.calls).toHaveLength(0);
+  });
+
+  it('risk: session left alive. the transport resolves on 2xx and rejects with the HTTP status otherwise, or with no status when offline', async() => {
+    const logout = new FakeLogout([]);
+    const transport = new ElectronCloudRefreshTransport(new FakeCloud(), logout);
+    logout.behaviour = 204;
+    await expect(transport.logout({ refreshToken: 'rt-1' })).resolves.toBeUndefined();
+    logout.behaviour = 401;
+    await expect(transport.logout({ refreshToken: 'rt-1' })).rejects.toMatchObject({ status: 401 });
+    logout.behaviour = 503;
+    await expect(transport.logout({ refreshToken: 'rt-1' })).rejects.toMatchObject({ status: 503 });
+    logout.behaviour = 'network';
+    const offline = await transport.logout({ refreshToken: 'rt-1' }).catch((error: unknown) => error);
+    expect(offline).toBeInstanceOf(Error);
+    expect((offline as { status?: number }).status).toBeUndefined();
+    expect(logout.calls).toEqual(['rt-1', 'rt-1', 'rt-1', 'rt-1']);
+  });
+
+  it('risk: session resurrected. a session read before sign-out can never be written back after the clear', async() => {
+    const storage = new MemoryStorage(fresh());
+    const legacy = new LegacyTokenStore(storage);
+    const before = await legacy.read();
+    expect(before).not.toBeNull();
+    await new LegacySignOutTokenStore(legacy, storage).clear();
+    expect(storage.session).toBeNull();
+    storage.session = fresh('rt-other'); // e.g. a new sign-in landed meanwhile
+    const rotated = (await legacy.read())!; // a valid shape for the write, carrying new tokens
+    expect(await legacy.compareAndSet(before, rotated)).toBe(false);
+    expect(storage.writes).toBe(0);
+    expect(storage.session?.tokens.refreshToken).toBe('rt-other');
+  });
+
+  it('risk: session resurrected. after sign-out a refresh attempt makes no Cloud call and writes nothing', async() => {
+    const { storage, cloud, refresher } = rig(fresh());
+    await refresher.signOut();
+    expect(await refresher.currentAccessToken()).toBe('');
+    expect(cloud.calls).toHaveLength(0);
+    expect(storage.writes).toBe(0);
+    expect(storage.session).toBeNull();
   });
 });
