@@ -27,7 +27,7 @@ import {
 } from '@sulla/vault-crypto';
 
 import { makeLoginVerifier } from './auth.js';
-import { mapBitwardenExport, parseBitwardenCsv, readBitwardenJson, readBitwardenZip, type BitwardenImportPreview } from './bitwardenImport.js';
+import { BitwardenExportImporter, type BitwardenExportUpload, type BitwardenImportPreview } from './bitwarden/BitwardenExportImporter.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
@@ -617,6 +617,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
     private readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
     private readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
+    private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
@@ -1116,7 +1117,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const maxContent = input.format === 'zip' ? 34 * 1024 * 1024 : 25 * 1024 * 1024;
     if (typeof input.content !== 'string' || Buffer.byteLength(input.content) > maxContent) throw new LocalVaultError('invalid_operation', 400, 'Bitwarden exports are limited to 25 MB');
     const keys = this.requireKeys(), generation = this.generation;
-    const mapped = input.format === 'csv' ? parseBitwardenCsv(input.content) : mapBitwardenExport(input.format === 'zip' ? await readBitwardenZip(input.content,input.password) : await readBitwardenJson(input.content, input.password));
+    const mapped = await this.readBitwardenExport(input);
     const rows = await this.itemRepository.listOwnedActiveForImport<ItemRow>([keys.userId]);
     const existing = new Set<string>();
     for (const row of rows.rows) {
@@ -1127,6 +1128,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const items = mapped.items.filter(item => { const key=this.bitwardenDedupeKey(item); if(seen.has(key)){duplicates++;return false;} seen.add(key);return true; });
     this.requireGeneration(generation);
     return { preview:{ counts:mapped.counts,total:mapped.total,unmapped:mapped.unmapped,warnings:mapped.warnings,duplicates,importable:items.length }, items, keys, generation };
+  }
+
+  /** Parses through @sulla/domain; its failures become route errors ({ error: code }, 400). */
+  private async readBitwardenExport(input: BitwardenExportUpload) {
+    try {
+      return await this.bitwardenImporter.read(input);
+    } catch (error) {
+      if (this.bitwardenImporter.isImportFailure(error)) throw new LocalVaultError(error.code, 400, error.message);
+      throw error;
+    }
   }
 
   private bitwardenDedupeKey(item: VaultItemPlaintext): string {

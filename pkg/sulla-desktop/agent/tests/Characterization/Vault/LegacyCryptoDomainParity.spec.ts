@@ -8,7 +8,7 @@
 // A failure here is an S7 gap.
 //
 // This PR doesn't vendor a candidate build. The spec is skipped unless SULLA_DOMAIN_CANDIDATE_DIST points at
-// an extracted candidate's dist/index.js (e.g. sulla-domain-0.3.2-rc.1.tgz -> package/dist/index.js, with
+// an extracted candidate's dist/index.js (e.g. sulla-domain-<candidate>.tgz -> package/dist/index.js, with
 // its dependencies resolvable from that package).
 
 import { createHash } from 'node:crypto';

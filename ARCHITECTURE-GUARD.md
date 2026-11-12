@@ -22,6 +22,7 @@ Only production code is checked. Tests, fixtures, `node_modules`, build output, 
 | `long-file` | a file over 400 lines that isn't on the allowlist | split it into classes |
 | `procedural-module` | a file that exports free functions doing I/O or business logic (await, fetch, fs, IPC, storage, db calls) and exports no class. UI components (`.vue/.tsx/.jsx`), `*.config.*` and `scripts/` are exempt | make it a Service, Repository or other class |
 | `frozen` | a file listed under `"frozen"` in `architecture-guard.config.json` grows past its `maxLines` or exports a name not in its `exports` list | bug fixes only: keep the fix inside the budget and put new code in the replacement (see below) |
+| `domain-owned` | a local copy of logic the shared `@sulla/domain` package owns (config `domainOwned`; today: Bitwarden export parsing, matched by Bitwarden field names in code or strings). Comments, tests and fixtures are ignored. Never allowlisted | call the domain service (for Bitwarden: `services/sulla-vault/src/bitwarden/BitwardenExportImporter.ts`) |
 
 ## Frozen files: bug fixes only
 Some legacy files stay in service until their replacement lands. They're listed under `"frozen"` in `architecture-guard.config.json` with a `reason`, an `until` (what ends the freeze), a `maxLines` budget, the `exports` they may have, and an `exceptions` list. Today: `services/sulla-vault/src/browserEnvelope/syncRunner.ts` (the v3 Cloud vault sync runner) is frozen until Replica replaces it.
