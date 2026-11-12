@@ -22,6 +22,10 @@ import ExtensionView from '../pages/ExtensionView.vue';
 
 import store from './store';
 
+import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 // BrowserTab is rendered persistently in AgentRouter (outside keep-alive)
 // so iframes are never removed from the DOM.  This stub just lets the
 // router match /Browser/:id for route.path / route.params without
@@ -44,6 +48,13 @@ const router = createRouter({
 });
 
 const app = createApp(AgentRouter);
+
+// Live Agents (Studio) and the chat sub-agent drawer inject this client; this
+// window hosts both, so it must provide it (entry/index.ts does the same).
+const agentStateClient = new AgentStateClient(ipcRenderer as any, window as any);
+app.provide(AGENT_STATE_CLIENT_KEY, agentStateClient);
+agentStateClient.start().catch(() => undefined);
+window.addEventListener('beforeunload', () => agentStateClient.stop(), { once: true });
 
 app.use(router);
 // The Preferences and Docker tabs read settings, containers and snapshots from the Vuex store.
