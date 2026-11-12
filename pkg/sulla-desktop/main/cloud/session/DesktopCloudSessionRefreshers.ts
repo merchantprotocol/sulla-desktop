@@ -4,13 +4,15 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import {
-  ClientSessionService, IdentityError, RefreshOutcomeClassifier, RefreshSchedule, type RefreshLock,
+  ClientSessionService, IdentityError, RefreshOutcomeClassifier, RefreshSchedule, SignOutService,
+  type PendingRevocationQueue, type RefreshLock, type SignOutResult,
 } from '@sulla/domain';
 import { EventDispatcher, SystemClock, type Clock } from '@sulla/foundation';
 
-import { type CloudRefreshHttp, ElectronCloudRefreshTransport } from './ElectronCloudRefreshTransport';
+import { type CloudLogoutHttp, type CloudRefreshHttp, ElectronCloudRefreshTransport } from './ElectronCloudRefreshTransport';
 import {
-  DesktopRefreshLocks, LegacyTokenStore, NoListenerResolver, PendingEntryTokenStore, type CloudSessionStorage, type StoredCloudSession,
+  DesktopRefreshLocks, LegacySignOutTokenStore, LegacyTokenStore, NoListenerResolver, PendingEntryTokenStore, UnavailableRevocationQueue,
+  type CloudSessionStorage, type StoredCloudSession,
 } from './DesktopTokenStores';
 
 /** Reports refresh outcomes so the caller keeps its own log throttling. No tokens, ever. */
@@ -28,6 +30,7 @@ export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
   private readonly store: LegacyTokenStore<S>;
   private readonly sessions: ClientSessionService;
   private readonly schedule: RefreshSchedule;
+  private readonly signOutService: SignOutService;
 
   constructor(
     private readonly storage: CloudSessionStorage<S>,
@@ -35,13 +38,31 @@ export class LegacyCloudSessionRefresher<S extends StoredCloudSession> {
     private readonly reporter: RefreshReporter,
     lock: RefreshLock = DesktopRefreshLocks.shared,
     clock: Clock = new SystemClock(),
+    logoutHttp: CloudLogoutHttp | null = null,
+    revocations: PendingRevocationQueue = new UnavailableRevocationQueue(),
   ) {
     this.store = new LegacyTokenStore(storage);
     this.schedule = new RefreshSchedule(clock);
-    this.sessions = new ClientSessionService(
-      this.store, new ElectronCloudRefreshTransport(http), lock, this.schedule,
-      new RefreshOutcomeClassifier(), new EventDispatcher(new NoListenerResolver()),
+    const transport = new ElectronCloudRefreshTransport(http, logoutHttp);
+    const events = new EventDispatcher(new NoListenerResolver());
+    this.sessions = new ClientSessionService(this.store, transport, lock, this.schedule, new RefreshOutcomeClassifier(), events);
+    this.signOutService = new SignOutService(
+      this.sessions, new LegacySignOutTokenStore(this.store, storage), lock, transport, revocations, [], events,
     );
+  }
+
+  /**
+   * Server-mode sign-out through the domain SignOutService: closes the refresh gate, waits for any in-flight refresh,
+   * clears the stored session inside the refresh lock, and only then POSTs /auth/logout once with the newest refresh
+   * token. Throws (gate reopened, nothing revoked) when the local clear fails. A blank refresh token is never sent.
+   */
+  signOut(): Promise<SignOutResult> {
+    return this.signOutService.signOut();
+  }
+
+  /** A new session was signed in and stored: reopen the refresh gate that sign-out closed. */
+  adopted(): void {
+    this.sessions.reopenGate();
   }
 
   /** The stored access token, refreshed when within 60s of expiry. On any failure the stored token is returned, as before. */
