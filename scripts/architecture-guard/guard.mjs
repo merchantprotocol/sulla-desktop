@@ -12,6 +12,8 @@
 //                    that is not on the allowlist
 //   domain-owned     a local copy of logic that the shared @sulla/domain package owns (config
 //                    `domainOwned`). Never allowlisted: call the domain service instead.
+//   frozen           a file listed under "frozen" in architecture-guard.config.json grows past its
+//                    line budget or gains an export (bug fixes only; see FrozenFileGuard.mjs)
 //
 // Today's offenders live in architecture-guard.allowlist.json. The allowlist may only shrink:
 //   - a file's recorded count for mutable-state / raw-sql may not go up
@@ -26,6 +28,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { FrozenFileGuard } from './FrozenFileGuard.mjs';
 
 const ROOT = process.cwd();
 const CONFIG_PATH = path.join(ROOT, 'architecture-guard.config.json');
@@ -215,6 +219,17 @@ function baseAllowlist() {
   }
 }
 
+function baseFrozen() {
+  const ref = process.env.GUARD_BASE_REF;
+  if (!ref) return null;
+  try {
+    const text = execFileSync('git', ['show', `${ref}:architecture-guard.config.json`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    return JSON.parse(text).frozen || {};
+  } catch {
+    return null; // no config on base
+  }
+}
+
 function writeAllowlist(files) {
   const sorted = Object.fromEntries(Object.keys(files).sort().map((k) => [k, files[k]]));
   const total = Object.values(sorted).reduce((a, e) => a + Object.keys(e.rules).length, 0);
@@ -316,6 +331,15 @@ function main() {
       }
     }
   }
+
+  // Frozen files: bug fixes only (size budget + export list, raised only by a recorded exception).
+  const frozen = new FrozenFileGuard({
+    exists: (f) => existsSync(path.join(ROOT, f)),
+    read: (f) => readFileSync(path.join(ROOT, f), 'utf8'),
+    code: (src) => stripCommentsAndStrings(src).code,
+  }).check(cfg.frozen || {}, baseFrozen());
+  for (const w of frozen.warnings) console.warn(`warning: ${w}`);
+  errors.push(...frozen.errors);
 
   const entries = Object.values(allow).reduce((a, e) => a + Object.keys(e.rules || {}).length, 0);
   if (stale.length) {

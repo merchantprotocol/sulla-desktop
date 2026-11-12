@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveLoginHash, deriveMasterKey } from '@sulla/vault-crypto';
 import { makeLoginVerifier } from '../../../../../../services/sulla-vault/src/auth';
 import { LocalVaultAuthority } from '../../../../../../services/sulla-vault/src/localAuthority';
+import { LocalVaultCryptoProvider } from '../../../../../../services/sulla-vault/src/localCrypto/LocalVaultCryptoProvider';
 
 class FakeVaultRepositories {
   readonly kdfWrites: unknown[] = [];
@@ -44,7 +45,8 @@ class AccountPasswordRewrapFixture {
     const state = authority as unknown as Record<string, unknown>;
     Object.assign(state, {
       db: database, config: thisConfig(), userRepository: repositories, rewrapHistory: repositories,
-      auditLogRepository: repositories, securityOperationTail: Promise.resolve(), generation: 0, cacheChallenges: new Map(),
+      auditLogRepository: repositories, localCryptoProvider: new LocalVaultCryptoProvider(),
+      securityOperationTail: Promise.resolve(), generation: 0, cacheChallenges: new Map(),
       keys: options.keys === false ? undefined : { userId: 'user-1', userKey: Uint8Array.from({ length: 32 }, () => 9) },
       humanSessions: new Map([['session', { csrf: 'csrf', expiresAt: Date.now() + 60_000, phase: 'unlocked' }]]),
     });

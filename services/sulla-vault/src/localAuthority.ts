@@ -10,19 +10,12 @@ import https from 'node:https';
 import net from 'node:net';
 
 import pg from 'pg';
-import { IdentityError } from '@sulla/domain';
+import { IdentityError, VaultOperationError, type LocalEncryptedItem, type LocalItemContext } from '@sulla/domain';
 
 import {
   agentPolicyAllows,
   agentPolicyFromLegacyLlmAccess,
-  createUserKey,
-  createUserKeyPair,
-  decryptWithKey,
-  decryptItemText,
   deriveLoginHash,
-  deriveMasterKey,
-  encryptItem,
-  encryptWithKey,
   type AgentAccessLevel,
   type AgentPolicy,
   type EncryptedEnvelope,
@@ -33,7 +26,7 @@ import {
   type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { makeLoginVerifier, verifyLoginHash } from './auth.js';
+import { makeLoginVerifier } from './auth.js';
 import { BitwardenExportImporter, type BitwardenExportUpload, type BitwardenImportPreview } from './bitwarden/BitwardenExportImporter.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
@@ -105,6 +98,8 @@ import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
+import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
+import { LocalVaultCryptoProvider } from './localCrypto/LocalVaultCryptoProvider.js';
 
 const CHALLENGE_TTL_MS = 30_000;
 const CACHE_UPDATE_TTL_MS = 60_000;
@@ -621,6 +616,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
     private readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
     private readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
+    private readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
     private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
@@ -642,6 +638,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
+
+  /** Seals one item for its `items` row (domain `LocalItemCipher`: fresh item key, AAD binds owner + item id). */
+  private async sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem> {
+    return (await this.localCryptoProvider.get()).sealItem(plaintext, userKey, context);
+  }
+
+  /** Opens one `items` row to its exact UTF-8 plaintext. */
+  private async openItemText(item: LocalEncryptedItem, userKey: Uint8Array, context: LocalItemContext): Promise<string> {
+    return (await this.localCryptoProvider.get()).openItemText(item, userKey, context);
+  }
 
   status(): { state: LocalVaultState; unlocked: boolean; principalId?: string; cacheUpdateRequired: boolean } {
     this.expireStagedCacheUpdate();
@@ -712,7 +718,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!/^[0-9a-f-]{36}$/i.test(itemId)) throw new LocalVaultError('invalid_operation',400,'Backup credential ID is invalid');
     const item=(await this.itemRepository.findOwnedPersonalActive<ItemRow>([itemId,keys.userId])).rows[0];
     if (!item) throw new LocalVaultError('policy_denied',403,'Backup credential is unavailable');
-    const plaintext=JSON.parse(await decryptItemText({version:1,ciphertext:item.ciphertext,encryptedItemKey:item.encrypted_item_key},keys.userKey,{itemId:item.id,ownerId:keys.userId})) as VaultItemPlaintext;
+    const plaintext=JSON.parse(await this.openItemText({version:1,ciphertext:item.ciphertext,encryptedItemKey:item.encrypted_item_key},keys.userKey,{itemId:item.id,ownerId:keys.userId})) as VaultItemPlaintext;
     const bound=credentialField(plaintext,'backup_target');
     if (credentialField(plaintext,'backup_kind')!==kind || bound!==target) throw new LocalVaultError('policy_denied',403,'Vault item must bind backup_kind and backup_target to this destination');
     const fields=kind==='s3'?['accessKeyId','secretAccessKey','sessionToken']:['username','password','domain'];
@@ -877,30 +883,27 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }> {
     const attemptGeneration = this.generation;
     if (!password || password.length > 1024) throw new LocalVaultError('invalid_credentials', 400, 'Password is required');
-    const existing = await this.userRepository.findActiveKdf<{ kdf: {
-      password?: { salt?: string; parameters?: { memoryBytes: number; operations: number } };
-      salt?: string; parameters?: { memoryBytes: number; operations: number };
-    } }>();
-    const storedKdf = existing.rows[0]?.kdf;
-    const passwordKdf = storedKdf?.password?.salt
-      ? storedKdf.password
-      : storedKdf?.salt ? { salt: storedKdf.salt, parameters: storedKdf.parameters } : undefined;
-    if (existing.rowCount && !passwordKdf?.salt) {
+    const existing = await this.userRepository.findActiveKdf<{ kdf: unknown }>();
+    const crypto = await this.localCryptoProvider.get();
+    const stored = existing.rowCount ? crypto.readKdf(existing.rows[0]?.kdf) : undefined;
+    const storedPasswordKdf = stored?.passwordKdf();
+    if (existing.rowCount && !storedPasswordKdf) {
       throw new LocalVaultError('invalid_credentials', 409, 'This vault requires the OS-protected unlock cache');
     }
-    const derived = await deriveMasterKey(password, passwordKdf?.salt, passwordKdf?.parameters);
+    // A fresh vault draws a new salt; an existing one reuses its stored salt and cost exactly.
+    const passwordKdf = storedPasswordKdf ?? crypto.credential.newPasswordKdf();
+    const masterKey = crypto.credential.deriveMasterKey(password, passwordKdf);
     try {
-      const result = await this.activateMasterKey(derived.key, undefined, {
-        authority: 'container', version: 1, password: { salt: derived.salt, parameters: derived.parameters },
-      }, attemptGeneration);
-      if (existing.rowCount && !storedKdf?.password?.salt) {
+      const result = await this.activateMasterKey(masterKey, undefined, crypto.kdfColumn(passwordKdf), attemptGeneration);
+      // Older builds stored a flat {salt, parameters}; it is upgraded once to the current shape (same key bytes).
+      if (stored?.isLegacyFlat) {
         const keys = this.requireKeys();
-        await this.userRepository.updateKdf(keys.userId, { authority: 'container', version: 1, password: { salt: derived.salt, parameters: derived.parameters } });
+        await this.userRepository.updateKdf(keys.userId, crypto.kdfColumn(passwordKdf));
       }
-      this.stageCacheUpdate(derived.key);
+      this.stageCacheUpdate(masterKey);
       return { ...result, cacheUpdateRequired: true };
     } finally {
-      derived.key.fill(0);
+      masterKey.fill(0);
     }
   }
 
@@ -915,33 +918,32 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         encrypted_private_key: EncryptedEnvelope; encrypted_user_key: EncryptedEnvelope;
       }>();
 
+      const crypto = await this.localCryptoProvider.get();
       let next: UnlockedKeys;
       if (!existing.rowCount) {
-        const loginHash = await deriveLoginHash(masterKey);
-        const created = await createUserKey(masterKey);
+        const created = crypto.createAccount(masterKey);
         try {
-          const pair = await createUserKeyPair(created.userKey);
-          const verifier = makeLoginVerifier(loginHash);
           const result = await this.userRepository.create<{ id: string }>(
-            [verifier.salt, verifier.verifier, pair.publicKey, pair.encryptedPrivateKey, created.encryptedUserKey, newAccountKdf],
+            [created.verifier.salt, created.verifier.verifier, created.publicKey, created.encryptedPrivateKey, created.encryptedUserKey, newAccountKdf],
           );
-          next = { userId: result.rows[0].id, publicKey: pair.publicKey, userKey: created.userKey, privateKey: pair.privateKey, legacyVmk };
+          next = { userId: result.rows[0].id, publicKey: created.publicKey, userKey: created.userKey, privateKey: created.privateKey, legacyVmk };
         } catch (error) {
           created.userKey.fill(0);
+          created.privateKey.fill(0);
           throw error;
         }
       } else {
         const account = existing.rows[0];
-        if (!verifyLoginHash(await deriveLoginHash(masterKey), account.login_hash_salt, account.login_hash_verifier)) {
+        if (!crypto.verifyPassword(masterKey, account.login_hash_salt, account.login_hash_verifier)) {
           throw new LocalVaultError('invalid_credentials', 401, 'Unlock material did not match the vault');
         }
-        const userKey = (await this.keyEnvelopeReaderProvider.get()).unwrapUserKey(account.encrypted_user_key, masterKey);
+        const userKey = crypto.credential.openUserKey(masterKey, account.encrypted_user_key);
         try {
           next = {
             userId: account.id,
             publicKey: account.public_key,
             userKey,
-            privateKey: (await this.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(account.encrypted_private_key, userKey),
+            privateKey: crypto.credential.openPrivateKey(userKey, account.encrypted_private_key),
             legacyVmk,
           };
         } catch (error) {
@@ -1090,7 +1092,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     const rows = await this.itemRepository.listOwnedActiveByUpdated<ItemRow & { item_type: string; updated_at: string }>([keys.userId]);
     const items = await Promise.all(rows.rows.map(async row => {
-      const item = JSON.parse(await decryptItemText(
+      const item = JSON.parse(await this.openItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
         { itemId: row.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
@@ -1119,7 +1121,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const rows = await this.itemRepository.listOwnedActiveForImport<ItemRow>([keys.userId]);
     const existing = new Set<string>();
     for (const row of rows.rows) {
-      const item = JSON.parse(await decryptItemText({ version:1, ciphertext:row.ciphertext, encryptedItemKey:row.encrypted_item_key }, keys.userKey, { itemId:row.id, ownerId:keys.userId })) as VaultItemPlaintext;
+      const item = JSON.parse(await this.openItemText({ version:1, ciphertext:row.ciphertext, encryptedItemKey:row.encrypted_item_key }, keys.userKey, { itemId:row.id, ownerId:keys.userId })) as VaultItemPlaintext;
       existing.add(this.bitwardenDedupeKey(item));
     }
     const seen = new Set(existing); let duplicates = 0;
@@ -1151,7 +1153,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async importBitwarden(sessionId: string|undefined, csrf: string|undefined, input: { content:string; format:'json'|'csv'|'zip'; password?:string }): Promise<BitwardenImportPreview & { duplicates:number; importable:number; imported:number }> {
     return this.runSecurityOperation(async()=>{
       const prepared=await this.prepareBitwardenImport(sessionId,csrf,input);
-      await this.runTransaction(async client => { for(const item of prepared.items){ const id=randomUUID(); const encrypted=await encryptItem(JSON.stringify(item),prepared.keys.userKey,{itemId:id,ownerId:prepared.keys.userId}); await this.itemRepository.insertImportedItem([id,prepared.keys.userId,item.type,encrypted.ciphertext,encrypted.encryptedItemKey,item.agentPolicy], client); } });
+      await this.runTransaction(async client => { for(const item of prepared.items){ const id=randomUUID(); const encrypted=await this.sealItem(JSON.stringify(item),prepared.keys.userKey,{itemId:id,ownerId:prepared.keys.userId}); await this.itemRepository.insertImportedItem([id,prepared.keys.userId,item.type,encrypted.ciphertext,encrypted.encryptedItemKey,item.agentPolicy], client); } });
       this.requireGeneration(prepared.generation);
       await this.auditHumanAction(this.db,prepared.keys.userId,'human_bitwarden_import');
       return {...prepared.preview,imported:prepared.items.length};
@@ -1184,7 +1186,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const result = await this.itemRepository.findOwnedActiveForReveal<ItemRow>([itemId, keys.userId]);
     const row = result.rows[0];
     if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
-    const item = JSON.parse(await decryptItemText(
+    const item = JSON.parse(await this.openItemText(
       { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
       { itemId: row.id, ownerId: keys.userId },
     )) as VaultItemPlaintext;
@@ -1232,7 +1234,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (!checked.ok) throw new LocalVaultError('invalid_operation', 400, checked.error);
       item.proxy = checked.proxy;
     }
-    const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
+    const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const result = await this.runTransaction(async client => {
       if (!input.id) {
       const created = await this.itemRepository.insertHumanItem<{ revision: number }>([id, keys.userId, input.item.type, encrypted.ciphertext, encrypted.encryptedItemKey, input.item.agentPolicy,
@@ -1262,7 +1264,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const result = await this.itemRepository.findOwnedActiveCustomFields<ItemRow>([itemId, keys.userId]);
     const row = result.rows[0];
     if (!row) return [];
-    const stored = JSON.parse(await decryptItemText(
+    const stored = JSON.parse(await this.openItemText(
       { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
       { itemId: row.id, ownerId: keys.userId },
     )) as VaultItemPlaintext;
@@ -1296,33 +1298,35 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     const account = await this.userRepository.findCredentials<{
       login_hash_salt: Buffer; login_hash_verifier: Buffer;
-      kdf: { password?: { salt: string; parameters: { memoryBytes: number; operations: number } } };
+      kdf: unknown;
     }>(keys.userId);
-    const passwordKdf = account.rows[0]?.kdf?.password;
+    const crypto = await this.localCryptoProvider.get();
+    const stored = account.rows[0]?.kdf as { password?: unknown } | undefined;
+    const passwordKdf = stored?.password ? crypto.readKdf(stored)?.passwordKdf() : undefined;
     if (!passwordKdf) throw new LocalVaultError('invalid_credentials', 409, 'Password unlock is not configured');
-    const current = await deriveMasterKey(currentPassword, passwordKdf.salt, passwordKdf.parameters);
-    const next = await deriveMasterKey(nextPassword);
+    const nextKdf = crypto.credential.newPasswordKdf();
+    const current = crypto.credential.deriveMasterKey(currentPassword, passwordKdf);
+    const next = crypto.credential.deriveMasterKey(nextPassword, nextKdf);
     try {
-      if (!verifyLoginHash(await deriveLoginHash(current.key), account.rows[0].login_hash_salt, account.rows[0].login_hash_verifier)) {
+      if (!crypto.verifyPassword(current, account.rows[0].login_hash_salt, account.rows[0].login_hash_verifier)) {
         throw new LocalVaultError('invalid_credentials', 401, 'Current password is invalid');
       }
-      const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
-      const wrapped = await encryptWithKey(keys.userKey, next.key, 'sulla:user-key:v1');
+      const verifier = crypto.newVerifier(next);
+      const wrapped = crypto.credential.sealUserKey(next, keys.userKey);
       await this.runTransaction(async client => {
       await this.rewrapHistory.preserveCurrentPasswordWrap(keys.userId, 'password_change', client);
       await this.userRepository.updatePassword(keys.userId, [
-        verifier.salt, verifier.verifier, wrapped,
-        { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } },
+        verifier.salt, verifier.verifier, wrapped, crypto.kdfColumn(nextKdf),
       ], client);
       this.requireGeneration(generation);
       await this.auditHumanAction(client, keys.userId, 'human_password_changed');
       this.requireGeneration(generation);
       });
-      this.stageCacheUpdate(next.key);
+      this.stageCacheUpdate(next);
       return { cacheMode: 'helper-update-required' };
     } finally {
-      current.key.fill(0);
-      next.key.fill(0);
+      current.fill(0);
+      next.fill(0);
     }
     });
   }
@@ -1479,24 +1483,15 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.requireApprovalIdentity(serviceId, token);
     const keys = this.requireKeys();
     const generation = this.generation;
-    const recoveryKey = randomBytes(32);
-    const recovery = await deriveMasterKey(recoveryKey.toString('base64url'));
-    try {
-      const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
-      const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
-      let replacedExisting = false;
-      await this.runTransaction(async client => {
-        replacedExisting = await this.rewrapHistory.preserveCurrentRecoveryWrap(keys.userId, 'rotation', client);
-        await this.recoveryRepository.upsertForRotation([keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
-            verifier.verifier.toString('base64url'), wrapped], client);
-        this.requireGeneration(generation);
-        await this.auditHumanAction(client, keys.userId, 'account_recovery_key_rotated');
-      });
-      return { recoveryKey: recoveryKey.toString('base64url'), replacedExisting };
-    } finally {
-      recovery.key.fill(0);
-      recoveryKey.fill(0);
-    }
+    const rotation = (await this.localCryptoProvider.get()).recovery.rotate(keys.userKey);
+    let replacedExisting = false;
+    await this.runTransaction(async client => {
+      replacedExisting = await this.rewrapHistory.preserveCurrentRecoveryWrap(keys.userId, 'rotation', client);
+      await this.recoveryRepository.upsertForRotation([keys.userId, rotation.row.recoverySalt, rotation.row.recoveryVerifier, rotation.row.encryptedUserKey], client);
+      this.requireGeneration(generation);
+      await this.auditHumanAction(client, keys.userId, 'account_recovery_key_rotated');
+    });
+    return { recoveryKey: rotation.recoveryKey, replacedExisting };
   }
 
   async configureHumanRecovery(
@@ -1508,20 +1503,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (recoveryCode.length < 12) throw new LocalVaultError('invalid_credentials', 400, 'Recovery code is too short');
     const keys = this.requireKeys();
     const generation = this.generation;
-    const recovery = await deriveMasterKey(recoveryCode);
-    try {
-      const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
-      const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
-      await this.runTransaction(async client => {
-      await this.recoveryRepository.upsertForHumanRecovery([keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
-          verifier.verifier.toString('base64url'), wrapped], client);
-      this.requireGeneration(generation);
-      await this.auditHumanAction(client, keys.userId, 'human_recovery_configured');
-      this.requireGeneration(generation);
-      });
-    } finally {
-      recovery.key.fill(0);
-    }
+    const row = (await this.localCryptoProvider.get()).recovery.configure(keys.userKey, recoveryCode);
+    await this.runTransaction(async client => {
+    await this.recoveryRepository.upsertForHumanRecovery([keys.userId, row.recoverySalt, row.recoveryVerifier, row.encryptedUserKey], client);
+    this.requireGeneration(generation);
+    await this.auditHumanAction(client, keys.userId, 'human_recovery_configured');
+    this.requireGeneration(generation);
+    });
     });
   }
 
@@ -1535,35 +1523,37 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const result = await this.recoveryRepository.findAny<{ user_id: string; recovery_salt: string; recovery_verifier: string; encrypted_user_key: EncryptedEnvelope }>();
     if (!result.rowCount) throw new LocalVaultError('invalid_credentials', 404, 'Vault recovery is not configured');
     const row = result.rows[0];
-    const metadata = JSON.parse(row.recovery_salt) as { kdf: string; verifier: string; parameters: { memoryBytes: number; operations: number } };
-    const recovery = await deriveMasterKey(recoveryCode, metadata.kdf, metadata.parameters);
-    const next = await deriveMasterKey(nextPassword);
+    const crypto = await this.localCryptoProvider.get();
+    const nextKdf = crypto.credential.newPasswordKdf();
+    const next = crypto.credential.deriveMasterKey(nextPassword, nextKdf);
     let recoveredUserKey: Uint8Array | undefined;
     try {
-      if (!verifyLoginHash(await deriveLoginHash(recovery.key), Buffer.from(metadata.verifier, 'base64url'), Buffer.from(row.recovery_verifier, 'base64url'))) {
-        throw new LocalVaultError('invalid_credentials', 401, 'Recovery code is invalid');
+      try {
+        recoveredUserKey = crypto.recovery.open(
+          { recoverySalt: row.recovery_salt, recoveryVerifier: row.recovery_verifier, encryptedUserKey: row.encrypted_user_key }, recoveryCode);
+      } catch (error) {
+        if (error instanceof VaultOperationError && error.code === 'invalid_credential') {
+          throw new LocalVaultError('invalid_credentials', 401, 'Recovery code is invalid');
+        }
+        throw error;
       }
-      recoveredUserKey = (await this.keyEnvelopeReaderProvider.get()).unwrapRecoveryUserKey(row.encrypted_user_key, recovery.key);
-      const verifier = makeLoginVerifier(await deriveLoginHash(next.key));
-      const wrapped = await encryptWithKey(recoveredUserKey, next.key, 'sulla:user-key:v1');
+      const verifier = crypto.newVerifier(next);
+      const wrapped = crypto.credential.sealUserKey(next, recoveredUserKey);
       await this.runTransaction(async client => {
       await this.rewrapHistory.preserveCurrentPasswordWrap(row.user_id, 'recovery', client);
       await this.userRepository.updatePassword(row.user_id, [
-        verifier.salt, verifier.verifier, wrapped,
-        { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } },
+        verifier.salt, verifier.verifier, wrapped, crypto.kdfColumn(nextKdf),
       ], client);
       this.requireStableGeneration(attemptGeneration);
       await this.auditHumanAction(client, row.user_id, 'human_recovery_unlocked');
       });
-      const unlocked = await this.activateMasterKey(next.key, undefined,
-        { authority: 'container', version: 1, password: { salt: next.salt, parameters: next.parameters } }, attemptGeneration);
-      this.stageCacheUpdate(next.key);
+      const unlocked = await this.activateMasterKey(next, undefined, crypto.kdfColumn(nextKdf), attemptGeneration);
+      this.stageCacheUpdate(next);
       const rotated = this.issueHumanSession();
       if (rotated.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Recovery did not unlock the vault');
       return { ...rotated, phase: 'unlocked', state: unlocked.state, cacheMode: 'helper-update-required' };
     } finally {
-      recovery.key.fill(0);
-      next.key.fill(0);
+      next.fill(0);
       recoveredUserKey?.fill(0);
     }
     });
@@ -1583,18 +1573,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       this.itemRepository.listOwnedForBackup([keys.userId]),
       this.recoveryRepository.findForUser(keys.userId),
     ]);
-    const backup = await deriveMasterKey(backupPassword);
-    try {
-      const payload = Buffer.from(JSON.stringify({ version: 1, user: user.rows[0], items: items.rows, recovery: recovery.rows[0] ?? null }));
-      const envelope = await encryptWithKey(payload, backup.key, 'sulla:local-backup:v1');
-      payload.fill(0);
-      this.requireGeneration(generation);
-      await this.auditHumanAction(this.db, keys.userId, 'human_backup_exported');
-      this.requireGeneration(generation);
-      return { version: 1, salt: backup.salt, parameters: backup.parameters, envelope };
-    } finally {
-      backup.key.fill(0);
-    }
+    const envelope = (await this.localCryptoProvider.get()).backups.seal(
+      { user: user.rows[0], items: items.rows, recovery: recovery.rows[0] ?? null }, backupPassword);
+    this.requireGeneration(generation);
+    await this.auditHumanAction(this.db, keys.userId, 'human_backup_exported');
+    this.requireGeneration(generation);
+    return envelope;
     });
   }
 
@@ -1608,16 +1592,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const attemptGeneration = this.generation;
     const existing = await this.userRepository.exists();
     if (existing.rowCount) throw new LocalVaultError('policy_denied', 409, 'Backup import requires an empty local vault');
-    const backup = await deriveMasterKey(backupPassword, backupEnvelope.salt, backupEnvelope.parameters);
-    let clear: Uint8Array | undefined;
+    const backups = (await this.localCryptoProvider.get()).backups;
     try {
-      clear = await decryptWithKey(backupEnvelope.envelope, backup.key, 'sulla:local-backup:v1');
-      const payload = JSON.parse(Buffer.from(clear).toString('utf8')) as { version: number; user: any; items: any[]; recovery: any | null };
-      if (payload.version !== 1 || !payload.user?.id || !Array.isArray(payload.items)) throw new Error('invalid backup payload');
-      const asBuffer = (value: unknown): Buffer => {
-        if (!value || typeof value !== 'object' || !Array.isArray((value as any).data)) throw new Error('invalid backup byte field');
-        return Buffer.from((value as any).data);
-      };
+      const payload = backups.open(backupEnvelope, backupPassword);
+      const asBuffer = DesktopHumanBackup.bytea;
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
@@ -1648,9 +1626,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     } catch (error) {
       if (error instanceof LocalVaultError) throw error;
       throw new LocalVaultError('invalid_credentials', 400, 'Backup password or payload is invalid');
-    } finally {
-      backup.key.fill(0);
-      clear?.fill(0);
     }
     });
   }
@@ -1705,7 +1680,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         tags: Array.isArray(input.tags) ? input.tags.map(String).filter(Boolean).slice(0, 50) : undefined,
         agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites, expiresAt: null, askFirst: false, allowServerAgents: false },
       };
-      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
+      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
       const generation = this.generation;
       const result = await this.runTransaction(async client => {
         const created = await this.itemRepository.insertAgentItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy], client);
@@ -1728,7 +1703,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const rows = await this.itemRepository.findOwnedActiveForAgentUpdate<ItemRow>([input.itemId, keys.userId]);
       const row = rows.rows[0];
       if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
-      const item = JSON.parse(await decryptItemText(
+      const item = JSON.parse(await this.openItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
         { itemId: row.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
@@ -1741,7 +1716,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (input.notes !== undefined) item.notes = String(input.notes);
       if (input.folder !== undefined) item.folder = String(input.folder);
       if (input.tags !== undefined) item.tags = input.tags.map(String).filter(Boolean).slice(0, 50);
-      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
+      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
       const generation = this.generation;
       const revision = await this.runTransaction(async client => {
         const updated = await this.itemRepository.updateOwnedCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, keys.userId, row.revision], client);
@@ -1773,10 +1748,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const row = existing.rows[0];
       const owned = await this.auditLogRepository.wasCreatedByAgentForIntegration([row.id, input.claims.agent_id]);
       if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only credentials they created');
-      const item = JSON.parse(await decryptItemText({ version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey, { itemId: row.id, ownerId: keys.userId })) as VaultItemPlaintext;
+      const item = JSON.parse(await this.openItemText({ version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey, { itemId: row.id, ownerId: keys.userId })) as VaultItemPlaintext;
       item.integration ??= { integrationId, accountId, properties: {} };
       item.integration.properties[property] = String(input.value);
-      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
+      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
       const updated = await this.runTransaction(async client => {
         const result = await this.itemRepository.updateCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, row.revision], client);
         if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
@@ -1790,7 +1765,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private async createAgentIntegrationItem(keys: UnlockedKeys, input: BrokerIntegrationCredentialWriteRequest, integrationId: string, accountId: string, property: string): Promise<BrokerVaultItemWriteResponse> {
     const id = randomUUID();
     const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false } };
-    const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
+    const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const revision = await this.runTransaction(async client => {
       const created = await this.itemRepository.insertAgentIntegrationItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`], client);
       await this.auditLogRepository.recordIntegrationAgentCreated([keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
@@ -1827,7 +1802,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       ? configuredActive
       : availableIds[0];
     const accounts = await Promise.all(result.rows.map(async item => {
-      const plaintext = JSON.parse(await decryptItemText(
+      const plaintext = JSON.parse(await this.openItemText(
         { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
         keys.userKey,
         { itemId: item.id, ownerId: keys.userId },
@@ -1905,7 +1880,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         type: 'apiKey', name: label, agentPolicy: policy,
         integration: { integrationId, accountId, properties: { account_label: label } },
       };
-      const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+      const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
       await this.runSecurityOperation(() => this.runTransaction(async client => {
         this.requireGeneration(generation);
         await this.itemRepository.insertOAuthAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, integrationRef], client);
@@ -1950,7 +1925,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     let plaintext: VaultItemPlaintext;
     if (existing.rowCount) {
       const row = existing.rows[0];
-      plaintext = JSON.parse(await decryptItemText(
+      plaintext = JSON.parse(await this.openItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key },
         keys.userKey, { itemId, ownerId: keys.userId },
       )) as VaultItemPlaintext;
@@ -1980,7 +1955,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         integration: { integrationId, accountId, properties: values },
       };
     }
-    const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+    const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
     await this.runSecurityOperation(() => this.runTransaction(async client => {
       this.requireGeneration(generation);
       if (existing.rowCount) {
@@ -2060,7 +2035,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         },
       },
     };
-    const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+    const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
     await this.runSecurityOperation(() => this.runTransaction(async client => {
       this.requireGeneration(generation);
       await this.itemRepository.softDeleteIntegrationAccounts([keys.userId, SULLA_CLOUD_INTEGRATION_ID], client);
@@ -2264,8 +2239,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           integration: { integrationId, accountId, properties },
           agentPolicy: policy,
         };
-        const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-        const reopened = await decryptItemText(encrypted, keys.userKey, { itemId, ownerId: keys.userId });
+        const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+        const reopened = await this.openItemText(encrypted, keys.userKey, { itemId, ownerId: keys.userId });
         if (reopened !== JSON.stringify(plaintext)) {
           throw new LocalVaultError('migration_failed', 409, 'Migrated item failed reopen verification');
         }
@@ -2349,7 +2324,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const result = await this.itemRepository.listAgentAccessiblePersonal<ItemRow>([keys.userId]);
     const items: BrokerItemListResponse['items'] = [];
     for (const row of result.rows) {
-      const plaintext = JSON.parse(await decryptItemText(
+      const plaintext = JSON.parse(await this.openItemText(
         { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
         { itemId: row.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
@@ -2402,7 +2377,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     const item = await this.loadBrokerItem(request, expected.host);
-    const plaintext = JSON.parse(await decryptItemText(
+    const plaintext = JSON.parse(await this.openItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
       { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
@@ -2638,7 +2613,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     if (request.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
     const item = await this.loadBrokerItem(request, SULLA_CLOUD_HOST, trustedDesktopPath);
-    const plaintext = JSON.parse(await decryptItemText(
+    const plaintext = JSON.parse(await this.openItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
       { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
@@ -2734,7 +2709,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       };
     }
     const item = await this.loadBrokerItem(input, input.operation.startsWith('oauth.') ? null : target.hostname);
-    const plaintext = JSON.parse(await decryptItemText(
+    const plaintext = JSON.parse(await this.openItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
       { itemId: item.id, ownerId: item.collection_id ?? item.owner_user_id ?? keys.userId },
@@ -3494,7 +3469,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   ): Promise<number> {
     if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
     const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
-    const encrypted = await encryptItem(JSON.stringify(prepared.plaintext), keys.userKey, {
+    const encrypted = await this.sealItem(JSON.stringify(prepared.plaintext), keys.userKey, {
       itemId: prepared.item.id,
       ownerId,
     });

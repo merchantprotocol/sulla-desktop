@@ -20,6 +20,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       tasks: Array.isArray(row.tasks) ? row.tasks : [], error: row.error ?? undefined,
       parentChannel: row.parent_channel ?? undefined, parentThreadId: row.parent_thread_id ?? undefined,
       parentAgentId: row.parent_agent_id ?? undefined, visibility: row.visibility === 'tab' ? 'tab' : 'hidden',
+      parentJobId: row.parent_job_id ?? null, parentTaskIndex: row.parent_task_index == null ? null : Number(row.parent_task_index),
       projectTaskIds: Array.isArray(row.project_task_ids) ? row.project_task_ids : [],
       completionDeliveredAt: row.completion_delivered_at ? new Date(row.completion_delivered_at).getTime() : null,
       waitingOnChildren: Number(row.waiting_on_children) || 0,
@@ -214,18 +215,34 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
    * ever run, which parsed tens of MB on each state change.
    */
   async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`WITH RECURSIVE owner AS MATERIALIZED (
-      SELECT j.job_id, task->>'threadId' AS thread_id FROM agent_jobs j
-      CROSS JOIN LATERAL jsonb_array_elements(j.tasks) task WHERE task->>'threadId' IS NOT NULL
-    ), chain(job_id, parent_thread_id, depth) AS (
-      SELECT job_id, parent_thread_id, 0 FROM agent_jobs
-      WHERE status IN ('running', 'parked') OR COALESCE(finished_at, created_at) > now() - ($1::bigint * interval '1 millisecond')
+    const rows = await this.connection.select(`WITH RECURSIVE seeds AS (
+      SELECT job_id FROM agent_jobs WHERE status IN ('running', 'parked')
       UNION
-      SELECT o.job_id, p.parent_thread_id, c.depth + 1 FROM chain c
-      JOIN owner o ON o.thread_id = c.parent_thread_id
-      JOIN agent_jobs p ON p.job_id = o.job_id
-      WHERE c.depth < 8
-    ) SELECT j.* FROM agent_jobs j WHERE j.job_id IN (SELECT job_id FROM chain) ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
+      SELECT job_id FROM agent_jobs
+      WHERE finished_at > now() - ($1::bigint * interval '1 millisecond')
+        OR (finished_at IS NULL AND created_at > now() - ($1::bigint * interval '1 millisecond'))
+    ), related(job_id) AS (
+      SELECT job_id FROM seeds
+      UNION
+      SELECT child_job.parent_job_id FROM related child
+      JOIN agent_jobs child_job ON child_job.job_id = child.job_id
+      WHERE child_job.parent_job_id IS NOT NULL
+    )
+    SELECT j.job_id, j.status, j.created_at, j.finished_at, j.task_count, j.error,
+      j.parent_channel, j.parent_thread_id, j.parent_agent_id, j.parent_job_id, j.parent_task_index,
+      j.visibility, j.project_task_ids,
+      j.completion_delivered_at, j.waiting_on_children, j.restart_resume_count, j.dismissed_at,
+      j.stopped_by, j.stop_reason, j.orphaned_child_notices, '[]'::jsonb AS results,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'agentId', t.agent_id, 'label', t.label, 'status', t.task_status,
+        'threadId', t.thread_id, 'startedAt', t.started_at_ms, 'finishedAt', t.finished_at_ms,
+        'returnedAt', t.returned_at_ms, 'wakeAt', t.wake_at_ms, 'dismissed', t.dismissed,
+        'visibility', t.visibility, 'summary', t.summary, 'waitReason', t.wait_reason,
+        'stoppedBy', t.stopped_by, 'stopReason', t.stop_reason,
+        'completion', CASE WHEN t.completion_status IS NULL THEN NULL
+          ELSE jsonb_build_object('status', t.completion_status) END
+      ) ORDER BY t.task_index) FROM agent_job_tasks t WHERE t.job_id = j.job_id), '[]'::jsonb) AS tasks
+    FROM agent_jobs j JOIN related r ON r.job_id = j.job_id ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
     return rows.map(row => this.map(row));
   }
 
@@ -235,7 +252,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       UNION ALL
       (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
-      parent_agent_id, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children,
+      parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children,
       orphaned_child_notices, stopped_by, stop_reason, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('agentId', task->>'agentId', 'label', task->>'label',
       'taskId', task->>'taskId', 'status', task->>'status', 'visibility', task->>'visibility',
