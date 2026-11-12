@@ -29,6 +29,9 @@ import yaml from 'yaml';
 
 import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
+import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
+import { MacBuildArchitecture } from './lib/mac-build-architecture';
+import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
@@ -183,6 +186,24 @@ class Builder {
     await this.buildMacNativeExtensions(context);
     await this.embedSullaRuntime(context);
     await this.checkBundledAssets(context);
+    this.checkNativeArchitectures(context);
+  }
+
+  /**
+   * Every Mach-O in the whole .app (main executable, Frameworks, helpers and
+   * Resources) must hold the CPU being packaged: a stale fixed-architecture
+   * tool or a prebuild the `files` exclusions missed fails the build here
+   * instead of shipping.
+   */
+  protected checkNativeArchitectures(context: AfterPackContext): void {
+    if (context.electronPlatformName !== 'darwin') return;
+    const target = MacBuildArchitecture.parse(context.arch === Arch.x64 ? 'x64' : context.arch === Arch.arm64 ? 'arm64' : String(context.arch));
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const problems = new MachOArchitectureAudit().problems(appPath, target.node);
+
+    if (problems.length) {
+      throw new Error(`The ${ target.node } app contains binaries for another CPU: ${ problems.join('; ') }`);
+    }
   }
 
   /**
@@ -324,6 +345,13 @@ class Builder {
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
 
+    // Mac only, and only x64 or arm64: checked before any build step so an
+    // unsupported host or --arch value can never fall through to arm64.
+    if (process.platform !== 'darwin') {
+      throw new Error(`Packaging for ${ process.platform } is not supported`);
+    }
+    const target = MacBuildArchitecture.parse(buildUtils.arch);
+
     await this.verifyMacSigningIdentity();
 
     // Build the electron builder configuration to include the version data.
@@ -333,12 +361,12 @@ class Builder {
     // committed in package.json.
     if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
-      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [buildUtils.arch === 'x64' ? 'x86_64' : 'arm64'], { stdio: 'inherit' });
+      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [target.uname], { stdio: 'inherit' });
     }
     if (process.platform === 'darwin') {
       // Container images, whisper and the audio driver for this architecture
       // (a no-op when resources/darwin/ is already up to date).
-      await fetchBundledAssets(buildUtils.arch === 'x64' ? 'x86_64' : 'arm64');
+      await fetchBundledAssets(target.uname);
     }
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];
@@ -346,9 +374,6 @@ class Builder {
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;
 
-    if (process.platform !== 'darwin') {
-      throw new Error(`Packaging for ${ process.platform } is not supported`);
-    }
     const electronPlatform = 'mac' as const;
 
     // When there are files (e.g., extraFiles or extraResources) specified at both
@@ -368,6 +393,10 @@ class Builder {
       delete section[key];
     }
 
+    // Leave the other CPU's native prebuilds out of this architecture's app
+    // (appended to the merged top-level list above).
+    config.files = [...(Array.isArray(config.files) ? config.files : []), ...new ForeignArchExcludes().globsFor(target.node)];
+
     await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
@@ -377,8 +406,8 @@ class Builder {
     const options: CliOptions = {
       config,
       publish: 'never',
-      arm64:   buildUtils.arch === 'arm64',
-      x64:     buildUtils.arch === 'x64',
+      arm64:   target.node === 'arm64',
+      x64:     target.node === 'x64',
     };
 
     if (process.argv.includes('--zip')) {
