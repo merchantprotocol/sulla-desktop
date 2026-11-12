@@ -4,38 +4,20 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
- * Desktop device key — the Ed25519 identity this install uses to prove to
- * Sulla Cloud that a request really comes from THIS machine.
+ * Desktop device key — the Ed25519 identity this install uses to prove to Sulla Cloud that a
+ * request really comes from THIS machine. Thin delegates to `DesktopDeviceIdentity`
+ * (main/cloud/device), kept so the ~10 signers don't change.
  *
- * Generated locally on first use and stored next to the device id in
- * ~/.sulla (0600). Only the public key is ever sent to the cloud (enrolled
- * via /devices/register). The cloud then requires a signature from it
- * before it will:
- *   - admit this machine to the secure desktop channel as role=desktop, and
- *   - accept an upload of this machine's vault/projects copy.
- *
- * So a stolen Sulla Cloud access token can't impersonate the desktop.
+ * Stored in ~/.sulla/device-key.json (v1: base64 raw public key + PKCS#8 PEM, 0600, dir 0700).
+ * Only the public key is sent to Cloud (/devices/register). A stolen access token can't
+ * impersonate the desktop without it.
  */
 
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 
-import paths from '@pkg/utils/paths';
 import { DeviceMessage, type DevicePurpose } from '@sulla/domain';
 
-interface StoredKey {
-  v:          1;
-  publicKey:  string; // base64 raw 32-byte Ed25519 key
-  privateKey: string; // PKCS#8 PEM
-  createdAt:  string;
-}
-
-let cached: { publicKey: string; key: crypto.KeyObject } | null = null;
-
-function keyPath(): string {
-  return path.join(paths.sullaConfig, 'device-key.json');
-}
+import { thisDevice } from './device/thisDevice';
 
 /** Raw 32-byte public key, base64 — the format the cloud stores. */
 export function rawPublicKeyB64(pub: crypto.KeyObject): string {
@@ -44,46 +26,13 @@ export function rawPublicKeyB64(pub: crypto.KeyObject): string {
   return Buffer.from(jwk.x, 'base64url').toString('base64');
 }
 
-function load(): { publicKey: string; key: crypto.KeyObject } {
-  if (cached) return cached;
-  const file = keyPath();
-  try {
-    const stored = JSON.parse(fs.readFileSync(file, 'utf-8')) as StoredKey;
-    if (stored.v === 1 && stored.privateKey && stored.publicKey) {
-      const key = crypto.createPrivateKey(stored.privateKey);
-      // Recompute rather than trust the stored copy.
-      const publicKey = rawPublicKeyB64(crypto.createPublicKey(key));
-      cached = { publicKey, key };
-      return cached;
-    }
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw new Error(`[deviceKey] unreadable ${ file }: ${ err?.message || err }`);
-  }
-
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
-  const stored: StoredKey = {
-    v:          1,
-    publicKey:  rawPublicKeyB64(publicKey),
-    privateKey: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
-    createdAt:  new Date().toISOString(),
-  };
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  // Write-then-rename so a crash can't leave a half-written key behind.
-  const tmp = `${ file }.${ process.pid }.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(stored), { mode: 0o600 });
-  fs.renameSync(tmp, file);
-  cached = { publicKey: stored.publicKey, key: privateKey };
-  return cached;
-}
-
 export function getDevicePublicKey(): string {
-  return load().publicKey;
+  return thisDevice.publicKey();
 }
 
 /** Short fingerprint shown in Settings so the owner can match it to the dashboard. */
 export function getDeviceKeyFingerprint(): string {
-  const hex = crypto.createHash('sha256').update(getDevicePublicKey()).digest('hex').slice(0, 16);
-  return hex.replace(/(.{4})(?!$)/g, '$1-');
+  return thisDevice.keyFingerprint();
 }
 
 // The purpose registry (tag per purpose) is the shared domain DeviceMessage; it matches the sulla-workers
@@ -96,18 +45,15 @@ export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
 export function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): string {
-  return crypto.sign(null, Buffer.from(new DeviceMessage(purpose, parts).toBytes()), load().key).toString('base64');
+  return thisDevice.signExact(purpose, parts);
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
 export function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): { ts: number; signature: string } {
-  const ts = Math.floor(Date.now() / 1000);
-  const message = new DeviceMessage(purpose, [...parts, ts]);
-  const signature = crypto.sign(null, Buffer.from(message.toBytes()), load().key).toString('base64');
-  return { ts, signature };
+  return thisDevice.sign(purpose, parts);
 }
 
 /** Test seam. */
 export function _resetDeviceKeyCache(): void {
-  cached = null;
+  thisDevice.resetCache();
 }
