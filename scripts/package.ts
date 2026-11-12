@@ -14,6 +14,7 @@
 'use strict';
 
 import fs from 'fs';
+import { createHash } from 'crypto';
 import os from 'os';
 import * as path from 'path';
 
@@ -32,7 +33,7 @@ import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes } from './lib/foreign-arch-excludes';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
-  PackageTargetAssetManifest, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec,
+  PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec,
   type PackageTargetAssetFetcher,
 } from './lib/package-target';
 
@@ -44,6 +45,48 @@ class BundledPackageTargetAssetFetcher implements PackageTargetAssetFetcher {
 }
 
 class Builder {
+  protected async replaceRuntimeArtifacts(source: string, target: PackageTargetSpec): Promise<void> {
+    const sourcePath = path.resolve(source);
+    const requestedTarget = path.resolve(process.cwd(), 'resources', 'darwin', 'sulla-runtime');
+    if (!(await fs.promises.stat(sourcePath).then(stat => stat.isDirectory(), () => false))) throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be an existing directory.');
+    const sourceRealPath = await fs.promises.realpath(sourcePath);
+    const targetPathCandidate = path.join(await fs.promises.realpath(path.dirname(requestedTarget)), path.basename(requestedTarget));
+    const targetPath = await fs.promises.realpath(targetPathCandidate).catch(() => targetPathCandidate);
+    if (sourceRealPath === targetPath || sourceRealPath.startsWith(`${ targetPath }${ path.sep }`) || targetPath.startsWith(`${ sourceRealPath }${ path.sep }`)) {
+      throw new Error('SULLA_RUNTIME_ARTIFACTS_DIR must be separate from resources/darwin/sulla-runtime.');
+    }
+    for (const relative of ['sulla-runtime', 'guest/vmlinuz', 'guest/initramfs.img', 'guest/usr.erofs']) {
+      if (!await fs.promises.stat(path.join(sourcePath, relative)).then(stat => stat.isFile(), () => false)) {
+        throw new Error(`SULLA_RUNTIME_ARTIFACTS_DIR is missing required file: ${ relative }`);
+      }
+    }
+    const parent = path.dirname(targetPath);
+    const stage = await fs.promises.mkdtemp(path.join(parent, '.sulla-runtime-stage-'));
+    const staged = path.join(stage, 'runtime');
+    const backup = path.join(stage, 'previous');
+    let movedOld = false;
+    try {
+      await fs.promises.cp(sourcePath, staged, { recursive: true });
+      const stagedRoot = path.join(stage, 'resources');
+      await fs.promises.mkdir(path.join(stagedRoot, 'darwin'), { recursive: true });
+      await fs.promises.rename(staged, path.join(stagedRoot, 'darwin', 'sulla-runtime'));
+      for (const relative of ['darwin/sulla-runtime/sulla-runtime', 'darwin/sulla-runtime/guest/vmlinuz', 'darwin/sulla-runtime/guest/initramfs.img', 'darwin/sulla-runtime/guest/usr.erofs']) {
+        if (!await fs.promises.stat(path.join(stagedRoot, relative)).then(stat => stat.isFile(), () => false)) throw new Error(`Invalid staged runtime: missing ${ relative }`);
+      }
+      const architectureProblems = new PackageTargetNativeBinaryAuditor().problems(process.cwd(), stagedRoot, target);
+      if (architectureProblems.some(problem => problem.includes('darwin/sulla-runtime/sulla-runtime'))) {
+        throw new Error(`Runtime artifact does not match ${ target.key }: ${ architectureProblems.join('; ') }`);
+      }
+      await fs.promises.rename(targetPath, backup).then(() => { movedOld = true; }, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+      await fs.promises.rename(path.join(stagedRoot, 'darwin', 'sulla-runtime'), targetPath);
+    } catch (error) {
+      if (movedOld) await fs.promises.rename(backup, targetPath);
+      throw error;
+    } finally {
+      if (!await fs.promises.access(backup).then(() => true, () => false)) await fs.promises.rm(stage, { recursive: true, force: true });
+    }
+  }
+
   protected async verifyMacSigningIdentity() {
     if (process.platform !== 'darwin') {
       return;
@@ -225,6 +268,7 @@ class Builder {
     const resourcesRoot = path.join(appPath, 'Contents', 'Resources', 'resources');
     const targetProblems = new PackageTargetAssetManifest().problems(resourcesRoot);
     const packagedFingerprint = new PackageTargetAssetManifest().fingerprint(resourcesRoot);
+    targetProblems.push(...new PackageTargetAssetManifest().packagedScriptProblems(resourcesRoot));
     const provenancePath = path.join(buildUtils.distDir, 'package-target-provenance.json');
     targetProblems.push(...new PackageTargetProvenance().problems(provenancePath, target, packagedFingerprint));
     targetProblems.push(...new PackageTargetNativeDependencyManifest().packagedProblems(path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked', 'node_modules'), target));
@@ -257,11 +301,24 @@ class Builder {
     const target = path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin', 'sulla-runtime');
     const source = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
 
+    // External artifacts were validated and safely staged before electron-builder.
+    // Refuse to use an unmaterialized/mismatched source rather than replacing output here.
     if (source) {
-      await fs.promises.rm(target, { recursive: true, force: true });
-      await fs.promises.cp(source, target, { recursive: true });
+      const sourceBinary = path.join(path.resolve(source), 'sulla-runtime');
+      const targetBinary = path.join(target, 'sulla-runtime');
+      const [sourceBytes, targetBytes] = await Promise.all([fs.promises.readFile(sourceBinary), fs.promises.readFile(targetBinary)]);
+      if (!sourceBytes.equals(targetBytes)) throw new Error('Packaged runtime differs from SULLA_RUNTIME_ARTIFACTS_DIR.');
     }
     const binary = path.join(target, 'sulla-runtime');
+    // Compare the copied packaged bytes with the pre-sign source. The signature
+    // changes these bytes, so this must happen before codesign below.
+    const sourceBinary = path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime', 'sulla-runtime');
+    const sourceDigest = createHash('sha256').update(await fs.promises.readFile(sourceBinary)).digest('hex');
+    const packagedDigest = createHash('sha256').update(await fs.promises.readFile(binary)).digest('hex');
+    const provenance = JSON.parse(await fs.promises.readFile(path.join(buildUtils.distDir, 'package-target-provenance.json'), 'utf8'));
+    if (!sourceDigest || sourceDigest !== packagedDigest || provenance.runtimeFingerprint !== sourceDigest) {
+      throw new Error('Packaged runtime bytes do not match the pre-sign source and recorded runtime provenance.');
+    }
     const required = [binary, ...['vmlinuz', 'initramfs.img', 'usr.erofs'].map(file => path.join(target, 'guest', file))];
     const missing: string[] = [];
 
@@ -381,8 +438,7 @@ class Builder {
     // so pre-pack validation fingerprints and CPU-audits the bytes we will embed.
     const runtimeArtifacts = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
     if (runtimeArtifacts) {
-      await fs.promises.rm(path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true, force: true });
-      await fs.promises.cp(runtimeArtifacts, path.join(process.cwd(), 'resources', 'darwin', 'sulla-runtime'), { recursive: true });
+      await this.replaceRuntimeArtifacts(runtimeArtifacts, target);
     }
     // Reject bad target inputs before writing packaging config or invoking electron-builder.
     const preparation = new PackageTargetPreparationService();

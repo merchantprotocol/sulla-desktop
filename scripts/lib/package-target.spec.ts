@@ -92,6 +92,16 @@ describe('package target integrity', () => {
     expect(auditor.problems('/repo', '/app/resources', target)).toContain(`${ PackageTargetAssetManifest.hostScripts[0] } is not executable`);
   });
 
+  it('rejects packaged host scripts that lost execute permission', () => {
+    // risk: packaged CLI availability — package output must preserve executable bits.
+    const fs = new MemoryFileSystem();
+    for (const script of PackageTargetAssetManifest.hostScripts) fs.files.set(`/app/resources/${ script }`, '#!/bin/sh');
+    fs.executableFiles.add(`/app/resources/${ PackageTargetAssetManifest.hostScripts[0] }`);
+    expect(new PackageTargetAssetManifest().packagedScriptProblems('/app/resources', fs)).toContain(
+      `${ PackageTargetAssetManifest.hostScripts[1] } is not executable in packaged output`,
+    );
+  });
+
   it('classifies the spin launcher as a host script and audits it without the Mach-O reader', () => {
     // risk: CLI availability — a shell launcher wrongly treated as Mach-O would fail every real build.
     const target = PackageTargetSpec.resolve('darwin', 'arm64');
@@ -161,9 +171,17 @@ describe('package target integrity', () => {
       `${ helper } is missing from packaged asar-unpacked output for ${ target.key }`,
     );
     fs.files.set(`/unpacked/${ helper.replace(/^node_modules\//, '') }`, 'helper');
+    fs.executableFiles.add(`/unpacked/${ helper.replace(/^node_modules\//, '') }`);
+    expect(manifest.packagedProblems('/unpacked', target, fs)).toEqual([]);
+    const releaseHelper = '/unpacked/node-pty/build/Release/spawn-helper';
+    fs.files.set('/unpacked/node-pty/build/Release/pty.node', 'release binary');
+    fs.files.set(releaseHelper, 'release helper');
+    expect(manifest.packagedProblems('/unpacked', target, fs)).toContain('node_modules/node-pty/build/Release/spawn-helper is not executable in packaged asar-unpacked output');
+    fs.executableFiles.add(releaseHelper);
     expect(manifest.packagedProblems('/unpacked', target, fs)).toEqual([]);
     const config = yaml.parse(readFileSync(path.join(process.cwd(), 'packaging/electron-builder.yml'), 'utf8'));
     expect(config.asarUnpack).toContain('node_modules/node-pty/prebuilds/**');
+    expect(config.asarUnpack).toContain('node_modules/node-pty/build/Release/**');
   });
 
   it('records immutable target-keyed provenance and rejects stale markers after a target switch', () => {

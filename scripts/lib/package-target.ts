@@ -111,6 +111,13 @@ export class PackageTargetAssetManifest {
       .map(asset => `${ asset } is missing`);
   }
 
+  packagedScriptProblems(resourcesRoot: string, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string[] {
+    return PackageTargetAssetManifest.hostScripts.flatMap(script => {
+      const file = path.join(resourcesRoot, script);
+      return !fileSystem.exists(file) || !fileSystem.isExecutable(file) ? [`${ script } is not executable in packaged output`] : [];
+    });
+  }
+
   /** Hash real prepared resources so a marker cannot bless an unrelated/stale asset tree. */
   fingerprint(resourcesRoot: string, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string {
     const hash = createHash('sha256');
@@ -124,10 +131,24 @@ export class PackageTargetAssetManifest {
     }
     return hash.digest('hex');
   }
+
+  runtimeFingerprint(resourcesRoot: string, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string {
+    const file = path.join(resourcesRoot, PackageTargetAssetManifest.hostMachOBinaries[0]);
+    return createHash('sha256').update(fileSystem.readBinary(file)).digest('hex');
+  }
 }
 
 /** Required target-specific native modules; presence is checked before and after packing and Mach-O CPU is audited at both boundaries. */
 export class PackageTargetNativeDependencyManifest {
+  /** node-pty 1.1.0 prefers build/Release when install-app-deps produced it, then falls back to prebuilds. */
+  static readonly nodePtyRuntimeCandidates = Object.freeze([
+    'node_modules/node-pty/build/Release/pty.node',
+    'node_modules/node-pty/build/Release/spawn-helper',
+    'node_modules/node-pty/prebuilds/darwin-x64/pty.node',
+    'node_modules/node-pty/prebuilds/darwin-x64/spawn-helper',
+    'node_modules/node-pty/prebuilds/darwin-arm64/pty.node',
+    'node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper',
+  ] as const);
   problems(repositoryRoot: string, target: PackageTargetSpec, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string[] {
     return target.nativeDependencyPaths
       .filter(dependency => !fileSystem.exists(path.join(repositoryRoot, dependency)))
@@ -136,9 +157,20 @@ export class PackageTargetNativeDependencyManifest {
 
   /** electron-builder unpacks native modules; checking these concrete output paths catches file-filter omissions. */
   packagedProblems(unpackedNodeModules: string, target: PackageTargetSpec, fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()): string[] {
-    return target.nativeDependencyPaths
+    const problems = target.nativeDependencyPaths
       .filter(dependency => !fileSystem.exists(path.join(unpackedNodeModules, dependency.replace(/^node_modules\//, ''))))
       .map(dependency => `${ dependency } is missing from packaged asar-unpacked output for ${ target.key }`);
+    const nodePtyRequired = ['node_modules/node-pty/prebuilds/darwin-' + target.arch + '/pty.node', 'node_modules/node-pty/prebuilds/darwin-' + target.arch + '/spawn-helper'];
+    const releaseBinary = path.join(unpackedNodeModules, 'node-pty/build/Release/pty.node');
+    const releaseHelper = path.join(unpackedNodeModules, 'node-pty/build/Release/spawn-helper');
+    if (fileSystem.exists(releaseBinary) && !fileSystem.exists(releaseHelper)) problems.push('node_modules/node-pty/build/Release/spawn-helper is missing although build/Release/pty.node is present');
+    if (fileSystem.exists(releaseBinary) && fileSystem.exists(releaseHelper) && !fileSystem.isExecutable(releaseHelper)) problems.push('node_modules/node-pty/build/Release/spawn-helper is not executable in packaged asar-unpacked output');
+    for (const relative of PackageTargetNativeDependencyManifest.nodePtyRuntimeCandidates) {
+      const packaged = path.join(unpackedNodeModules, relative.replace(/^node_modules\//, ''));
+      if (nodePtyRequired.includes(relative) && !fileSystem.exists(packaged)) problems.push(`${ relative } is missing from packaged asar-unpacked output for ${ target.key }`);
+      if (fileSystem.exists(packaged) && relative.endsWith('/spawn-helper') && !fileSystem.isExecutable(packaged)) problems.push(`${ relative } is not executable in packaged asar-unpacked output`);
+    }
+    return problems;
   }
 }
 
@@ -189,7 +221,7 @@ export class PackageTargetPreparationService {
     provenance: PackageTargetProvenance,
   ): Promise<string[]> {
     const problems = await this.prepare(repositoryRoot, resourcesRoot, target, fetcher);
-    if (problems.length === 0) provenance.write(provenancePath, target, this.fingerprint(resourcesRoot));
+    if (problems.length === 0) provenance.write(provenancePath, target, this.fingerprint(resourcesRoot), this.assets.runtimeFingerprint(resourcesRoot, this.fileSystem));
     return problems;
   }
 
@@ -207,6 +239,10 @@ export class PackageTargetNativeBinaryAuditor implements PackageTargetBinaryAudi
     const wanted = target.arch === 'x64' ? 'x86_64' : 'arm64';
     const paths = [
       ...target.nativeDependencyPaths.map(relative => [relative, path.join(repositoryRoot, relative)] as const),
+      ...['node_modules/node-pty/build/Release/pty.node'].flatMap(relative => {
+        const file = path.join(repositoryRoot, relative);
+        return this.fileSystem.exists(file) ? [[relative, file] as const] : [];
+      }),
       ...PackageTargetAssetManifest.hostMachOBinaries.map(relative => [relative, path.join(resourcesRoot, relative)] as const),
     ];
     const scriptProblems = PackageTargetAssetManifest.hostScripts.flatMap(relative => {
@@ -214,6 +250,9 @@ export class PackageTargetNativeBinaryAuditor implements PackageTargetBinaryAudi
       if (!this.fileSystem.exists(file)) return [];
       return this.fileSystem.isExecutable(file) ? [] : [`${ relative } is not executable`];
     });
+    const releaseHelper = path.join(repositoryRoot, 'node_modules/node-pty/build/Release/spawn-helper');
+    const releaseBinary = path.join(repositoryRoot, 'node_modules/node-pty/build/Release/pty.node');
+    if (this.fileSystem.exists(releaseBinary) && !this.fileSystem.isExecutable(releaseHelper)) scriptProblems.push('node_modules/node-pty/build/Release/spawn-helper is not executable');
     return [...scriptProblems, ...paths.flatMap(([relative, file]) => {
       if (!this.fileSystem.exists(file)) return [];
       const archs = this.reader.read(file);
@@ -227,9 +266,9 @@ export class PackageTargetNativeBinaryAuditor implements PackageTargetBinaryAudi
 export class PackageTargetProvenance {
   constructor(private readonly fileSystem: PackageTargetFileSystem = new NodePackageTargetFileSystem()) {}
 
-  write(file: string, target: PackageTargetSpec, assetFingerprint: string): void {
+  write(file: string, target: PackageTargetSpec, assetFingerprint: string, runtimeFingerprint = ''): void {
     this.fileSystem.write(file, JSON.stringify({
-      schema: 1,
+      schema: 2,
       targetKey: target.key,
       hostOS: target.os,
       hostArch: target.arch,
@@ -238,10 +277,11 @@ export class PackageTargetProvenance {
       guestArch: target.guestArch,
       abiValidation: 'not decoded; Mach-O CPU validation does not prove Node/Electron ABI compatibility',
       assetFingerprint,
+      runtimeFingerprint,
     }, null, 2));
   }
 
-  problems(file: string, target: PackageTargetSpec, assetFingerprint: string): string[] {
+  problems(file: string, target: PackageTargetSpec, assetFingerprint: string, runtimeFingerprint?: string): string[] {
     if (!this.fileSystem.exists(file)) return ['packaging target provenance is missing'];
     let recorded: Record<string, unknown>;
 
@@ -250,9 +290,9 @@ export class PackageTargetProvenance {
     } catch {
       return ['packaging target provenance is invalid JSON'];
     }
-    if (recorded.schema !== 1 || recorded.targetKey !== target.key || recorded.hostOS !== target.os || recorded.hostArch !== target.arch ||
+    if (recorded.schema !== 2 || recorded.targetKey !== target.key || recorded.hostOS !== target.os || recorded.hostArch !== target.arch ||
       recorded.assetHostArch !== target.assetHostArch || recorded.guestOS !== 'linux' || recorded.guestArch !== target.guestArch ||
-      recorded.assetFingerprint !== assetFingerprint) {
+      recorded.assetFingerprint !== assetFingerprint || (runtimeFingerprint !== undefined && recorded.runtimeFingerprint !== runtimeFingerprint)) {
       return [`packaging target provenance does not match ${ target.key }`];
     }
 
