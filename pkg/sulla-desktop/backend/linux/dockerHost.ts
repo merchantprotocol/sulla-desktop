@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  DockerComposeRuntime, DockerComposeProjectSpec, DockerComposeCommandResult, DockerComposeCommandRunner,
+  DockerComposeRuntime, DockerComposeProjectSpec, assertDockerComposeProject, DockerComposeCommandResult, DockerComposeCommandRunner,
 } from '@pkg/backend/containerClient/dockerComposeRuntime';
 
 export type DockerHostCommandResult = DockerComposeCommandResult;
@@ -167,6 +167,7 @@ export class LinuxDockerHost extends DockerComposeRuntime {
 }
 
 function validateProject(project: LinuxComposeProject): void {
+  assertDockerComposeProject(project);
   // The shared lifecycle checks the app namespace and endpoint overrides;
   // Linux additionally requires the compose file to exist as a regular file.
   if (!path.isAbsolute(project.composeFile)) throw new Error('Docker Compose file path must be absolute.');
