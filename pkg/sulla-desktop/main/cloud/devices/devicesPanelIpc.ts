@@ -12,6 +12,7 @@ import {
 } from './DevicesPanelService';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import Logging from '@pkg/utils/logging';
 
 export type DevicesPanelResult<T> = { ok: true; value: T } | { ok: false; code: DevicesPanelErrorCode | 'not_signed_in'; error: string };
 
@@ -30,7 +31,7 @@ export class DevicesPanelIpc {
   constructor(private readonly service: DevicesPanelService) {}
 
   register(): void {
-    const ipc = getIpcMainProxy(console);
+    const ipc = getIpcMainProxy(Logging.background);
 
     ipc.handle('sulla-cloud-devices:list', async() => this.run<CloudDevicesList>(() => this.service.list()));
     ipc.handle('sulla-cloud-devices:rename', async(_e: unknown, id: string, name: string) => this.run<CloudDeviceView>(() => this.service.rename(id, name)));
