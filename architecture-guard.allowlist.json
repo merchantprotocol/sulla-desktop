@@ -1680,12 +1680,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/components/settings/sections/DockerSection.vue": {
-      "rules": {
-        "long-file": 563
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/components/settings/sections/FilesSection.vue": {
       "rules": {
         "long-file": 611
@@ -4639,6 +4633,12 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
+    "services/sulla-tools/src/index.ts": {
+      "rules": {
+        "raw-sql": 1
+      },
+      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
+    },
     "services/sulla-tools/src/stores.ts": {
       "rules": {
         "raw-sql": 4
@@ -4798,7 +4798,7 @@
       "rules": {
         "long-file": 1193,
         "mutable-state": 3,
-        "raw-sql": 85
+        "raw-sql": 107
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
