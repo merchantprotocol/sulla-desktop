@@ -259,10 +259,15 @@ export function useRoutines() {
     }
     const nextStatus = row.status === 'archive' ? 'draft' : 'archive';
     try {
-      await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      const result = await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      if (!result?.success) {
+        throw new Error('The workflow status did not change');
+      }
       await load();
 
-      return true;
+      // load() deliberately captures IPC failures rather than throwing.
+      // Do not announce success when the refreshed list could not be read.
+      return error.value === null;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
 
