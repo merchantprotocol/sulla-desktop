@@ -156,6 +156,13 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('chat-artifacts:changed', onArtifactChanged);
     this.stopWatchers.push(() => ipcRenderer.removeListener('chat-artifacts:changed', onArtifactChanged));
+    // The list came back "not ready" while the database was starting; load it now.
+    const onDatabaseAvailable = () => {
+      this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+        console.warn('[PersonaAdapter] artifact load failed:', err));
+    };
+    ipcRenderer.on('database:available', onDatabaseAvailable);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('database:available', onDatabaseAvailable));
 
     const unsubscribeArtifactClose = this.controller.on('artifactClosed', (event) => {
       if (!this.persistentArtifacts.has(event.artifactId)) return;
@@ -385,7 +392,10 @@ export class PersonaAdapter {
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
-    await this.loadPersistentArtifacts(this.ci.threadId.value ?? '');
+    // The message is already sent; a failed artifact refresh must not turn
+    // send() into a rejection.
+    await this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+      console.warn('[PersonaAdapter] artifact load failed:', err));
   }
 
   private agentTextForVoice(text: string, identity: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): string {
@@ -1203,8 +1213,9 @@ export class PersonaAdapter {
 
   private async loadPersistentArtifacts(threadId: string): Promise<void> {
     if (!threadId) return;
-    const records = await ipcRenderer.invoke('chat-artifacts:list', { threadId }) as ChatArtifactRecord[];
-    if (threadId !== this.ci.threadId.value) return;
+    const records = await ipcRenderer.invoke('chat-artifacts:list', { threadId }) as ChatArtifactRecord[] | null;
+    // null: database not reachable yet. Keep what is shown; `database:available` reloads.
+    if (!records || threadId !== this.ci.threadId.value) return;
     this.persistentArtifacts = new Set(records.map(record => record.id));
     this.controller.syncPersistentArtifacts(records.map(record => this.mapPersistentArtifact(record)));
   }

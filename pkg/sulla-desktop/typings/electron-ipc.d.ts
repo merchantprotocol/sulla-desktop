@@ -262,7 +262,8 @@ export interface IpcMainInvokeEvents {
       metadata?:  Record<string, unknown>;
     }[];
   };
-  'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
+  /** null while the database is not reachable yet; reload on `database:available`. */
+  'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[] | null;
   'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:open-file': (input: { threadId: string; fileId: string }) => import('@pkg/agent/services/ChatArtifactService').CreateArtifactResult;
   'chat-artifacts:save': (input: {
@@ -1279,6 +1280,8 @@ export interface IpcRendererEvents {
   'capture-studio:recording-state': (status: { recording: boolean }) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
+  /** The database answered again after an outage; reload lists that came back empty. */
+  'database:available': () => void;
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;

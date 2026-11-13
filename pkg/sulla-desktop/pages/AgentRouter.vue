@@ -280,6 +280,8 @@ async function refreshRailExtensions(){
   const extensionNames = Object.fromEntries(permissions.map(item=>[item.extensionId,item.name]));
   railExtensions.value = items.filter(item=>!hidden.has(item.extensionId)).map(item=>({...item,tooltip:`${item.label} · ${extensionNames[item.extensionId]||item.extensionId}`}));
 }
+// Permissions come back empty while the database is starting; reload when it is up.
+function onDatabaseAvailable(){ void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err)); }
 function openExtension(item:ExtensionRailItem){ window.dispatchEvent(new CustomEvent('sulla:open-extension-ui',{detail:item})); }
 function openExtensionPermissions(){ openSingleTab('preferences','extensions'); }
 async function removeExtensionFromRail(item:ExtensionRailItem){
@@ -725,7 +727,8 @@ const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
-  void refreshRailExtensions();
+  ipcRenderer.on('database:available', onDatabaseAvailable);
+  void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err));
   ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
 
@@ -780,6 +783,7 @@ onMounted(async() => {
 
 onUnmounted(() => {
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
+  ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
   presenceTracker.stop();
   if (footerStatsTimer) {
