@@ -9,32 +9,38 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div
-    ref="scroller"
-    class="scroller"
-  >
-    <div class="chat-dialogue">
-      <!-- Time marker for today (phase-0 scaffold) -->
-      <TimeMarker
-        v-if="showTodayMarker"
-        :label="todayLabel"
-      />
+  <div class="transcript">
+    <div
+      ref="scroller"
+      class="scroller"
+    >
+      <div class="chat-dialogue">
+        <!-- Time marker for today (phase-0 scaffold) -->
+        <TimeMarker
+          v-if="showTodayMarker"
+          :label="todayLabel"
+        />
 
-      <template
-        v-for="entry in transcriptEntries"
-        :key="entry.id"
-      >
-        <ThinkingGroup
-          v-if="entry.kind === 'thinking-group'"
-          :messages="entry.messages"
-        />
-        <MessageRouter
-          v-else
-          :msg="entry"
-        />
-      </template>
+        <template
+          v-for="entry in transcriptEntries"
+          :key="entry.id"
+        >
+          <ThinkingGroup
+            v-if="entry.kind === 'thinking-group'"
+            :messages="entry.messages"
+          />
+          <MessageRouter
+            v-else
+            :msg="entry"
+          />
+        </template>
+      </div>
     </div>
 
+    <!--
+      Outside the scroller so it stays put while the transcript scrolls,
+      pinned just above the composer (see ScrollPill / --composer-h).
+    -->
     <ScrollPill
       :visible="showPill"
       @jump="scrollToBottom"
@@ -72,6 +78,10 @@ defineExpose({ scroller, scrollToBottom });
 </script>
 
 <style scoped>
+.transcript {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+}
 .scroller {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;

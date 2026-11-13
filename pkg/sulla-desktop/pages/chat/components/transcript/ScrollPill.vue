@@ -18,7 +18,9 @@ defineEmits<{ (e: 'jump'): void }>();
 
 <style scoped>
 .scroll-pill {
-  position: absolute; bottom: 220px; left: 50%;
+  /* Sit just above the composer, like mobile. --composer-h is the live
+     composer height published by useResizeSync on .main. */
+  position: absolute; bottom: calc(var(--composer-h, 140px) + 24px); left: 50%;
   transform: translateX(-50%);
   padding: 8px 14px; border-radius: 100px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
