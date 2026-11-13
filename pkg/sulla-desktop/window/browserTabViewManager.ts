@@ -15,8 +15,10 @@ import { isRecentSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
+import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 import { getWindow, openUrlInApp } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
+import { BrowserLoginVault } from '@pkg/window/browserLoginVault';
 
 const console = Logging.sulla;
 const perf = Logging.perf;
@@ -137,6 +139,7 @@ export class BrowserTabViewManager {
    */
   private vaultIndex: { builtAt: number; byOrigin: Map<string, VaultAccountMatch[]> } | null = null;
   private vaultIndexBuild: Promise<Map<string, VaultAccountMatch[]>> | null = null;
+  private readonly loginVault = new BrowserLoginVault(usesContainerVaultAuthority, console);
   private sessionInitialised = false;
   /** Subscribers notified for every tab view created (see onViewCreated). */
   private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
@@ -993,6 +996,7 @@ export class BrowserTabViewManager {
    */
   /** Build (or reuse) the origin → accounts index for saved website logins. */
   private async vaultAccountsByOrigin(): Promise<Map<string, VaultAccountMatch[]>> {
+    if (!this.loginVault.available()) return new Map();
     if (this.vaultIndex && Date.now() - this.vaultIndex.builtAt < VAULT_INDEX_TTL_MS) {
       return this.vaultIndex.byOrigin;
     }
@@ -1127,6 +1131,8 @@ export class BrowserTabViewManager {
    */
   private async setPendingCredentials(tabId: string, origin: string, username: string, password: string, pageTitle?: string, frame?: Electron.WebFrameMain): Promise<void> {
     this.clearPendingCredentials(tabId);
+    // Nothing captured here could be saved or compared; do not hold the password.
+    if (!this.loginVault.available()) return;
 
     try {
       const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
@@ -1224,6 +1230,7 @@ export class BrowserTabViewManager {
    * page could request any account id and receive its decrypted password.
    */
   private async autofillVaultCredential(tabId: string, accountId: string, frame: Electron.WebFrameMain): Promise<void> {
+    if (!this.loginVault.available()) return;
     try {
       const origin = trustedFrameOrigin(frame);
       if (!origin) return;
