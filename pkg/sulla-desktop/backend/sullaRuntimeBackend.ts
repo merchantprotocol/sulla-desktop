@@ -1437,6 +1437,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
+        // Node is otherwise PID 1 here and never reaps orphans. BusyBox wget
+        // forks an ssl_client helper for every HTTPS healthcheck; when it is
+        // orphaned it becomes a zombie under Node, one every 10s (~8,600/day).
+        // Docker's init (tini) as PID 1 reaps them.
+        init: true,
         healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }
