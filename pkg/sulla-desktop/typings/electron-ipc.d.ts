@@ -445,6 +445,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
   'sulla-cloud-chat:unlink': (linkId: string, deleteCloudCopy: boolean) => void;
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
+  'sulla-cloud-connection:relink-device':     () => import('@pkg/main/devicesCloudApi').DeviceRelinkResult;
   'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
@@ -454,6 +455,11 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
   'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
+
+  // Settings → Account → Devices (see main/cloud/devices/devicesPanelIpc.ts).
+  'sulla-cloud-devices:list':   () => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
+  'sulla-cloud-devices:rename': (id: string, name: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDeviceView>;
+  'sulla-cloud-devices:remove': (id: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };

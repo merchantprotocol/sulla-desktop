@@ -1,7 +1,7 @@
 {
   "sourceRepository": "https://github.com/merchantprotocol/sulla-core",
-  "sourceRef": "221327055eeaad23b27231bebaec6c0f8e133c03",
-  "sourceCommit": "221327055eeaad23b27231bebaec6c0f8e133c03",
+  "sourceRef": "ea82b0530388285b3462b4689188d768039dcb8f",
+  "sourceCommit": "ea82b0530388285b3462b4689188d768039dcb8f",
   "packages": [
     {
       "package": "@sulla/foundation",
@@ -9,7 +9,15 @@
       "file": "sulla-foundation-0.1.1-7d4a6dd.tgz",
       "sha256": "0af9c760c958ecb440829022c6f00faa9b2fd9c4110679d99cada5b9841d7d7c",
       "sourceRef": "7d4a6dd8",
-      "source": "sulla-core main 7d4a6dd8 build (npm ci, npm run build, npm pack packages/foundation); bundling fix, foundation 0.1.1"
+      "source": "sulla-core main 7d4a6dd8 build (npm ci, npm run build, npm pack packages/foundation); bundling fix, foundation 0.1.1; byte-identical to the foundation 0.1.1 shipped with domain-v0.3.3 (ea82b05)"
+    },
+    {
+      "package": "@sulla/domain",
+      "version": "0.3.3",
+      "file": "sulla-domain-0.3.3-ea82b05.tgz",
+      "sha256": "4d3a05011194d7d9b3de0e9fffca68111a364c5698601cb6f92ee15de6b24dc0",
+      "sourceRef": "ea82b05",
+      "source": "sulla-core main ea82b05 (tag domain-v0.3.3, epic PR #54) release artifact: 0.3.2 vault + identity (Account, RequestPrincipal, device identity, DeviceIdentityService, opt-in recovery rotation); defaults byte-identical to 0.3.1; depends on @sulla/foundation 0.1.1."
     },
     {
       "package": "@sulla/domain",
@@ -17,13 +25,7 @@
       "file": "sulla-domain-0.3.1-c5f7154.tgz",
       "sha256": "74b4f85278b4cc89b8b08c1d3fe18722d0e98718a3cee53ec77ce112c6d15d82",
       "sourceRef": "c5f7154",
-      "source": "sulla-core main c5f7154 build (npm pack packages/domain); VaultSyncService full-state heads, missing_head, rollback, head_moved, CAS retries, commit caps, unit of work; depends on @sulla/foundation 0.1.1. Identical tarball to www-sulladesktop and sulla-mobile."
-    },
-    {
-      "package": "@sulla/foundation",
-      "version": "0.1.0",
-      "file": "sulla-foundation-0.1.0-2213270.tgz",
-      "sha256": "9bf68774363077242b615c84fa0a78ef0f020ec0eae242ee5033a36978ccc9ca"
+      "source": "sulla-core main c5f7154 build (npm pack packages/domain); kept for services/sulla-vault, which stays on domain 0.3.1 until its own bump (epic/vault-oop). Depends on @sulla/foundation 0.1.1. Identical tarball to www-sulladesktop and sulla-mobile."
     }
   ]
 }

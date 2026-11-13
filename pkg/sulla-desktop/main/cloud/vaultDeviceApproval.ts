@@ -82,21 +82,21 @@ class VaultDeviceApprovalService {
     const status=await transport.getStatus(deviceId);
     const vault=status as {enabled?:boolean;vaultId?:string;epoch?:number}; if(!vault.enabled||!vault.vaultId)return;
     const userId=await getCurrentUserId();
-    const listed=await transport.listEnrollmentRequests(vault.vaultId,this.signature(vault.vaultId,'enrollment-list',undefined,deviceId,userId));
+    const listed=await transport.listEnrollmentRequests(vault.vaultId,await this.signature(vault.vaultId,'enrollment-list',undefined,deviceId,userId));
     for(const request of listed.requests??[]){
       if(this.seen.has(`enroll:${request.id}`))continue; this.seen.add(`enroll:${request.id}`);
       if(!await this.promptEnrollment(request))continue;
       const [bundleBody,recordsBody]=await Promise.all([transport.getBundle(vault.vaultId,deviceId),transport.getRecords(vault.vaultId,deviceId)]);
       const wrapped=await client.wrapVaultEnrollment({requestId:request.id,vaultId:vault.vaultId,vaultEpoch:Number(vault.epoch??(bundleBody.bundle as any)?.epoch),publicKey:request.publicKey!,bundle:bundleBody.bundle??bundleBody,head:recordsBody.head,records:recordsBody.records,approved:true});
-      await transport.respondToEnrollmentRequest(vault.vaultId,request.id,{wrappedUserKey:wrapped.wrappedUserKey},this.signature(vault.vaultId,`enrollment-respond:${request.id}`,{wrappedUserKey:wrapped.wrappedUserKey},deviceId,userId));
+      await transport.respondToEnrollmentRequest(vault.vaultId,request.id,{wrappedUserKey:wrapped.wrappedUserKey},await this.signature(vault.vaultId,`enrollment-respond:${request.id}`,{wrappedUserKey:wrapped.wrappedUserKey},deviceId,userId));
       break;
     }
   }
 
-  private signature(vaultId:string,op:string,body:unknown,deviceId:string,userId:string):VaultSyncSignature{
+  private async signature(vaultId:string,op:string,body:unknown,deviceId:string,userId:string):Promise<VaultSyncSignature>{
     const bytes=body===undefined?Buffer.alloc(0):Buffer.from(JSON.stringify(body));
     const hash=crypto.createHash('sha256').update(bytes).digest('hex');
-    const proof=signDeviceMessage('vault-sync-v3',[userId,deviceId,vaultId,op,hash]);
+    const proof=await signDeviceMessage('vault-sync-v3',[userId,deviceId,vaultId,op,hash]);
     return {deviceId,timestamp:proof.ts,signature:proof.signature};
   }
 
