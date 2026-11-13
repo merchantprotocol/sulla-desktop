@@ -322,6 +322,8 @@ export interface IpcMainInvokeEvents {
   'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
   /** Retry the managed services now (the Repair action). */
   'sulla-runtime:repair-services': () => void;
+  /** Docker tab Stop/Start/Restart/Delete, so supervision does not undo a Stop. */
+  'docker/container-intent': (intent: import('@pkg/backend/sullaContainerHealth').ContainerIntent, names: string[]) => void;
   /** Why the last backend start failed, until the next start. */
   'sulla-runtime:start-failure': () => { reason: string; message: string } | undefined;
   'app-quit':               () => void;
