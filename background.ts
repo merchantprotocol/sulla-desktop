@@ -2066,10 +2066,13 @@ ipcMainProxy.on('k8s-restart', async() => {
     case State.STOPPED:
     case State.STARTED:
     case State.DISABLED:
+    case State.ERROR:
       // Calling start() will restart the backend, possible switching versions
-      // as a side-effect.
+      // as a side-effect. From ERROR this is the way to try again.
       await startK8sManager();
       break;
+    default:
+      console.log(`Ignoring restart request while the backend is ${ k8smanager.state }`);
     }
   } catch (ex) {
     handleFailure(ex);

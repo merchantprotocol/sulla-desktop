@@ -20,7 +20,7 @@ import {
   ago, gb, groupSubtitle, isSecretKey, parseSize, readableSize, splitIO, upFor,
 } from '@pkg/components/docker/format';
 import {
-  cleanName, displayProject, flatPorts, imageName as splitImageName, isNetworkWide, reachableFrom,
+  cleanName, displayProject, flatPorts, healthFromStatus, imageName as splitImageName, isNetworkWide, reachableFrom,
 } from '@pkg/components/docker/helpers';
 import PrefIcon from '@pkg/components/settings/PrefIcon.vue';
 import DockerSection from '@pkg/components/settings/sections/DockerSection.vue';
@@ -73,7 +73,11 @@ const matches = (...values: unknown[]) => {
 };
 
 async function exec(command: string, args: string[]): Promise<any> {
-  return await window.ddClient?.docker.cli.exec(command, args, { cwd: '/' });
+  if (!window.ddClient) {
+    throw new Error('Docker isn’t connected to this window yet. Wait for Docker to finish starting, then try again.');
+  }
+
+  return await window.ddClient.docker.cli.exec(command, args, { cwd: '/' });
 }
 async function execJsonLines(command: string, args: string[]): Promise<any[]> {
   try {
@@ -108,11 +112,23 @@ const stoppedCount = computed(() => containerRows.value.length - runningCount.va
 const containerFilter = ref<'all' | 'run' | 'stop'>('all');
 const collapsed = ref<Record<string, boolean>>({});
 
+const healthOf = (c: Container) => healthFromStatus(rowInfo.value[c.id]?.Status);
 function dotClass(c: Container) {
+  if (pending.value[c.id]) {
+    return 'dot warn';
+  }
+  if (c.state === 'running' && healthOf(c) !== 'healthy' && healthOf(c)) {
+    return healthOf(c) === 'unhealthy' ? 'dot bad' : 'dot warn';
+  }
+
   return { running: 'dot', restarting: 'dot warn', paused: 'dot warn', dead: 'dot bad' }[c.state as string] ??
     ((c.state as string) === 'exited' && exitCode(c) ? 'dot bad' : 'dot off');
 }
 function statusClass(c: Container) {
+  if (c.state === 'running' && healthOf(c) === 'unhealthy') {
+    return 'badc';
+  }
+
   return { restarting: 'warnc', paused: 'warnc', dead: 'badc' }[c.state as string] ?? 'muted';
 }
 function exitCode(c: Container): number {
@@ -121,8 +137,13 @@ function exitCode(c: Container): number {
 function statusText(c: Container) {
   const raw = rowInfo.value[c.id]?.Status as string | undefined;
 
+  if (pending.value[c.id]) {
+    return pending.value[c.id];
+  }
   if (c.state === 'running') {
-    return `Running · ${ upFor(c.started) }`;
+    const health = healthOf(c);
+
+    return ['Running', health === 'starting' ? 'health starting' : health, upFor(c.started)].filter(Boolean).join(' · ');
   }
   if (c.state === 'restarting') {
     const code = /Restarting \((\d+)\)/.exec(raw ?? '')?.[1];
@@ -162,21 +183,47 @@ const groups = computed(() => {
     .sort((a, b) => groupRank(a.name) - groupRank(b.name) || a.name.localeCompare(b.name));
 });
 
-async function containerCommand(command: string, ids: string[]) {
+/* Stop/Start/Restart/Delete. `pending` shows "Stopping…" until Docker answers (stop can take 10 s). */
+const pending = ref<Record<string, string>>({});
+const PENDING_LABEL: Record<string, string> = { stop: 'Stopping…', start: 'Starting…', restart: 'Restarting…', rm: 'Deleting…' };
+const INTENT: Record<string, 'stop' | 'start' | 'restart' | 'remove'> = { stop: 'stop', start: 'start', restart: 'restart', rm: 'remove' };
+// Tells Sulla's service supervisor, so a Sulla service stopped here stays stopped.
+async function reportIntent(command: string, list: Container[]) {
+  await ipcRenderer.invoke('docker/container-intent', INTENT[command], list.map(c => cleanName(c.containerName))).catch(() => undefined);
+}
+async function containerCommand(command: 'stop' | 'start' | 'restart' | 'rm', list: Container[]) {
+  const targets = list.filter(c => !pending.value[c.id]);
+
+  if (!targets.length) {
+    return;
+  }
+  error.value = '';
+  for (const c of targets) {
+    pending.value[c.id] = PENDING_LABEL[command];
+  }
   try {
-    await exec(command, ids);
-    await store.dispatch('container-engine/fetchContainers').catch(() => undefined);
+    await reportIntent(command, targets);
+    await exec(command, [...(command === 'rm' ? ['-f'] : []), ...targets.map(c => c.id)]);
   } catch (e) {
+    // The stop did not happen; hand the containers back to supervision.
+    if (command === 'stop') {
+      await reportIntent('start', targets);
+    }
     fail(e);
+  } finally {
+    for (const c of targets) {
+      delete pending.value[c.id];
+    }
+    await Promise.all([store.dispatch('container-engine/fetchContainers').catch(() => undefined), loadRowInfo()]);
   }
 }
-const startOrStop = (c: Container) => containerCommand(isUp(c) ? 'stop' : 'start', [c.id]);
-const restart = (c: Container) => containerCommand('restart', [c.id]);
-const groupStartOrStop = (g: { all: Container[], running: number }) => containerCommand(g.running ? 'stop' : 'start', g.all.map(c => c.id));
-const groupRestart = (g: { all: Container[] }) => containerCommand('restart', g.all.map(c => c.id));
+const startOrStop = (c: Container) => containerCommand(isUp(c) ? 'stop' : 'start', [c]);
+const restart = (c: Container) => containerCommand('restart', [c]);
+const groupStartOrStop = (g: { all: Container[], running: number }) => containerCommand(g.running ? 'stop' : 'start', g.all);
+const groupRestart = (g: { all: Container[] }) => containerCommand('restart', g.all);
 async function removeContainer(c: Container) {
   if (await confirm(`Delete ${ cleanName(c.containerName) }?`, 'The container is stopped and removed. Its volumes are kept.', 'Delete')) {
-    await containerCommand('rm', ['-f', c.id]);
+    await containerCommand('rm', [c]);
     if (section.value === 'container') {
       go('containers');
     }
@@ -280,6 +327,9 @@ const detailStatus = computed(() => {
   if (!c) {
     return '';
   }
+  if (pending.value[c.id]) {
+    return pending.value[c.id];
+  }
 
   return c.state === 'running' ? ['Running', health.value, `up ${ upFor(c.started) }`].filter(Boolean).join(' · ') : statusText(c);
 });
@@ -327,7 +377,12 @@ function startLogs() {
   stopLogs();
   logLines.value = [];
   logBuffer = '';
-  if (!selected.value || !window.ddClient) {
+  if (!selected.value) {
+    return;
+  }
+  if (!window.ddClient) {
+    pushLog('Docker isn’t connected to this window yet. Logs appear once Docker has started.\n');
+
     return;
   }
   const options: any = {
@@ -481,8 +536,13 @@ const shownImages = computed(() => imageRows.value
 const usedBy = (users: string[]) => (users.length > 1 ? `${ users[0] } and ${ users.length - 1 } more` : users[0]);
 async function runImage(ref: string) {
   if (await confirm(`Run ${ ref }?`, 'Starts a new container from this image in the background.', 'Run')) {
-    await containerCommand('run', ['-d', ref]);
-    go('containers');
+    try {
+      await exec('run', ['-d', ref]);
+      await store.dispatch('container-engine/fetchContainers').catch(() => undefined);
+      go('containers');
+    } catch (e) {
+      fail(e);
+    }
   }
 }
 async function removeImage(i: { ref: string, users: string[] }) {
@@ -517,9 +577,20 @@ function onImageOutput(_e: any, data: string) {
 }
 function onImageEnded(_e: any, status: number) {
   pullBusy.value = false;
-  pullOutput.value += status === 0 ? '\nDone.\n' : `\nFailed (exit ${ status }).\n`;
+  if (status === 0) {
+    pullOutput.value += '\nDone.\n';
+  } else {
+    pullOutput.value += typeof status === 'number' ? `\nFailed (exit ${ status }).\n` : '\nFailed. See the output above.\n';
+    error.value = `Couldn’t ${ pullAction.value } ${ pullName.value.trim() || 'the image' }. See the output under the field.`;
+  }
   void loadImages();
 }
+// Build asks for a Dockerfile first; closing that picker cancels.
+function onImageCancelled() {
+  pullBusy.value = false;
+  pullOutput.value += '\nCancelled.\n';
+}
+const pullAction = ref<'pull' | 'build'>('pull');
 function pullOrBuild(action: 'pull' | 'build') {
   const name = pullName.value.trim();
 
@@ -527,6 +598,7 @@ function pullOrBuild(action: 'pull' | 'build') {
     return;
   }
   pullBusy.value = true;
+  pullAction.value = action;
   pullOutput.value = `${ action } ${ name }\n`;
   ipcRenderer.send(action === 'pull' ? 'do-image-pull' : 'do-image-build', name);
 }
@@ -713,13 +785,15 @@ async function createSnapshot() {
       snapshotDescription.value = '';
       go('snapshots');
     }
+  } catch (e) {
+    fail(e);
   } finally {
     snapshotBusy.value = false;
   }
 }
 async function restoreSnapshot(name: string) {
   if (await confirm(`Restore ${ name }?`, 'Docker goes back to how it was when this snapshot was taken. Anything newer is lost.', 'Restore')) {
-    const result = await store.dispatch('snapshots/restore', name);
+    const result = await store.dispatch('snapshots/restore', name).catch((e: any) => e?.message || String(e));
 
     if (result) {
       error.value = String(result);
@@ -728,7 +802,7 @@ async function restoreSnapshot(name: string) {
 }
 async function deleteSnapshot(name: string) {
   if (await confirm(`Delete ${ name }?`, 'You can’t restore it after this.', 'Delete')) {
-    const result = await store.dispatch('snapshots/delete', name);
+    const result = await store.dispatch('snapshots/delete', name).catch((e: any) => e?.message || String(e));
 
     if (result) {
       error.value = String(result);
@@ -801,7 +875,13 @@ async function loadDiskUsed() {
 }
 const kubernetesOn = computed(() => !!settings.value?.kubernetes?.enabled);
 async function restartDocker() {
+  if (backendState.value === 'STARTING' || backendState.value === 'STOPPING') {
+    error.value = `Docker is already ${ backendState.value === 'STARTING' ? 'starting' : 'stopping' }. Try again when it finishes.`;
+
+    return;
+  }
   if (await confirm('Restart Docker?', 'Containers with a restart policy come back on their own.', 'Restart')) {
+    error.value = '';
     ipcRenderer.send('k8s-restart');
   }
 }
@@ -851,7 +931,11 @@ async function refresh() {
       loadVolumes(),
       section.value === 'volumes' ? loadVolumeSizes() : undefined,
       section.value === 'volumes' ? loadRowInfo().then(loadVolumeMounts) : undefined,
-      section.value === 'snapshots' ? store.dispatch('snapshots/fetch') : undefined,
+      section.value === 'snapshots' ? store.dispatch('snapshots/fetch').then((result: unknown) => {
+        if (result) {
+          error.value = String(result);
+        }
+      }) : undefined,
     ]);
   } catch (e) {
     fail(e);
@@ -897,6 +981,16 @@ watch(() => [section.value, view.value.id, detailTab.value], () => {
     detailTimer = setInterval(loadStats, 2000);
   }
 }, { immediate: true });
+// The open container was stopped, started or restarted: follow its new logs and health.
+watch(() => selected.value?.state, (now, before) => {
+  if (section.value !== 'container' || !now || !before || now === before) {
+    return;
+  }
+  void loadInspect();
+  if (detailTab.value === 'logs') {
+    startLogs();
+  }
+});
 watch(() => containers.value && Object.keys(containers.value).join(','), () => {
   void loadRowInfo();
 });
@@ -906,6 +1000,7 @@ onMounted(() => {
   ipcRenderer.on('settings-update', readSettings);
   ipcRenderer.on('images-process-output', onImageOutput);
   ipcRenderer.on('images-process-ended', onImageEnded);
+  ipcRenderer.on('images-process-cancelled', onImageCancelled);
   ipcRenderer.on('backend-locked', onBackendLocked);
   ipcRenderer.on('backend-unlocked', onBackendUnlocked);
   ipcRenderer.on('k8s-check-state' as any, onBackendState);
@@ -924,6 +1019,8 @@ onMounted(() => {
       void connect();
     } else {
       void loadVolumes();
+      // Status lines carry health ("Up 2 hours (healthy)"), which changes without a Docker event.
+      void loadRowInfo();
     }
     void loadUsage();
     void loadDiskUsed();
@@ -941,6 +1038,7 @@ onBeforeUnmount(() => {
   ipcRenderer.removeListener('settings-update', readSettings);
   ipcRenderer.removeListener('images-process-output', onImageOutput);
   ipcRenderer.removeListener('images-process-ended', onImageEnded);
+  ipcRenderer.removeListener('images-process-cancelled', onImageCancelled);
   ipcRenderer.removeListener('backend-locked', onBackendLocked);
   ipcRenderer.removeListener('backend-unlocked', onBackendUnlocked);
   ipcRenderer.removeListener('k8s-check-state' as any, onBackendState);
@@ -1206,6 +1304,7 @@ onBeforeUnmount(() => {
                           <button
                             type="button"
                             :title="isUp(c) ? 'Stop' : 'Start'"
+                            :disabled="!!pending[c.id]"
                             @click="startOrStop(c)"
                           >
                             <PrefIcon :name="isUp(c) ? 'stop' : 'play'" />
@@ -1213,6 +1312,7 @@ onBeforeUnmount(() => {
                           <button
                             type="button"
                             title="Restart"
+                            :disabled="!!pending[c.id]"
                             @click="restart(c)"
                           >
                             <PrefIcon name="restart" />
@@ -1227,6 +1327,7 @@ onBeforeUnmount(() => {
                           <button
                             type="button"
                             title="Delete"
+                            :disabled="!!pending[c.id]"
                             @click="removeContainer(c)"
                           >
                             <PrefIcon name="trash" />
@@ -1298,6 +1399,7 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="btn"
+                  :disabled="!!(selected && pending[selected.id])"
                   @click="selected && startOrStop(selected)"
                 >
                   <PrefIcon :name="isUp(selected) ? 'stop' : 'play'" />{{ isUp(selected) ? 'Stop' : 'Start' }}
@@ -1305,6 +1407,7 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="btn"
+                  :disabled="!!(selected && pending[selected.id])"
                   @click="selected && restart(selected)"
                 >
                   <PrefIcon name="restart" />Restart
@@ -1313,6 +1416,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="btn ico danger"
                   title="Delete"
+                  :disabled="!!(selected && pending[selected.id])"
                   @click="selected && removeContainer(selected)"
                 >
                   <PrefIcon name="trash" />
