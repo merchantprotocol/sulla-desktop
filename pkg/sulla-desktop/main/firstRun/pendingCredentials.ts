@@ -12,6 +12,7 @@ import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstR
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
 import { ElectronCloudAccountTransport } from '@pkg/main/cloud/account/ElectronCloudAccountTransport';
+import { SessionBindSigner } from '@pkg/main/cloud/device/SessionBindSigner';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
@@ -121,8 +122,8 @@ function scheduleDurableSync(delayMs = 0): void {
 class PendingSessionExpiredError extends Error {}
 
 const pendingSessionRefresher = new PendingCloudSessionRefresher(
-  // POST /auth/refresh {refreshToken}, one attempt, 20 s timeout (unchanged).
-  new ElectronCloudAccountTransport().withSingleAttemptRefresh(),
+  // POST /auth/refresh {refreshToken}, one attempt, 20 s timeout, with this device's session-bind proof.
+  new ElectronCloudAccountTransport({ sessionBind: SessionBindSigner.forDesktop(message => console.warn(message)) }).withSingleAttemptRefresh(),
   () => new PendingSessionExpiredError('Cloud session expired'),
 );
 

@@ -46,6 +46,7 @@ import {
   CloudAccountHttpError, ElectronCloudAccountTransport, type CloudContractor, type CloudSignInResponse,
 } from './cloud/account/ElectronCloudAccountTransport';
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
+import { SessionBindSigner } from './cloud/device/SessionBindSigner';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
@@ -60,7 +61,11 @@ const INTEGRATION_ID = 'sulla-cloud';
 
 /** Every Sulla Cloud /auth/ call (sign-in, refresh, logout, password reset) goes through this one transport. */
 // The signed-in calls (set/change password, recovery availability) use the server-mode session's access token.
-const accountTransport = new ElectronCloudAccountTransport({ accessToken: () => getCurrentAccessToken() });
+// Sign-ins and refreshes carry this device's session-bind proof so Cloud can bind the session to it.
+const accountTransport = new ElectronCloudAccountTransport({
+  accessToken: () => getCurrentAccessToken(),
+  sessionBind: SessionBindSigner.forDesktop(message => console.warn(message)),
+});
 const passwordSignIn = new CloudPasswordSignIn(accountTransport, () => CloudAccountCredentialService.forDesktop(), firstRunTrace);
 const legacyAdopter = new LegacyCloudSessionAdopter(accountTransport);
 

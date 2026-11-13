@@ -14,6 +14,7 @@ import type {
 
 import { type CloudLogoutHttp, type CloudRefreshHttp, FetchCloudLogoutHttp, FetchCloudRefreshHttp } from './CloudTokenHttp';
 import { SullaCloudHttpClient } from './SullaCloudHttpClient';
+import { NoSessionBind, type SessionBindHeaders } from '../device/SessionBindSigner';
 
 /** One business on the signed-in account, as Sulla Cloud returns it. */
 export interface CloudContractor {
@@ -86,6 +87,11 @@ export interface ElectronCloudAccountTransportOptions {
   logoutHttp?:  CloudLogoutHttp;
   /** Bearer token for the signed-in calls (setPassword, changePassword, recoveryAvailability). Empty = not signed in. */
   accessToken?: () => Promise<string>;
+  /**
+   * Device session-bind proof for the session-creating POSTs (sign-ins and refresh). Production passes
+   * `SessionBindSigner.forDesktop()`; the default sends none, so a test transport never touches ~/.sulla.
+   */
+  sessionBind?: SessionBindHeaders;
 }
 
 /**
@@ -98,16 +104,21 @@ export interface ElectronCloudAccountTransportOptions {
  * `Content-Type: application/json` header, the same 20 s timeout, and the same single network retry on prelogin and
  * refresh. A non-2xx throws `CloudAccountHttpError` (status + the server's `error` and `code` + Retry-After); refresh and
  * logout throw `CloudAccountNetworkError` (no status) when Cloud is unreachable; other calls rethrow what fetch threw.
+ *
+ * Session-creating POSTs (register, email/login, upgrade, email-code/verify, otp/verify, apple, handoff/redeem, refresh)
+ * also carry the device session-bind proof headers from `sessionBind` when one is configured (Cloud W-ID-6).
  */
 export class ElectronCloudAccountTransport implements CloudAccountTransport {
   private readonly http: SullaCloudHttpClient;
   private readonly refreshHttp: CloudRefreshHttp;
   private readonly logoutHttp: CloudLogoutHttp;
   private readonly accessToken: () => Promise<string>;
+  private readonly sessionBind: SessionBindHeaders;
 
   constructor(options: ElectronCloudAccountTransportOptions = {}) {
     this.http = options.http ?? new SullaCloudHttpClient();
-    this.refreshHttp = options.refreshHttp ?? new FetchCloudRefreshHttp(refreshToken => this.post('/auth/refresh', { refreshToken }, true));
+    this.sessionBind = options.sessionBind ?? new NoSessionBind();
+    this.refreshHttp = options.refreshHttp ?? new FetchCloudRefreshHttp(refreshToken => this.sessionPost('/auth/refresh', { refreshToken }, true));
     // Logout is POSTed once (no retry): the refresh token is revoked server-side whatever the response body holds.
     this.logoutHttp = options.logoutHttp ?? new FetchCloudLogoutHttp(refreshToken => this.post('/auth/logout', { refreshToken }));
     this.accessToken = options.accessToken ?? (async() => '');
@@ -117,9 +128,10 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
   withSingleAttemptRefresh(): ElectronCloudAccountTransport {
     return new ElectronCloudAccountTransport({
       http:        this.http,
-      refreshHttp: new FetchCloudRefreshHttp(refreshToken => this.post('/auth/refresh', { refreshToken })),
+      refreshHttp: new FetchCloudRefreshHttp(refreshToken => this.sessionPost('/auth/refresh', { refreshToken })),
       logoutHttp:  this.logoutHttp,
       accessToken: this.accessToken,
+      sessionBind: this.sessionBind,
     });
   }
 
@@ -142,18 +154,18 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
     const body = 'authHash' in request
       ? { email: request.email, authHash: request.authHash, kdf: request.kdf, name: request.name, timezone: request.timezone, phone: request.phone }
       : { email: request.email, password: request.password, name: request.name, timezone: request.timezone, phone: request.phone };
-    return this.json(await this.post('/auth/email/register', body));
+    return this.json(await this.sessionPost('/auth/email/register', body));
   }
 
   /** POST /auth/email/login {email, authHash} (a v2 account). */
   async emailLogin(request: CloudEmailLoginRequestDto): Promise<CloudSessionResponseDto> {
     const body = 'authHash' in request ? { email: request.email, authHash: request.authHash } : { email: request.email, password: request.password };
-    return this.json(await this.post('/auth/email/login', body));
+    return this.json(await this.sessionPost('/auth/email/login', body));
   }
 
   /** POST /auth/upgrade {email, password, authHash, kdf}: a legacy (v1) account signs in and becomes v2. */
   async upgrade(request: CloudUpgradeRequestDto): Promise<CloudSessionResponseDto> {
-    return this.json(await this.post('/auth/upgrade', { email: request.email, password: request.password, authHash: request.authHash, kdf: request.kdf }));
+    return this.json(await this.sessionPost('/auth/upgrade', { email: request.email, password: request.password, authHash: request.authHash, kdf: request.kdf }));
   }
 
   /** POST /auth/email-code/start {email}. The body of a 2xx is not read. */
@@ -164,7 +176,7 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
 
   /** POST /auth/email-code/verify {email, code, name, timezone}. */
   async verifyEmailCode(request: CloudEmailCodeVerifyRequestDto): Promise<CloudSessionResponseDto> {
-    return this.json(await this.post('/auth/email-code/verify', { email: request.email, code: request.code, name: request.name, timezone: request.timezone }));
+    return this.json(await this.sessionPost('/auth/email-code/verify', { email: request.email, code: request.code, name: request.name, timezone: request.timezone }));
   }
 
   /** POST /auth/refresh {refreshToken}. A reply without a new refresh token keeps the current one; a 2xx without an access token is a 502. */
@@ -205,14 +217,14 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
 
   /** POST /auth/otp/verify {phone, code} (+ timezone / apple_identity_token when given). */
   async phoneOtpVerify(request: CloudPhoneOtpVerifyRequestDto): Promise<CloudSessionResponseDto> {
-    return this.json(await this.post('/auth/otp/verify', {
+    return this.json(await this.sessionPost('/auth/otp/verify', {
       phone: request.phone, code: request.code, timezone: request.timezone, apple_identity_token: request.apple_identity_token,
     }));
   }
 
   /** POST /auth/apple {identityToken, fullName, email} from native Sign in with Apple (or authorizationCode + redirectUri). */
   async apple(request: CloudAppleSignInRequestDto): Promise<CloudSessionResponseDto> {
-    return this.json(await this.post('/auth/apple', {
+    return this.json(await this.sessionPost('/auth/apple', {
       identityToken: request.identityToken, authorizationCode: request.authorizationCode, redirectUri: request.redirectUri,
       fullName: request.fullName, email: request.email,
     }));
@@ -220,7 +232,7 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
 
   /** POST /auth/handoff/redeem {code}: the browser vault origin's 60-second single-use code becomes a token pair. */
   async handoffRedeem(request: CloudHandoffRedeemRequestDto): Promise<CloudHandoffRedeemResponseDto> {
-    const body = await this.json<{ accessToken?: unknown; refreshToken?: unknown }>(await this.post('/auth/handoff/redeem', { code: request.code }));
+    const body = await this.json<{ accessToken?: unknown; refreshToken?: unknown }>(await this.sessionPost('/auth/handoff/redeem', { code: request.code }));
     if (typeof body.accessToken !== 'string' || !body.accessToken || typeof body.refreshToken !== 'string' || !body.refreshToken) {
       throw new CloudAccountHttpError(502);
     }
@@ -272,6 +284,20 @@ export class ElectronCloudAccountTransport implements CloudAccountTransport {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
+    }, retry);
+  }
+
+  /**
+   * A POST that creates or rotates a session: the body is serialized once, and the device signs those exact bytes.
+   * The same proof rides on the single network retry (it is seconds old; Cloud accepts ±2 minutes).
+   */
+  private async sessionPost(path: string, body: unknown, retry = false): Promise<Response> {
+    const raw = JSON.stringify(body);
+    const proof = await this.sessionBind.headersFor(path, raw);
+    return this.http.send(path, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ...proof },
+      body:    raw,
     }, retry);
   }
 
