@@ -99,6 +99,7 @@ import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository,
 import { FilesAuditEmitter } from './filesAudit.js';
 import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
+import type { VaultUserBackupRow } from './localCrypto/DesktopHumanBackup.js';
 import { LocalVaultCryptoProvider } from './localCrypto/LocalVaultCryptoProvider.js';
 
 const CHALLENGE_TTL_MS = 30_000;
@@ -1569,7 +1570,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const keys = this.requireKeys();
     const generation = this.generation;
     const [user, items, recovery] = await Promise.all([
-      this.userRepository.findById(keys.userId),
+      this.userRepository.findById<VaultUserBackupRow>(keys.userId),
       this.itemRepository.listOwnedForBackup([keys.userId]),
       this.recoveryRepository.findForUser(keys.userId),
     ]);
