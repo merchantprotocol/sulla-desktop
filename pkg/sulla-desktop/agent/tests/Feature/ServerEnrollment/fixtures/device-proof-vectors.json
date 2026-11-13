@@ -1,0 +1,71 @@
+{
+  "source": "Copied verbatim (plus this key) from merchantprotocol/sulla-server packages/accounts-server/service/tests/fixtures/device-proof-vectors.json, PR #14 branch feat/m6-s8-device-enrollment @ af07f62. Copyright (c) 2025-2026 Merchant Protocol LLC. Keep in sync with the server; do not edit the vectors here.",
+  "description": "Sulla Server device-proof test vectors (M6 S8). Ed25519 (RFC 8032) over UTF-8 DeviceMessage text; keys and signatures are standard padded base64. Signatures are deterministic, so a client that reproduces these bytes is wire-compatible.",
+  "purpose": "server-device-v1",
+  "purposeTag": "sulla-server-device-v1",
+  "windowSeconds": 120,
+  "device": {
+    "seedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "deviceId": "d1-vector-device-0001",
+    "publicKey": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="
+  },
+  "nextDevice": {
+    "seedHex": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+    "publicKey": "5/FioQvsVZr+oZXk3OhLaVaNXSywlj60RsBoXisX8vA="
+  },
+  "server": {
+    "serverId": "6f1c1c3e-2a4b-4c5d-8e6f-7a8b9c0d1e2f",
+    "organizationId": "0b7e6a52-3f1d-4c2a-9e8b-5d4c3b2a1f0e",
+    "userId": "3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a",
+    "serverDeviceRowId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+  },
+  "enrollment": {
+    "signerCall": "DeviceIdentityService.sign('server-device-v1', ['enroll', serverId, organizationId, deviceId, publicKey])",
+    "ts": 1794528000,
+    "message": "sulla-server-device-v1\nenroll\n6f1c1c3e-2a4b-4c5d-8e6f-7a8b9c0d1e2f\n0b7e6a52-3f1d-4c2a-9e8b-5d4c3b2a1f0e\nd1-vector-device-0001\nebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\n1794528000",
+    "proof": {
+      "ts": 1794528000,
+      "signature": "ybiF3JLbQJFFuWEiISZsv7S24Iue3FalCwTtMeGFPMdyCyV4Yqis3Osr5dZunz4BPJHicJ5q/mK8eOlUdnLdAw=="
+    },
+    "body": {
+      "organizationId": "0b7e6a52-3f1d-4c2a-9e8b-5d4c3b2a1f0e",
+      "deviceId": "d1-vector-device-0001",
+      "publicKey": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+      "proof": {
+        "ts": 1794528000,
+        "signature": "ybiF3JLbQJFFuWEiISZsv7S24Iue3FalCwTtMeGFPMdyCyV4Yqis3Osr5dZunz4BPJHicJ5q/mK8eOlUdnLdAw=="
+      }
+    }
+  },
+  "request": {
+    "signerCall": "DeviceIdentityService.signExact('server-device-v1', ['request', serverId, deviceId, METHOD, path, ts, nonce, sha256hex(rawBody)])",
+    "method": "POST",
+    "path": "/desktop/v1/devices/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/token",
+    "ts": 1794528000,
+    "nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "rawBody": "{\"audience\":\"sulla-vault\"}",
+    "bodySha256": "0154849faa267f860bf3ff957d3ab4296ce2f86bee853aa11af3a0d13d7b4e17",
+    "message": "sulla-server-device-v1\nrequest\n6f1c1c3e-2a4b-4c5d-8e6f-7a8b9c0d1e2f\nd1-vector-device-0001\nPOST\n/desktop/v1/devices/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/token\n1794528000\nAAECAwQFBgcICQoLDA0ODw\n0154849faa267f860bf3ff957d3ab4296ce2f86bee853aa11af3a0d13d7b4e17",
+    "headers": {
+      "x-sulla-device-ts": "1794528000",
+      "x-sulla-device-nonce": "AAECAwQFBgcICQoLDA0ODw",
+      "x-sulla-device-signature": "yOHHL+BjrPALfQiXR8bsHmTqcUpjV79frciSmu1SGRBjSznBBxAp+ccZxMwN/dpche8CiywjsMaxO42Ea5INAA=="
+    }
+  },
+  "keyRotation": {
+    "signerCall": "DeviceIdentityService.keyRotationProof(userId, nextPublicKey)",
+    "ts": 1794528000,
+    "message": "sulla-key-rotate-v1\n3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a\nd1-vector-device-0001\n5/FioQvsVZr+oZXk3OhLaVaNXSywlj60RsBoXisX8vA=\n1794528000",
+    "proof": {
+      "ts": 1794528000,
+      "signature": "gxMGrzrHitLn8GlD6QVjY38sNbzToEQ+ac3BXc10pRCiYIeQMr8tiEEGR89r5E7kQALbxQjuBvO+MOUB6HvGDA=="
+    },
+    "body": {
+      "publicKey": "5/FioQvsVZr+oZXk3OhLaVaNXSywlj60RsBoXisX8vA=",
+      "proof": {
+        "ts": 1794528000,
+        "signature": "gxMGrzrHitLn8GlD6QVjY38sNbzToEQ+ac3BXc10pRCiYIeQMr8tiEEGR89r5E7kQALbxQjuBvO+MOUB6HvGDA=="
+      }
+    }
+  }
+}
