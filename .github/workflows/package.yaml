@@ -26,16 +26,43 @@ defaults:
     shell: bash
 
 jobs:
+  # Release freeze. While `.release-freeze` exists on main, no tag build and no
+  # nightly may run: the gate fails before anything is built, signed or published.
+  # Artifacts-only dispatch builds are not releases and still run. To lift the
+  # freeze, delete `.release-freeze` from main (docs/releasing.md).
+  freeze-gate:
+    name: Release freeze check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    - name: Refuse to release while frozen
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') || inputs.publish_channel == 'nightly' }}
+      run: |
+        set -uo pipefail
+        if [[ "$IS_RELEASE" != "true" ]]; then echo "Not a release build; freeze does not apply."; exit 0; fi
+        if body=$(gh api "repos/${GH_REPO}/contents/.release-freeze?ref=main" --jq '.content' 2>/dev/null); then
+          echo "::error::RELEASE FREEZE is active. Production builds are on hold until the owner lifts it (delete .release-freeze from main)."
+          echo "$body" | base64 -d || true
+          exit 1
+        fi
+        echo "No freeze file on main; release may proceed."
+
   # The mac app embeds the native runtime (macOS VM). It is rebuilt from this
   # commit on every release.
   runtime:
+    needs: freeze-gate
     uses: ./.github/workflows/sulla-runtime.yml
     with:
       skip_publish: true
 
   package:
-    needs: runtime
-    if: ${{ !cancelled() }}
+    needs: [freeze-gate, runtime]
+    if: ${{ !cancelled() && needs.freeze-gate.result == 'success' }}
     strategy:
       # One leg's intermittent electron-extract failure must not cancel
       # the other — each architecture stands on its own.

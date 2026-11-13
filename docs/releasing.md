@@ -145,3 +145,10 @@ same `latest-mac.yml`.
 Apps released before this change read updates from GitHub Releases and can't
 follow the feed to R2. Their users need to download the new version once; from
 then on updates come from the bucket.
+
+## Release freeze
+
+While a file named `.release-freeze` exists on `main`, the Package workflow's
+`freeze-gate` job fails every tag build and nightly before anything is built,
+signed or published. Artifacts-only dispatch builds still run. Only the owner
+lifts a freeze, by merging a PR that deletes `.release-freeze`.
