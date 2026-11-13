@@ -243,6 +243,18 @@ describe('vault enrollment completion (requester)', () => {
     expect(broker.events).toEqual([]);
   });
 
+  it('stops at once with enrollment_denied when an approver denied the request (410)', async() => {
+    // risk: auth/UX — a denied device must stop asking instead of polling until the request expires
+    cloud.consumeReplies.push({ status: 409, body: { error: 'request_not_found_or_consumed' } }, { status: 410, body: { error: 'request_denied' } });
+    const subject = await harness();
+    const done = subject.complete(MASTER, 'user-0001');
+    const settled = expect(done).rejects.toThrow('enrollment_denied');
+    await runPolls(2);
+    await settled;
+    expect(cloud.callsTo('/consume')).toHaveLength(2);
+    expect(broker.events).toEqual([]);
+  });
+
   it('gives up with enrollment_timeout after exactly 60 polls', async() => {
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');

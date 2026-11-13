@@ -133,19 +133,49 @@ describe('vault enrollment approver', () => {
     expect(list.headers['X-Sulla-Device-Signature']).toBe('Em9ml/0svPPtRMUFZnIYke2FUECebKFj7gJ+uYs7x9MC9OpoE6k5VtSEo/9TA4zFM/vwCKzUOBa+jSdcK7FNDg==');
   });
 
-  it('sends nothing for a declined request and never prompts for it again', async() => {
-    // risk: an approval or denial reaching Cloud without the owner's tap
+  it('denies a declined request on Cloud once, signed, and never prompts for it again', async() => {
+    // risk: auth — a declined device must be ended on Cloud, and only by this device's signed call after the tap
     cloud.listReply = { status: 200, body: { requests: [request('req-a')] } };
     env.prompt = NOT_NOW;
     subject.startApprover();
-    await until(() => env.timeline.includes('prompt'));
+    await until(() => cloud.callsTo('/deny').length === 1);
     await settle();
     await vi.advanceTimersByTimeAsync(15_000);
     await settle();
     expect(env.timeline.filter(event => event === 'prompt')).toHaveLength(1);
-    expect(cloud.calls.filter(call => call.method !== 'GET')).toEqual([]);
+    expect(cloud.calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual([
+      `/cloud-vault-sync/vaults/${ VAULT }/enrollment/requests/req-a/deny`,
+    ]);
+    const [deny] = cloud.callsTo('/deny');
+    expect(deny.query.get('deviceId')).toBe('device-0001');
+    expect(deny.body).toBe(JSON.stringify({ reason: 'user_denied' }));
+    const ts = deny.headers['X-Sulla-Timestamp'];
+    const message = ['sulla-vault-sync-v3', 'user-0001', 'device-0001', VAULT, 'enrollment-deny:req-a', sha(deny.body!), ts].join('\n');
+    expect(FixedDeviceKeyDir.verify(message, deny.headers['X-Sulla-Device-Signature'])).toBe(true);
     expect(broker.wrapCalls).toEqual([]);
     expect(cloud.callsTo('/bundle')).toEqual([]);
+    expect(cloud.callsTo('/respond')).toEqual([]);
+  });
+
+  it.each([
+    ['a Cloud without the deny route (404)', { status: 404, body: { error: 'not_found' } }],
+    ['a failing deny (500)', { status: 500, body: { error: 'internal_error' } }],
+  ])('after %s: no retry, no re-prompt, and the next request is still offered', async(_label, reply) => {
+    // risk: availability — an old or failing Cloud must not turn a decline into an error loop
+    cloud.listReply = { status: 200, body: { requests: [request('req-a')] } };
+    cloud.denyReply = reply;
+    env.prompt = NOT_NOW;
+    subject.startApprover();
+    await until(() => cloud.callsTo('/deny').length === 1);
+    await settle();
+    cloud.listReply = { status: 200, body: { requests: [request('req-a'), request('req-b')] } };
+    env.prompt = ALLOW;
+    await vi.advanceTimersByTimeAsync(15_000);
+    await until(() => cloud.callsTo('/respond').length === 1);
+    await settle();
+    expect(cloud.callsTo('/deny')).toHaveLength(1);
+    expect(env.timeline.filter(event => event === 'prompt')).toHaveLength(2);
+    expect(cloud.callsTo('/respond')[0].path.split('/').at(-2)).toBe('req-b');
   });
 
   it('touches no vault data while the prompt is still open', async() => {
