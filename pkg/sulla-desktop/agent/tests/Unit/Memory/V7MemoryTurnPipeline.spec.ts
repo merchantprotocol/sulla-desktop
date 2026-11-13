@@ -56,6 +56,7 @@ describe('v7 per-turn memory behavior', () => {
     await vi.waitFor(() => expect(runs).toHaveLength(2));
     expect(runs[1]).toMatchObject({ turnId: 'turn-3', coalescedTurns: 2, contextWindow: 37 });
     expect(runs[1].state.messages).toHaveLength(75);
+    expect(runs[0].state.messages).toHaveLength(40);
   });
 
   it('bounds the writer queue, drops its oldest waiter and expires stale waiters', async () => {

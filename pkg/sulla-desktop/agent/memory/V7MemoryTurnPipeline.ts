@@ -380,7 +380,10 @@ export class V7MemoryScheduler {
       const contextWindow = this.windowFor(startLength, slot.rememberedThrough);
       truncated = slot.rememberedThrough !== null && startLength - slot.rememberedThrough + 2 > contextWindow;
       if (truncated) this.log.write({ agent: 'scheduler', thread: threadId, turn: turn.turnId, ms: 0, outcome: 'window-capped', uncovered: startLength - (slot.rememberedThrough as number) + 2 - contextWindow });
-      return this.pipeline.run({ state: turn.state, threadId, turnId: turn.turnId, contextWindow, coalescedTurns: turn.coalescedTurns });
+      // Keep draft/review/final on the same completed transcript span. New
+      // messages remain available to the coalesced next run, not this sequence.
+      const state = { ...turn.state, messages: [...turn.state.messages], metadata: { ...turn.state.metadata } };
+      return this.pipeline.run({ state, threadId, turnId: turn.turnId, contextWindow, coalescedTurns: turn.coalescedTurns });
     }).then((result) => {
       if (result.covered) slot.rememberedThrough = startLength;
     }).catch((error) => {
