@@ -49,24 +49,30 @@ export function useEngineSettings() {
       _.set(next, path, value);
     }
     error.value = '';
-    await store.dispatch('preferences/setPreferences', next);
+    try {
+      await store.dispatch('preferences/setPreferences', next);
 
-    const decision = decideApply(await store.dispatch('preferences/proposePreferences'));
+      const decision = decideApply(await store.dispatch('preferences/proposePreferences'));
 
-    if (decision === 'invalid') {
-      error.value = store.state.preferences.preferencesError || 'Sulla could not accept that value.';
-      // Put the old values back so the screen shows what's actually saved.
-      await store.dispatch('preferences/setPreferences', before);
+      if (decision === 'invalid') {
+        error.value = store.state.preferences.preferencesError || 'Sulla could not accept that value.';
+        // Put the old values back so the screen shows what's actually saved.
+        await store.dispatch('preferences/setPreferences', before);
 
-      return;
+        return;
+      }
+      if (decision === 'apply' && !held.value) {
+        await store.dispatch('preferences/commitPreferences');
+
+        return;
+      }
+      // Restarting changes are held. Anything changed while they're held joins them.
+      held.value = decision === 'reset' || held.value === 'reset' ? 'reset' : 'restart';
+    } catch (err) {
+      // Never fail silently: put the old values back and say why.
+      await store.dispatch('preferences/setPreferences', before).catch(() => undefined);
+      error.value = `Sulla could not save this setting: ${ err instanceof Error ? err.message : String(err) }`;
     }
-    if (decision === 'apply' && !held.value) {
-      await store.dispatch('preferences/commitPreferences');
-
-      return;
-    }
-    // Restarting changes are held. Anything changed while they're held joins them.
-    held.value = decision === 'reset' || held.value === 'reset' ? 'reset' : 'restart';
   }
 
   function set(path: string, value: unknown): Promise<void> {
