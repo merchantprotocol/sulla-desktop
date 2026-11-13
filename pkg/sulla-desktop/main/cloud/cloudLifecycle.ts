@@ -202,9 +202,9 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
 
-// One immutable gate; the channel is reached lazily so construction has no side effects.
+// One immutable gate; services are reached lazily (import cycle: vaultSyncV3/filesSyncV1 -> sullaCloudAuth -> here), so nothing is captured by value at load.
 const syncGate = new DeviceSyncGate(
-  { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: VaultSyncV3, files: FilesSyncV1 },
+  { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: { start: () => VaultSyncV3.start(), stop: () => VaultSyncV3.stop() }, files: { start: () => FilesSyncV1.start(), stop: () => FilesSyncV1.stop() } },
   async kind => isCloudKindEnabled(await getCloudPreferences(), kind),
 );
 
