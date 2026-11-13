@@ -15,3 +15,7 @@ The kernel unpacks the initramfs into RAM it never reclaims, so the initramfs ca
 Measured from the 0.2.0 initramfs (Alpine 3.23, linux-lts 6.18.58, 4 KiB pages): 627 MiB in RAM, of which `/usr` was 512 MiB and `/lib/modules` 101 MiB; what stays in the initramfs now is about 15 MiB.
 
 Outputs are `vmlinuz`, `initramfs.img`, `usr.erofs`, `VERSION`, and `SHA256SUMS`. Set `SOURCE_DATE_EPOCH` to the source commit timestamp for deterministic mtimes. The artifact has no mutable root: persistent state belongs on the data disk (`/dev/vda`).
+
+## WSL2 import rootfs
+
+`build-wsl-rootfs.sh amd64` (or `arm64`) builds the `wsl-import-rootfs` target for the Windows app-owned WSL2 distribution. It uses the same Alpine packages, Docker Engine/CLI/Compose and app userspace, then reassembles a regular root filesystem tar without the custom VM PID 1 or VM kernel modules. Buildx writes `rootfs.tar` and `rootfs.tar.sha256` under `dist/wsl/<arch>/`; verify it with `sha256sum -c rootfs.tar.sha256` before `wsl.exe --import`. Import and lifecycle commands must target only the named app-owned distribution; the script does not install WSL or change Windows features.

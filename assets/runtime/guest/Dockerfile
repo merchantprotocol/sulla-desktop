@@ -90,6 +90,22 @@ RUN set -eu; \
     /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img; \
     printf 'sulla-runtime-guest=0.3.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION
 
+# WSL2 imports a conventional distribution rootfs instead of the custom
+# initramfs/erofs layout used by the macOS Virtualization.framework runtime.
+# Reassemble the same pinned Alpine userspace and Docker toolchain, but omit
+# the custom PID 1 and kernel modules that are specific to the packaged guest.
+RUN set -eu; \
+    mkdir -p /image/wsl-rootfs; \
+    cp -a /image/rootfs/. /image/wsl-rootfs/; \
+    cp -a /image/usr/. /image/wsl-rootfs/usr/; \
+    rm -f /image/wsl-rootfs/init; \
+    rm -f /image/wsl-rootfs/lib/modules; \
+    rm -rf /image/wsl-rootfs/lib/sulla-boot-modules /image/wsl-rootfs/usr/lib/modules; \
+    mkdir -p /image/wsl-rootfs/run /image/wsl-rootfs/tmp; \
+    chmod 1777 /image/wsl-rootfs/tmp; \
+    tar --numeric-owner -C /image/wsl-rootfs -cf /image/wsl-rootfs.tar .; \
+    sha256sum /image/wsl-rootfs.tar | awk '{ print $1 "  rootfs.tar" }' > /image/wsl-rootfs.sha256
+
 # A filesystem image does not depend on the CPU, so mkfs.erofs runs natively
 # instead of under emulation. erofs with LZ4HC because the guest kernel
 # decompresses it fast and in parallel (Alpine builds squashfs with a single
@@ -111,3 +127,10 @@ RUN --mount=type=bind,from=image,source=/image,target=/image \
 
 FROM scratch
 COPY --from=usr /out/ /
+
+# `docker buildx build --target wsl-import-rootfs --output type=local,dest=...`
+# yields rootfs.tar and rootfs.tar.sha256; the tar entries are at distro root
+# as required by `wsl.exe --import`.
+FROM scratch AS wsl-import-rootfs
+COPY --from=image /image/wsl-rootfs.tar /rootfs.tar
+COPY --from=image /image/wsl-rootfs.sha256 /rootfs.tar.sha256
