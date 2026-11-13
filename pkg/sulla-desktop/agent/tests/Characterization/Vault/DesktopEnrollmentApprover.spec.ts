@@ -160,22 +160,21 @@ describe('vault enrollment approver', () => {
   it.each([
     ['a Cloud without the deny route (404)', { status: 404, body: { error: 'not_found' } }],
     ['a failing deny (500)', { status: 500, body: { error: 'internal_error' } }],
-  ])('after %s: no retry, no re-prompt, and the next request is still offered', async(_label, reply) => {
-    // risk: availability — an old or failing Cloud must not turn a decline into an error loop
-    cloud.listReply = { status: 200, body: { requests: [request('req-a')] } };
-    cloud.denyReply = reply;
-    env.prompt = NOT_NOW;
-    subject.startApprover();
-    await until(() => cloud.callsTo('/deny').length === 1);
-    await settle();
+  ])('after %s: no retry, no re-prompt, and the same poll still offers the next request', async(_label, reply) => {
+    // risk: availability — an old or failing Cloud must not turn a decline into an error loop or skip other devices
     cloud.listReply = { status: 200, body: { requests: [request('req-a'), request('req-b')] } };
-    env.prompt = ALLOW;
+    cloud.denyReply = reply;
+    const answers = [NOT_NOW, ALLOW];
+    env.prompt = () => answers.shift()!();
+    subject.startApprover();
+    await until(() => cloud.callsTo('/respond').length === 1); // same poll: no timer advanced
+    await settle();
+    expect(cloud.callsTo('/deny').map(call => call.path.split('/').at(-2))).toEqual(['req-a']);
+    expect(cloud.callsTo('/respond').map(call => call.path.split('/').at(-2))).toEqual(['req-b']);
     await vi.advanceTimersByTimeAsync(15_000);
-    await until(() => cloud.callsTo('/respond').length === 1);
     await settle();
     expect(cloud.callsTo('/deny')).toHaveLength(1);
     expect(env.timeline.filter(event => event === 'prompt')).toHaveLength(2);
-    expect(cloud.callsTo('/respond')[0].path.split('/').at(-2)).toBe('req-b');
   });
 
   it('touches no vault data while the prompt is still open', async() => {
