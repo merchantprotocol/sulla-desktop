@@ -116,7 +116,16 @@ export function usePromptSections() {
 
   async function save(id: string, content: string) {
     try {
-      replace(await ipcRenderer.invoke('system-prompt:update', id, { content }) as PromptSection | null);
+      const updated = await ipcRenderer.invoke('system-prompt:update', id, { content }) as PromptSection | null;
+
+      if (!updated) {
+        // The section was deleted elsewhere: say so instead of looking saved.
+        await load();
+        error.value = 'Could not save: this section no longer exists.';
+
+        return;
+      }
+      replace(updated);
       error.value = '';
     } catch (err) {
       error.value = `Could not save: ${ message(err) }`;
@@ -125,7 +134,15 @@ export function usePromptSections() {
 
   async function setEnabled(section: PromptSection, enabled: boolean) {
     try {
-      replace(await ipcRenderer.invoke('system-prompt:update', section.id, { enabled }) as PromptSection | null);
+      const updated = await ipcRenderer.invoke('system-prompt:update', section.id, { enabled }) as PromptSection | null;
+
+      if (!updated) {
+        await load();
+        error.value = 'Could not change this section: it no longer exists.';
+
+        return;
+      }
+      replace(updated);
     } catch (err) {
       error.value = `Could not change this section: ${ message(err) }`;
     }

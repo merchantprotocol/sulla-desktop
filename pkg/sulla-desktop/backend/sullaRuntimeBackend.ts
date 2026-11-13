@@ -29,6 +29,7 @@ import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import {
   ContainerHealPlanner, DOCKER_MANAGED_CONTAINERS, describeHealAction, type HealAction, type ManagedContainerRow,
+  UserStoppedContainers,
 } from './sullaContainerHealth';
 import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
@@ -166,6 +167,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     mainEvents.on('sulla-managed-services-repair', () => {
       this.repairManagedServices().catch(error => console.warn('[Sulla] Repair failed:', error));
     });
+    // Stop/Start/Restart/Delete from the Docker tab (IPC 'docker/container-intent').
+    mainEvents.on('sulla-container-intent', (intent, names) => {
+      this.#userStopped.record(intent, names);
+    });
   }
 
   readonly executor = this;
@@ -189,6 +194,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
   #staleFilesAdapters = new Set<string>();
   #healPlanner = new ContainerHealPlanner();
+  /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
+  readonly #userStopped = new UserStoppedContainers();
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   /** The native Sulla runtime VM. */
@@ -474,6 +481,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   async start(config_: BackendSettings): Promise<void> {
     const config = this.cfg = clone(config_);
     const managedServicesGeneration = this.beginManagedServicesGeneration();
+
+    // Restarting Docker brings every Sulla service back, including ones stopped by hand.
+    this.#userStopped.clear();
     this.currentAction = Action.STARTING;
     let settleBackendStart!: () => void;
     const backendStartSettled = new Promise<void>((resolve) => { settleBackendStart = resolve });
@@ -2062,6 +2072,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             const { service, container } = entry;
 
             if (this.#activeOptionalSullaServices.has(service)) return true;
+            // Stopped on purpose from the Docker tab: leave it (and what needs it) until they start it.
+            if (this.#userStopped.has(container)) {
+              bootStatus.set(service, 'stopped by you');
+
+              return false;
+            }
             for (const dependency of optionalServiceNeeds[service] ?? []) {
               const dependencyEntry = orderedOptionalServices.find(candidate => candidate.service === dependency);
 
@@ -2218,7 +2234,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // Missing, or stopped for good (exited/dead is not restart-looping, so
       // the unhealthy check below leaves it alone).
       const present = new Set(rows.filter(row => row.state !== 'exited' && row.state !== 'dead').map(row => row.container));
-      const missing = desired.filter(entry => !present.has(entry.container));
+      // A container the person stopped from the Docker tab is not missing; it stays stopped.
+      const missing = this.#userStopped.withoutStopped(desired.filter(entry => !present.has(entry.container)));
 
       const missingKey = missing.map(entry => entry.container).join(', ');
 
@@ -2227,7 +2244,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         lastMissing = missingKey;
       }
       if (missing.length) onMissing(missing);
-      for (const action of this.#healPlanner.plan(rows)) {
+      for (const action of this.#healPlanner.plan(rows.filter(row => !this.#userStopped.has(row.container)))) {
         console.warn(describeHealAction(action));
         await this.runHealAction(action, composeCommand)
           .catch(error => console.warn(`[Sulla] Could not ${ action.kind } ${ action.container }:`, (error as Error).message?.split('\n')[0]));

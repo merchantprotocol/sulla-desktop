@@ -67,7 +67,11 @@ export function useVoiceSettings() {
 
   async function downloadKokoro(): Promise<void> {
     ttsPreviewError.value = null;
-    await ipcRenderer.invoke('voice-kokoro-download').catch(() => false);
+    try {
+      await ipcRenderer.invoke('voice-kokoro-download');
+    } catch (err: any) {
+      ttsPreviewError.value = `The on-device voice didn’t download: ${ err?.message || String(err) }`;
+    }
     await refreshKokoroStatus();
   }
   const ttsVoice = ref('');
@@ -150,28 +154,38 @@ export function useVoiceSettings() {
     speakerMuted.value = state.muted;
   }
 
-  async function onSpeakerMuteToggle() {
-    const result = await ipc.invoke('audio-driver:speaker-mute-toggle');
-    if (result?.ok) {
-      speakerVolume.value = result.volume;
-      speakerMuted.value = result.muted;
+  const speakerError = ref<string | null>(null);
+
+  /** Volume and mute act on the speaker Sulla is capturing; say why when they can't. */
+  async function changeSpeaker(channel: string) {
+    speakerError.value = null;
+    try {
+      const result = await ipc.invoke(channel);
+
+      if (result?.ok) {
+        speakerVolume.value = result.volume;
+        speakerMuted.value = result.muted;
+
+        return;
+      }
+      speakerError.value = result
+        ? `Could not change the volume: ${ result.error || 'the speaker did not answer' }`
+        : 'Volume and mute work while system audio capture is running. Start a Secretary Mode session first.';
+    } catch (err: any) {
+      speakerError.value = `Could not change the volume: ${ err?.message || String(err) }`;
     }
   }
 
-  async function onSpeakerVolumeUp() {
-    const result = await ipc.invoke('audio-driver:speaker-volume-up');
-    if (result?.ok) {
-      speakerVolume.value = result.volume;
-      speakerMuted.value = result.muted;
-    }
+  function onSpeakerMuteToggle() {
+    return changeSpeaker('audio-driver:speaker-mute-toggle');
   }
 
-  async function onSpeakerVolumeDown() {
-    const result = await ipc.invoke('audio-driver:speaker-volume-down');
-    if (result?.ok) {
-      speakerVolume.value = result.volume;
-      speakerMuted.value = result.muted;
-    }
+  function onSpeakerVolumeUp() {
+    return changeSpeaker('audio-driver:speaker-volume-up');
+  }
+
+  function onSpeakerVolumeDown() {
+    return changeSpeaker('audio-driver:speaker-volume-down');
   }
 
   async function fetchSpeakerDevices() {
@@ -205,8 +219,18 @@ export function useVoiceSettings() {
 
   async function onSpeakerDeviceChange() {
     const selected = speakerOutputDevices.value.find(d => d.value === speakerDeviceId.value);
-    if (selected) {
-      await ipc.invoke('audio-driver:set-system-output', selected.label);
+    if (!selected) {
+      return;
+    }
+    speakerError.value = null;
+    try {
+      const result = await ipc.invoke('audio-driver:set-system-output', selected.label);
+
+      if (result?.ok === false) {
+        speakerError.value = `Could not switch the speaker: ${ result.error || 'macOS refused the change' }`;
+      }
+    } catch (err: any) {
+      speakerError.value = `Could not switch the speaker: ${ err?.message || String(err) }`;
     }
   }
 
@@ -240,6 +264,7 @@ export function useVoiceSettings() {
       micPermission.value = result?.microphone || 'unknown';
     } catch (e: any) {
       console.error('[AudioSettings] checkMicPermission error:', e);
+      micError.value = `Could not check microphone access: ${ e?.message || String(e) }`;
     } finally {
       micPermissionChecking.value = false;
     }
@@ -261,6 +286,7 @@ export function useVoiceSettings() {
       }
     } catch (e: any) {
       console.error('[AudioSettings] requestMicPermission error:', e);
+      micError.value = `Could not ask for microphone access: ${ e?.message || String(e) }`;
     } finally {
       micPermissionChecking.value = false;
     }
@@ -470,11 +496,21 @@ export function useVoiceSettings() {
       micRunning.value = false;
     } else {
       // Request both PCM formats so raw + gated are both available
-      const result = await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
+      let result: any;
+      try {
+        result = await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
+      } catch (err: any) {
+        micError.value = `Could not start the microphone: ${ err?.message || String(err) }`;
+        return;
+      }
       if (result?.ok === false && result?.error === 'microphone-permission-denied') {
         micPermission.value = 'denied';
         micError.value = 'Microphone permission denied. ' +
           'Open System Settings > Privacy & Security > Microphone to grant access.';
+        return;
+      }
+      if (result?.ok === false) {
+        micError.value = `Could not start the microphone: ${ result.error || 'unknown error' }`;
         return;
       }
       micRunning.value = true;
@@ -483,12 +519,11 @@ export function useVoiceSettings() {
 
   // ─── Mic test recording ─────────────────────────────────────────
 
+  // Only the modes the mic controller really records. The compressed and
+  // streaming variants were never built (they silently recorded raw audio).
   const MIC_TEST_MODES = {
-    raw:                'Studio Quality — Raw (ASMR)',
-    'noise-reduction':  'Studio Quality — Voice (Noise Reduction)',
-    'voice-compressed': 'Studio Quality — Voice + Compression',
-    streaming:          'Compressed — Streaming',
-    'streaming-voice':  'Compressed — Voice (Streaming)',
+    raw:               'Studio Quality — Raw (ASMR)',
+    'noise-reduction': 'Studio Quality — Voice (Noise Reduction)',
   } as const;
 
   type MicTestModeKey = keyof typeof MIC_TEST_MODES;
@@ -503,17 +538,7 @@ export function useVoiceSettings() {
 
   /** Map UI mode to the controller recording mode */
   function getRecordingMode(mode: MicTestModeKey): string {
-    switch (mode) {
-    case 'noise-reduction':
-    // Same PCM path; compression is applied later.
-    case 'voice-compressed':
-    // TODO: WebM/Opus + noise reduction
-    case 'streaming-voice':
-      return 'noise-reduction';
-    // TODO: WebM/Opus path for 'streaming'
-    default:
-      return 'raw';
-    }
+    return mode === 'noise-reduction' ? 'noise-reduction' : 'raw';
   }
 
   async function startMicTestRecording() {
@@ -526,7 +551,18 @@ export function useVoiceSettings() {
     const mode = getRecordingMode(micTestMode.value);
     micTestModeLabel.value = MIC_TEST_MODES[micTestMode.value];
     console.log('[AudioSettings] Starting test recording', { uiMode: micTestMode.value, recordMode: mode });
-    await ipc.invoke('audio-driver:test-record-start', mode);
+    micError.value = null;
+    try {
+      const started = await ipc.invoke('audio-driver:test-record-start', mode);
+
+      if (started?.ok === false) {
+        micError.value = `Could not start the test recording: ${ started.error || 'unknown error' }`;
+        return;
+      }
+    } catch (err: any) {
+      micError.value = `Could not start the test recording: ${ err?.message || String(err) }`;
+      return;
+    }
     micTestRecording.value = true;
     micTestSeconds = 0;
     micTestDuration.value = '0:00';
@@ -546,7 +582,13 @@ export function useVoiceSettings() {
     micTestRecording.value = false;
 
     console.log('[AudioSettings] Stopping test recording');
-    const result = await ipc.invoke('audio-driver:test-record-stop');
+    let result: any;
+    try {
+      result = await ipc.invoke('audio-driver:test-record-stop');
+    } catch (err: any) {
+      micError.value = `Could not finish the test recording: ${ err?.message || String(err) }`;
+      return;
+    }
     console.log('[AudioSettings] test-record-stop result', {
       hasRaw:     !!result?.raw,
       hasReduced: !!result?.noiseReduced,
@@ -557,6 +599,8 @@ export function useVoiceSettings() {
     if (audioData) {
       const blob = new Blob([audioData], { type: 'audio/wav' });
       micTestAudioUrl.value = URL.createObjectURL(blob);
+    } else {
+      micError.value = 'The test recording captured no audio. Turn on “Listen now” first and speak while recording.';
     }
   }
 
@@ -642,9 +686,14 @@ export function useVoiceSettings() {
     return m ? `${ m.size } · ${ m.speed } · ${ m.lang }` : '';
   }
 
+  /** Shown under the Whisper card: download, delete, detect and test failures. */
+  const whisperError = ref<string | null>(null);
+
   function setActiveWhisperModel(model: string) {
     activeWhisperModel.value = model;
-    ipc.invoke('sulla-settings-set', 'audioWhisperModel', model);
+    Promise.resolve(ipc.invoke('sulla-settings-set', 'audioWhisperModel', model)).catch((err: any) => {
+      whisperError.value = `Could not save the model choice: ${ err?.message || String(err) }`;
+    });
   }
 
   // ── Transcribe pipeline stats (polled while transcribing) ──
@@ -713,6 +762,7 @@ export function useVoiceSettings() {
       }
     } catch (e: any) {
       console.warn('[AudioSettings] whisper detect failed:', e);
+      whisperError.value = `Could not check Whisper: ${ e?.message || String(e) }`;
     } finally {
       whisperDetecting.value = false;
     }
@@ -720,6 +770,7 @@ export function useVoiceSettings() {
 
   async function downloadWhisperModel() {
     whisperDownloading.value = true;
+    whisperError.value = null;
     clearWhisperLog();
     whisperProgressPhase.value = `Downloading ${ whisperModelToDownload.value }`;
     whisperProgressPct.value = 0;
@@ -731,9 +782,11 @@ export function useVoiceSettings() {
         await detectWhisper();
       } else {
         addWhisperLog('Download failed.');
+        whisperError.value = `The ${ whisperModelToDownload.value } model didn’t download. Check your connection and try again.`;
       }
     } catch (e: any) {
       addWhisperLog(`Error: ${ e.message }`);
+      whisperError.value = `The model didn’t download: ${ e?.message || String(e) }`;
     } finally {
       whisperDownloading.value = false;
     }
@@ -742,6 +795,7 @@ export function useVoiceSettings() {
   async function deleteWhisperModel(model: string) {
     if (!confirm(`Delete model "${ model }"? You can re-download it later.`)) return;
     addWhisperLog(`Deleting model: ${ model }...`);
+    whisperError.value = null;
     try {
       const fs = require('fs') as typeof import('fs');
       const path = require('path') as typeof import('path');
@@ -756,6 +810,7 @@ export function useVoiceSettings() {
       await detectWhisper();
     } catch (e: any) {
       addWhisperLog(`Failed to delete: ${ e.message }`);
+      whisperError.value = `Could not delete ${ model }: ${ e?.message || String(e) }`;
     }
   }
 
@@ -786,22 +841,42 @@ export function useVoiceSettings() {
     } else {
       // Clear previous results
       whisperTestEntries.value = [];
+      whisperError.value = null;
       // Start mic first, then whisper
       console.log('[AudioSettings] Starting mic (whisper-test)...');
-      const micResult = await ipc.invoke('audio-driver:start-mic', 'whisper-test', ['pcm-s16le']);
+      let micResult: any;
+      try {
+        micResult = await ipc.invoke('audio-driver:start-mic', 'whisper-test', ['pcm-s16le']);
+      } catch (err: any) {
+        whisperError.value = `Could not start the microphone: ${ err?.message || String(err) }`;
+        return;
+      }
       console.log('[AudioSettings] start-mic result:', micResult);
+      if (micResult?.ok === false) {
+        whisperError.value = `Could not start the microphone: ${ micResult.error || 'unknown error' }`;
+        return;
+      }
       micRunning.value = true;
       console.log('[AudioSettings] Starting whisper transcription...', { mode: whisperTranscribeMode.value });
-      const result = await ipc.invoke('audio-driver:transcribe-start', {
-        mode:  whisperTranscribeMode.value,
-        model: activeWhisperModel.value || undefined,
-      });
+      let result: any;
+      try {
+        result = await ipc.invoke('audio-driver:transcribe-start', {
+          mode:  whisperTranscribeMode.value,
+          model: activeWhisperModel.value || undefined,
+        });
+      } catch (err: any) {
+        result = { ok: false, error: err?.message || String(err) };
+      }
       console.log('[AudioSettings] transcribe-start result:', result);
       whisperTranscribing.value = !!result?.ok;
       if (result?.ok) {
         startTranscribeStatsPoll();
       } else {
         console.error('[AudioSettings] Whisper transcription failed to start');
+        whisperError.value = `Whisper didn’t start: ${ result?.error || 'unknown error' }`;
+        // Don't leave the mic on for a test that never started.
+        await Promise.resolve(ipc.invoke('audio-driver:stop-mic', 'whisper-test')).catch(() => undefined);
+        micRunning.value = false;
       }
     }
   }
@@ -892,6 +967,8 @@ export function useVoiceSettings() {
 
   // ─── Settings persistence ───────────────────────────────────────
 
+  const settingsError = ref<string | null>(null);
+
   async function loadSettings(): Promise<void> {
     try {
       ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'kokoro');
@@ -902,12 +979,14 @@ export function useVoiceSettings() {
       sttProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttProvider', 'whisper');
       audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
       activeWhisperModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioWhisperModel', '');
-    } catch (err) {
+    } catch (err: any) {
       console.error('[AudioSettings] Failed to load settings:', err);
+      settingsError.value = `Could not load your voice settings: ${ err?.message || String(err) }`;
     }
   }
 
   async function saveSettings(): Promise<void> {
+    settingsError.value = null;
     try {
       await ipcRenderer.invoke('sulla-settings-set', 'audioTtsProvider', ttsProvider.value);
       await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoice', ttsVoice.value);
@@ -916,8 +995,9 @@ export function useVoiceSettings() {
       await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
       await ipcRenderer.invoke('sulla-settings-set', 'audioSttProvider', sttProvider.value);
       await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[AudioSettings] Failed to save settings:', err);
+      settingsError.value = `Could not save your voice settings: ${ err?.message || String(err) }`;
     }
   }
 
@@ -1197,9 +1277,17 @@ export function useVoiceSettings() {
           };
 
           audio.onended = done;
-          audio.onerror = done;
-          audio.play().catch(() => resolve());
+          audio.onerror = () => {
+            ttsPreviewError.value = 'The voice sample could not be played.';
+            done();
+          };
+          audio.play().catch((err: any) => {
+            ttsPreviewError.value = `The voice sample could not be played: ${ err?.message || String(err) }`;
+            done();
+          });
         });
+      } else {
+        ttsPreviewError.value = 'The voice engine returned no audio.';
       }
     } catch (err) {
       console.warn('[AudioSettings] Voice preview failed:', err);
@@ -1277,6 +1365,9 @@ export function useVoiceSettings() {
   });
 
   return {
+    speakerError,
+    whisperError,
+    settingsError,
     ttsProviders,
     ttsProvider,
     kokoroStatus,

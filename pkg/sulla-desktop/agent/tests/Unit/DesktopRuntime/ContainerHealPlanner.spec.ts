@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ContainerHealPlanner, HEALTHY_RESET_MS, MAX_AUTO_RECREATES, STATEFUL_GRACE_MS, STATELESS_GRACE_MS,
-  type ManagedContainerRow,
+  type ManagedContainerRow, UserStoppedContainers,
 } from '@pkg/backend/sullaContainerHealth';
 
 const MIN = 60_000;
@@ -109,5 +109,37 @@ describe('ContainerHealPlanner', () => {
 
     expect(planner.plan([...healthyDeps, relay])[0]).toMatchObject({ managedBy: 'docker', kind: 'restart', attempt: 1 });
     expect(planner.plan([...healthyDeps, relay])[0]).toMatchObject({ managedBy: 'docker', kind: 'recreate', attempt: 2 });
+  });
+});
+
+describe('UserStoppedContainers', () => {
+  const desired = [
+    { service: 'sulla_vault', container: 'sulla_vault' },
+    { service: 'sulla_files_fuse', container: 'sulla_files_fuse' },
+  ];
+
+  // risk: irreversible side effect — a Stop from the Docker tab must not be undone by the reconcile
+  it('keeps a container stopped from the Docker tab out of the missing list until it is started again', () => {
+    const stopped = new UserStoppedContainers();
+
+    stopped.record('stop', ['/sulla_vault']);
+    expect(stopped.withoutStopped(desired).map(entry => entry.container)).toEqual(['sulla_files_fuse']);
+
+    stopped.record('start', ['sulla_vault']);
+    expect(stopped.withoutStopped(desired).map(entry => entry.container)).toEqual(['sulla_vault', 'sulla_files_fuse']);
+  });
+
+  // risk: availability — restart, delete or a Docker restart hands the container back to supervision
+  it('forgets the stop on restart, remove and clear', () => {
+    const stopped = new UserStoppedContainers();
+
+    for (const intent of ['restart', 'remove'] as const) {
+      stopped.record('stop', ['sulla_vault']);
+      stopped.record(intent, ['sulla_vault']);
+      expect(stopped.has('sulla_vault')).toBe(false);
+    }
+    stopped.record('stop', ['sulla_vault', 'sulla_files_fuse', '']);
+    stopped.clear();
+    expect(stopped.withoutStopped(desired)).toHaveLength(2);
   });
 });

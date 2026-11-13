@@ -64,6 +64,11 @@ export class AnthropicService extends BaseLanguageModel {
     this.retryCount = Math.max(0, Math.min(10, count));
   }
 
+  /** Seconds to wait for a request before giving up on it. */
+  public setDefaultTimeoutSeconds(seconds: number): void {
+    this.defaultTimeoutMs = Math.max(1, seconds) * 1000;
+  }
+
   protected async healthCheck(): Promise<boolean> {
     return !!this.apiKey && !!this.baseUrl;
   }

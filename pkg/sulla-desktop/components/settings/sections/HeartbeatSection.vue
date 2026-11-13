@@ -25,14 +25,18 @@ const emit = defineEmits<{ (e: 'go', section: 'models'): void }>();
 const heartbeat = computed(() => prompts.find('heartbeat'));
 const goal = computed(() => prompts.find('heartbeat_goal'));
 
-function saveDelay(event: Event) {
-  const minutes = Math.round(Number((event.target as HTMLInputElement).value));
+async function saveDelay(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const minutes = Math.round(Number(input.value));
 
   if (Number.isFinite(minutes) && minutes >= 1 && minutes <= 1440) {
-    void delay.save(minutes);
-  } else {
-    void delay.reload();
+    await delay.save(minutes);
+
+    return;
   }
+  await delay.reload();
+  input.value = String(delay.value.value);
+  delay.error.value = 'Enter a number of minutes between 1 and 1,440.';
 }
 </script>
 
@@ -83,10 +87,10 @@ function saveDelay(event: Event) {
         </button>
       </PrefRow>
       <p
-        v-if="enabled.error.value || delay.error.value"
+        v-if="enabled.error.value || delay.error.value || prompts.error.value"
         class="note badc"
       >
-        {{ enabled.error.value || delay.error.value }}
+        {{ enabled.error.value || delay.error.value || prompts.error.value }}
       </p>
     </PrefCard>
 

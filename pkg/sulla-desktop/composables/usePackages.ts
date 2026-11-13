@@ -24,6 +24,8 @@ import { computed, ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import { PackageUpdater } from './PackageUpdater';
+
 export type PackageApp = 'none' | 'dashboard' | 'app';
 
 export interface PackageRow {
@@ -243,6 +245,7 @@ export function usePackages() {
   const detailError = ref<string | null>(null);
 
   const installed = ref<InstalledPackage[]>([]);
+  const installedError = ref<string | null>(null);
   const busySlug = ref<string | null>(null); // package currently installing / uninstalling
 
   const installedSlugs = computed(() => new Set(installed.value.map(p => p.slug)));
@@ -278,8 +281,10 @@ export function usePackages() {
   async function loadInstalled(): Promise<void> {
     try {
       installed.value = await packagesIpc.listInstalled();
-    } catch {
-      // Installed badges are a nicety — never block browsing on them.
+      installedError.value = null;
+    } catch (err) {
+      // Never block browsing on this, but My Library must not claim to be empty when it failed to load.
+      installedError.value = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -344,6 +349,23 @@ export function usePackages() {
     }
   }
 
+  /** Update an installed package to the listed version (see PackageUpdater). */
+  async function update(current: InstalledPackage, row: PackageRow): Promise<{ ok: boolean; error?: string }> {
+    busySlug.value = row.slug;
+    try {
+      const result = await new PackageUpdater(packagesIpc).update(current, row);
+      await loadInstalled();
+
+      return result;
+    } catch (err) {
+      await loadInstalled();
+
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      busySlug.value = null;
+    }
+  }
+
   async function uninstall(slug: string, removeData = false): Promise<PackageUninstallResult> {
     busySlug.value = slug;
     try {
@@ -366,6 +388,7 @@ export function usePackages() {
     detailLoading,
     detailError,
     installed,
+    installedError,
     installedSlugs,
     busySlug,
     load,
@@ -374,6 +397,7 @@ export function usePackages() {
     clearDetail,
     install,
     setActive,
+    update,
     uninstall,
   };
 }
