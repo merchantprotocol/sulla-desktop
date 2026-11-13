@@ -798,7 +798,7 @@
           <video v-else-if="quickLookUrl && quickLookEntry.mime.startsWith('video/')" :src="quickLookUrl" controls autoplay />
           <audio v-else-if="quickLookUrl && quickLookEntry.mime.startsWith('audio/')" :src="quickLookUrl" controls autoplay />
           <iframe v-else-if="quickLookUrl && quickLookEntry.mime === 'application/pdf'" :src="quickLookUrl" :title="quickLookEntry.name" sandbox="" />
-          <div v-else class="quick-look-fallback"><span class="fi" :class="quickLookEntry.kindClass" v-html="quickLookEntry.icon" /><p>Preview isn’t available for this item.</p></div>
+          <div v-else class="quick-look-fallback"><span class="fi" :class="quickLookEntry.kindClass" v-html="quickLookEntry.icon" /><p v-if="quickLookError" role="alert">Preview could not load: {{ quickLookError }}</p><p v-else>Preview isn’t available for this item.</p></div>
           <footer><b>{{ quickLookEntry.name }}</b><span>{{ formatBytes(quickLookEntry.size) }} · {{ formatDate(quickLookEntry.updatedAt, true) }}</span></footer>
           <button v-if="supportsDocumentEditor(quickLookEntry.path)" class="btn sm quick-look-open" type="button" @click="openQuickLookSelection">Open</button>
         </div>
@@ -1005,7 +1005,7 @@ let stopPointerGesture:(() => void) | undefined;
 let suppressGestureClick = false;
 let gestureClickTimer:ReturnType<typeof setTimeout> | undefined;
 let refreshGeneration = 0;
-const quickLookEntry = ref<DisplayEntry | null>(null); const quickLookUrl = ref(''); const quickLookLoading = ref(false); let quickLookGeneration = 0;
+const quickLookEntry = ref<DisplayEntry | null>(null); const quickLookUrl = ref(''); const quickLookError = ref(''); const quickLookLoading = ref(false); let quickLookGeneration = 0;
 const quickLookDialog = ref<HTMLElement | null>(null); let quickLookTrigger:HTMLElement | null = null;
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
@@ -1736,9 +1736,9 @@ function startMarquee(event:PointerEvent) {
 async function openQuickLook(entry = selectedEntries.value.find(item => !item.folder)) {
   if (!entry || entry.folder) return;
   if (!quickLookEntry.value) quickLookTrigger = document.activeElement as HTMLElement | null;
-  quickLookEntry.value = entry; quickLookUrl.value = ''; quickLookLoading.value = true; const generation = ++quickLookGeneration;
+  quickLookEntry.value = entry; quickLookUrl.value = ''; quickLookError.value = ''; quickLookLoading.value = true; const generation = ++quickLookGeneration;
   await nextTick(); if (generation !== quickLookGeneration) return; quickLookDialog.value?.querySelector<HTMLButtonElement>('button')?.focus();
-  try { const url = await props.dataSource.mediaUrl(entry.id, entry.currentVersionId); if (generation === quickLookGeneration) quickLookUrl.value = url } catch { if (generation === quickLookGeneration) quickLookUrl.value = '' } finally { if (generation === quickLookGeneration) quickLookLoading.value = false }
+  try { const url = await props.dataSource.mediaUrl(entry.id, entry.currentVersionId); if (generation === quickLookGeneration) quickLookUrl.value = url } catch (cause) { if (generation === quickLookGeneration) { quickLookUrl.value = ''; quickLookError.value = cause instanceof Error ? cause.message : String(cause) } } finally { if (generation === quickLookGeneration) quickLookLoading.value = false }
 }
 function closeQuickLook() { const wasOpen = Boolean(quickLookEntry.value); quickLookGeneration++; quickLookEntry.value = null; quickLookUrl.value = ''; quickLookLoading.value = false; if (wasOpen) quickLookTrigger?.focus(); quickLookTrigger = null }
 function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quickLookIndex.value + delta]; if (entry) openQuickLook(entry) }
