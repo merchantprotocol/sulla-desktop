@@ -37,6 +37,7 @@ import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/cap
 import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
+import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 import { WorkflowConcurrencyLimitError } from './WorkflowConcurrencyLimitError.js';
 
 import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
@@ -1141,6 +1142,8 @@ async function establishLegacyOwnership(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
+  await new StartupDatabaseWait({ name: 'workflow-manager' }).until('connect', () => pool.query('SELECT 1'));
   await migrate();
   await establishLegacyOwnership();
   const reconciled = await reconcileAbandonedRuns();

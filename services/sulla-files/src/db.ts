@@ -8,15 +8,18 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
+
+import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 const MIGRATION_APPLICATION = 'sulla-files-migrate';
 const MIGRATION_LOCK = 8_795_043;
 const MIGRATION_RETRIES = 3;
 const sleep = (ms:number) => new Promise(resolve => setTimeout(resolve, ms));
-export async function connect(url:string, max = 10) {
+export async function connect(url:string, max = 10, startup = new StartupDatabaseWait({ name: 'SullaFiles' })) {
   const db = new pg.Pool({ connectionString: url, max });
   // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
   db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
-  await db.query('SELECT 1'); return db
+  // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
+  await startup.until('connect', () => db.query('SELECT 1')); return db
 }
 export async function connectOptional(url?:string) { if (!url) return undefined; return connect(url) }
 function retryableMigrationError(error:unknown):boolean {
