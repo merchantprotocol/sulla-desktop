@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // The device identity is injected in exactly one place (DesktopVaultEnrollmentModule's constructor), so
-// M4's desktopDeviceIdentity() can replace the interim stores without touching enrollment. Synthetic data.
+// a test (or a future identity) can be passed in without touching enrollment. Synthetic data.
 
 import { DeviceId } from '@sulla/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

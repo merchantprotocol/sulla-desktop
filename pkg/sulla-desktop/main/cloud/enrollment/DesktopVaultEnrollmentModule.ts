@@ -3,29 +3,35 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import path from 'node:path';
-
-import { DeviceIdentityService, NobleCryptoPrimitives, WebCryptoRandomSource } from '@sulla/domain';
+import { NobleCryptoPrimitives, WebCryptoRandomSource } from '@sulla/domain';
 import { SystemClock } from '@sulla/foundation';
 
-import paths from '@pkg/utils/paths';
 import { getConfiguredApprovalClient } from '@pkg/vault-broker';
-import { getDesktopDeviceId } from '../../deviceIdentity';
 import { getCurrentUserId } from '../../sullaCloudAuth';
 import { cloudRequest } from '../cloudFetch';
-import { getDevicePublicKey } from '../deviceKey';
+import { desktopDeviceIdentity } from '../device/DesktopDeviceIdentity';
 import { CloudVaultSyncHttpTransport } from '../vaultSyncV3/transport';
 import { VaultEnrollmentBrokerSource } from './BrokerEnrollmentKeyAgreement';
 import { CloudEnrollmentTransport, type EnrollmentUserSource } from './CloudEnrollmentTransport';
 import { DesktopEnrollmentCoordinator, type VaultUnlockNotifier } from './DesktopEnrollmentCoordinator';
 import { ElectronEnrollmentApprovalGate } from './ElectronEnrollmentApprovalGate';
-import { InterimDeviceIdStore, InterimDeviceKeyStore } from './InterimDeviceIdentityStores';
 import { EnrollmentRequestOpener } from './OpenEnrollmentRequest';
 import { VaultEnrollmentApprover } from './VaultEnrollmentApprover';
 import { VaultSyncRequestSigner, type VaultSyncDeviceIdentity } from './VaultSyncRequestSigner';
 
 class SignedInCloudUser implements EnrollmentUserSource {
   userId(): Promise<string> { return getCurrentUserId() }
+}
+
+/**
+ * The process-wide device identity, looked up per call rather than captured when this module loads, so the
+ * enrollment singleton follows `DesktopDeviceIdentity.useInstance()` and never touches ~/.sulla at import.
+ */
+class ProcessDeviceIdentity implements VaultSyncDeviceIdentity {
+  deviceId(): ReturnType<VaultSyncDeviceIdentity['deviceId']> { return desktopDeviceIdentity().deviceId() }
+  signerFor(purpose: Parameters<VaultSyncDeviceIdentity['signerFor']>[0]): ReturnType<VaultSyncDeviceIdentity['signerFor']> {
+    return desktopDeviceIdentity().signerFor(purpose);
+  }
 }
 
 class SullaVaultUnlockNotifier implements VaultUnlockNotifier {
@@ -41,12 +47,11 @@ export class DesktopVaultEnrollmentModule {
   readonly approver: VaultEnrollmentApprover;
 
   /**
-   * DEVICE IDENTITY SEAM — the only place enrollment gets its device identity. M4 owns device identity:
-   * once its `desktopDeviceIdentity()` (pkg/sulla-desktop/main/cloud/device/DesktopDeviceIdentity.ts, PR #2207)
-   * lands, pass that domain DeviceIdentityService here (or change this default to it) and delete
-   * InterimDeviceIdentityStores.ts. Nothing else in enrollment touches the device id or key.
+   * DEVICE IDENTITY SEAM — the only place enrollment gets its device identity. The default is this install's
+   * one domain DeviceIdentityService, `desktopDeviceIdentity()` (main/cloud/device/DesktopDeviceIdentity.ts),
+   * resolved on each call. Nothing else in enrollment touches the device id or key.
    */
-  constructor(identity: VaultSyncDeviceIdentity = DesktopVaultEnrollmentModule.interimDeviceIdentity()) {
+  constructor(identity: VaultSyncDeviceIdentity = new ProcessDeviceIdentity()) {
     const crypto = new NobleCryptoPrimitives();
     const random = WebCryptoRandomSource.fromGlobal();
     const clock = new SystemClock();
@@ -67,15 +72,6 @@ export class DesktopVaultEnrollmentModule {
       polling: DesktopEnrollmentCoordinator.POLLING,
     });
     this.approver = new VaultEnrollmentApprover(transport, new ElectronEnrollmentApprovalGate(), broker);
-  }
-
-  /** INTERIM default until M4's desktopDeviceIdentity() replaces it: today's ~/.sulla device-id and device-key.json. */
-  static interimDeviceIdentity(): DeviceIdentityService {
-    return new DeviceIdentityService(
-      new InterimDeviceIdStore(() => getDesktopDeviceId(), () => path.join(paths.sullaConfig, 'device-id')),
-      new InterimDeviceKeyStore(() => getDevicePublicKey(), () => path.join(paths.sullaConfig, 'device-key.json')),
-      new NobleCryptoPrimitives(), WebCryptoRandomSource.fromGlobal(), new SystemClock(),
-    );
   }
 }
 
