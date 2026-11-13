@@ -41,6 +41,7 @@ import { CloudRuntimeProjectionSync, syncRuntimeProjections } from './runtimePro
 import { dispatchCloudAgentCommand } from '@pkg/agent/tools/agents/cloudProjection';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { openUrlInApp } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -304,6 +305,10 @@ export function initCloudConnectionEvents(): void {
   const ipc = getIpcMainProxy(console);
 
   ipc.handle('sulla-cloud-connection:get-status', async() => getCloudConnectionStatus());
+
+  // Registered with the other Cloud handlers (always present), unlike the extension manager's
+  // open-external listener, which only exists once the backend has started.
+  ipc.handle('sulla-cloud-connection:open-devices-page', async() => { openUrlInApp('https://sulladesktop.com/cloud/devices.html') });
 
   // Re-link this computer after Cloud refused its key (device_key_mismatch). Human-driven from the Devices card.
   ipc.handle('sulla-cloud-connection:relink-device', async() => {

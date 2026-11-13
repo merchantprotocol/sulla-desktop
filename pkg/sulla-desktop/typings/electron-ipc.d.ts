@@ -454,6 +454,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-vault:decide-held':            (recordId: string, decision: 'approve' | 'reject') => boolean;
   'sulla-cloud-memory:list-pending':          () => Array<{ id: string; generation: number | string; record: Record<string, unknown>; source_device_id: string }>;
   'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
+  'sulla-cloud-connection:open-devices-page': () => void;
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
   'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
 
