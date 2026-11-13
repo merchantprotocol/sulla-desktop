@@ -33,6 +33,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import RecipeLogs from '@pkg/components/recipes/RecipeLogs.vue';
 import RecipeShell from '@pkg/components/recipes/RecipeShell.vue';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import StudioTopbar from './StudioTopbar.vue';
 interface Recipe { slug: string; name: string; description: string; version: string; image?: string; extension?: string; updatedAt: string }
@@ -56,6 +57,7 @@ async function restart(slug: string) { await stop(slug); if (!actionError.value)
 // Recipe dashboards open in the Sulla browser, like the Use Cases dashboard link.
 function openPort(port: string | number) { const n = extractPort(port); if (n) window.open(`http://localhost:${n}`, '_blank', 'noopener'); }
 function openDashboard(status?: RecipeStatus) { const port = primaryPort(status); if (port) openPort(port); }
+useDatabaseAvailableReload(load, 'StudioRecipesPage');
 onMounted(async() => { await load(); timer = setInterval(() => void refreshAll(), 10000); }); onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 

@@ -32,6 +32,8 @@ import type {
 } from '@pkg/types/routines';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import { useDatabaseAvailableReload } from './useDatabaseAvailableReload';
+
 /**
  * Minimal row shape returned by the `workflow-db-list` IPC handler.
  * Mirrors WorkflowListRow in the model so the mapper is the only place
@@ -199,6 +201,9 @@ export function useRoutines() {
   async function refresh(): Promise<void> {
     return load();
   }
+
+  // workflow-db-list returns [] while the database is starting; refill when it is up.
+  useDatabaseAvailableReload(load, 'useRoutines');
 
   /**
    * Permanently delete a routine. Always reloads the list from the DB
