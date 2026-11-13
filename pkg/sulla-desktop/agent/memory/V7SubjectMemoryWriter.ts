@@ -428,3 +428,167 @@ export async function appendV7ElephantOutput(response: string): Promise<Elephant
     };
   }
 }
+
+// ============================================================================
+// DREAMER WRITE PATH
+// ============================================================================
+
+const MAX_CONCLUSIONS = 10;
+const MAX_OVERVIEWS = 10;
+const MAX_SUPERSEDES = 5;
+const MAX_CONCLUSION_EVIDENCE = 20;
+
+interface DreamConclusion {
+  id:         string;
+  ts:         number;
+  text:       string;
+  why:        string | null;
+  scope:      string[];
+  supersedes: string[];
+  evidence:   string[];
+}
+
+interface DreamOverview {
+  subject: string;
+  text:    string;
+  status:  string | null;
+}
+
+export interface DreamAppendResult {
+  accepted:    boolean;
+  conclusions: number;
+  overviews:   number;
+  evidence:    number;
+  superseded:  number;
+  reason?:     string;
+}
+
+async function validateDream(raw: unknown, windowEpisodeIds: ReadonlySet<string>): Promise<{ conclusions: DreamConclusion[]; overviews: DreamOverview[] }> {
+  const root = asRecord(raw, 'root');
+  exactKeys(root, ['conclusions', 'overviews'], 'root');
+  if (!Array.isArray(root.conclusions) || root.conclusions.length > MAX_CONCLUSIONS)
+    throw new Error('conclusions exceeds limit');
+  if (!Array.isArray(root.overviews) || root.overviews.length > MAX_OVERVIEWS)
+    throw new Error('overviews exceeds limit');
+
+  const subjectRows = await postgresClient.query<{ slug: string }>('SELECT slug FROM subject_memory.subjects');
+  const validSubjects = new Set(subjectRows.map(row => row.slug));
+  // The dreamer may only retire its own kind of memory: model-inferred
+  // conclusions. User rules and seeded truths are never superseded here.
+  const supersedable = new Set((await postgresClient.query<{ id: string }>(
+    `SELECT id FROM subject_memory.current_items() WHERE kind = 'conclusion' AND origin = 'model_inferred'`,
+  )).map(row => row.id));
+
+  const conclusions = root.conclusions.map((value, index): DreamConclusion => {
+    const row = asRecord(value, `conclusions[${ index }]`);
+    exactKeys(row, ['id', 'ts', 'text', 'why', 'scope', 'supersedes', 'evidence'], `conclusions[${ index }]`);
+    const ts = Number(row.ts);
+    const id = boundedString(row.id, 'conclusion id', 80) as string;
+    if (!Number.isSafeInteger(ts) || ts < 1_000_000_000_000) throw new Error('conclusion ts must be epoch milliseconds');
+    validateId(id, ts, 'dreamer');
+    const scope = stringArray(row.scope, 'conclusion scope');
+    if (!scope.length || scope.some(key => !validSubjects.has(key))) throw new Error('conclusion scope contains an unknown subject slug');
+    const supersedes = stringArray(row.supersedes, 'conclusion supersedes', MAX_SUPERSEDES);
+    if (supersedes.some(target => !supersedable.has(target)))
+      throw new Error('supersedes must identify current model-inferred conclusions');
+    const evidence = stringArray(row.evidence, 'conclusion evidence', MAX_CONCLUSION_EVIDENCE);
+    if (!evidence.length) throw new Error('every conclusion requires evidence');
+    if (evidence.some(episodeId => !windowEpisodeIds.has(episodeId)))
+      throw new Error('conclusion evidence must cite episodes from the dream batch');
+    return {
+      id,
+      ts,
+      text:  boundedString(row.text, 'conclusion text', 2_000) as string,
+      why:   row.why === null ? null : boundedString(row.why, 'conclusion why', 1_000) as string,
+      scope,
+      supersedes,
+      evidence,
+    };
+  });
+
+  const ids = conclusions.map(row => row.id);
+  if (new Set(ids).size !== ids.length) throw new Error('ids must be unique within an append');
+  if (ids.length) {
+    const existing = await postgresClient.query<{ id: string }>('SELECT id FROM subject_memory.items WHERE id = ANY($1::text[])', [ids]);
+    if (existing.length) throw new Error('append ids must not already exist');
+  }
+  const retired = conclusions.flatMap(row => row.supersedes);
+  if (new Set(retired).size !== retired.length) throw new Error('a conclusion can be superseded only once per append');
+
+  const overviewSubjects = new Set<string>();
+  const overviews = root.overviews.map((value, index): DreamOverview => {
+    const row = asRecord(value, `overviews[${ index }]`);
+    exactKeys(row, ['subject', 'text', 'status'], `overviews[${ index }]`);
+    const subject = boundedString(row.subject, 'overview subject', 128) as string;
+    if (!validSubjects.has(subject)) throw new Error('overview subject is not a known subject slug');
+    if (overviewSubjects.has(subject)) throw new Error('one overview per subject per append');
+    overviewSubjects.add(subject);
+    return {
+      subject,
+      text:   boundedString(row.text, 'overview text', 2_000) as string,
+      status: row.status === null ? null : boundedString(row.status, 'overview status', 64) as string,
+    };
+  });
+
+  return { conclusions, overviews };
+}
+
+/**
+ * Validate the dreamer's data-only response and append it with parameterized
+ * SQL. Nothing is ever deleted: a conclusion retires older conclusions only
+ * through supersedes (the same superseded_by/superseded_ts the items trigger
+ * sets), and overviews are appended as a new version per subject.
+ */
+export async function appendV7DreamOutput(
+  response: string,
+  windowEpisodeIds: ReadonlySet<string>,
+  now: number = Date.now(),
+): Promise<DreamAppendResult> {
+  try {
+    const dream = await validateDream(parseOutput(response), windowEpisodeIds);
+    return await postgresClient.transaction(async(client) => {
+      const inserted = { conclusions: 0, overviews: 0, evidence: 0, superseded: 0 };
+      for (const row of dream.conclusions) {
+        const result = await client.query(`
+          INSERT INTO subject_memory.items
+            (id, kind, ptype, text, why, scope, origin, ts, supersedes, always_on, worker)
+          VALUES ($1, 'conclusion', NULL, $2, $3, $4, 'model_inferred', $5, $6, false, 'v7-dreamer')
+          ON CONFLICT (id) DO NOTHING`,
+        [row.id, row.text, row.why, row.scope, row.ts, row.supersedes[0] ?? null]);
+        inserted.conclusions += result.rowCount ?? 0;
+        if (row.supersedes[0]) inserted.superseded++;
+        // A merge retires more than one conclusion; the column holds one id,
+        // so mark the rest exactly as the mark_superseded trigger would.
+        for (const target of row.supersedes.slice(1)) {
+          const update = await client.query(`
+            UPDATE subject_memory.items SET superseded_by = $1, superseded_ts = $2
+             WHERE id = $3 AND ts <= $2 AND (superseded_ts IS NULL OR superseded_ts > $2)`,
+          [row.id, row.ts, target]);
+          inserted.superseded += update.rowCount ?? 0;
+        }
+        for (const episodeId of row.evidence) {
+          const link = await client.query(`
+            INSERT INTO subject_memory.evidence (item_id, episode_id, role)
+            VALUES ($1, $2, 'origin')
+            ON CONFLICT (item_id, episode_id) DO NOTHING`,
+          [row.id, episodeId]);
+          inserted.evidence += link.rowCount ?? 0;
+        }
+      }
+      for (const row of dream.overviews) {
+        const result = await client.query(`
+          INSERT INTO subject_memory.overviews (subject, ts, text, status, worker)
+          VALUES ($1, $2, $3, $4, 'v7-dreamer')
+          ON CONFLICT (subject, ts) DO NOTHING`,
+        [row.subject, now, row.text, row.status]);
+        inserted.overviews += result.rowCount ?? 0;
+      }
+      return { accepted: true, ...inserted };
+    });
+  } catch (error) {
+    return {
+      accepted: false, conclusions: 0, overviews: 0, evidence: 0, superseded: 0,
+      reason:   error instanceof Error ? error.message : String(error),
+    };
+  }
+}

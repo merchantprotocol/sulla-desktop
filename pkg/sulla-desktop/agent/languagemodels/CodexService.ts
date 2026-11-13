@@ -19,7 +19,7 @@ import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFault
 import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
-import { providerSessionStore } from './providerSessionStore';
+import { isEphemeralSessionKey, providerSessionStore } from './providerSessionStore';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
@@ -106,7 +106,8 @@ export class CodexService extends BaseLanguageModel {
     try {
       const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
       if (stored) {
-        this.sessions.set(convId, stored);
+        // Subconscious runs stay out of the process-lifetime map (see providerSessionStore).
+        if (!isEphemeralSessionKey(convId)) this.sessions.set(convId, stored);
         return stored;
       }
     } catch { /* Redis unavailable — start fresh session */ }
@@ -114,7 +115,7 @@ export class CodexService extends BaseLanguageModel {
   }
 
   private async setSession(convId: string, sessionId: string): Promise<void> {
-    this.sessions.set(convId, sessionId);
+    if (!isEphemeralSessionKey(convId)) this.sessions.set(convId, sessionId);
     try {
       await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId);
     } catch { /* Durable store unavailable — session persists in memory only this run */ }
