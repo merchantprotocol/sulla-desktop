@@ -722,7 +722,7 @@ export class BackendGraphWebSocketService {
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
-    let newRoute: { agent: RoutableAgent } | null = null;
+    let newRoute: RoutableAgent | null = null;
     const threadModelSelection = new ThreadModelOverridePolicy().parse(metadata as Record<string, unknown> | undefined);
 
     // Default is resolved from Preferences on every turn. It is not a snapshot of the legacy
@@ -730,30 +730,16 @@ export class BackendGraphWebSocketService {
     if (!explicitAgentId && threadModelSelection.mode === 'default' && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const routedAgent = await resolveDefaultRouteAgent();
       agentId = routedAgent.graphAgentId;
-      newRoute = { agent: routedAgent };
+      newRoute = routedAgent;
     }
 
-    // The renderer allocates a threadId before its first send, so first-turn
-    // detection must use actual graph/saved history rather than !threadIdFromMsg.
-    // Explicit persona picks always win, and only the human desktop chat may route.
-    // A brand-new chat opens on the New chats default (the user's selected agent,
-    // or Sulla with the chosen model). Any routed choice is stored on the thread
-    // so it stays sticky.
+    // Explicit persona picks always win. A new chat opens on the selected agent or the
+    // New chats default. A thread that already carries a stored route keeps it.
     else if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
       const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
-
-      if (rememberedAgentId) {
-        agentId = rememberedAgentId;
-      } else if (!priorState || priorState.messages.length === 0) {
-        const routedAgent = await resolveDefaultRouteAgent();
-        // A model default keeps Sulla but still has to be stored on the thread.
-        if (routedAgent.graphAgentId !== defaultAgentId || routedAgent.modelChoice) {
-          agentId = routedAgent.graphAgentId;
-          newRoute = { agent: routedAgent };
-        }
-      }
+      if (rememberedAgentId) agentId = rememberedAgentId;
     }
 
     let state: AgentGraphState | undefined;
@@ -776,21 +762,10 @@ export class BackendGraphWebSocketService {
       if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
 
       if (newRoute) {
-        applyThreadAgentRoute(state, newRoute.agent);
+        applyThreadAgentRoute(state, newRoute);
         // Persist before execution so a renderer refresh or process interruption
         // cannot lose the sticky route chosen for this thread.
         await saveThreadState(state);
-        if (newRoute.agent.graphAgentId !== defaultAgentId) {
-          this.wsService.send(channelId, {
-            type: 'agent_routed',
-            data: {
-              threadId,
-              agentId: newRoute.agent.agentId,
-              name:    newRoute.agent.name,
-            },
-            timestamp: Date.now(),
-          });
-        }
       }
 
       // A support tab supplies an opaque session id every turn. Resolve the

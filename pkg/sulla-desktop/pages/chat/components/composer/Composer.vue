@@ -47,25 +47,6 @@
             </div>
           </div>
 
-          <!-- Live intent: what Reflex would run for this draft right now. -->
-          <div
-            v-if="reflexChip"
-            :class="['reflex-intent', reflexChip.kind]"
-            role="status"
-            aria-live="polite"
-          >
-            <button
-              v-if="reflexChip.kind === 'suggest'"
-              type="button"
-              class="reflex-intent-btn"
-              title="Run instantly with Reflex (Tab) — Esc to dismiss"
-              @mousedown.prevent
-              @click="acceptReflexIntent"
-            >
-              <span class="bolt">⚡</span>{{ reflexChip.text }}<kbd>⇥</kbd>
-            </button>
-            <span v-else><span class="bolt">{{ reflexChip.kind === 'done' ? '⚡' : '!' }}</span>{{ reflexChip.text }}</span>
-          </div>
         </div>
 
         <div :class="['composer', { recording: isRecording }]">
@@ -179,7 +160,6 @@
           <template v-else-if="draft.trim()">
             <span><kbd>⏎</kbd> send</span>
             <span><kbd>⇧⏎</kbd> new line</span>
-            <span><kbd>Tab</kbd> run with Reflex</span>
           </template>
           <template v-else>
             <span><kbd>/</kbd> commands</span>
@@ -211,7 +191,6 @@ import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
-import { useReflexIntent } from '../../composables/useReflexIntent';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
@@ -325,28 +304,6 @@ const artifactMentions = useArtifactMentions();
 const mentionSource = { list: (q: string) => artifactMentions.list(q) };
 const taRef = computed(() => inputRef.value?.el ?? null);
 useCommandPopover(taRef, mentionSource);
-
-// ─── Live intent (Reflex) ──────────────────────────────────────────
-// While the human types, Reflex previews the action it would run for the
-// draft. Tab runs it instantly (no model turn); Enter still sends normally;
-// Esc hides the chip until the draft changes.
-const reflexIntentEnabled = computed(() => !isRecording.value && !controller.popover.value.open);
-const reflexIntent = useReflexIntent(draft, reflexIntentEnabled);
-const reflexChip = computed(() => {
-  if (reflexIntent.flash.value) {
-    return { kind: reflexIntent.flash.value.kind, text: reflexIntent.flash.value.kind === 'done' ? `Done — ${ reflexIntent.flash.value.text }` : reflexIntent.flash.value.text };
-  }
-  if (reflexIntent.preview.value && reflexIntentEnabled.value) return { kind: 'suggest' as const, text: reflexIntent.preview.value.label };
-  return null;
-});
-
-async function acceptReflexIntent(): Promise<void> {
-  if (await reflexIntent.accept()) {
-    draft.value = '';
-    controller.hidePopover();
-  }
-  inputRef.value?.focus();
-}
 
 // ─── Slash command actions ─────────────────────────────────────────
 // When the user picks a bare slash command from the popover — or types
@@ -482,14 +439,6 @@ function onKeydown(e: KeyboardEvent): void {
     const caretAtEnd = !el || (el.selectionStart === el.selectionEnd && el.selectionEnd === el.value.length);
     if (useCases.onKeydown(e, caretAtEnd)) return;
   }
-  if (!p.open && reflexIntent.preview.value) {
-    if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault();
-      void acceptReflexIntent();
-      return;
-    }
-    if (e.key === 'Escape') { e.preventDefault(); reflexIntent.dismiss(); return; }
-  }
   if (p.open) {
     if (e.key === 'ArrowDown') { e.preventDefault(); controller.movePopoverSelection(1); }
     if (e.key === 'ArrowUp')   { e.preventDefault(); controller.movePopoverSelection(-1); }
@@ -621,7 +570,6 @@ function stopVoice(commit: boolean): void {
 
 onBeforeUnmount(() => {
   voiceAdapter.dispose();
-  reflexIntent.dispose();
   window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
   ipcRenderer.removeListener('capture-studio:recording-state', onScreenRecordingState);
@@ -731,35 +679,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   color: var(--text-muted); margin-right: 4px;
 }
 
-.reflex-intent {
-  position: absolute; bottom: 100%; left: 42px;
-  margin-bottom: 8px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
-  color: var(--text-muted);
-  animation: reflex-intent-in 0.14s ease-out;
-}
-.reflex-intent-btn, .reflex-intent > span {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 4px 10px; border-radius: 999px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-glow);
-  color: inherit; font: inherit; cursor: pointer;
-}
-.reflex-intent-btn:hover { background: var(--accent-dim); }
-.reflex-intent.done > span { border-color: var(--status-success); background: var(--status-success-soft); cursor: default; }
-.reflex-intent.error > span { border-color: var(--status-warning); background: var(--status-warning-soft); cursor: default; }
-.reflex-intent .bolt { color: var(--accent-hover); }
-.reflex-intent kbd {
-  font-family: var(--font-mono); font-size: 9px;
-  padding: 1px 5px; border-radius: 3px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-dim);
-  color: var(--text-muted);
-}
-@keyframes reflex-intent-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: none; }
-}
 
 .hidden-file-input {
   display: none;
@@ -806,34 +725,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   gap: 6px;
   padding: 0 10px;
 }
-.reflex-intent {
-  position: static;
-  width: max-content;
-  margin: 10px 0 0;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: 12px;
-  letter-spacing: 0;
-  animation: noir-reflex-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
-}
-.reflex-intent-btn,
-.reflex-intent > span {
-  height: 28px;
-  padding: 0 6px 0 10px;
-  border: 0;
-  border-radius: 14px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent-hover) 35%, transparent);
-}
-.reflex-intent kbd {
-  padding: 2px 7px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--border-default) 75%, transparent);
-  font-size: 10.5px;
-}
-@keyframes noir-reflex-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .composer {
   display: flex;
   align-items: stretch;
@@ -938,9 +829,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-card,
-  .reflex-intent { animation: none; transition: none; }
+  .composer-card { animation: none; transition: none; }
 }
+@keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
 .usecase-strip {
   width: 100%;
@@ -948,7 +839,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   box-shadow: inset 0 0 0 1px var(--border-default);
-  animation: noir-reflex-in 0.18s cubic-bezier(.22, 1, .36, 1) both;
+  animation: usecase-strip-in 0.18s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-strip-hd {
   display: flex; align-items: center; gap: 8px;
@@ -991,7 +882,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   width: max-content; max-width: 100%;
   background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent-border);
   color: var(--text-primary); font-size: 12.5px;
-  animation: noir-reflex-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
+  animation: usecase-strip-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-chip .usecase-type { display: none; }
 .usecase-verb { color: var(--accent-hover); }

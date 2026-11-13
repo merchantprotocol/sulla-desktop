@@ -28,7 +28,6 @@ import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
-import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
@@ -125,31 +124,6 @@ export class PersonaAdapter {
       onStop:     () => this.ci.stop(),
       onContinue: () => this.ci.continueRun(),
     });
-    const channelId = opts.channelId ?? 'sulla-desktop';
-    const routeUnsub = getWebSocketClientService().onMessage(channelId, (message) => {
-      if (message.type !== 'agent_routed' || !message.data || typeof message.data !== 'object') return;
-      const route = message.data as Record<string, unknown>;
-      if (route.threadId !== this.ci.threadId.value || typeof route.agentId !== 'string') return;
-
-      // Preserve the chat-local provider/model while making future sends carry
-      // the routed persona selected before the first agent turn.
-      this.controller.selectForChat(
-        this.controller.model.value,
-        this.controller.thread.value.providerId ?? null,
-        route.agentId,
-      );
-      const name = typeof route.name === 'string' && route.name.trim() ? route.name.trim() : route.agentId;
-      this.controller.appendMessage({
-        id:        asMessageId(`agent-route-${ Date.now() }`),
-        kind:      'thinking',
-        thoughts:  [`Chat opened with ${ name }`],
-        startedAt: Date.now(),
-        completed: true,
-        createdAt: Date.now(),
-      });
-    });
-    if (routeUnsub) this.stopWatchers.push(routeUnsub);
-
     const onArtifactChanged = (_event: unknown, change: ChatArtifactChangedEvent) => {
       if (change?.threadId !== this.ci.threadId.value) return;
       this.applyPersistentArtifact(change.artifact, !!change.focus);
