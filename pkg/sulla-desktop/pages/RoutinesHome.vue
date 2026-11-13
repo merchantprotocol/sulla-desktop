@@ -194,6 +194,10 @@ async function loadAll() {
     routinesController.load(),
     loadRunSummaries(),
   ]);
+  // load() swallows the error into controller state and empties the list;
+  // without this the page shows "No workflows yet" for a failed read.
+  const err = routinesController.error.value;
+  if (err) showFeedback('error', `Couldn't load workflows: ${ err }`);
 }
 
 // ── Workflows list run data ─────────────────────────────────────────
@@ -314,7 +318,8 @@ function controllerError(): string {
 
 async function onDuplicate(id: string) {
   const name = routineName(id);
-  if (await routinesController.duplicate(id)) {
+  const newId = await routinesController.duplicate(id);
+  if (newId) {
     showFeedback('success', `Duplicated "${ name }".`);
   } else {
     showFeedback('error', `Couldn't duplicate "${ name }"${ controllerError() }`);
@@ -323,11 +328,11 @@ async function onDuplicate(id: string) {
 
 async function onToggleArchive(id: string) {
   const name = routineName(id);
-  const archiving = routinesController.routines.value.find(r => r.id === id)?.status !== 'archive';
+  const wasArchived = routinesController.routines.value.find(r => r.id === id)?.status === 'archive';
   if (await routinesController.toggleArchive(id)) {
-    showFeedback('success', archiving ? `Archived "${ name }".` : `Restored "${ name }" as a draft.`);
+    showFeedback('success', wasArchived ? `Restored "${ name }".` : `Archived "${ name }".`);
   } else {
-    showFeedback('error', `Couldn't ${ archiving ? 'archive' : 'restore' } "${ name }"${ controllerError() }`);
+    showFeedback('error', `Couldn't ${ wasArchived ? 'restore' : 'archive' } "${ name }"${ controllerError() }`);
   }
 }
 
@@ -396,6 +401,7 @@ async function onRestoreRoutine(id: string) {
 
     return;
   }
+  showFeedback('success', `Restored "${ name }".`);
   emit('restore-routine', id);
 }
 
@@ -410,15 +416,16 @@ async function onExport(id: string) {
   // failure through the inline toast so the view stays consistent with
   // other IPC failure paths.
   try {
-    const result = await ipcRenderer.invoke('routines-export', id);
-    // Cancelling the save dialog is not a saved export, and an { error } reply is a failure.
-    if ('canceled' in result) return;
-    if ('error' in result) {
-      showFeedback('error', `Export failed: ${ result.error }`);
+    // The handler answers { canceled } / { error } / { path } instead of
+    // throwing for the expected outcomes, so read the shape.
+    const result = await ipcRenderer.invoke('routines-export', id) as { path?: string; canceled?: boolean; error?: string } | undefined;
+    if (result?.canceled) return;
+    if (result?.error || !result?.path) {
+      showFeedback('error', `Export failed: ${ result?.error ?? 'no file was written' }`);
 
       return;
     }
-    showFeedback('success', 'Export saved.');
+    showFeedback('success', `Exported to ${ result.path }.`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Routines] Export failed:', err);

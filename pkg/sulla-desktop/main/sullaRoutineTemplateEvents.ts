@@ -728,7 +728,7 @@ async function executeRoutineInternal(
   const workflow = await WorkflowModel.findById(workflowId);
   const protectedKind = options?.routineKind ??
     (workflow?.attributes.system
-      ? (workflowId === 'core-routine-dream-about-human' ? 'dreaming' : 'other')
+      ? (workflowId === 'core-routine-dreamer' ? 'dreaming' : 'other')
       : null);
   let routineSlotId: string | null = null;
   const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
