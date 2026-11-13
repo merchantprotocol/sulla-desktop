@@ -77,7 +77,7 @@ function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
-  openPreferences():void { ipcRenderer.send('preferences-open') }
+  openPreferences():void { ipcRenderer.send('preferences-open', 'files') }
   nativeSourceReady = false;
   readonly capabilities = {
     upload:          true,
