@@ -33,7 +33,6 @@ import { modelsToolManifests } from './models/manifests';
 import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
 import { redisToolManifests } from './redis/manifests';
-import { reflexToolManifests } from './reflex/manifests';
 import { rulesToolManifests } from './rules/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
 import { settingsToolManifests } from './settings/manifests';
@@ -73,7 +72,6 @@ export const allToolManifests: ToolManifest[] = [
   ...pgToolManifests,
   ...redisToolManifests,
   ...rulesToolManifests,
-  ...reflexToolManifests,
   ...ledgerToolManifests,
   ...secretaryToolManifests,
   ...settingsToolManifests,

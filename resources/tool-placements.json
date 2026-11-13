@@ -949,16 +949,6 @@
       "sideEffect": "write",
       "credential": "none"
     },
-    "chat/route_agent": {
-      "category": "chat",
-      "name": "route_agent",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
     "chat/set_heartbeat": {
       "category": "chat",
       "name": "set_heartbeat",
@@ -3076,76 +3066,6 @@
       ],
       "relayable": false,
       "sideEffect": "read",
-      "credential": "none"
-    },
-    "reflex/reflex_correct": {
-      "category": "reflex",
-      "name": "reflex_correct",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
-    "reflex/reflex_export": {
-      "category": "reflex",
-      "name": "reflex_export",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
-    "reflex/reflex_forget": {
-      "category": "reflex",
-      "name": "reflex_forget",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "irreversible",
-      "credential": "none"
-    },
-    "reflex/reflex_list_examples": {
-      "category": "reflex",
-      "name": "reflex_list_examples",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "reflex/reflex_predict": {
-      "category": "reflex",
-      "name": "reflex_predict",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "reflex/reflex_stats": {
-      "category": "reflex",
-      "name": "reflex_stats",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "reflex/reflex_teach": {
-      "category": "reflex",
-      "name": "reflex_teach",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
       "credential": "none"
     },
     "rules/add_rule": {
