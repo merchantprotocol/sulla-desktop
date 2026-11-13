@@ -72,7 +72,7 @@ class AccountPasswordRewrapFixture {
 
 function thisConfig() {
   return {
-    mode: 'desktop' as const, port: 0, databaseUrl: 'postgresql://synthetic/unused', jwtSecret: 'j'.repeat(64),
+    mode: 'desktop' as const, port: 0, databaseUrl: 'postgresql://synthetic/unused',
     extensionOrigins: [], bootstrapServiceId: 'bootstrap', bootstrapServiceToken: 'b'.repeat(40),
     controlServiceId: 'control', controlServiceToken: 'c'.repeat(40), approvalServiceId: 'approval', approvalServiceToken: 'a'.repeat(40),
     brokerServiceId: 'broker', brokerServiceToken: 'r'.repeat(40), filesServiceId: 'files', filesServiceToken: 'f'.repeat(40),

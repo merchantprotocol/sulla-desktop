@@ -621,20 +621,18 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
-    if (config.mode === 'desktop') {
-      const credentials = [
-        ['bootstrap', config.bootstrapServiceToken],
-        ['control', config.controlServiceToken],
-        ['approval', config.approvalServiceToken],
-        ['broker', config.brokerServiceToken],
-        ['files', config.filesServiceToken],
-      ] as const;
-      for (const [name, value] of credentials) {
-        if (!value || Buffer.byteLength(value) < 32) throw new Error(`Desktop vault ${ name } credential is not configured`);
-      }
-      if (new Set(credentials.map(([, value]) => value)).size !== credentials.length) {
-        throw new Error('Desktop vault service credentials must be distinct');
-      }
+    const credentials = [
+      ['bootstrap', config.bootstrapServiceToken],
+      ['control', config.controlServiceToken],
+      ['approval', config.approvalServiceToken],
+      ['broker', config.brokerServiceToken],
+      ['files', config.filesServiceToken],
+    ] as const;
+    for (const [name, value] of credentials) {
+      if (!value || Buffer.byteLength(value) < 32) throw new Error(`Desktop vault ${ name } credential is not configured`);
+    }
+    if (new Set(credentials.map(([, value]) => value)).size !== credentials.length) {
+      throw new Error('Desktop vault service credentials must be distinct');
     }
   }
 
