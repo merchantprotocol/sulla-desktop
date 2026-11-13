@@ -1944,7 +1944,11 @@ export function createApp(
     // requireFile delegates to requirePath, which checks the collection role and
     // protected-path policy. Collection authorization is already established;
     // the SQL excludes protected files and the same policy is applied to folders below.
-    const fileIds=files.rows.map((file:any)=>file.id);
+    // Same path rule requirePath applied per item: protected paths stay hidden,
+    // except audit logs inside the logs system area.
+    const pathVisible=(path:string)=>!isProtectedPath(path) || (access.collection.system_area==='logs' && (isAuditLogPath(path) || path==='audit/vault'));
+    const visibleFiles=files.rows.filter((file:any)=>pathVisible(file.path));
+    const fileIds=visibleFiles.map((file:any)=>file.id);
     const fileReceipts=fileIds.length?(await db.query(`SELECT DISTINCT ON (r.file_id) r.* FROM files_database_operation_receipts r
       JOIN files f ON f.id=r.file_id AND f.current_version_id::text=r.after_state->>'versionId'
       WHERE r.file_id=ANY($1) AND r.action='trash' ORDER BY r.file_id,r.created_at DESC`,[fileIds])).rows:[];
@@ -1956,7 +1960,7 @@ export function createApp(
     const fileOperationIds=fileReceipts.map((receipt:any)=>receipt.id);
     const pathOperations=fileOperationIds.length?(await db.query('SELECT operation_id,state,plan,last_error FROM files_path_operations WHERE operation_id=ANY($1)',[fileOperationIds])).rows:[];
     const pathOperationById=new Map(pathOperations.map((operation:any)=>[operation.operation_id,operation]));
-    for (const authorized of files.rows) {
+    for (const authorized of visibleFiles) {
       const role='manage'; const draftVisible=true;
       const receipt=fileReceiptByVersion.get(`${authorized.id}:${authorized.current_version_id}`);
       const pathOperation=receipt?pathOperationById.get(receipt.id):null;
@@ -1966,7 +1970,7 @@ export function createApp(
     }
     const folders=await db.query(`SELECT * FROM file_folders f WHERE f.collection_id=$1 AND f.deleted_at IS NOT NULL AND NOT EXISTS(
       SELECT 1 FROM file_folders p WHERE p.collection_id=f.collection_id AND p.deleted_at IS NOT NULL AND p.id<>f.id AND starts_with(f.path,p.path||'/')) ORDER BY f.deleted_at DESC,f.path`,[collectionId]);
-    const visibleFolders=folders.rows.filter((folder:any)=>!isProtectedPath(folder.path));
+    const visibleFolders=folders.rows.filter((folder:any)=>pathVisible(folder.path));
     const folderReceipts=visibleFolders.length?(await db.query(`SELECT * FROM files_database_operation_receipts r WHERE r.collection_id=$1 AND r.action='trash' AND r.state='completed'
       AND r.folder_plan->>'source'=ANY($2) ORDER BY r.created_at DESC`,[collectionId,[...new Set(visibleFolders.map((folder:any)=>folder.path))]])).rows:[];
     const folderReceiptByFolder=new Map<string,any>();
