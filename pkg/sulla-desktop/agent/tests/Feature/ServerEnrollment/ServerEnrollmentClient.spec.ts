@@ -15,7 +15,6 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { DeviceIdentityService } from '@sulla/domain';
-import { FakeClock } from '@sulla/foundation/testing';
 
 import { NodeDeviceCrypto } from '../../../../main/cloud/device/NodeDeviceCrypto';
 import { ServerDeviceMessage } from '../../../../main/serverEnrollment/ServerDeviceMessage';
@@ -24,6 +23,15 @@ import { ServerEnrollmentClient, ServerEnrollmentError, type FetchLike } from '.
 
 const vectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'device-proof-vectors.json'), 'utf8'));
 const DESKTOP_API = 'https://server.example.test/desktop/v1';
+
+/** A clock the test moves by hand (the sleeper advances it). */
+class ManualClock {
+  constructor(private ms: number) {}
+
+  now(): Date { return new Date(this.ms) }
+
+  advance(ms: number): void { this.ms += ms }
+}
 
 class MemoryStore<T> {
   constructor(private value: T | null) {}
@@ -70,7 +78,7 @@ class FakeServer {
 
 /** One Desktop: the vector device's identity, a fake clock at the vector second, and the client under test. */
 class VectorDesktop {
-  readonly clock = new FakeClock(vectors.enrollment.ts * 1000);
+  readonly clock = new ManualClock(vectors.enrollment.ts * 1000);
   readonly server = new FakeServer();
   readonly sleeps: number[] = [];
   readonly identity: DeviceIdentityService;
