@@ -51,6 +51,7 @@ import { initIntegrationGrantIpc } from './integrationGrantIpc';
 import { initSupportSessionIpc } from './supportSessionIpc';
 import { initDebugErrorReporting } from './DebugErrorService';
 
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
@@ -316,7 +317,7 @@ export function initSullaEvents(): void {
 
   ipcMainProxy.handle('agents-list', async() => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return (await agentDefinitionService.list()).filter(agent => agent.enabled && agent.status !== 'archive').map(agent => ({
+    return (await getDatabaseReadGuard().run('agents-list', () => agentDefinitionService.list(), [])).filter(agent => agent.enabled && agent.status !== 'archive').map(agent => ({
       id:          agent.slug,
       name:        agent.name,
       description: agent.description,

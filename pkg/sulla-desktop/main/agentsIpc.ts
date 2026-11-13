@@ -31,6 +31,7 @@ import { readConversationLog, readConversationPreview, type AgentConversationEnt
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
+import { getDatabaseReadGuard } from './DatabaseReadGuard';
 import { debugErrorService } from './DebugErrorService';
 
 // ── Response shape ───────────────────────────────────────────────────────────
@@ -234,7 +235,9 @@ export function initAgentsIpc(): void {
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return (await agentDefinitionService.list()).filter(a => a.status !== 'archive').map(a => ({
+    // [] while the database is still starting; Studio Agents reloads on `database:available`.
+    const definitions = await getDatabaseReadGuard().run('agent-definitions:list', () => agentDefinitionService.list(), []);
+    return definitions.filter(a => a.status !== 'archive').map(a => ({
       id:                 a.id,
       slug:               a.slug,
       name:               a.name,

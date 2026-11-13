@@ -468,7 +468,7 @@ export function initSullaWorkflowEvents(): void {
   ipcMainProxy.handle('workflow-history-get', async(_event: unknown, workflowId: string, limit?: number) => {
     try {
       const WorkflowHistoryModel = await importWorkflowHistoryModel();
-      const rows = await WorkflowHistoryModel.findByWorkflow(workflowId, limit ?? 50);
+      const rows = await getDatabaseReadGuard().run('workflow-history-get', () => WorkflowHistoryModel.findByWorkflow(workflowId, limit ?? 50), []);
 
       return rows.map(r => ({
         id:                r.attributes.id!,
