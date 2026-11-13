@@ -20,7 +20,7 @@ import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGrap
 import { SullaIntegrations } from './agent/integrations';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';
-import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { ChatCompletionsServer, getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
@@ -343,6 +343,10 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       console.log('[Background] Chat completions API server started');
     },
     async() => { await getChatCompletionsServer().stop() },
+    // stop() sweeps leftover agent containers (bounded at 20s); the default 5s
+    // budget reported every quit with containers as a timeout and let the
+    // sweep race the VM shutdown.
+    { stopTimeoutMs: ChatCompletionsServer.STOP_TIMEOUT_MS },
   );
 
   // The tunnel authenticates as the vault's principal, so it waits for the
