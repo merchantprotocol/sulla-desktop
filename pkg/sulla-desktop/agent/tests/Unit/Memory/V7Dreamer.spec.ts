@@ -225,3 +225,13 @@ describe('DreamOutputValidator', () => {
     expect(validator.validate('```json\n{"items":[]}\n```', batch, CONTEXT, NOW)).toEqual({ items: [], evidence: [] });
   });
 });
+
+
+describe('short Dreamer intervals', () => {
+  it('does not let scheduling slack erase a one-minute cadence', () => {
+    const policy = new DreamWindowPolicy();
+    expect(policy.isDue(NOW, NOW, 60_000)).toBe(false);
+    expect(policy.isDue(NOW + 30_000, NOW, 60_000)).toBe(false);
+    expect(policy.isDue(NOW + 60_000, NOW, 60_000)).toBe(true);
+  });
+});

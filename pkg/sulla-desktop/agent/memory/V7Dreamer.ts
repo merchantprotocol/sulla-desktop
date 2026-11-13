@@ -164,7 +164,9 @@ export class DreamWindowPolicy {
   isDue(now: number, lastWindowEnd: number | null, intervalMs: number): boolean {
     if (lastWindowEnd === null) return true;
 
-    return now - lastWindowEnd >= Math.max(0, intervalMs - DreamWindowPolicy.DUE_SLACK_MS);
+    const slackMs = Math.min(DreamWindowPolicy.DUE_SLACK_MS, intervalMs / 10);
+
+    return now - lastWindowEnd >= intervalMs - slackMs;
   }
 
   /**
