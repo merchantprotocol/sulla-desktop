@@ -2293,7 +2293,6 @@
     },
     "pkg/sulla-desktop/main/cloud/deviceKey.ts": {
       "rules": {
-        "mutable-state": 1,
         "procedural-module": 7
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
