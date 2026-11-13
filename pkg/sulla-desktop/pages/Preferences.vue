@@ -70,7 +70,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   extensions:  'permissions hooks integrations use cases activity grants',
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
-  privacy:     'host access admin administrator telemetry usage',
+  privacy:     'host access telemetry usage',
   docker:      'memory cpu disk rosetta virtual machine vz qemu virtiofs 9p sshfs engine moby containerd path images ' +
     'network port',
   advanced: 'debug logs troubleshooting health extensions experimental vault proxy reset factory',
