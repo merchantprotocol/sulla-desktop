@@ -3303,12 +3303,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/pages/AgentConnectedAccounts.vue": {
-      "rules": {
-        "long-file": 908
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/pages/AgentIntegrationDetail.vue": {
       "rules": {
         "long-file": 1888
