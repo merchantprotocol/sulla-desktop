@@ -1972,6 +1972,57 @@ function handleTabContextMenuAction(
   background: var(--bg-surface-hover);
 }
 
+/* Tab strip "option A": every tab reads as its own card, the active tab is a
+   solid surface with its close button showing, and pinned tabs carry a pin
+   plus an accent underline. Replaces the sliding glow pill. */
+.app-titlebar .tab-active-indicator {
+  display: none;
+}
+
+.app-titlebar .tab-scroll-container {
+  gap: 6px;
+}
+
+.app-titlebar .tab-item {
+  height: 32px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.app-titlebar .tab-item:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.app-titlebar .tab-active .tab-close,
+.app-titlebar .tab-active-native .tab-close {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.app-titlebar .tab-pinned {
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent), inset 0 -2px 0 var(--accent);
+}
+
+.app-titlebar .tab-pinned.tab-active,
+.app-titlebar .tab-pinned.tab-active-native {
+  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), inset 0 -2px 0 var(--accent);
+}
+
+.app-titlebar .tab-pinned-boundary::before {
+  background: var(--border-strong, var(--border-default));
+}
+
 .app-titlebar .tab-new {
   width: 34px;
   height: 34px;
