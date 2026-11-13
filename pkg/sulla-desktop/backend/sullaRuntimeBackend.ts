@@ -27,7 +27,9 @@ import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaService
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
-import { planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
+import {
+  ContainerHealPlanner, DOCKER_MANAGED_CONTAINERS, describeHealAction, type HealAction, type ManagedContainerRow,
+} from './sullaContainerHealth';
 import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
 } from './onDemandServices';
@@ -186,7 +188,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #managedServicesGeneration = 0;
   /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
   #staleFilesAdapters = new Set<string>();
-  #containerRecreates = new Map<string, number>();
+  #healPlanner = new ContainerHealPlanner();
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   /** The native Sulla runtime VM. */
@@ -2174,9 +2176,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   /**
-   * Keep managed containers honest: every minute, recreate any Sulla container that Docker
-   * reports unhealthy (or restart-looping) past its grace period. The Files adapter's stale
-   * guest mount is handled by the Files mount manager, not here.
+   * Keep managed containers honest: every minute, heal any Sulla container that Docker
+   * reports unhealthy (or restart-looping) past its grace period: restart it first, then
+   * recreate it if the restart did not help (see ContainerHealPlanner). Covers the sulla
+   * compose project and the containers Desktop runs directly (the agent host relay). The
+   * Files adapter's stale guest mount is handled by the Files mount manager, not here.
    */
   private watchManagedContainerHealth(
     generation: number,
@@ -2184,27 +2188,32 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     desired: ReadonlyArray<{ service: string; container: string }>,
     onMissing: (missing: Array<{ service: string; container: string }>) => void,
   ): void {
-    this.#containerRecreates.clear();
+    this.#healPlanner.reset();
     let ticking = false;
     let lastMissing = '';
     const tick = async(): Promise<void> => {
       this.assertManagedServicesGeneration(generation);
       const listing = await this.execCommand(
         { capture: true, root: true, expectFailure: true }, 'docker', 'ps', '-a',
-        '--filter', 'label=com.docker.compose.project=sulla',
-        '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}',
+        '--format', '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}',
       );
       const rows: ManagedContainerRow[] = [];
 
       for (const line of listing.split('\n').filter(Boolean)) {
-        const [container, service] = line.split('\t');
+        const [container, project, service] = line.split('\t');
+        const managedBy = project === 'sulla' ? 'compose' : DOCKER_MANAGED_CONTAINERS.includes(container) ? 'docker' : undefined;
+
+        if (!managedBy) continue;
         const state = (await this.execCommand(
           { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
           '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.State.StartedAt}}', container,
         ).catch(() => '')).trim().split(' ');
 
         if (state.length < 3) continue;
-        rows.push({ container, service, state: state[0], health: state[1], runningForMs: Date.now() - Date.parse(state[2]) });
+        rows.push({
+          container, service: managedBy === 'compose' ? service : container, managedBy,
+          state: state[0], health: state[1], runningForMs: Date.now() - Date.parse(state[2]),
+        });
       }
       // Missing, or stopped for good (exited/dead is not restart-looping, so
       // the unhealthy check below leaves it alone).
@@ -2218,11 +2227,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         lastMissing = missingKey;
       }
       if (missing.length) onMissing(missing);
-      for (const action of planUnhealthyRecreates(rows, this.#containerRecreates)) {
-        this.#containerRecreates.set(action.container, (this.#containerRecreates.get(action.container) ?? 0) + 1);
-        console.warn(`[Sulla] ${ action.container } is ${ action.reason }; recreating it`);
-        await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service)
-          .catch(error => console.warn(`[Sulla] Could not recreate ${ action.container }:`, (error as Error).message?.split('\n')[0]));
+      for (const action of this.#healPlanner.plan(rows)) {
+        console.warn(describeHealAction(action));
+        await this.runHealAction(action, composeCommand)
+          .catch(error => console.warn(`[Sulla] Could not ${ action.kind } ${ action.container }:`, (error as Error).message?.split('\n')[0]));
       }
     };
     // A failed tick is logged and the next one runs as usual; only the end
@@ -2241,6 +2249,24 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // Containers that survived a crash can be broken before Desktop even starts: sweep once soon
     // after startup settles instead of waiting a full interval.
     setTimeout(run, 45_000).unref?.();
+  }
+
+  /** Run one planned heal. The host relay is rebuilt by its launcher, never by compose. */
+  private async runHealAction(action: HealAction, composeCommand: string[]): Promise<void> {
+    if (action.kind === 'give-up') return;
+    if (action.kind === 'restart') {
+      await this.execCommand({ root: true }, 'docker', 'restart', '--time', '10', action.container);
+
+      return;
+    }
+    if (action.managedBy === 'docker') {
+      const { repairHostRelay } = await import('@pkg/agent/services/AgentContainerLauncher');
+
+      await repairHostRelay();
+
+      return;
+    }
+    await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service);
   }
 
   /**

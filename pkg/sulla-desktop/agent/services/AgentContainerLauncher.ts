@@ -512,6 +512,8 @@ pidfile="$dir/relay.pid"
 need_restart=0
 if test -S "$sock"; then
   if ! test -f "$verfile" || [ "$(cat "$verfile" 2>/dev/null)" != "$ver" ]; then need_restart=1; fi
+  # A relay that died leaves its socket behind; restart it when its process is gone.
+  if ! kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then need_restart=1; fi
 else
   need_restart=1
 fi
@@ -530,9 +532,17 @@ for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
   if (!nativeRuntime) await guestExec(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
   await guestExec(ensureAgentNetworkCommand());
+  // Healthy only while the bridge accepts connections and (VM relay) the guest
+  // relay behind it does: Desktop's container supervisor restarts it otherwise.
+  const upstreamProbe = nativeRuntime ? 'process.exit(0)' : `n.connect("${ HOST_RELAY_SOCKET }").on("connect",()=>process.exit(0)).on("error",()=>process.exit(1))`;
+  const healthProbe = `const n=require("net");setTimeout(()=>process.exit(1),2500);n.connect(${ HOST_RELAY_PORT },"127.0.0.1").on("connect",function(){this.destroy();${ upstreamProbe }}).on("error",()=>process.exit(1))`;
+  const healthArgs = [
+    '--health-cmd', `node -e '${ healthProbe }'`, '--health-interval', '10s', '--health-timeout', '3s',
+    '--health-retries', '3', '--health-start-period', '10s',
+  ];
   // Same versioning as the VM relay: a container left by an older build keeps
-  // running its old script, so replace it when the script changes.
-  const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
+  // running its old script, so replace it when the script or its healthcheck changes.
+  const bridgeVersion = crypto.createHash('sha256').update(bridge).update(healthProbe).digest('hex').slice(0, 12);
   const inspectRelay = () => guestExec(['docker', 'inspect', '--format',
     `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}} {{.State.Running}}`, HOST_RELAY_NAME])
     .then(({ stdout }) => {
@@ -553,7 +563,7 @@ exit 1`;
   await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
   try {
     await guestExec(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
-      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
+      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`, ...healthArgs,
       '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   } catch (error) {
@@ -578,6 +588,18 @@ function ensureHostRelay(image: string): Promise<void> {
   }
 
   return hostRelayReady;
+}
+
+/**
+ * Rebuild the host relay from scratch: Desktop's container supervisor calls this when a
+ * restart did not make the relay healthy. Restarts the guest relay process if it died and
+ * replaces the relay container.
+ */
+export async function repairHostRelay(): Promise<void> {
+  const image = await ensureAgentImage();
+
+  await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
+  await ensureHostRelay(image);
 }
 
 /** How long a launch waits for the threat proxy to publish its CA after a cold boot. */

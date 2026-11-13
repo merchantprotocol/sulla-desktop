@@ -226,7 +226,8 @@ export function threatProxyComposeService(image: Record<string, unknown>): Recor
     restart:      'unless-stopped',
     mem_limit:    '512m',
     healthcheck:  {
-      test:     ['CMD', 'python3', '-c', `import socket; socket.create_connection(('127.0.0.1', ${ THREAT_PROXY_PORT }), 2).close()`],
+      // Listening, and the CA agents must trust is published: a launch needs both.
+      test:     ['CMD', 'python3', '-c', `import os, socket; assert os.path.getsize('${ target }/public/ca-bundle.pem') > 0; socket.create_connection(('127.0.0.1', ${ THREAT_PROXY_PORT }), 2).close()`],
       interval:       '5s',
       timeout:        '3s',
       retries:        10,

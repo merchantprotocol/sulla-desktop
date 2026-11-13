@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1097,
+  "entries": 1093,
   "files": {
     "background.ts": {
       "rules": {
@@ -1563,12 +1563,6 @@
         "procedural-module": 4
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/backend/sullaContainerHealth.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/backend/sullaRuntime/NativeRuntime.ts": {
       "rules": {
@@ -4113,7 +4107,6 @@
     },
     "services/sulla-accounts/src/app.ts": {
       "rules": {
-        "raw-sql": 1,
         "procedural-module": 1
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
@@ -4680,12 +4673,6 @@
         "procedural-module": 6
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-tools/src/index.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "services/sulla-tools/src/stores.ts": {
       "rules": {
