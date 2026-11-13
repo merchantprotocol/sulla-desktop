@@ -62,8 +62,9 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
 
   it('signs every other registry purpose with its real tag, never an empty one', () => {
     // risk: before, these signed "\nuser-1..." (an empty tag) that Cloud could never verify.
+    // The registry grows additively (0.3.3 added replica-v1), so this checks each purpose, not a count.
     const others = ALL.filter(purpose => !(purpose in LegacyDeviceMessageBuilder.TAGS));
-    // The registry grows with @sulla/domain (0.3.3 added replica-v1), so assert coverage, not a count.
+    expect(others.length).toBeGreaterThan(0);
     expect(others).toEqual(expect.arrayContaining(['browser-pairing-approve', 'replica-v1']));
     for (const purpose of others) {
       const message = deviceMessage(purpose, PARTS);
@@ -72,26 +73,28 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
     }
   });
 
-  it('refuses a part with a newline and an unknown purpose', () => {
+  it('refuses a part with a newline and an unknown purpose', async() => {
     // risk: a newline lets two different field lists produce the same signed bytes; an unknown purpose signed an empty tag.
     expect(() => deviceMessage('vault-sync-v3', ['user\n1', 'device'])).toThrow('newlines');
-    expect(() => signDeviceMessage('sync-upload', ['a\nb'])).toThrow('newlines');
-    expect(() => signDeviceMessageExact('sync-upload', [1, 'a\nb'])).toThrow('newlines');
+    await expect(signDeviceMessage('sync-upload', ['a\nb'])).rejects.toThrow('newlines');
+    await expect(signDeviceMessageExact('sync-upload', [1, 'a\nb'])).rejects.toThrow('newlines');
     expect(() => deviceMessage('made-up-purpose' as DevicePurpose, PARTS)).toThrow('unknown device purpose');
-    expect(() => signDeviceMessageExact('toString' as DevicePurpose, PARTS)).toThrow('unknown device purpose');
+    await expect(signDeviceMessageExact('toString' as DevicePurpose, PARTS)).rejects.toThrow('unknown device purpose');
   });
 
-  it('signs the registry bytes: the signature verifies against the device public key', () => {
+  it('signs the registry bytes: the signature verifies against the device public key', async() => {
     // risk: forged-or-rejected identity — the signature must cover exactly tag + parts (+ ts).
     const publicKey = crypto.createPublicKey({
-      key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(getDevicePublicKey(), 'base64').toString('base64url') },
+      key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(await getDevicePublicKey(), 'base64').toString('base64url') },
       format: 'jwk',
     });
     for (const purpose of ALL) {
-      const exact = signDeviceMessageExact(purpose, PARTS);
+      const exact = await signDeviceMessageExact(purpose, PARTS);
       expect(crypto.verify(null, new DeviceMessage(purpose, PARTS).toBytes(), publicKey, Buffer.from(exact, 'base64')), purpose).toBe(true);
 
-      const { ts, signature } = signDeviceMessage(purpose, PARTS);
+      const { ts, signature } = await signDeviceMessage(purpose, PARTS);
+      // risk: the Workers verifier expects unix SECONDS; milliseconds fail its freshness window.
+      expect(Math.abs(ts - Math.floor(Date.now() / 1000)), purpose).toBeLessThanOrEqual(5);
       const signed = new DeviceMessage(purpose, [...PARTS, ts]).toBytes();
       expect(crypto.verify(null, signed, publicKey, Buffer.from(signature, 'base64')), purpose).toBe(true);
       expect(crypto.verify(null, new DeviceMessage(purpose, PARTS).toBytes(), publicKey, Buffer.from(signature, 'base64'))).toBe(false);

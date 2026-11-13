@@ -2,7 +2,15 @@
 import { execFileSync } from 'node:child_process';
 import { hostname } from 'node:os';
 
-const VAULT_PORT = 18787;
+export const VAULT_PORT = 18787;
+
+/** Splits `repo:tag` (a registry port is not a tag); null for digests or untagged refs. */
+export function imageRepoTag(image) {
+  if (image.includes('@')) return null;
+  const colon = image.lastIndexOf(':');
+  if (colon <= image.lastIndexOf('/')) return null;
+  return { repo: image.slice(0, colon), tag: image.slice(colon + 1) };
+}
 
 /** Docker CLI runtime. The anchor (postgres) container owns the network namespace and publishes the vault port. */
 export class DockerCliRuntime {
@@ -19,6 +27,13 @@ export class DockerCliRuntime {
   }
 
   pull(image) { this.docker(['pull', '-q', image]); }
+
+  hasImage(image) {
+    try { this.docker(['image', 'inspect', image]); return true; } catch { return false; }
+  }
+
+  /** Pulls only when the image is not already local, so a locally built image can be smoked. */
+  ensureImage(image) { if (!this.hasImage(image)) this.pull(image); }
 
   startAnchor(name, args, image) {
     this.docker(['run', '-d', '--name', name, '-p', `127.0.0.1::${ VAULT_PORT }`, ...args, image]);
@@ -39,7 +54,8 @@ export class DockerCliRuntime {
 
   stop(name) { this.docker(['stop', name]); }
 
-  remove(name) { this.docker(['rm', '-f', name]); }
+  /** -v also removes the container's anonymous volumes (postgres declares one), so nothing leaks. */
+  remove(name) { this.docker(['rm', '-f', '-v', name]); }
 
   logs(name) { return this.docker(['logs', '--tail', '30', name], { capture: true }); }
 }
@@ -72,6 +88,19 @@ export class SullaToolRuntime {
   }
 
   pull(image) { this.tool('pull', { image }); }
+
+  hasImage(image) {
+    const ref = imageRepoTag(image);
+    if (!ref) return false;
+    // Docker 29 prints one IMAGE column (repo:tag); older CLIs print REPOSITORY and TAG columns.
+    return this.tool('images', { all: true }).split('\n').some(line => {
+      const [first, second] = line.trim().split(/\s+/);
+      return first === image || (first === ref.repo && second === ref.tag);
+    });
+  }
+
+  /** Pulls only when the image is not already local, so a locally built image can be smoked. */
+  ensureImage(image) { if (!this.hasImage(image)) this.pull(image); }
 
   startAnchor(name, args, image) { this.runDetached(name, args, image); }
 

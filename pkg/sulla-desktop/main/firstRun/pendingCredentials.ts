@@ -11,7 +11,7 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
-import { FetchCloudRefreshHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
+import { ElectronCloudAccountTransport } from '@pkg/main/cloud/account/ElectronCloudAccountTransport';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
@@ -121,10 +121,8 @@ function scheduleDurableSync(delayMs = 0): void {
 class PendingSessionExpiredError extends Error {}
 
 const pendingSessionRefresher = new PendingCloudSessionRefresher(
-  new FetchCloudRefreshHttp(refreshToken => fetch('https://sulla-workers.merchantprotocol.workers.dev/auth/refresh', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
-  })),
+  // POST /auth/refresh {refreshToken}, one attempt, 20 s timeout (unchanged).
+  new ElectronCloudAccountTransport().withSingleAttemptRefresh(),
   () => new PendingSessionExpiredError('Cloud session expired'),
 );
 

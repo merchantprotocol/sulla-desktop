@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const POSTGRES_IMAGE = 'postgres:16-alpine';
+export const POSTGRES_IMAGE = 'postgres:16-alpine';
 const PG_PORT = 55432;
 
 /** Throwaway PostgreSQL holding only synthetic vault rows. SQL runs from files through a one-shot psql container. */
@@ -24,6 +24,8 @@ export class SyntheticPostgres {
     this.runtime.startAnchor(this.name, [
       '-e', 'POSTGRES_USER=smoke', '-e', `POSTGRES_PASSWORD=${ this.password }`,
       '-e', 'POSTGRES_DB=vault_smoke', '-e', `PGPORT=${ PG_PORT }`,
+      // PGDATA on tmpfs: the image declares a VOLUME there, and a tmpfs mount means no anonymous volume is created.
+      '--tmpfs', '/var/lib/postgresql/data',
     ], POSTGRES_IMAGE);
     for (let attempt = 0; attempt < 60; attempt++) {
       try {
@@ -49,6 +51,12 @@ export class SyntheticPostgres {
     return this.query(`SELECT id::text || ':' || encode(sha256(convert_to(i::text, 'UTF8')), 'hex') FROM items i ORDER BY id`)
       .split('\n').filter(Boolean);
   }
+
+  /**
+   * Deliberate-break hook (VAULT_SMOKE_BREAK=key-row): a no-op UPDATE rewrites the key tuple (new xmin/ctid,
+   * same values), exactly what a migration that touches the key row would do. The smoke must then fail.
+   */
+  rewriteKeyRow() { this.query('UPDATE users SET id = id'); }
 
   /** The vault key row: id:sha256(full row text):xmin:ctid. */
   keyRow() {

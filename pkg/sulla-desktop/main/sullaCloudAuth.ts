@@ -41,9 +41,14 @@ import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
 import type { AccountKdf } from '@sulla/domain';
 
+import { CloudPasswordSignIn } from './cloud/account/CloudPasswordSignIn';
+import {
+  CloudAccountHttpError, ElectronCloudAccountTransport, type CloudContractor, type CloudSignInResponse,
+} from './cloud/account/ElectronCloudAccountTransport';
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
-import { FetchCloudRefreshHttp } from './cloud/session/ElectronCloudRefreshTransport';
+import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
+import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
 import { readRecoveryKeyFromMacKeychain, recoveryKeyStorageStatus, saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
@@ -51,22 +56,13 @@ import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const INTEGRATION_ID = 'sulla-cloud';
 
-async function cloudFetch(path: string, init: RequestInit, retry = false): Promise<Response> {
-  const attempts = retry ? 2 : 1;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await fetch(`${ API_BASE }${ path }`, { ...init, signal: AbortSignal.timeout(20_000) });
-    } catch (error) {
-      lastError = error;
-      if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 500));
-    }
-  }
-  throw lastError;
-}
+/** Every Sulla Cloud /auth/ call (sign-in, refresh, logout, password reset) goes through this one transport. */
+// The signed-in calls (set/change password, recovery availability) use the server-mode session's access token.
+const accountTransport = new ElectronCloudAccountTransport({ accessToken: () => getCurrentAccessToken() });
+const passwordSignIn = new CloudPasswordSignIn(accountTransport, () => CloudAccountCredentialService.forDesktop(), firstRunTrace);
+const legacyAdopter = new LegacyCloudSessionAdopter(accountTransport);
 
 let pendingCloudMasterKey: Uint8Array | undefined;
 let pendingCloudAccountKdf: AccountKdf | undefined;
@@ -151,14 +147,6 @@ const LEGACY_PHONE = 'sullaCloudPhone';
 interface StoredTokens {
   accessToken:  string;
   refreshToken: string;
-}
-
-interface CloudContractor {
-  id:           string;
-  phone:        string;
-  businessName: string | null;
-  name:         string | null;
-  email:        string | null;
 }
 
 /**
@@ -418,28 +406,20 @@ async function ensureLegacySessionAdopted(): Promise<void> {
       return;
     }
 
-    let refreshed: Response;
+    let adoption: LegacyAdoptionOutcome;
     try {
-      refreshed = await cloudFetch('/auth/refresh', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ refreshToken }),
-      }, true);
+      adoption = await legacyAdopter.refresh({
+        user_id: userId, active_contractor_id: legacy.active_contractor_id, access_token: legacy.access_token, refresh_token: refreshToken,
+      });
     } catch (error) {
       throw new VaultNotReadyError(`cloud refresh unavailable: ${ (error as Error)?.message || error }`);
     }
-    if (refreshed.status === 401 || refreshed.status === 403) {
+    if (adoption.kind === 'rejected') {
       startupAdoptionError = SIGN_IN_AGAIN;
       startupAdoptionComplete = true;
       return;
     }
-    if (!refreshed.ok) throw new VaultNotReadyError(`cloud refresh failed: HTTP ${ refreshed.status }`);
-    const tokens = await refreshed.json() as { accessToken?: string; refreshToken?: string };
-    if (!tokens.accessToken) {
-      startupAdoptionError = SIGN_IN_AGAIN;
-      startupAdoptionComplete = true;
-      return;
-    }
+    const tokens = adoption.tokens;
 
     let contractors: CloudContractor[] = [];
     try {
@@ -452,7 +432,7 @@ async function ensureLegacySessionAdopted(): Promise<void> {
       await client.adoptSullaCloudSession({
         userId, activeContractorId, contractors,
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken || refreshToken,
+        refreshToken: tokens.refreshToken,
       });
     } catch (error) {
       if (error instanceof VaultBrokerError && error.code === 'invalid_operation') {
@@ -529,32 +509,9 @@ async function buildStatus(lastError?: string): Promise<AuthStatus> {
   };
 }
 
-// ── Server calls ────────────────────────────────────────────
+// ── Sign-in responses ───────────────────────────────────────
 
-async function sendOtp(phone: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await cloudFetch('/auth/otp/send', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ phone }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
-  }
-  return { ok: true };
-}
-
-interface VerifyResponse {
-  contractor:    CloudContractor;
-  accessToken:   string;
-  refreshToken:  string;
-  /** Reserved for future multi-contractor support. Today the server does not
-   * return a distinct userId — we alias to contractor.id. */
-  userId?:       string;
-  /** Reserved for future multi-contractor support. Today the server returns a
-   * single `contractor` field which we wrap into this list. */
-  contractors?:  CloudContractor[];
-}
+type VerifyResponse = CloudSignInResponse;
 
 function responseToSession(data: VerifyResponse): CloudSession {
   const contractors = data.contractors?.length ? data.contractors : [data.contractor];
@@ -567,155 +524,6 @@ function responseToSession(data: VerifyResponse): CloudSession {
       refreshToken: data.refreshToken,
     },
   };
-}
-
-async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
-  const res = await cloudFetch('/auth/otp/verify', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ phone, code }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
-  }
-  const data = await res.json() as VerifyResponse;
-  return { ok: true, data };
-}
-
-async function prelogin(email: string): Promise<{ kdf: AccountKdf; authVersion: 1 | 2 }> {
-  const res = await cloudFetch('/auth/prelogin', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email }),
-  }, true);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(`${ res.status }: ${ body.error || 'Sulla Cloud request failed' }`);
-  }
-  const data = await res.json() as { kdf?: unknown; authVersion?: unknown };
-  if (data.authVersion !== 1 && data.authVersion !== 2) throw new Error('Sulla Cloud returned an unsupported authentication version.');
-  return { kdf: (await CloudAccountCredentialService.forDesktop()).parseIssuedKdf(data.kdf), authVersion: data.authVersion };
-}
-
-interface PasswordAuthResponse {
-  ok:          boolean;
-  error?:      string;
-  httpStatus?: number;
-  retryAfter?: number;
-  data?:       VerifyResponse;
-  masterKey?:  Uint8Array;
-  kdf?:        AccountKdf;
-}
-
-/** Cloud throttles repeated sign-in attempts with 429 + Retry-After (seconds). */
-function retryAfterSeconds(res: Response): number | undefined {
-  const value = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
-  return Number.isFinite(value) ? value : undefined;
-}
-
-function throttled(result: PasswordAuthResponse, accountExists = true) {
-  const wait = result.retryAfter ?? 60;
-  return { ok: false as const, accountExists, retryAfter: wait, error: `Too many tries. Wait ${ wait } seconds and try again.` };
-}
-
-async function emailLoginOnce(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
-  const account = knownAccount ?? await prelogin(email);
-  const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password, account.kdf);
-  const endpoint = account.authVersion === 1 ? '/auth/upgrade' : '/auth/email/login';
-  const body = account.authVersion === 1
-    ? { email, password, authHash: credential.authHash, kdf: credential.kdf }
-    : { email, authHash: credential.authHash };
-  try {
-    const res = await cloudFetch(endpoint, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
-    if (!res.ok) {
-      credential.masterKey.fill(0);
-      const response = await res.json().catch(() => ({})) as { error?: string };
-      return { ok: false, error: response.error || `HTTP ${ res.status }`, httpStatus: res.status, retryAfter: retryAfterSeconds(res) };
-    }
-    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey, kdf: credential.kdf };
-  } catch (error) {
-    credential.masterKey.fill(0);
-    throw error;
-  }
-}
-
-/** New accounts use NFC. Existing decomposed passwords still work once, unchanged. */
-async function emailLogin(email: string, password: string, knownAccount?: Awaited<ReturnType<typeof prelogin>>): Promise<PasswordAuthResponse> {
-  const normalized = password.normalize('NFC');
-  const first = await emailLoginOnce(email, normalized, knownAccount);
-  if (first.ok || normalized === password || (first.httpStatus !== 401 && first.httpStatus !== 403)) return first;
-  firstRunTrace('account', 'normalized password did not match; trying the legacy byte form');
-  return emailLoginOnce(email, password, knownAccount);
-}
-
-async function emailRegister(email: string, password: string, name?: string): Promise<PasswordAuthResponse> {
-  const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password.normalize('NFC'));
-  try {
-    const res = await cloudFetch('/auth/email/register', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        email,
-        authHash: credential.authHash,
-        kdf: credential.kdf,
-        name,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    });
-    if (!res.ok) {
-      credential.masterKey.fill(0);
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status, retryAfter: retryAfterSeconds(res) };
-    }
-    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey, kdf: credential.kdf };
-  } catch (error) {
-    credential.masterKey.fill(0);
-    throw error;
-  }
-}
-
-/** Passwordless: email a 6-digit code that signs in or creates the account. */
-async function emailCodeStart(email: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await cloudFetch('/auth/email-code/start', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email }),
-  });
-  if (res.ok) return { ok: true };
-  const body = await res.json().catch(() => ({})) as { error?: string };
-  return { ok: false, error: body.error || `HTTP ${ res.status }` };
-}
-
-async function emailCodeVerify(email: string, code: string, name?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse & { isNewUser?: boolean } }> {
-  const res = await cloudFetch('/auth/email-code/verify', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email, code, name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
-  }
-  return { ok: true, data: await res.json() as VerifyResponse & { isNewUser?: boolean } };
-}
-
-async function appleSignIn(identityToken: string, fullName?: string, email?: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
-  const res = await cloudFetch('/auth/apple', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ identityToken, fullName, email }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
-  }
-  const data = await res.json() as VerifyResponse;
-  return { ok: true, data };
 }
 
 // ── Public helpers ─────────────────────────────────────────
@@ -759,12 +567,13 @@ const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
         },
       });
     },
+    /** Server-mode sign-out: drop the first-run copy and the stored account. Throws when the account could not be removed. */
+    async clear(): Promise<void> {
+      await clearPendingCredential(INTEGRATION_ID);
+      await clearSession();
+    },
   },
-  new FetchCloudRefreshHttp(refreshToken => cloudFetch('/auth/refresh', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ refreshToken }),
-  }, true)),
+  accountTransport,
   {
     failed: warnRefreshFailure,
     refreshed() {
@@ -775,6 +584,14 @@ const legacySessions = new LegacyCloudSessionRefresher<CloudSession>(
     },
   },
 );
+
+/** `sulla-cloud:logout`: container vault unchanged; server mode clears locally, then revokes on Sulla Cloud. */
+const cloudSignOut = new DesktopCloudSignOut({
+  usesContainerVault:     usesContainerVaultAuthority,
+  clearPendingMasterKey:  clearPendingCloudMasterKey,
+  clearPendingCredential: () => clearPendingCredential(INTEGRATION_ID),
+  clearContainerSession:  clearSession,
+}, legacySessions);
 
 /**
  * Returns the currently-signed-in access token, or empty string if not
@@ -915,8 +732,7 @@ export function initSullaCloudAuthEvents(): void {
   ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => ({ available: true }));
   ipcMainProxy.handle('sulla-cloud:password-reset-availability' as any, async() => {
     try {
-      const response = await cloudFetch('/auth/email/reset-password/start', { method: 'OPTIONS', signal: AbortSignal.timeout(5_000) });
-      return { available: response.ok };
+      return { available: await accountTransport.passwordResetAvailable() };
     } catch { return { available: false } }
   });
   ipcMainProxy.handle('sulla-cloud:first-run-sign-out' as any, async() => {
@@ -985,7 +801,7 @@ export function initSullaCloudAuthEvents(): void {
         status: await buildStatus(),
       };
     }
-    const result = await sendOtp(normalized);
+    const result = await CloudAccountHttpError.settle(accountTransport.phoneOtpSend({ phone: normalized }));
     if (!result.ok) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
@@ -1018,6 +834,8 @@ export function initSullaCloudAuthEvents(): void {
     const session = responseToSession(data);
     try {
       await saveSession(session);
+      // A sign-out closed the refresh gate; this new session must refresh again.
+      legacySessions.adopted();
     } catch (err) {
       if (!usesContainerVaultAuthority()) throw err;
       const error = vaultSessionError(err, 'sign in');
@@ -1066,6 +884,7 @@ export function initSullaCloudAuthEvents(): void {
         contractors_json:    JSON.stringify(session.contractors),
       },
     });
+    legacySessions.adopted();
     let mayStartCloudServices = false;
     try {
       mayStartCloudServices = await checkEnrollmentAfterCloudSignIn();
@@ -1122,8 +941,8 @@ export function initSullaCloudAuthEvents(): void {
       };
     }
 
-    const result = await verifyOtp(normalizedPhone, normalizedCode);
-    if (!result.ok || !result.data) {
+    const result = await CloudAccountHttpError.settle(accountTransport.phoneOtpVerify({ phone: normalizedPhone, code: normalizedCode }).then(ElectronCloudAccountTransport.signIn));
+    if (!result.ok) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     return completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
@@ -1134,7 +953,7 @@ export function initSullaCloudAuthEvents(): void {
     if (!e || !password) {
       return { ok: false, error: 'Email and password are required.', status: await buildStatus() };
     }
-    const result = await emailLogin(e, password);
+    const result = await passwordSignIn.login(e, password);
     if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
@@ -1152,7 +971,8 @@ export function initSullaCloudAuthEvents(): void {
     const e = String(email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
     try {
-      return await emailCodeStart(e);
+      const started = await CloudAccountHttpError.settle(accountTransport.startEmailCode({ email: e }));
+      return started.ok ? { ok: true } : started;
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' };
     }
@@ -1163,12 +983,12 @@ export function initSullaCloudAuthEvents(): void {
     const e = String(email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
     try {
-      const response = await cloudFetch('/auth/email/reset-password/start', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e }),
-      });
-      if (!response.ok) return { ok: false, error: response.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
+      await accountTransport.startPasswordReset({ email: e });
       return { ok: true };
-    } catch { return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' } }
+    } catch (error) {
+      if (error instanceof CloudAccountHttpError) return { ok: false, error: error.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
+      return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.' };
+    }
   });
 
   ipcMainProxy.handle('sulla-cloud:password-reset-complete' as any, async(_event: unknown, ...args: unknown[]) => {
@@ -1179,17 +999,17 @@ export function initSullaCloudAuthEvents(): void {
     if (!password) return { ok: false, error: 'Enter a password.' };
     const credential = await (await CloudAccountCredentialService.forDesktop()).derive(password.normalize('NFC'));
     try {
-      const response = await cloudFetch('/auth/email/reset-password/complete', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: e, code: c, authHash: credential.authHash, kdf: credential.kdf }),
-      });
-      credential.masterKey.fill(0);
-      const body = await response.json().catch(() => ({})) as { error?: string; vaultState?: string };
-      if (!response.ok) {
-        return { ok: false, error: response.status === 400 ? 'That code is wrong or expired.' : response.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
+      let body: { vaultState?: string };
+      try {
+        body = await accountTransport.completePasswordReset({ email: e, code: c, authHash: credential.authHash, kdf: credential.kdf });
+      } catch (error) {
+        if (!(error instanceof CloudAccountHttpError)) throw error;
+        credential.masterKey.fill(0);
+        return { ok: false, error: error.status === 400 ? 'That code is wrong or expired.' : error.status === 429 ? 'Too many tries. Wait a few minutes and try again.' : 'Password reset is not available right now.' };
       }
+      credential.masterKey.fill(0);
       firstRunTrace('account', 'Cloud password reset completed; signing in');
-      const login = await emailLogin(e, password);
+      const login = await passwordSignIn.login(e, password);
       if (!login.ok || !login.data || !login.masterKey || !login.kdf) return { ok: false, error: 'Password changed. Sign in again to continue.' };
       const userId = login.data.userId ?? login.data.contractor.id;
       retainCloudMasterKey(login.masterKey, login.kdf, userId);
@@ -1207,13 +1027,15 @@ export function initSullaCloudAuthEvents(): void {
     if (!e || !/^\d{6}$/.test(c)) {
       return { ok: false, error: 'Enter the 6-digit code from the email.', status: await buildStatus() };
     }
-    let result: Awaited<ReturnType<typeof emailCodeVerify>>;
+    let result: { ok: true; data: VerifyResponse } | { ok: false; error: string };
     try {
-      result = await emailCodeVerify(e, c, name?.trim() || undefined);
+      result = await CloudAccountHttpError.settle(accountTransport.verifyEmailCode({
+        email: e, code: c, name: name?.trim() || undefined, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }).then(ElectronCloudAccountTransport.signIn));
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus() };
     }
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     // The code is spent and the tokens are in hand. On first run the VM's
@@ -1238,52 +1060,11 @@ export function initSullaCloudAuthEvents(): void {
     if (!password) {
       return { ok: false, error: 'Enter a password.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    let data: VerifyResponse;
-    let masterKey: Uint8Array;
-    let accountKdf: AccountKdf;
-    let isNewUser: boolean;
-    try {
-      // /auth/prelogin answers every email with a KDF (real or decoy) so it
-      // cannot reveal whether an account exists. Register first; only a 409
-      // means the account exists and the password should sign in.
-      firstRunTrace('account', 'Cloud account submit', { emailDomain: e.split('@')[1], inMemory: shouldKeepSessionInMemory() });
-      const created = await emailRegister(e, password, name?.trim() || undefined);
-      firstRunTrace('account', 'register answered', { ok: created.ok, httpStatus: created.httpStatus, error: created.error });
-      if (created.ok && created.data) {
-        data = created.data;
-        masterKey = created.masterKey!;
-        accountKdf = created.kdf!;
-        isNewUser = true;
-      } else if (created.httpStatus === 429) {
-        return { ...throttled(created, false), status: await buildStatus().catch(() => ({} as any)) };
-      } else if (created.httpStatus === 409) {
-        const login = await emailLogin(e, password);
-        firstRunTrace('account', 'existing account; sign-in answered', { ok: login.ok, httpStatus: login.httpStatus, error: login.error });
-        if (login.httpStatus === 429) return { ...throttled(login), status: await buildStatus().catch(() => ({} as any)) };
-        if (!login.ok || !login.data) {
-          const error = login.httpStatus === 401 || login.httpStatus === 403
-            ? 'That password is not correct.'
-            : login.httpStatus && login.httpStatus >= 500
-              ? 'Sulla Cloud had a problem, try again.'
-              : login.error || 'Sulla needs an update to sign in.';
-          return { ok: false, accountExists: true, error, status: await buildStatus().catch(() => ({} as any)) };
-        }
-        data = login.data;
-        masterKey = login.masterKey!;
-        accountKdf = login.kdf!;
-        isNewUser = false;
-      } else {
-        return { ok: false, error: created.httpStatus && created.httpStatus >= 500 ? 'Sulla Cloud had a problem, try again.' : created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      firstRunTrace('account', 'Cloud account request threw', { error: message });
-      const friendly = /unsupported|kdf|version/i.test(message)
-        ? 'Sulla needs an update to sign in.'
-        : /\b5\d\d\b/.test(message) ? 'Sulla Cloud had a problem, try again.' : 'Could not reach Sulla Cloud. Check your connection and try again.';
-      return { ok: false, error: friendly, status: await buildStatus().catch(() => ({} as any)) };
-    }
-    retainCloudMasterKey(masterKey!, accountKdf!, (data.userId ?? data.contractor.id));
+    firstRunTrace('account', 'Cloud account submit', { emailDomain: e.split('@')[1], inMemory: shouldKeepSessionInMemory() });
+    const account = await passwordSignIn.continueFirstRun(e, password, name?.trim() || undefined);
+    if (!account.ok) return { ...account, status: await buildStatus().catch(() => ({} as any)) };
+    const { data, masterKey, kdf: accountKdf, isNewUser } = account;
+    retainCloudMasterKey(masterKey, accountKdf, (data.userId ?? data.contractor.id));
     const signedIn = shouldKeepSessionInMemory()
       ? await completeFirstRunSignIn(data)
       : await completeSignInWhenReady(data, 'Sulla is still starting up. Wait a minute, then try again.');
@@ -1299,7 +1080,7 @@ export function initSullaCloudAuthEvents(): void {
     if (!e || !password) {
       return { ok: false, error: 'Enter your email and a password.', status: await buildStatus() };
     }
-    const result = await emailRegister(e, password, name?.trim());
+    const result = await passwordSignIn.register(e, password, name?.trim());
     if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
@@ -1316,8 +1097,8 @@ export function initSullaCloudAuthEvents(): void {
     if (!identityToken?.trim()) {
       return { ok: false, error: 'Apple identity token missing.', status: await buildStatus() };
     }
-    const result = await appleSignIn(identityToken.trim(), fullName, email);
-    if (!result.ok || !result.data) {
+    const result = await CloudAccountHttpError.settle(accountTransport.apple({ identityToken: identityToken.trim(), fullName, email }).then(ElectronCloudAccountTransport.signIn));
+    if (!result.ok) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     return completeSignInForCurrentState(result.data, 'Sulla is still starting up. Wait a minute, then try again.');
@@ -1382,16 +1163,15 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    legacySessions.invalidate();
-    clearPendingCloudMasterKey();
-    await clearPendingCredential(INTEGRATION_ID);
-    try {
-      await clearSession();
-    } catch (err) {
-      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-      // The broker clear is the authority. If it fails, keep Desktop paired
-      // and Cloud services running so both sides still describe one session.
-      return buildStatus(vaultSessionError(err, 'sign out'));
+    const outcome = await cloudSignOut.run();
+    if (!outcome.signedOut) {
+      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', outcome.error);
+      // The local clear is the authority. If it fails (nothing was revoked), keep
+      // Desktop paired and Cloud services running so both sides still describe one session.
+      return buildStatus(vaultSessionError(outcome.error, 'sign out'));
+    }
+    if (outcome.serverRevoked === false) {
+      console.warn('[SullaCloudAuth] Signed out locally; Sulla Cloud could not revoke the session now, so it will expire on its own');
     }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows

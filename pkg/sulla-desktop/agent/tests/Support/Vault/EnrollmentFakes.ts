@@ -118,6 +118,7 @@ export class FakeVaultBroker {
 export class FixedDeviceKeyDir {
   static readonly SEED = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 1));
   static readonly PUBLIC_KEY_B64 = 'ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=';
+  static readonly DEVICE_ID = 'device-0001';
   readonly dir: string;
 
   constructor() {
@@ -126,6 +127,9 @@ export class FixedDeviceKeyDir {
     fs.writeFileSync(path.join(this.dir, 'device-key.json'), JSON.stringify({
       v: 1, publicKey: FixedDeviceKeyDir.PUBLIC_KEY_B64, privateKey: key.export({ format: 'pem', type: 'pkcs8' }).toString(), createdAt: '2026-01-01T00:00:00.000Z',
     }), { mode: 0o600 });
+    // An enrolled install also has its device id on disk (main/cloud/device/FileDeviceIdStore), so the real
+    // desktopDeviceIdentity() reads it instead of minting one.
+    fs.writeFileSync(path.join(this.dir, 'device-id'), FixedDeviceKeyDir.DEVICE_ID, { mode: 0o600 });
   }
 
   static privateKey(): crypto.KeyObject {

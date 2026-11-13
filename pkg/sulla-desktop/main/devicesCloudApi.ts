@@ -6,7 +6,7 @@
 /** Device registration and the 45-second Cloud liveness heartbeat. */
 
 import { getCloudPreferences } from './cloud/cloudSettings';
-import { getDevicePublicKey } from './cloud/deviceKey';
+import { desktopDeviceIdentity } from './cloud/device/DesktopDeviceIdentity';
 import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
 
 import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
@@ -19,6 +19,11 @@ export interface CloudDeviceState {
   registered: boolean;
   revoked: boolean;
   error?: string;
+  /**
+   * Cloud refused this computer's key (`device_key_mismatch`): the key file was lost or replaced, so this install can
+   * never sign the rotation proof. The owner has to re-link it (`DeviceCloudService.relink`).
+   */
+  relinkRequired?: boolean;
   teamId?: string;
   teamName?: string;
 }
@@ -27,7 +32,9 @@ interface DeviceCloudDependencies {
   cloudRequest: typeof cloudRequest;
   isCloudSignedIn: typeof isCloudSignedIn;
   getCloudPreferences: typeof getCloudPreferences;
-  getDevicePublicKey: typeof getDevicePublicKey;
+  /** The domain DeviceIdentityService (`desktopDeviceIdentity()`): public key + /devices/register rotation proof. */
+  identity: { publicKey(): Promise<string>; keyRotationProof(userId: string, nextKey?: string): Promise<{ ts: number; signature: string }> };
+  getCurrentUserId: () => Promise<string>;
   getDesktopDeviceMetadata: typeof getDesktopDeviceMetadata;
   getDesktopDeviceId: typeof getDesktopDeviceId;
   setInterval: typeof setInterval;
@@ -37,7 +44,11 @@ interface DeviceCloudDependencies {
   logger: typeof Logging.background;
 }
 
+export type DeviceRelinkResult = { ok: true } | { ok: false; error: string };
+
 export class DeviceCloudService {
+  static readonly KEY_MISMATCH = 'device_key_mismatch';
+
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private cachedDeviceId: string | null = null;
   private deviceState: CloudDeviceState = { registered: false, revoked: false };
@@ -56,6 +67,8 @@ export class DeviceCloudService {
   async register(): Promise<string | null> {
     try {
       const meta = await this.dependencies.getDesktopDeviceMetadata();
+      const publicKey = await this.dependencies.identity.publicKey();
+      const proof = await this.registrationProof();
       const res = await this.postJson('/devices/register', {
         deviceId: meta.deviceId,
         deviceType: meta.deviceType,
@@ -65,13 +78,15 @@ export class DeviceCloudService {
         name: meta.name,
         osVersion: meta.osVersion,
         appVersion: meta.appVersion,
-        publicKey: this.dependencies.getDevicePublicKey(),
+        publicKey,
+        ...(proof ? { proof } : {}),
         ...(await this.reportedPreferences()),
       });
       if (!res.ok) {
         if (res.status === 409) {
           this.dependencies.logger.warn(`[DevicesApi] register refused: ${ res.data?.error }`);
-          this.setDeviceState({ registered: false, revoked: false, error: res.data?.error || 'registration_refused' });
+          const error = res.data?.error || 'registration_refused';
+          this.setDeviceState({ registered: false, revoked: false, error, ...(error === DeviceCloudService.KEY_MISMATCH ? { relinkRequired: true } : {}) });
         }
         return null;
       }
@@ -88,6 +103,27 @@ export class DeviceCloudService {
       this.dependencies.logger.log(`[DevicesApi] register failed: ${ error }`);
       return null;
     }
+  }
+
+  /**
+   * Re-link after `device_key_mismatch` (the domain DeviceRegistrationPolicy lost-key rule): the owner removes this
+   * computer's Cloud row, then it registers again with the key it holds now. Cloud accepts that as a release, so vault
+   * approval starts over. Only allowed while Cloud is refusing the key.
+   */
+  async relink(): Promise<DeviceRelinkResult> {
+    if (!this.deviceState.relinkRequired) return { ok: false, error: 'relink_not_required' };
+    try {
+      if (!await this.dependencies.isCloudSignedIn()) return { ok: false, error: 'not_signed_in' };
+      const deviceId = await this.dependencies.getDesktopDeviceId();
+      const removed = await this.dependencies.cloudRequest('DELETE', `/devices/${ encodeURIComponent(deviceId) }`);
+      if (!removed.ok) return { ok: false, error: `remove_failed_${ removed.status }` };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    const registered = await this.register();
+    if (registered && this.deviceState.registered) return { ok: true };
+
+    return { ok: false, error: this.deviceState.error || 'registration_failed' };
   }
 
   async heartbeat(): Promise<void> { await this.heartbeatRetrier.run(); }
@@ -122,6 +158,15 @@ export class DeviceCloudService {
     for (const listener of this.stateListeners) {
       try { listener(next); } catch { /* listener isolation */ }
     }
+  }
+
+  /** `proof` for /devices/register, signed by the key this install holds; omitted when no user id is available. */
+  private async registrationProof(): Promise<{ ts: number; signature: string } | null> {
+    let userId = '';
+    try { userId = await this.dependencies.getCurrentUserId() } catch { /* not signed in: register is skipped anyway */ }
+    if (!userId) return null;
+
+    return this.dependencies.identity.keyRotationProof(userId);
   }
 
   private async reportedPreferences(): Promise<{ remoteAccess: 'enabled' | 'disabled'; syncSettings: Record<string, boolean> } | Record<string, never>> {
@@ -183,7 +228,9 @@ export const DevicesCloudApi = new DeviceCloudService({
   cloudRequest,
   isCloudSignedIn,
   getCloudPreferences,
-  getDevicePublicKey,
+  get identity() { return desktopDeviceIdentity() },
+  // Lazy: sullaCloudAuth imports this module.
+  getCurrentUserId: async() => (await import('./sullaCloudAuth')).getCurrentUserId(),
   getDesktopDeviceMetadata,
   getDesktopDeviceId,
   setInterval,

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DesktopEnrollmentHarness } from '../../Support/Vault/DesktopEnrollmentHarness';
 import { FakeEnrollmentCloud, FakeVaultBroker, FixedDeviceKeyDir, type RecordedCloudCall } from '../../Support/Vault/EnrollmentFakes';
+import { DesktopDeviceIdentity } from '../../../../main/cloud/device/DesktopDeviceIdentity';
 
 const env = vi.hoisted(() => ({ cloud: null as any, broker: null as any, userId: 'user-0001', deviceDir: '' }));
 
@@ -69,6 +70,7 @@ async function runPolls(attempts: number): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers({ now: T0, toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
   keyDir = new FixedDeviceKeyDir();
+  DesktopDeviceIdentity.useInstance(null); // the identity is process-wide; rebuild it over this test's dir
   env.deviceDir = keyDir.dir;
   env.userId = 'user-0001';
   env.cloud = cloud = new FakeEnrollmentCloud(VAULT);
