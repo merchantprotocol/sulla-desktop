@@ -16,6 +16,7 @@ import { RedisRevocationStore, RequestStore } from './stores.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { RedisHealthProbe } from './RedisHealthProbe.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
+import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { HttpDesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
@@ -185,6 +186,8 @@ app.use((error: any, _request: express.Request, response: express.Response, _nex
 });
 
 async function main(): Promise<void> {
+  // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
+  await new StartupDatabaseWait({ name: 'sulla-tools' }).until('connect', () => pool.query('SELECT 1'));
   await initializeCatalog();
   await requests.initialize();
   const server = app.listen(config.port, '0.0.0.0', () => console.log(`[sulla-tools] listening on :${ config.port }`));
