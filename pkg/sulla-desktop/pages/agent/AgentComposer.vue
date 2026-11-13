@@ -17,6 +17,10 @@
     >
       <div class="absolute -top-px right-11 left-20 h-[2px] bg-linear-to-r [--tw-gradient-from:color-mix(in_srgb,var(--accent-hover)_0%,transparent)] [--tw-gradient-via:color-mix(in_srgb,var(--accent-hover)_70%,transparent)] [--tw-gradient-to:color-mix(in_srgb,var(--accent-hover)_0%,transparent)]" />
       <div class="absolute right-20 -bottom-px left-11 h-[2px] bg-linear-to-r from-[color-mix(in_srgb,var(--accent)_0%,transparent)] via-[var(--accent)] to-[color-mix(in_srgb,var(--accent)_0%,transparent)]" />
+      <div v-if="attachmentError" role="alert" class="px-3 py-2 text-sm">
+        {{ attachmentError }}
+        <button type="button" class="ml-2 underline" @click="attachmentError = ''">Dismiss</button>
+      </div>
       <!-- Attachment thumbnail preview strip -->
       <div
         v-if="pendingAttachments.length > 0"
@@ -553,6 +557,7 @@ const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
 const fileInputEl = ref<HTMLInputElement | null>(null);
 const isComposerMultiline = ref(false);
 const pendingAttachments = ref<PendingAttachment[]>([]);
+const attachmentError = ref('');
 
 function triggerFileInput(): void {
   fileInputEl.value?.click();
@@ -561,11 +566,18 @@ function triggerFileInput(): void {
 function handleFileSelect(event: Event): void {
   const input = event.target as HTMLInputElement;
   if (!input.files?.length) return;
+  attachmentError.value = '';
 
   for (const file of Array.from(input.files)) {
-    if (!file.type.startsWith('image/')) continue;
+    if (!file.type.startsWith('image/')) {
+      attachmentError.value = 'Only image attachments are supported here.';
+      continue;
+    }
 
     const reader = new FileReader();
+    reader.onerror = () => {
+      attachmentError.value = `Couldn't read attachment “${ file.name }”. Please choose it again.`;
+    };
     reader.onload = () => {
       const dataUrl = reader.result as string;
       // Extract base64 from data URL: "data:image/png;base64,AAAA..."

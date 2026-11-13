@@ -1154,6 +1154,7 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Conversation History
+  'conversation-history:clear-confirmed': (olderThan?: string) => { success: boolean };
   'conversation-history:list': (options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: 'chat' | 'browser' | 'workflow' | 'graph' }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord[];
   'conversation-history:update': (id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord | null;
   'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
