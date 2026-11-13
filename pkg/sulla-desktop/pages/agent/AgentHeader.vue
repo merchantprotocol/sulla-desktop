@@ -79,6 +79,22 @@
           @mouseleave="hideTabPeek"
         >
           <span class="tab-accent-bar" />
+          <svg
+            v-if="tab.pinned"
+            class="tab-pin"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            role="img"
+            aria-label="Pinned"
+          >
+            <path d="M15 4.5l-4 4l-4 1.5l-1.5 1.5l7 7l1.5 -1.5l1.5 -4l4 -4" />
+            <path d="M9 15l-4.5 4.5" />
+            <path d="M14.5 4l5.5 5.5" />
+          </svg>
           <span class="tab-icon">
             <img
               v-if="tab.favicon"
@@ -1420,6 +1436,7 @@ function handleTabContextMenuAction(
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.875rem;
+  font-family: var(--type-tabs-font, inherit);
   font-size: 0.8125rem;
   font-weight: 500;
   line-height: 1;
@@ -1441,6 +1458,9 @@ function handleTabContextMenuAction(
 }
 
 .tab-label {
+  /* Size lives on the label: the tab itself carries Tailwind text-size utilities that win over .tab-item. */
+  font-size: var(--type-tabs-size, inherit);
+  color: var(--type-tabs-color, inherit);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1702,20 +1722,21 @@ function handleTabContextMenuAction(
   display: none;
 }
 
-/* Pinning is functional in every theme. Keep its default treatment compact
-   and deliberately plain so it fits the existing tab strip. */
+/* Pinned tabs keep their title (shortened) and show a pin plus an accent
+   underline, so they read as pinned instead of collapsing to a bare icon. */
 .tab-pinned {
-  min-width: 36px;
-  max-width: 36px;
-  flex-basis: 36px;
-  justify-content: center;
-  gap: 0;
-  padding-right: 0;
-  padding-left: 0;
+  min-width: 0;
+  max-width: 150px;
+  flex: 0 0 auto;
+  gap: 6px;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.tab-pinned .tab-label {
-  display: none;
+.tab-pin {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--accent);
 }
 
 .tab-pinned-boundary {
@@ -1793,11 +1814,12 @@ function handleTabContextMenuAction(
 }
 
 .app-titlebar .tab-item {
-  width: 136px;
-  min-width: 112px;
-  max-width: 176px;
+  /* Wide enough that titles read; the strip scrolls with its arrows when full. */
+  width: auto;
+  min-width: 160px;
+  max-width: 260px;
   height: 34px;
-  flex: 0 1 136px;
+  flex: 0 1 auto;
   gap: 9px;
   padding: 0 8px 0 12px;
   border: 0;
@@ -1840,17 +1862,14 @@ function handleTabContextMenuAction(
 }
 
 .app-titlebar .tab-pinned {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
-  flex-basis: 36px;
-  justify-content: center;
-  gap: 0;
-  padding: 0;
-}
-
-.app-titlebar .tab-pinned .tab-label {
-  display: none;
+  width: auto;
+  min-width: 0;
+  max-width: 150px;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 0 12px 0 10px;
+  border-radius: 10px 10px 4px 4px;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .app-titlebar .tab-pinned-boundary {

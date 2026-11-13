@@ -222,6 +222,13 @@ export class PersonaAdapter {
     this.controller.setConnection('online');
 
     const applyDecision = (_event: unknown, record: import('@pkg/shared/decisions').DecisionRecord) => {
+      this.decisionStatus.set(record.id, record.status);
+      this.decisionExpiry.set(record.id, record.expiresAt);
+      for (const message of this.controller.thread.value.messages) {
+        if (message.kind === 'tool_question' && message.questionId === record.id && message.expiresAt !== record.expiresAt) {
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, { expiresAt: record.expiresAt });
+        }
+      }
       if (['pending', 'deferred'].includes(record.status)) return;
       for (const message of this.controller.thread.value.messages) {
         if (message.kind === 'tool_approval' && message.approvalId === record.id) {
@@ -236,6 +243,18 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('decisions:changed', applyDecision);
     this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+    // Question and approval cards are rebuilt from history as "pending"; their real
+    // outcome lives in the decisions store. Without this, every answered card from
+    // an earlier session reopens after a restart and invites a second answer.
+    ipcRenderer.invoke('decisions:list' as any)
+      .then((records: import('@pkg/shared/decisions').DecisionRecord[]) => {
+        for (const record of records ?? []) applyDecision(undefined, record);
+        this.settleKnownDecisions();
+      })
+      .catch(() => undefined);
+    // Cards also come back from the chat's local save, possibly after the list above
+    // resolved; settle any of those against the known outcomes as they appear.
+    this.stopWatchers.push(watch(() => this.controller.thread.value.messages.length, () => this.settleKnownDecisions()));
 
     const reconnectClaude = (_event: unknown, payload: { type?: string; providerId?: string; message?: string }) => {
       if (payload?.type !== 'provider-auth-reconnect-required' || payload.providerId !== 'claude-code') return;
@@ -479,6 +498,49 @@ export class PersonaAdapter {
   // run. The leading update is synchronous so visible progress never depends
   // on reaching an animation-frame boundary. During a continuous stream, a
   // short timer publishes the latest accumulated state at a bounded rate.
+  /** Known outcome of each decision by id, so re-mapped cards keep their resolved state. */
+  private readonly decisionStatus = new Map<string, import('@pkg/shared/decisions').DecisionRecord['status']>();
+  private readonly decisionExpiry = new Map<string, number>();
+
+  private settleKnownDecisions(): void {
+    this.controller.removeDuplicateMessages();
+    for (const message of this.controller.thread.value.messages) {
+      if (message.kind === 'tool_question' && message.status === 'pending') {
+        const status = this.questionStatus(message.questionId);
+        if (status !== 'pending') this.controller.updateMessage<ToolQuestionMessage>(message.id, { status });
+      } else if (message.kind === 'tool_approval' && message.decision === 'pending') {
+        const decision = this.approvalDecision(message.approvalId);
+        if (decision !== 'pending') this.controller.updateMessage<ToolApprovalMessage>(message.id, { decision });
+      }
+    }
+  }
+
+  /** A re-mapped card starts "pending"; never let that reopen one already resolved. */
+  private keepResolution(existing: Message | undefined, mapped: Message): Message {
+    if (existing?.kind === 'tool_question' && mapped.kind === 'tool_question' && existing.status !== 'pending') {
+      return { ...mapped, status: existing.status, answers: existing.answers };
+    }
+    if (existing?.kind === 'tool_approval' && mapped.kind === 'tool_approval' && existing.decision !== 'pending') {
+      return { ...mapped, decision: existing.decision };
+    }
+
+    return mapped;
+  }
+
+  private questionStatus(questionId: string | undefined): ToolQuestionMessage['status'] {
+    const status = questionId ? this.decisionStatus.get(questionId) : undefined;
+    if (!status || status === 'pending' || status === 'deferred') return 'pending';
+
+    return status === 'answered' ? 'answered' : 'timed_out';
+  }
+
+  private approvalDecision(approvalId: string | undefined): ToolApprovalMessage['decision'] {
+    const status = approvalId ? this.decisionStatus.get(approvalId) : undefined;
+    if (!status || status === 'pending' || status === 'deferred') return 'pending';
+
+    return status === 'approved' ? 'approved' : status === 'denied' ? 'denied' : 'timed_out';
+  }
+
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
@@ -496,8 +558,12 @@ export class PersonaAdapter {
         this.seen.add(b.id);
         continue;
       }
-      if (this.seen.has(b.id)) {
-        this.controller.updateMessage(mapped.id, mapped as Partial<Message>);
+      // Also update when the message was restored from the local save: appending
+      // it again would create a duplicate card that updates can never reach.
+      const existing = this.controller.thread.value.messages.find(m => m.id === mapped.id);
+      if (this.seen.has(b.id) || existing) {
+        this.seen.add(b.id);
+        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
@@ -725,7 +791,7 @@ export class PersonaAdapter {
         createdAt,
         reason:     b.toolApproval.reason,
         command:    b.toolApproval.command,
-        decision:   'pending',
+        decision:   this.approvalDecision(b.toolApproval.approvalId),
         approvalId: b.toolApproval.approvalId,
         origin:     b.toolApproval.origin,
       } satisfies ToolApprovalMessage;
@@ -743,7 +809,8 @@ export class PersonaAdapter {
         createdAt,
         questionId: b.toolQuestion.questionId,
         questions:  b.toolQuestion.questions,
-        status:     'pending',
+        status:     this.questionStatus(b.toolQuestion.questionId),
+        expiresAt:  this.decisionExpiry.get(b.toolQuestion.questionId),
       } satisfies ToolQuestionMessage;
     }
 

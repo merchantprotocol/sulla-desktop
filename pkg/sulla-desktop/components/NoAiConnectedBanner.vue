@@ -5,7 +5,11 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <aside v-if="visible" class="no-ai" role="status">
+  <aside v-if="vaultLocked" class="no-ai vault-locked" role="status">
+    <div><strong>Your Password Vault is locked.</strong><span> Sulla can't reach your AI models or saved sign-ins until you unlock it. Your model connections are fine, and paused work continues after you unlock.</span></div>
+    <button type="button" @click="openVault">Unlock vault</button>
+  </aside>
+  <aside v-else-if="visible" class="no-ai" role="status">
     <div><strong>Connect an AI model to start chatting.</strong><span> Sign in to Claude, ChatGPT, or Grok, or add an API key.</span></div>
     <button type="button" @click="openModels">Connect a model</button>
   </aside>
@@ -19,6 +23,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const router = useRouter();
 const visible = ref(false);
+// A locked vault hides every model account, so it must win over "connect a model".
+const vaultLocked = ref(false);
 const requestedIntegration = ref<string | null>(null);
 let openedGuidedConnect = false;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -28,7 +34,21 @@ async function openIntegration(integrationId: string) {
   ipcRenderer.send('first-run:trace' as any, 'main-window', 'opened deferred API connection', { integrationId });
 }
 
+/** True only for a set-up vault that is answering and locked; a starting or missing vault is not the user's to fix. */
+async function checkVaultLocked(): Promise<boolean> {
+  if (await ipcRenderer.invoke('vault:is-unlocked' as any).catch(() => true)) return false;
+
+  return await ipcRenderer.invoke('vault:is-setup' as any).catch(() => false) === true;
+}
+function openVault() {
+  window.dispatchEvent(new CustomEvent('sulla:open-mode', { detail: { mode: 'vault' } }));
+}
 async function refresh() {
+  vaultLocked.value = await checkVaultLocked();
+  if (vaultLocked.value) {
+    visible.value = false;
+    return;
+  }
   const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
     .catch(() => ({ connected: false, loading: true }));
   if (status.loading) {
@@ -60,7 +80,7 @@ function openModels() {
 }
 function onModelChanged() { void refresh(); }
 function onOpenConnections() { openModels(); }
-function onVaultUnlocked() { void refresh(); }
+function onVaultUnlocked() { vaultLocked.value = false; void refresh(); }
 
 onMounted(() => {
   void refresh();

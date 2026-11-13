@@ -6,6 +6,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { startTypography } from '@pkg/composables/useTypography';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
 export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light' | 'studio-light';
@@ -195,6 +196,8 @@ export function useTheme() {
     }
     // Apply on mount in case the watch didn't fire (value unchanged)
     applyThemeClass(currentTheme.value);
+    // Every window mounts useTheme, so per-section typography loads here too.
+    startTypography();
   });
 
   // Listen for cross-window localStorage changes
