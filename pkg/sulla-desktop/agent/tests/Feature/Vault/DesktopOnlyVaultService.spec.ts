@@ -64,16 +64,25 @@ class DesktopVaultServer {
   }
 
   async request(method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }> {
-    const response = await fetch(new URL(path, this.baseUrl), {
-      method,
-      redirect: 'manual',
-      headers:  body === undefined ? {} : { 'content-type': 'application/json' },
-      body:     body === undefined ? undefined : JSON.stringify(body),
+    const target = new URL(path, this.baseUrl);
+    return new Promise((resolve, reject) => {
+      const request = http.request(target, {
+        method,
+        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      }, response => {
+        let text = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => text += chunk);
+        response.on('end', () => {
+          let json: unknown = text;
+          try { json = JSON.parse(text); } catch { /* non-JSON body */ }
+          resolve({ status: response.statusCode ?? 0, json });
+        });
+      });
+      request.on('error', reject);
+      if (body !== undefined) request.write(JSON.stringify(body));
+      request.end();
     });
-    const text = await response.text();
-    let json: unknown = text;
-    try { json = JSON.parse(text); } catch { /* non-JSON body */ }
-    return { status: response.status, json };
   }
 
   async stop(): Promise<void> {
