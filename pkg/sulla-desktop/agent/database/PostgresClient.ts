@@ -10,6 +10,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { hostPort } from '@pkg/utils/instance';
 
+import { DatabaseOutageState, DatabaseUnavailableClassifier } from './DatabaseAvailability';
+
 // Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
 // context slot is shared with Blink, so getStore() can read a Blink object and
 // V8 aborts the whole renderer (it took down the password vault on its first
@@ -22,6 +24,26 @@ export class PostgresClient {
   private connected = false;
   private shuttingDown = false;
   private statementTimeout: AsyncLocalStorage<number> | null = IN_RENDERER ? null : new AsyncLocalStorage<number>();
+  private readonly socketOutage = new DatabaseOutageState();
+  private classifier: DatabaseUnavailableClassifier | null = null;
+
+  /** Host port the pool connects to (honours SULLA_DATABASE_URL). */
+  get databasePort(): number | undefined {
+    const url = process.env.SULLA_DATABASE_URL;
+    if (!url) return hostPort(30116);
+    try {
+      return Number(new URL(url).port || 5432);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Classifies errors that only mean "the database is not reachable right now". */
+  get unavailableClassifier(): DatabaseUnavailableClassifier {
+    this.classifier ??= new DatabaseUnavailableClassifier(this.databasePort);
+
+    return this.classifier;
+  }
 
   get isShuttingDown(): boolean {
     return this.shuttingDown;
@@ -50,14 +72,40 @@ export class PostgresClient {
       connectionTimeoutMillis: Number(process.env.SULLA_DATABASE_CONNECT_TIMEOUT_MS ?? 10000),
     });
 
-    // Graceful pool error handling
-    this.pool.on('error', (err) => {
-      if (this.shuttingDown) return; // suppress noise during shutdown
-      console.error('[PostgresPool] Unexpected error on idle client', err);
-      this.connected = false;
+    // pg-pool only listens for 'error' on a client while it sits idle in the
+    // pool and removes that listener while the client is checked out. When
+    // Postgres restarts (VM stop, cold boot) every checked-out client emits
+    // 'error' with no listener, and Node turns each one into an
+    // UncaughtException "Connection terminated unexpectedly". Give every
+    // client a permanent listener; the in-flight query still rejects with the
+    // same error, so callers see the real failure.
+    this.pool.on('connect', (client) => {
+      client.on('error', err => this.handleSocketError('client', err));
+      const downForMs = this.socketOutage.markAvailable();
+      if (downForMs !== null) {
+        console.log(`[PostgresPool] Connection restored after ${ Math.round(downForMs / 1000) }s`);
+      }
     });
+    this.pool.on('error', err => this.handleSocketError('idle client', err));
 
     await this.connect();
+  }
+
+  /**
+   * A pooled socket died. Logged once per outage so a Postgres restart does
+   * not print one line per open connection.
+   */
+  private handleSocketError(kind: 'client' | 'idle client', err: Error): void {
+    this.connected = false;
+    if (this.shuttingDown) return; // suppress noise during shutdown
+    if (!this.unavailableClassifier.isUnavailable(err)) {
+      console.error(`[PostgresPool] Unexpected error on ${ kind }`, err);
+
+      return;
+    }
+    if (this.socketOutage.markUnavailable()) {
+      console.warn(`[PostgresPool] Database connection lost (${ err.message }); pooled connections will reconnect when it is back`);
+    }
   }
 
   /**
@@ -201,6 +249,9 @@ export class PostgresClient {
           max:                     1,
           connectionTimeoutMillis: 2000,
         });
+        // A socket that dies after the probe query must not become an
+        // UncaughtException; the probe is ended right after anyway.
+        probe.on('error', () => { /* probe is disposable */ });
         await probe.query('SELECT 1');
         console.log(`[PostgresClient] Host database port reachable (attempt ${ i })`);
 
