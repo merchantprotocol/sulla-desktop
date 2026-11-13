@@ -81,12 +81,13 @@
           <div class="toolbar"><h1>Updates</h1><span>Use cases with a newer version in Use Cases.</span><div class="toolbar-actions"><button v-if="updateCount" class="button primary" :disabled="Boolean(pk.busySlug.value)" @click="updateAll"><UseCaseIcon name="up" /> Update all ({{ updateCount }})</button></div></div>
           <div v-if="libraryRows.length === 0" class="empty card"><b>Everything is up to date</b><p>Updating keeps your settings and data.</p></div>
           <div v-else class="card table-card"><table><thead><tr><th>Use case</th><th>Installed</th><th>Available</th><th>Updated</th><th /></tr></thead><tbody>
-            <tr v-for="item in libraryRows" :key="item.slug" class="item-row" @click="openInstalled(item.slug)"><td><div class="name-cell"><span class="feature-icon" :class="topicTone(marketplaceRow(item.slug)?.topic || '')"><UseCaseIcon :name="marketplaceRow(item.slug) ? packageIcon(marketplaceRow(item.slug)!) : 'box'" /></span><span><b>{{ item.title }}</b><small>{{ marketplaceRow(item.slug)?.publisher || 'Sulla' }}</small></span></div></td><td><code>{{ item.version }}</code></td><td><code class="available">{{ marketplaceRow(item.slug)?.version }}</code></td><td>{{ dateLabel(marketplaceRow(item.slug)?.updatedAt || '') }}</td><td class="row-action"><button class="button small" :disabled="Boolean(pk.busySlug.value)" @click.stop="onGet(marketplaceRow(item.slug)!)"><UseCaseIcon name="up" /> Update</button></td></tr>
+            <tr v-for="item in libraryRows" :key="item.slug" class="item-row" @click="openInstalled(item.slug)"><td><div class="name-cell"><span class="feature-icon" :class="topicTone(marketplaceRow(item.slug)?.topic || '')"><UseCaseIcon :name="marketplaceRow(item.slug) ? packageIcon(marketplaceRow(item.slug)!) : 'box'" /></span><span><b>{{ item.title }}</b><small>{{ marketplaceRow(item.slug)?.publisher || 'Sulla' }}</small></span></div></td><td><code>{{ item.version }}</code></td><td><code class="available">{{ marketplaceRow(item.slug)?.version }}</code></td><td>{{ dateLabel(marketplaceRow(item.slug)?.updatedAt || '') }}</td><td class="row-action"><button class="button small" :disabled="Boolean(pk.busySlug.value)" @click.stop="onUpdate(item)"><UseCaseIcon name="up" /> Update</button></td></tr>
           </tbody></table></div>
         </template>
         <template v-else>
           <div class="toolbar"><h1>{{ view === 'updates' ? 'Updates' : 'My Library' }}</h1><span>Use cases installed on this Desktop. Only active ones run.</span><div class="toolbar-actions"><button v-if="updateCount" class="button" @click="updateAll"><UseCaseIcon name="up" /> Update all ({{ updateCount }})</button><button class="button" @click="showBrowse"><UseCaseIcon name="grid" /> Browse Use Cases</button></div></div>
-          <div v-if="libraryRows.length === 0" class="empty card"><b>{{ view === 'updates' ? 'Everything is up to date' : 'Your library is empty' }}</b><p v-if="view !== 'updates'">Browse Use Cases and pull one down.</p></div>
+          <div v-if="pk.installedError.value" class="empty card"><b>Couldn't load your library</b><p>{{ pk.installedError.value }}</p><button class="button" @click="pk.loadInstalled()">Try again</button></div>
+          <div v-else-if="libraryRows.length === 0" class="empty card"><b>{{ view === 'updates' ? 'Everything is up to date' : 'Your library is empty' }}</b><p v-if="view !== 'updates'">Browse Use Cases and pull one down.</p></div>
           <div v-else class="library-panes">
             <div class="card table-card"><table><thead><tr><th>Use case</th><th>Version</th><th>Source</th><th>Status</th></tr></thead><tbody>
               <template v-if="activeRows.length"><tr class="section-row"><td colspan="4">Active <span>{{ activeRows.length }}</span></td></tr><tr v-for="item in activeRows" :key="item.slug" class="item-row" :class="{ selected: selectedSlug === item.slug }" @click="selectedSlug = item.slug"><td><div class="name-cell"><span class="feature-icon" :class="topicTone(marketplaceRow(item.slug)?.topic || '')"><UseCaseIcon :name="marketplaceRow(item.slug) ? packageIcon(marketplaceRow(item.slug)!) : 'box'" /></span><div><b>{{ item.title }}</b><small>{{ marketplaceRow(item.slug) ? includesLine(marketplaceRow(item.slug)!) : item.name }}</small></div></div></td><td><code>{{ item.version }}</code></td><td><span>Installed package</span><small>{{ marketplaceRow(item.slug)?.publisher }}</small></td><td><span class="state" :class="{ active: item.active }"><i />{{ item.active ? 'Active' : 'Off' }}</span></td></tr></template>
@@ -170,8 +171,11 @@ const browseGroups = computed(() => {
   if (rest.length) groups.push({ label: 'More use cases', items: rest });
   return groups;
 });
-const updateCount = computed(() => pk.installed.value.filter(item => marketplaceRow(item.slug)?.version !== item.version).length);
-const libraryRows = computed(() => view.value === 'updates' ? pk.installed.value.filter(item => marketplaceRow(item.slug)?.version !== item.version) : pk.installed.value);
+// Only a package still listed in Use Cases with a different version has an update; one
+// that is no longer listed has nothing to update to (its Update button used to crash).
+const updatable = computed(() => pk.installed.value.filter(item => hasUpdate(item.slug, item.version)));
+const updateCount = computed(() => updatable.value.length);
+const libraryRows = computed(() => view.value === 'updates' ? updatable.value : pk.installed.value);
 const activeRows = computed(() => libraryRows.value.filter(item => item.active));
 const offRows = computed(() => libraryRows.value.filter(item => !item.active));
 const selectedInstalled = computed(() => pk.installed.value.find(item => item.slug === selectedSlug.value) ?? pk.installed.value[0] ?? null);
@@ -198,6 +202,7 @@ function kindIcon(kind: string) { return ({ agent: 'agent', skill: 'skill', rout
 function kindTone(kind: string) { return ({ agent: 'blue', skill: 'purple', routine: 'green', function: 'purple', integration: 'amber', recipe: 'red' } as Record<string, string>)[kind] || 'blue'; }
 function installed(slug: string) { return pk.installed.value.find(item => item.slug === slug); }
 function marketplaceRow(slug: string) { return pk.packages.value.find(item => item.slug === slug); }
+function hasUpdate(slug: string, version: string) { const row = marketplaceRow(slug); return Boolean(row && row.version !== version); }
 function groupItems(items: ({ kind: string; slug: string } | PackageContentItem)[]) { const labels: Record<string, string> = { agent: 'Agents', skill: 'Skills', routine: 'Workflows', function: 'Functions', integration: 'Integrations', recipe: 'Recipes' }; return Object.entries(labels).map(([kind, label]) => ({ kind, label, items: items.filter(item => item.kind === kind) })).filter(group => group.items.length); }
 function includesLine(item: PackageRow) { return groupItems(item.contents).map(group => `${group.items.length} ${group.items.length === 1 ? group.label.toLowerCase().slice(0, -1) : group.label.toLowerCase()}`).join(' · ') || 'Open to see what’s included'; }
 function dateLabel(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
@@ -210,7 +215,9 @@ function showUpdates() { view.value = 'updates'; pk.clearDetail(); }
 function selectTopic(key: string) { view.value = 'browse'; selectedTopic.value = key; pk.clearDetail(); }
 function openPackage(item: PackageRow) { searchFocused.value = false; void pk.loadDetail(item.id); }
 function openInstalled(slug: string) { pk.clearDetail(); view.value = 'library'; selectedSlug.value = slug; }
-function publishUseCase() { void router.push('/Routines'); emit('feedback', 'info', 'Publish a package from Sulla Studio.'); }
+// '/Routines' is not a route in this window, so pushing it blanked the screen. Publishing
+// from this Desktop works per workflow (its ⋯ menu → Publish), so take the user there.
+function publishUseCase() { showSection('workflows'); emit('feedback', 'info', 'Pick a workflow, open its ⋯ menu and choose Publish to send it for review.'); }
 function openVault(slug: string) { void router.push(`/Integrations/${encodeURIComponent(slug)}`); }
 function openDashboard(port: number) { window.open(`http://localhost:${port}`, '_blank', 'noopener'); }
 async function onGet(row: PackageRow) { download.value = { name: row.title }; const result = await pk.install(row); download.value = null; if (result.ok) { feedback.value = { kind: 'success', message: `${row.title} is in My Library.` }; emit('installed'); openInstalled(row.slug); } else feedback.value = { kind: 'error', message: result.error || `Couldn't get ${row.title}.` }; }
@@ -220,7 +227,9 @@ async function startPackage() { if (!activateTarget.value) return; starting.valu
 async function deactivate(item: InstalledPackage) { const result = await pk.setActive(item.slug, false); feedback.value = result.ok ? { kind: 'success', message: `${item.title} is off.` } : { kind: 'error', message: result.error || `Couldn't deactivate ${item.title}.` }; }
 function openUninstall(item: InstalledPackage) { uninstallTarget.value = item; removeData.value = false; }
 async function confirmUninstall() { if (!uninstallTarget.value) return; const target = uninstallTarget.value; const result = await pk.uninstall(target.slug, removeData.value); if (result.ok) { uninstallTarget.value = null; selectedSlug.value = null; feedback.value = { kind: 'success', message: `${target.title} uninstalled${removeData.value ? ' and data removed' : '; data kept'}.` }; emit('installed'); } else feedback.value = { kind: 'error', message: result.error || `Couldn't uninstall ${target.title}.` }; }
-async function updateAll() { for (const item of libraryRows.value) { const row = marketplaceRow(item.slug); if (row) await onGet(row); } }
+// Installing over an installed package is refused, so Update used to fail every time.
+async function onUpdate(item: InstalledPackage): Promise<boolean> { const row = marketplaceRow(item.slug); if (!row) return false; download.value = { name: row.title }; const result = await pk.update(item, row); download.value = null; if (result.ok) { feedback.value = { kind: 'success', message: `${row.title} updated to ${row.version}.` }; emit('installed'); } else feedback.value = { kind: 'error', message: result.error || `Couldn't update ${row.title}.` }; return result.ok; }
+async function updateAll() { for (const item of [...updatable.value]) { if (!await onUpdate(item)) return; } }
 
 onMounted(async() => { await Promise.all([pk.load(), pk.loadInstalled(), loadPackageTopics()]); selectedSlug.value = pk.installed.value[0]?.slug ?? null; });
 </script>
