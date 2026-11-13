@@ -29,16 +29,21 @@
  *                         Docker daemon; required for the sulla runtime)
  *   VAULT_SMOKE_PREFIX    container-name prefix (default vault-smoke-<pid>)
  *   VAULT_SMOKE_KEEP=1    keep containers and scratch for debugging (remove them yourself)
+ *   VAULT_SMOKE_BREAK=key-row  deliberate break: rewrite the key row after the snapshot; the run must FAIL (exit 1)
+ *
+ * Images already present locally are not pulled, so NEW can be a locally built tag.
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DockerCliRuntime, SullaToolRuntime } from './runtime.mjs';
-import { SyntheticPostgres } from './repositories/SyntheticPostgres.mjs';
+import { DockerCliRuntime, SullaToolRuntime, VAULT_PORT } from './runtime.mjs';
+import { POSTGRES_IMAGE, SyntheticPostgres } from './repositories/SyntheticPostgres.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PIN_FILE = 'packaging/bundled-images.yaml';
@@ -229,7 +234,7 @@ class VaultUpgradeSmoke {
     this.log(`runtime=${ this.runtime.name } OLD=${ this.oldImage } NEW=${ this.newImage }`);
     try {
       this.tlsDir = this.makeTls();
-      for (const image of [POSTGRES_IMAGE, this.oldImage, this.newImage]) this.runtime.pull(image);
+      for (const image of [POSTGRES_IMAGE, this.oldImage, this.newImage]) this.runtime.ensureImage(image);
       this.database = new SyntheticPostgres(this.runtime, `${ this.prefix }-db`, this.workdir);
       this.started.push(this.database.name);
       await this.database.start();
@@ -253,6 +258,10 @@ class VaultUpgradeSmoke {
       assert.equal(itemsBefore.length, fixtures.length, 'one items row per synthetic item');
       assert.equal(keyBefore.length, 1, 'exactly one users key row');
       this.log(`OLD: created vault + ${ itemsBefore.length } items via the human API; snapshot taken`);
+      if (process.env.VAULT_SMOKE_BREAK === 'key-row') {
+        this.database.rewriteKeyRow();
+        this.log('DELIBERATE BREAK: key row rewritten after the snapshot; this run must fail');
+      }
       this.runtime.stop(oldVault.name);
 
       // NEW image on the same DB: migrations run at startup.
