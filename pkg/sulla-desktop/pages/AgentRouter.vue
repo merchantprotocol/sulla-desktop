@@ -161,7 +161,8 @@ import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
-import { openDocumentTab, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
@@ -175,7 +176,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
 
@@ -202,6 +203,46 @@ const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 watch(() => route.path, (path) => {
   const match = path.match(/^\/Browser\/(.+)$/);
   if (match) persistActiveTabId(match[1]);
+});
+
+// ── Active-tab guard ──
+// The `/Browser/:id` route IS the active tab. Every removal path (user close,
+// agent tab closed by main, job ending, tab cap eviction) splices the tab list
+// without knowing about the route. If the active id disappears we re-point
+// the route at a neighbour, or open a fresh chat tab when none remain, so the
+// view never points at a missing tab (the blank-screen bug). One guard here
+// covers every path.
+function currentVisualTabOrder(): string[] {
+  const ids = browserTabs.map(t => t.id);
+  const saved = tabOrder.value.filter(id => ids.includes(id));
+  const rest = ids.filter(id => !saved.includes(id));
+
+  return orderPinnedFirst([...saved, ...rest], pinnedTabIds.value);
+}
+
+let knownTabOrder: string[] = currentVisualTabOrder();
+const visualTabOrderKey = computed(() => JSON.stringify(currentVisualTabOrder()));
+
+watch(visualTabOrderKey, () => {
+  const previousOrder = knownTabOrder;
+  knownTabOrder = currentVisualTabOrder();
+
+  const match = /^\/Browser\/(.+)$/.exec(route.path);
+  if (!match) return;
+
+  const activeId = match[1];
+  const remainingIds = browserTabs.map(t => t.id);
+  if (remainingIds.includes(activeId)) return;
+
+  if (remainingIds.length === 0) {
+    const fresh = createTab('about:blank', { mode: 'chat' });
+    router.replace(`/Browser/${ fresh.id }`);
+
+    return;
+  }
+
+  const nextId = selectTabAfterRemoval(previousOrder, activeId, remainingIds) ?? remainingIds[0];
+  router.replace(`/Browser/${ nextId }`);
 });
 
 // ── Global ModeRail wiring ──
