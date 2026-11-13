@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import StudioTopbar from './StudioTopbar.vue';
 
@@ -68,6 +69,7 @@ async function saveDraft() { if (!detail.value?.draftDetail) return; saving.valu
 async function publishDraft() { if (!detail.value?.draftDetail) return; publishing.value = true; if (editing.value) await saveDraft(); const res = await ipcRenderer.invoke('library-draft-publish-marketplace', detail.value.draftDetail.id); publishing.value = false; detailError.value = 'error' in res ? res.error : `Submitted to Use Cases as ${res.templateId}.`; }
 async function deleteDraft() { if (!detail.value?.draftDetail || !window.confirm('Delete this draft?')) return; const res = await ipcRenderer.invoke('library-draft-delete', detail.value.draftDetail.id); if ('error' in res) detailError.value = res.error; else { closeDetail(); await load(); } }
 onMounted(load);
+useDatabaseAvailableReload(load, 'StudioSkillsPage');
 </script>
 
 <style scoped lang="scss">

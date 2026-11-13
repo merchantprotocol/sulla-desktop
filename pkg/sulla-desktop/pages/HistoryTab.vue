@@ -416,6 +416,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { useTheme } from '@pkg/composables/useTheme';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -701,6 +702,9 @@ function clearHistory(scope: 'hour' | 'today' | 'all') {
 function onHistoryCleared() {
   loadHistory();
 }
+
+// History lists come back empty while the database is starting; reload when it is up.
+useDatabaseAvailableReload(loadHistory, 'HistoryTab');
 
 onMounted(() => {
   loadHistory();

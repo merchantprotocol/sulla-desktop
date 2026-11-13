@@ -47,6 +47,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
 import { MODEL_CLASSES, MODEL_ROUTING_IPC, type AgentModelChoice, type ModelClass, type ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { CLASS_LABELS, choiceLabel, modelName, providerName, providerOrder, resolveChoice } from '@pkg/components/settings/sections/modelRouting/routingLogic';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import AgentDirectoryTab from './AgentDirectoryTab.vue';
 import StudioTopbar from './StudioTopbar.vue';
@@ -106,6 +107,7 @@ async function exportAgent() { if (!active.value) return; const manifest = await
 async function publishAgent() { if (!active.value) return; publishing.value = true; const check = await ipcRenderer.invoke('agent-definitions:publish-check', active.value.slug); if ('error' in check) { detailError.value = true; detailMessage.value = check.error; publishing.value = false; return; } if (check.warnings.length && !window.confirm(`${check.warnings.join('\n')}\n\nPublish anyway?`)) { publishing.value = false; return; } const res = await ipcRenderer.invoke('agent-definitions:publish', active.value.slug); publishing.value = false; detailError.value = 'error' in res; detailMessage.value = 'error' in res ? res.error : `Submitted as ${res.templateId}.`; }
 async function deleteAgent() { if (!active.value?.id || !window.confirm(`Delete ${active.value.name}?`)) return; await ipcRenderer.invoke('agent-definitions:delete', active.value.id); closeDetail(); await load(); }
 onMounted(load);
+useDatabaseAvailableReload(load, 'StudioAgentsPage');
 </script>
 
 <style scoped lang="scss">

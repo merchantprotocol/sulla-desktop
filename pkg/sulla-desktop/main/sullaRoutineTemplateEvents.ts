@@ -529,7 +529,7 @@ export function initSullaRoutineTemplateEvents(): void {
     if (!workflowId) return [];
     try {
       const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
-      const rows = await postgresClient.queryAll(
+      const rows = await getDatabaseReadGuard().run('routines-list-runs', () => postgresClient.queryAll(
         `WITH latest AS (
            SELECT DISTINCT ON (execution_id)
              execution_id,
@@ -555,7 +555,7 @@ export function initSullaRoutineTemplateEvents(): void {
          ORDER BY l.created_at DESC
          LIMIT $2`,
         [workflowId, typeof limit === 'number' && limit > 0 ? limit : 25],
-      );
+      ), []);
 
       return rows.map((row: any) => ({
         executionId:     row.execution_id,
