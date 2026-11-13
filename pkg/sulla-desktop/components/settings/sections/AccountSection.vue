@@ -20,7 +20,7 @@ import { useAccountSettings } from '@pkg/composables/preferences/useAccountSetti
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const {
-  userName, email, subscribeToUpdates, saveProfile, accountsLoading, accountsPending,
+  userName, email, subscribeToUpdates, saveProfile, profileError, accountsLoading, accountsPending,
   accountsError, accountsNotice, accountsProfile, accountsDisplayName, accountsConnections,
   accountsMemberships, authorityUrl, authorityError, discoveredAuthority, selectedAudience,
   authorizationNotice, refreshAccounts, saveAccountsProfile, discoverAuthority, cancelAuthority,
@@ -95,8 +95,19 @@ async function makeRecoveryKey() {
 }
 
 async function recoveryAction(action: 'save' | 'print' | 'copy') {
-  await ipcRenderer.invoke(`sulla-cloud:recovery-key-${ action }`, recoveryKey.value);
-  recoveryNotice.value = action === 'copy' ? 'Recovery key copied' : action === 'print' ? 'Opening print dialog' : 'Saved to Files';
+  recoveryNotice.value = '';
+  try {
+    const result = await ipcRenderer.invoke(`sulla-cloud:recovery-key-${ action }`, recoveryKey.value);
+
+    if (action === 'save' && !result?.saved) {
+      recoveryNotice.value = 'Not saved';
+
+      return;
+    }
+    recoveryNotice.value = action === 'copy' ? 'Recovery key copied' : action === 'print' ? 'Sent to the printer' : 'Saved as a PDF';
+  } catch (error) {
+    recoveryNotice.value = `Could not ${ action } the recovery key: ${ error instanceof Error ? error.message : String(error) }`;
+  }
 }
 
 async function setRemoteAccess(on: boolean) {
@@ -177,6 +188,12 @@ onBeforeUnmount(() => {
           @update:model-value="setSubscribe"
         />
       </PrefRow>
+      <p
+        v-if="profileError"
+        class="note badc"
+      >
+        {{ profileError }}
+      </p>
     </PrefCard>
 
     <PrefCard
