@@ -125,34 +125,6 @@ export class AgentNode extends BaseNode {
     // observation sub-agents on every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
 
-    // Reflex: Sulla's native decision engine gets the first look at a fresh
-    // human message. When it is confident it has seen this request succeed
-    // before, it runs that one tool call immediately, and the model is told
-    // what already happened via <reflex_context>. Below threshold it runs
-    // nothing; a close-enough guess becomes a <reflex_context> hint the model
-    // may act on, and the post-turn Reflex Trainer learns from the model.
-    const reflexStart = phaseStart();
-    if (!isToolCallLoop) {
-      (state.metadata as any).reflexContext = '';
-      (state.metadata as any).reflexDecision = null;
-      (state.metadata as any).turnToolEvents = [];
-      const isConversationalist = String((state.metadata as any).agentId || state.metadata.wsChannel || '') === 'conversationalist';
-      // A reflex can execute a learned tool before the model has classified a
-      // microphone transcript. Voice turns for the Conversationalist must reach
-      // that classification gate first so overheard speech can do no work.
-      if (!(state.metadata as any).isSubAgent && !_inWorkflow && !isConversationalist) {
-        const { runReflex, formatReflexContext, latestHumanText } = await import('../reflex/ReflexService');
-        const reflex = await runReflex(latestHumanText(state.messages), state);
-        if (reflex) {
-          (state.metadata as any).reflexContext = formatReflexContext(reflex);
-          if (reflex.kind === 'acted') {
-            (state.metadata as any).reflexDecision = reflex;
-            void this.wsChatMessage(state, `⚡ Reflex ${ reflex.success ? 'ran' : 'tried' } ${ reflex.toolName } (confidence ${ reflex.confidence })`, 'assistant', 'thinking');
-          }
-        }
-      }
-    }
-    preModelPhases.reflex = Date.now() - reflexStart;
 
     let subconsciousMs = 0;
     if (!isToolCallLoop) {
@@ -329,7 +301,7 @@ export class AgentNode extends BaseNode {
     // in-graph tool calls also ends the turn (the edge defaults it to done).
     // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
     // their turns routinely take that path — gating on the wrapper alone
-    // silently skipped every post-turn writer, the Reflex Trainer included.
+    // silently skipped every post-turn writer.
     if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);

@@ -12,7 +12,7 @@ import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
-import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
+import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
@@ -26,7 +26,6 @@ import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
-import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
@@ -723,7 +722,7 @@ export class BackendGraphWebSocketService {
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
-    let newRoute: { prediction: ReflexRouteResult | null; agent: RoutableAgent } | null = null;
+    let newRoute: { agent: RoutableAgent } | null = null;
     const threadModelSelection = new ThreadModelOverridePolicy().parse(metadata as Record<string, unknown> | undefined);
 
     // Default is resolved from Preferences on every turn. It is not a snapshot of the legacy
@@ -731,32 +730,17 @@ export class BackendGraphWebSocketService {
     if (!explicitAgentId && threadModelSelection.mode === 'default' && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const routedAgent = await resolveDefaultRouteAgent();
       agentId = routedAgent.graphAgentId;
-      newRoute = { prediction: null, agent: routedAgent };
+      newRoute = { agent: routedAgent };
     }
 
-    // The renderer allocates a threadId before its first send, so first-turn
-    // detection must use actual graph/saved history rather than !threadIdFromMsg.
-    // Explicit persona picks always win, and only the human desktop chat may route.
-    // Reflex routing is opt-in (reflexRouteEnabled); when it's on, a confident
-    // match picks a front-door agent. Otherwise the chat opens on Sulla. Any
-    // routed choice is stored on the thread so it stays sticky.
+    // The renderer allocates a threadId before its first send. Explicit agent
+    // selections and the Preferences default remain sticky; learned first-message
+    // routing has been retired.
     else if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
       const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
-
-      if (rememberedAgentId) {
-        agentId = rememberedAgentId;
-      } else if (!priorState || priorState.messages.length === 0) {
-        const prediction = await routeChatAgent(message, threadId);
-        const predictedAgent = prediction ? await resolveFrontDoorAgent(prediction.agentId) : null;
-        const routedAgent = predictedAgent ?? await resolveDefaultRouteAgent();
-        // A model default keeps Sulla but still has to be stored on the thread.
-        if (routedAgent.graphAgentId !== defaultAgentId || routedAgent.modelChoice) {
-          agentId = routedAgent.graphAgentId;
-          newRoute = { prediction: predictedAgent ? prediction : null, agent: routedAgent };
-        }
-      }
+      if (rememberedAgentId) agentId = rememberedAgentId;
     }
 
     let state: AgentGraphState | undefined;
@@ -790,9 +774,9 @@ export class BackendGraphWebSocketService {
               threadId,
               agentId:    newRoute.agent.agentId,
               name:       newRoute.agent.name,
-              confidence: newRoute.prediction?.confidence ?? null,
-              decisionId: newRoute.prediction?.decisionId ?? null,
-              reason:     newRoute.prediction ? 'reflex' : 'default',
+              confidence: null,
+              decisionId: null,
+              reason:     'default',
             },
             timestamp: Date.now(),
           });

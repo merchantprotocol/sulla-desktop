@@ -16,7 +16,6 @@
  *   - v7 memory: elephant draft -> goldfish review (once) -> elephant final.
  *     Two agents, at most three model calls per turn, single-flight per
  *     conversation. See memory/V7MemoryTurnPipeline.ts.
- *   - Reflex Trainer for human (non-sub-agent) turns.
  *
  * The legacy observation/identity memory agents (observation writer, seven
  * identity observers, conversation writer and their per-domain recalls) are
@@ -29,7 +28,6 @@ import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { v7MemoryScheduler } from '../memory/V7MemoryAgents';
 import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
-import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { latestUserText } from '../utils/latestUserText';
 import { stripTurnContext } from '../prompts/turnContext';
@@ -437,8 +435,7 @@ export async function runSubconsciousMiddleware(
  *
  * Per turn this launches at most:
  *   - the v7 memory sequence (elephant draft -> goldfish -> elephant final),
- *     single-flight per conversation and bounded by the writer gate, and
- *   - the Reflex Trainer for human (non-sub-agent) turns.
+ *     single-flight per conversation and bounded by the writer gate.
  *
  * Skipped inside workflows (same gate as the pre-turn pass) and when the turn
  * carried no analyzable user message.
@@ -452,14 +449,6 @@ export function runSubconsciousObservationWriters(
     return; // inside a workflow — writers stay off, same as the recall pass
   }
   if (!hasAnalyzableUserMessage(state)) return;
-
-  // Reflex Trainer learns from every human turn (independent of whether this
-  // agent opts into observation injection) — never from sub-agent prompts.
-  if (!meta.isSubAgent) {
-    Promise.resolve().then(() => runThroughWriterGate(() => runReflexTrainer(state))).catch((error) => {
-      console.error('[SubconsciousMiddleware] Post-turn reflex-trainer failed (fire-and-forget):', error instanceof Error ? error.message : error);
-    });
-  }
 
   if (!options.includeObservations) return;
 
@@ -720,18 +709,5 @@ async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
     (state.metadata as any).subagentDirectoryContext = await buildSubagentDirectoryContext((state.metadata as any).threadId);
   } catch (err) {
     console.warn('[SubconsciousMiddleware] subagent directory failed:', err instanceof Error ? err.message : err);
-  }
-}
-
-/** Fire-and-forget post-turn Reflex Trainer (teaches the Reflex engine). */
-async function runReflexTrainer(state: BaseThreadState): Promise<void> {
-  const startTime = Date.now();
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createReflexTrainer(state);
-    console.log(`[SubconsciousMiddleware:ReflexTrainer] Started | threadId: ${ threadId }`);
-    await graph.execute(subState, 'subconscious', { maxIterations: 6 });
-    console.log(`[SubconsciousMiddleware:ReflexTrainer] Completed in ${ Date.now() - startTime }ms | iterations: ${ (subState.metadata as any).iterations || 0 }`);
-  } catch (error) {
-    console.error('[SubconsciousMiddleware:ReflexTrainer] Failed:', error instanceof Error ? error.message : error);
   }
 }

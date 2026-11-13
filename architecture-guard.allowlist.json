@@ -220,12 +220,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/agent/database/models/ReflexModel.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/agent/database/models/SullaSettingsModel.ts": {
       "rules": {
         "long-file": 612,
@@ -254,12 +248,6 @@
     "pkg/sulla-desktop/agent/database/seeders/MemorySeedSeeder.ts": {
       "rules": {
         "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/database/seeders/ReflexSeedSeeder.ts": {
-      "rules": {
-        "procedural-module": 2
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
@@ -825,31 +813,6 @@
     "pkg/sulla-desktop/agent/prompts/turnContext.ts": {
       "rules": {
         "procedural-module": 3
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/reflex/ReflexEngine.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/reflex/ReflexService.ts": {
-      "rules": {
-        "mutable-state": 4,
-        "procedural-module": 12
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/reflex/reflexPolicy.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/reflex/reflexTraining.ts": {
-      "rules": {
-        "procedural-module": 2
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
@@ -2931,12 +2894,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/sullaReflexEvents.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/sullaRoutineExportEvents.ts": {
       "rules": {
         "long-file": 412,
@@ -4027,12 +3984,6 @@
     "scripts/build-builtin-skills.mjs": {
       "rules": {
         "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "scripts/build-reflex-seed.mjs": {
-      "rules": {
-        "mutable-state": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },

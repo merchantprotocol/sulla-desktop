@@ -38,7 +38,7 @@ export interface AgentDirectoryCard {
   returns:       string;
   costTier:      AgentCostTier | null;
   canCall:       string[];
-  /** Reflex may route a new chat straight to this agent. */
+  /** This agent may be selected as the first persona for a new chat. */
   frontDoor:     boolean;
   provider:      string | null;
   model:         string | null;
@@ -83,7 +83,7 @@ export function isActiveAgent(agent: AgentDefinition): boolean {
 }
 
 /**
- * Front-door agents are the ones Reflex may route a brand-new chat to. The
+ * Front-door agents may be selected for a brand-new chat. The
  * front_door column wins; rows without it fall back to config.frontDoor /
  * config.front_door so imported or hand-made agents can opt in too.
  */
