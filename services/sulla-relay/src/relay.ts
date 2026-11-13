@@ -107,7 +107,11 @@ export class RelayService {
     this.pendingHttp.clear();
     this.localRoutes.clear();
     this.webSockets.close();
-    await Promise.all([this.redis.quit(), this.subscriber.quit()]);
+    // Redis may already be closed (it is stopped alongside the relay); quit() then rejects
+    // with "Connection is closed". Fall back to a hard disconnect so shutdown always completes.
+    await Promise.all([this.redis, this.subscriber].map(async client => {
+      try { await client.quit() } catch { client.disconnect() }
+    }));
   }
 
   async healthy(): Promise<boolean> {
