@@ -7,6 +7,7 @@
 import yaml from 'yaml';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import type { InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
@@ -153,9 +154,10 @@ export async function buildLocalManifest(kind: KindSingular, slug: string): Prom
 }
 
 export function initSullaLibraryEvents(): void {
-  ipcMainProxy.handle('library-list-skills', async() => listSkills());
-  ipcMainProxy.handle('library-list-recipes', async() => listRecipes());
-  ipcMainProxy.handle('library-list-integrations', async() => listIntegrations());
+  // Lists render empty while the database is still starting; renderers reload on `database:available`.
+  ipcMainProxy.handle('library-list-skills', async() => getDatabaseReadGuard().run('library-list-skills', listSkills, []));
+  ipcMainProxy.handle('library-list-recipes', async() => getDatabaseReadGuard().run('library-list-recipes', listRecipes, []));
+  ipcMainProxy.handle('library-list-integrations', async() => getDatabaseReadGuard().run('library-list-integrations', listIntegrations, []));
 
   ipcMainProxy.handle('library-uninstall-integration', async(_event, slug: string) => {
     const { postgresClient } = await import('@pkg/agent/database/PostgresClient');

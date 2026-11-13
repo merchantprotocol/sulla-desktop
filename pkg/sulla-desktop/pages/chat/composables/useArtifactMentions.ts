@@ -94,8 +94,23 @@ function labelFrom(row: { name?: string; slug?: string; id?: string; description
   return primary;
 }
 
+let watchingDatabase = false;
+
+/**
+ * Lists come back empty while the database is still starting. Reload once
+ * main reports it reachable, after any load already in flight.
+ */
+function reloadWhenDatabaseAvailable(): void {
+  if (watchingDatabase) return;
+  watchingDatabase = true;
+  ipcRenderer.on('database:available', () => {
+    void (inflight ?? Promise.resolve()).then(() => loadAll());
+  });
+}
+
 async function loadAll(): Promise<void> {
   if (inflight) return inflight;
+  reloadWhenDatabaseAvailable();
 
   inflight = (async() => {
     const [routines, skills, functions, recipes, integrations, workflows] = await Promise.all([

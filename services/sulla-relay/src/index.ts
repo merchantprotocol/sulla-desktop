@@ -27,5 +27,5 @@ async function shutdown(): Promise<void> {
   await relay.stop();
   process.exit(0);
 }
-process.once('SIGTERM', () => { shutdown().catch(error => console.error('[sulla-relay] shutdown failed:', error)) });
-process.once('SIGINT', () => { shutdown().catch(error => console.error('[sulla-relay] shutdown failed:', error)) });
+process.once('SIGTERM', () => { shutdown().catch((error) => { console.error('[sulla-relay] shutdown failed:', error); process.exit(1) }) });
+process.once('SIGINT', () => { shutdown().catch((error) => { console.error('[sulla-relay] shutdown failed:', error); process.exit(1) }) });

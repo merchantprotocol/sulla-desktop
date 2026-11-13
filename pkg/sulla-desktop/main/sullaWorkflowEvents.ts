@@ -18,6 +18,7 @@ import * as path from 'path';
 
 import yaml from 'yaml';
 
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition, WorkflowStatus } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
@@ -428,12 +429,13 @@ export function initSullaWorkflowEvents(): void {
     if (await manager.isHealthy()) return manager.request('GET', '/v1/workflows');
 
     // Do NOT swallow errors here — returning [] silently makes the
-    // playbill look empty when the real problem is a broken query or a
-    // dead DB connection. The renderer catches into useRoutines.error
-    // and can surface a diagnostic to the user.
+    // playbill look empty when the real problem is a broken query. The
+    // renderer catches into useRoutines.error and can surface a diagnostic.
+    // Only "database not reachable yet" (VM booting or restarting) returns
+    // [] after a short retry; renderers reload on `database:available`.
     const WorkflowModel = await importWorkflowModel();
 
-    return WorkflowModel.listAll();
+    return getDatabaseReadGuard().run('workflow-db-list', () => WorkflowModel.listAll(), []);
   });
 
   ipcMainProxy.handle('workflow-db-get', async(_event: unknown, workflowId: string) => {

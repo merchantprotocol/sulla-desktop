@@ -192,7 +192,7 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   }
   if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
   // A revoked or key-refused device never starts device-signed sync (see DeviceSyncGate).
-  const deviceTrusted = deviceGate().allowsSync(DevicesCloudApi.getState());
+  const deviceTrusted = syncGate.allowsSync(DevicesCloudApi.getState());
   if (prefs.vault && deviceTrusted) VaultSyncV3.start(); else VaultSyncV3.stop();
   if (prefs.files && deviceTrusted) FilesSyncV1.start(); else FilesSyncV1.stop();
   if (prefs.memory) MemorySyncV1.start(); else MemorySyncV1.stop();
@@ -202,15 +202,11 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
 
-let gate: DeviceSyncGate | null = null;
-function deviceGate(): DeviceSyncGate {
-  gate ??= new DeviceSyncGate(
-    { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: VaultSyncV3, files: FilesSyncV1 },
-    async kind => isCloudKindEnabled(await getCloudPreferences(), kind),
-  );
-
-  return gate;
-}
+// One immutable gate; services are reached lazily (import cycle: vaultSyncV3/filesSyncV1 -> sullaCloudAuth -> here), so nothing is captured by value at load.
+const syncGate = new DeviceSyncGate(
+  { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: { start: () => VaultSyncV3.start(), stop: () => VaultSyncV3.stop() }, files: { start: () => FilesSyncV1.start(), stop: () => FilesSyncV1.stop() } },
+  async kind => isCloudKindEnabled(await getCloudPreferences(), kind),
+);
 
 function installPrefsListener() {
   if (prefsListenerInstalled) return;
@@ -226,7 +222,7 @@ function installPrefsListener() {
   DevicesCloudApi.onStateChange((state) => {
     // Revoked from the dashboard (or key refused): stop the channel, vault and files sync; heartbeats keep
     // polling so a restore (or a re-link) brings them back without a restart.
-    deviceGate().apply(state, signedIn).catch(() => undefined);
+    syncGate.apply(state, signedIn).catch(() => undefined);
     broadcast();
   });
 }
@@ -243,7 +239,7 @@ export async function startCloudServices(): Promise<void> {
   VaultDeviceApproval.start();
   // The channel needs the key enrolled first; if registration failed it
   // retries on its own backoff.
-  if (deviceId && deviceGate().allowsSync(DevicesCloudApi.getState())) getChannel().start();
+  if (deviceId && syncGate.allowsSync(DevicesCloudApi.getState())) getChannel().start();
   await applySyncPreferences(prefs).catch(err => console.warn('[CloudLifecycle] sync services start failed:', err));
   broadcast();
 }
