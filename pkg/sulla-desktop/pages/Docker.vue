@@ -239,7 +239,24 @@ function setTab(tab: string) {
 
 /* `docker ps` adds the status line ("Exited (1) 2 hours ago") and mounts the store doesn't keep. */
 const rowInfo = ref<Record<string, any>>({});
-async function loadRowInfo() {
+// Polled loaders must never overlap: a slow `docker` call otherwise piles up a new
+// child process every tick (hundreds of stuck `docker ps/stats/df` processes).
+function singleFlight<T>(fn: () => Promise<T>): () => Promise<T | undefined> {
+  let running = false;
+
+  return async() => {
+    if (running) {
+      return undefined;
+    }
+    running = true;
+    try {
+      return await fn();
+    } finally {
+      running = false;
+    }
+  };
+}
+async function loadRowInfoImpl() {
   const rows = await execJsonLines('ps', ['-a', '--no-trunc', '--format={{json .}}']);
 
   rowInfo.value = Object.fromEntries(rows.map(r => [r.ID, r]));
@@ -247,7 +264,7 @@ async function loadRowInfo() {
 
 /* Live CPU and memory for every running container. */
 const usage = ref<Record<string, { cpu: number, mem: number }>>({});
-async function loadUsage() {
+async function loadUsageImpl() {
   if (!runningCount.value) {
     usage.value = {};
 
@@ -866,13 +883,16 @@ const meters = computed(() => {
     { label: 'Disk', value: diskUsed.value === undefined ? '—' : gb(diskGB, 0), of: diskSize ? `of ${ diskSize } GB` : '', width: pct(diskGB, diskSize) },
   ];
 });
-async function loadDiskUsed() {
+async function loadDiskUsedImpl() {
   const rows = await execJsonLines('system', ['df', '--format={{json .}}']);
 
   if (rows.length) {
     diskUsed.value = rows.reduce((n, r) => n + parseSize(r.Size), 0);
   }
 }
+const loadRowInfo = singleFlight(loadRowInfoImpl);
+const loadUsage = singleFlight(loadUsageImpl);
+const loadDiskUsed = singleFlight(loadDiskUsedImpl);
 const kubernetesOn = computed(() => !!settings.value?.kubernetes?.enabled);
 async function restartDocker() {
   if (backendState.value === 'STARTING' || backendState.value === 'STOPPING') {
