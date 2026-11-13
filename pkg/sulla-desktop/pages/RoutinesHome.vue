@@ -302,12 +302,33 @@ async function onRunNow(id: string) {
 function onNewBlank() {
   emit('new-blank');
 }
+function routineName(id: string): string {
+  return routinesController.routines.value.find(r => r.id === id)?.name ?? id;
+}
+
+function controllerError(): string {
+  const err = routinesController.error.value;
+
+  return err ? `: ${ err }` : '.';
+}
+
 async function onDuplicate(id: string) {
-  await routinesController.duplicate(id);
+  const name = routineName(id);
+  if (await routinesController.duplicate(id)) {
+    showFeedback('success', `Duplicated "${ name }".`);
+  } else {
+    showFeedback('error', `Couldn't duplicate "${ name }"${ controllerError() }`);
+  }
 }
 
 async function onToggleArchive(id: string) {
-  await routinesController.toggleArchive(id);
+  const name = routineName(id);
+  const archiving = routinesController.routines.value.find(r => r.id === id)?.status !== 'archive';
+  if (await routinesController.toggleArchive(id)) {
+    showFeedback('success', archiving ? `Archived "${ name }".` : `Restored "${ name }" as a draft.`);
+  } else {
+    showFeedback('error', `Couldn't ${ archiving ? 'archive' : 'restore' } "${ name }"${ controllerError() }`);
+  }
 }
 
 function onPublishById(id: string) {
@@ -369,7 +390,12 @@ async function onPublishRoutine(routine: { id: string; name: string }) {
 // Archive tab uses its own "Restore" affordance. Restoring just flips
 // archive → draft via the existing toggleArchive action.
 async function onRestoreRoutine(id: string) {
-  await routinesController.toggleArchive(id);
+  const name = routineName(id);
+  if (!await routinesController.toggleArchive(id)) {
+    showFeedback('error', `Couldn't restore "${ name }"${ controllerError() }`);
+
+    return;
+  }
   emit('restore-routine', id);
 }
 
@@ -384,7 +410,14 @@ async function onExport(id: string) {
   // failure through the inline toast so the view stays consistent with
   // other IPC failure paths.
   try {
-    await ipcRenderer.invoke('routines-export', id);
+    const result = await ipcRenderer.invoke('routines-export', id);
+    // Cancelling the save dialog is not a saved export, and an { error } reply is a failure.
+    if ('canceled' in result) return;
+    if ('error' in result) {
+      showFeedback('error', `Export failed: ${ result.error }`);
+
+      return;
+    }
     showFeedback('success', 'Export saved.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
