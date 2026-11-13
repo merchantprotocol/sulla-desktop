@@ -18,12 +18,6 @@
       "sha256": "4d3a05011194d7d9b3de0e9fffca68111a364c5698601cb6f92ee15de6b24dc0",
       "sourceRef": "ea82b05",
       "source": "sulla-core main ea82b05 (tag domain-v0.3.3, epic PR #54) release artifact: 0.3.2 vault + identity (Account, RequestPrincipal, device identity, DeviceIdentityService, opt-in recovery rotation); defaults byte-identical to 0.3.1; depends on @sulla/foundation 0.1.1."
-    },
-    {
-      "package": "@sulla/foundation",
-      "version": "0.1.0",
-      "file": "sulla-foundation-0.1.0-2213270.tgz",
-      "sha256": "9bf68774363077242b615c84fa0a78ef0f020ec0eae242ee5033a36978ccc9ca"
     }
   ]
 }
