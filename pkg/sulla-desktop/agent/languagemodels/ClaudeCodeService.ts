@@ -416,6 +416,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return this.model || 'claude-code';
   }
 
+  /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
+  private launchModel(): string {
+    return this.model && this.model !== 'claude-code' ? this.model : '';
+  }
+
   override getProviderName(): string {
     return 'Claude Code';
   }
@@ -818,6 +823,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'claude-code',
+      model:             this.launchModel(),
       conversationId:    convId,
       state:             options.state,
       providerSessionId: existingSession,
@@ -893,6 +899,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'claude-code',
+        model:             this.launchModel(),
         conversationId:    convId,
         state:             options.state,
         providerSessionId: existingSession,

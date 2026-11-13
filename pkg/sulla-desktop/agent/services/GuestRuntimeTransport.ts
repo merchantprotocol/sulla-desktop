@@ -11,6 +11,8 @@ import * as path from 'node:path';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
+import { GuestDiskFullError } from './GuestDiskFullError';
+
 export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
 export const GUEST_AGENT_WORKSPACES_ROOT = `${ GUEST_RUNTIME_ROOT }/agents`;
 export const GUEST_PROVIDER_FILES_ROOT = `${ GUEST_RUNTIME_ROOT }/provider-transport`;
@@ -73,7 +75,7 @@ export function runGuest(args: string[], input?: string | Buffer, timeoutMs = CO
             return;
           }
           const detail = safeErrorText(String(stderr || stdout || ''));
-          reject(new Error(detail || `Guest command exited ${ exitCode }`));
+          reject(GuestDiskFullError.fromGuestFailure(detail, `Guest command exited ${ exitCode }`));
           return;
         }
         resolve(String(stdout ?? '').trim());
@@ -339,8 +341,8 @@ async function pipeToGuest(
       settled = true;
       clearTimeout(timer);
       if (sourceCode === 0 && guestCode === 0) resolve();
-      else reject(new Error(
-        safeErrorText(guestError) || safeErrorText(sourceError) || `Guest transfer failed (${ sourceCode }/${ guestCode })`,
+      else reject(GuestDiskFullError.fromGuestFailure(
+        safeErrorText(guestError) || safeErrorText(sourceError), `Guest transfer failed (${ sourceCode }/${ guestCode })`,
       ));
     };
     const timer = setTimeout(() => fail('Guest transfer timed out'), TRANSFER_TIMEOUT_MS);
