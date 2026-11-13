@@ -40,8 +40,6 @@
     "@sulla/foundation" "0.1.1"
     fflate "^0.8.3"
     zod "^3.25.0"
-    fflate "^0.8.3"
-    zod "^3.25.0"
 
 "@sulla/foundation@0.1.1", "@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz":
   version "0.1.1"

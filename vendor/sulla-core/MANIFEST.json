@@ -18,14 +18,6 @@
       "sha256": "4d3a05011194d7d9b3de0e9fffca68111a364c5698601cb6f92ee15de6b24dc0",
       "sourceRef": "ea82b05",
       "source": "sulla-core main ea82b05 (tag domain-v0.3.3, epic PR #54) release artifact: 0.3.2 vault + identity (Account, RequestPrincipal, device identity, DeviceIdentityService, opt-in recovery rotation); defaults byte-identical to 0.3.1; depends on @sulla/foundation 0.1.1."
-    },
-    {
-      "package": "@sulla/domain",
-      "version": "0.3.1",
-      "file": "sulla-domain-0.3.1-c5f7154.tgz",
-      "sha256": "74b4f85278b4cc89b8b08c1d3fe18722d0e98718a3cee53ec77ce112c6d15d82",
-      "sourceRef": "c5f7154",
-      "source": "sulla-core main c5f7154 build (npm pack packages/domain); kept for services/sulla-vault, which stays on domain 0.3.1 until its own bump (epic/vault-oop). Depends on @sulla/foundation 0.1.1. Identical tarball to www-sulladesktop and sulla-mobile."
     }
   ]
 }

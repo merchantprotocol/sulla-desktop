@@ -671,11 +671,11 @@ export function initSullaCloudAuthEvents(): void {
             traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
             return;
           }
-          const { completeVaultEnrollment, gateVaultCreation } = await import('./cloud/vaultEnrollment');
-          let disposition = await gateVaultCreation();
+          const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
+          let disposition = await DesktopVaultEnrollment.coordinator.gate();
           if (disposition === 'approval_available' || disposition === 'waiting_for_approver') {
             traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a signed-in computer, phone, or Cloud session.');
-            disposition = await completeVaultEnrollment(pendingCloudMasterKey!, pendingCloudUserId!);
+            disposition = await DesktopVaultEnrollment.coordinator.complete(pendingCloudMasterKey!, pendingCloudUserId!);
           }
           if (disposition === 'approval_available' || disposition === 'waiting_for_approver') { traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a computer, phone, or Cloud session that is signed in.'); return; }
           if (disposition === 'recovery') { traceWait('the existing Cloud vault needs recovery'); return; }
@@ -811,8 +811,8 @@ export function initSullaCloudAuthEvents(): void {
   const checkEnrollmentAfterCloudSignIn = async(): Promise<boolean> => {
     // This metadata-only gate deliberately has no password/master-key input.
     // Run it before cloud services can wake the local-vault create path.
-    const { gateVaultCreation } = await import('./cloud/vaultEnrollment');
-    const disposition = await gateVaultCreation();
+    const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
+    const disposition = await DesktopVaultEnrollment.coordinator.gate();
     if (disposition === 'approval_available' || disposition === 'waiting_for_approver') {
       const message = disposition === 'approval_available'
         ? 'Waiting for your other Sulla to approve this computer.'

@@ -5,6 +5,8 @@
 
 /** Typed HTTP boundary for Cloud vault-sync v3. It contains no sync policy. */
 
+import type { EnrollmentRequest, EnrollmentRequestCreatedDto, VaultEnrollmentStateResponseDto } from '@sulla/domain';
+
 export type VaultSyncErrorCode =
   | 'invalid_body' | 'invalid_query' | 'too_large' | 'unauthorized' | 'session_expired'
   | 'device_signature_required' | 'forbidden_origin' | 'vault_access_not_approved'
@@ -20,17 +22,17 @@ export interface VaultSyncHttpClient {
 export type VaultSyncAuthHeaderProvider = () => Promise<Record<string, string>> | Record<string, string>;
 export interface VaultSyncSignature { deviceId: string; timestamp: number; signature: string }
 export interface VaultStatus { enabled?: boolean; vaultId?: string; epoch?: number; [key: string]: unknown }
-export type EnrollmentStateName = 'no_vault' | 'trusted' | 'approval_available' | 'waiting_for_approver' | 'recovery_required';
-export interface EnrollmentState { state: EnrollmentStateName; vaultId?: string; epoch?: number }
-export interface EnrollmentRequest {
-  id: string;
-  vaultId?: string;
-  epoch?: number;
-  requesterType: string;
-  requesterId: string;
-  publicKey: string;
-  nonce: string;
-  expiresAt: string;
+/**
+ * A JSON request body serialised exactly once: the bytes a device signature hashes are the bytes sent
+ * (Cloud verifies sha256 over the raw body it receives).
+ */
+export class JsonRequestBody {
+  readonly text: string;
+  readonly bytes: Uint8Array;
+  constructor(readonly value: Readonly<Record<string, unknown>>) {
+    this.text = JSON.stringify(value);
+    this.bytes = new TextEncoder().encode(this.text);
+  }
 }
 export interface VaultBundleResponse { bundle?: Record<string, unknown>; [key: string]: unknown }
 export interface VaultRecordsResponse { records?: unknown[]; head?: unknown; nextCursor?: string | null; syncPaused?: boolean; bundleGeneration?: number; epoch?: number; [key: string]: unknown }
@@ -72,22 +74,22 @@ export class CloudVaultSyncHttpTransport {
   }
 
   getStatus(deviceId: string): Promise<VaultStatus> { return this.json('GET', `/cloud-vault-sync/status?deviceId=${encodeURIComponent(deviceId)}`); }
-  getEnrollmentState(vaultId: string, signature: VaultSyncSignature): Promise<EnrollmentState> {
+  getEnrollmentState(vaultId: string, signature: VaultSyncSignature): Promise<VaultEnrollmentStateResponseDto> {
     return this.signed('GET', '/cloud-vault-sync/enrollment/state', vaultId, 'enrollment-state', signature);
   }
-  listEnrollmentRequests(vaultId: string, signature: VaultSyncSignature): Promise<{ requests?: EnrollmentRequest[] }> {
+  listEnrollmentRequests(vaultId: string, signature: VaultSyncSignature): Promise<{ requests?: Omit<EnrollmentRequest, 'vaultId'>[] }> {
     return this.signed('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests`, vaultId, 'enrollment-list', signature);
   }
-  openEnrollmentRequest(vaultId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<EnrollmentRequest> {
+  openEnrollmentRequest(vaultId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<EnrollmentRequestCreatedDto> {
     return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests`, vaultId, 'enrollment-request', signature, body);
   }
-  consumeEnrollmentRequest(vaultId: string, requestId: string, signature: VaultSyncSignature): Promise<{ wrappedUserKey: unknown }> {
-    return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/consume`, vaultId, `enrollment-consume:${requestId}`, signature, {});
+  consumeEnrollmentRequest(vaultId: string, requestId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<{ wrappedUserKey: unknown }> {
+    return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/consume`, vaultId, `enrollment-consume:${requestId}`, signature, body);
   }
-  confirmEnrollmentRequest(vaultId: string, requestId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
+  confirmEnrollmentRequest(vaultId: string, requestId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
     return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/confirm`, vaultId, `enrollment-confirm:${requestId}`, signature, body);
   }
-  respondToEnrollmentRequest(vaultId: string, requestId: string, body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
+  respondToEnrollmentRequest(vaultId: string, requestId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
     return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/respond`, vaultId, `enrollment-respond:${requestId}`, signature, body);
   }
   getBundle(vaultId: string, deviceId: string): Promise<VaultBundleResponse> { return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`, undefined, {}, this.maxLargeResponseBytes); }
@@ -104,16 +106,16 @@ export class CloudVaultSyncHttpTransport {
   upsertVault(vaultId: string, operation: 'create' | 'replace' | 'rewrap', body: Record<string, unknown>, signature: VaultSyncSignature): Promise<Record<string, unknown>> { return this.signed('PUT', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}?op=${operation}`, vaultId, operation, signature, body); }
   deleteVault(vaultId: string, signature: VaultSyncSignature): Promise<Record<string, unknown>> { return this.signed('DELETE', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}`, vaultId, 'delete', signature); }
 
-  private async signed(method: string, path: string, vaultId: string, operation: string, signature: VaultSyncSignature, body?: Record<string, unknown>): Promise<any> {
+  private async signed(method: string, path: string, vaultId: string, operation: string, signature: VaultSyncSignature, body?: Record<string, unknown> | JsonRequestBody): Promise<any> {
     const separator = path.includes('?') ? '&' : '?';
     return this.json(method, `${path}${separator}deviceId=${encodeURIComponent(signature.deviceId)}`, body, {
       'X-Sulla-Timestamp': String(signature.timestamp), 'X-Sulla-Device-Signature': signature.signature,
     });
   }
-  private async json<T>(method: string, path: string, body?: Record<string, unknown>, headers: Record<string, string> = {}, maxResponseBytes = this.maxResponseBytes): Promise<T> {
+  private async json<T>(method: string, path: string, body?: Record<string, unknown> | JsonRequestBody, headers: Record<string, string> = {}, maxResponseBytes = this.maxResponseBytes): Promise<T> {
     const merged = { ...(await this.options.authHeaders()), ...headers };
     if (body !== undefined) merged['Content-Type'] = 'application/json';
-    const response = await this.options.client.request(`${this.options.baseUrl ?? ''}${path}`, { method, headers: merged, body: body === undefined ? undefined : JSON.stringify(body) });
+    const response = await this.options.client.request(`${this.options.baseUrl ?? ''}${path}`, { method, headers: merged, body: body === undefined ? undefined : body instanceof JsonRequestBody ? body.text : JSON.stringify(body) });
     const length = Number(response.headers.get('content-length') ?? 0);
     if (length > maxResponseBytes) throw this.mapper.map(413, { code: 'too_large' });
     const text = await response.text();
