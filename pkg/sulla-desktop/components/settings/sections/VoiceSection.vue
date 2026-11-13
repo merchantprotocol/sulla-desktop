@@ -37,7 +37,7 @@ const {
   whisperInstalled, whisperVersion, whisperModels, whisperModelToDownload, availableWhisperModels,
   activeWhisperModel, setActiveWhisperModel, getModelMeta, detectWhisper, downloadWhisperModel,
   deleteWhisperModel, whisperBusy, whisperProgressPhase, whisperProgressPct, whisperTranscribing,
-  whisperTestEntries, toggleWhisperTest,
+  whisperTestEntries, toggleWhisperTest, speakerError, whisperError, settingsError,
 } = useVoiceSettings();
 
 // Twelve bars, lit in proportion to the live mic level.
@@ -144,6 +144,12 @@ function pickVoiceEngine(event: Event) {
         <p>Microphone, transcription, Sulla’s voice and meeting capture.</p>
       </div>
     </div>
+    <p
+      v-if="settingsError"
+      class="note badc"
+    >
+      {{ settingsError }}
+    </p>
 
     <PrefCard
       title="Microphone"
@@ -439,6 +445,12 @@ function pickVoiceEngine(event: Event) {
           </div>
         </div>
       </div>
+      <p
+        v-if="whisperError"
+        class="note badc"
+      >
+        {{ whisperError }}
+      </p>
     </PrefCard>
 
     <PrefCard title="Sulla’s voice">
@@ -585,10 +597,10 @@ function pickVoiceEngine(event: Event) {
         > · {{ loopbackName }}</span></span>
       </PrefRow>
       <p
-        v-if="loopbackError"
+        v-if="loopbackError || speakerError"
         class="note badc"
       >
-        {{ loopbackError }}
+        {{ loopbackError || speakerError }}
       </p>
     </PrefCard>
 
