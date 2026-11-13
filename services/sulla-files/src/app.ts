@@ -1941,28 +1941,52 @@ export function createApp(
       const state=disposal.undoInvalidatedAt?'invalidated':pathOperation && (!['completed','undone','rolled-back'].includes(pathOperation.state)||pathOperation.last_error)?'recovery-required':receipt?'available':'unavailable';
       return {state,...(lifecycle.expiresAt?{expiresAt:lifecycle.expiresAt}:{})};
     };
-    for (const file of files.rows) { try {
-      const authorized=await requireFile(request,file.id,'view'); const role='manage'; const draftVisible=true;
-      const receipt=(await db.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash' AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1`,[file.id,file.current_version_id])).rows[0];
-      const pathOperation=receipt?(await db.query('SELECT state,plan,last_error FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0]:null;
+    // requireFile delegates to requirePath, which checks the collection role and
+    // protected-path policy. Collection authorization is already established;
+    // the SQL excludes protected files and the same policy is applied to folders below.
+    const fileIds=files.rows.map((file:any)=>file.id);
+    const fileReceipts=fileIds.length?(await db.query(`SELECT DISTINCT ON (r.file_id) r.* FROM files_database_operation_receipts r
+      JOIN files f ON f.id=r.file_id AND f.current_version_id::text=r.after_state->>'versionId'
+      WHERE r.file_id=ANY($1) AND r.action='trash' ORDER BY r.file_id,r.created_at DESC`,[fileIds])).rows:[];
+    const fileReceiptByVersion=new Map<string,any>();
+    for (const receipt of fileReceipts) {
+      const versionId=receipt.after_state?.versionId;
+      if (versionId) fileReceiptByVersion.set(`${receipt.file_id}:${versionId}`,receipt);
+    }
+    const fileOperationIds=fileReceipts.map((receipt:any)=>receipt.id);
+    const pathOperations=fileOperationIds.length?(await db.query('SELECT operation_id,state,plan,last_error FROM files_path_operations WHERE operation_id=ANY($1)',[fileOperationIds])).rows:[];
+    const pathOperationById=new Map(pathOperations.map((operation:any)=>[operation.operation_id,operation]));
+    for (const authorized of files.rows) {
+      const role='manage'; const draftVisible=true;
+      const receipt=fileReceiptByVersion.get(`${authorized.id}:${authorized.current_version_id}`);
+      const pathOperation=receipt?pathOperationById.get(receipt.id):null;
       allowed.push({ ...lifecycleFields(authorized),kind:'file',id:authorized.id,path:authorized.path,revision:String(authorized.operation_revision),
         currentTombstone:{kind:'version',id:authorized.current_version_id,...(receipt?{receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{})}:{}),undo:undoState(receipt,pathOperation)},
         capabilities:lifecycleCapabilities(role,draftVisible) });
-    } catch { /* inaccessible tombstones are filtered */ } }
+    }
     const folders=await db.query(`SELECT * FROM file_folders f WHERE f.collection_id=$1 AND f.deleted_at IS NOT NULL AND NOT EXISTS(
       SELECT 1 FROM file_folders p WHERE p.collection_id=f.collection_id AND p.deleted_at IS NOT NULL AND p.id<>f.id AND starts_with(f.path,p.path||'/')) ORDER BY f.deleted_at DESC,f.path`,[collectionId]);
-    for (const folder of folders.rows) { try {
-      await requirePath(request,collectionId,folder.path,'view');
+    const visibleFolders=folders.rows.filter((folder:any)=>!isProtectedPath(folder.path));
+    const folderReceipts=visibleFolders.length?(await db.query(`SELECT * FROM files_database_operation_receipts r WHERE r.collection_id=$1 AND r.action='trash' AND r.state='completed'
+      AND r.folder_plan->>'source'=ANY($2) ORDER BY r.created_at DESC`,[collectionId,[...new Set(visibleFolders.map((folder:any)=>folder.path))]])).rows:[];
+    const folderReceiptByFolder=new Map<string,any>();
+    for(const receipt of folderReceipts) for(const item of receipt.folder_plan?.folders??[]) {
+      const after=item?.after; if(!after) continue;
+      const key=`${receipt.folder_plan.source}:${after.folderId}:${after.revision}`;
+      if(!folderReceiptByFolder.has(key)) folderReceiptByFolder.set(key,receipt);
+    }
+    const folderOperationIds=[...new Set([...folderReceiptByFolder.values()].map((receipt:any)=>receipt.id))];
+    const folderOperations=folderOperationIds.length?(await db.query('SELECT operation_id,state,plan,last_error FROM files_path_operations WHERE operation_id=ANY($1)',[folderOperationIds])).rows:[];
+    const folderOperationById=new Map(folderOperations.map((operation:any)=>[operation.operation_id,operation]));
+    for (const folder of visibleFolders) {
       const role='manage';
-      const receipt=(await db.query(`SELECT * FROM files_database_operation_receipts r WHERE r.collection_id=$1 AND r.action='trash' AND r.state='completed'
-        AND r.folder_plan->>'source'=$2 AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.folder_plan->'folders') item WHERE item->'after'->>'folderId'=$3 AND item->'after'->>'revision'=$4)
-        ORDER BY r.created_at DESC LIMIT 1`,[collectionId,folder.path,folder.id,String(folder.operation_revision)])).rows[0];
+      const receipt=folderReceiptByFolder.get(`${folder.path}:${folder.id}:${String(folder.operation_revision)}`);
       if (!receipt) continue;
-      const pathOperation=(await db.query('SELECT state,plan,last_error FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0];
+      const pathOperation=folderOperationById.get(receipt.id);
       allowed.push({kind:'folder',id:folder.id,path:folder.path,revision:String(folder.operation_revision),deleted_at:folder.deleted_at,
         currentTombstone:{kind:'receipt',id:receipt.id,receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{}),undo:undoState(receipt,pathOperation)},
         capabilities:lifecycleCapabilities(role,false)});
-    } catch { /* inaccessible tombstones are filtered */ } }
+    }
     response.json(allowed);
   } catch (error) { next(error) } });
   app.post('/v1/trash/:id/restore', async(request:RequestWithIdentity, response, next) => { try {
