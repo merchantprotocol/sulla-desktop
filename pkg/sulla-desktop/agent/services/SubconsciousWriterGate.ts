@@ -6,8 +6,7 @@
 // SubconsciousWriterGate.ts
 //
 // Process-wide concurrency gate for post-turn subconscious work: the v7 memory
-// sequence (elephant draft -> goldfish -> elephant final) and the Reflex
-// Trainer. Every completed conversation (chat, mobile-relay, Heartbeat, PM
+// sequence (elephant draft -> goldfish -> elephant final). Every completed conversation (chat, mobile-relay, Heartbeat, PM
 // automation) funnels through the same backend process, so without a gate a
 // burst of conversations finishing together fires an unbounded number of
 // background LLM calls and starves the primary turn's own model call.

@@ -12,8 +12,7 @@ import paths from '@pkg/utils/paths';
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 /**
- * Subconscious runs (memory elephant/goldfish, reflex trainer, summarizer,
- * digester) get a fresh `subconscious_<ts>_<n>` conversation id per run and
+ * Subconscious runs (memory elephant/goldfish, summarizer, digester) get a fresh `subconscious_<ts>_<n>` conversation id per run and
  * are never resumed after it ends, so their provider sessions only need to
  * outlive one run. Keeping them for the 7-day default piled up hundreds of
  * dead keys in Redis and provider-sessions.json.
