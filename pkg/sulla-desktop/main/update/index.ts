@@ -22,7 +22,7 @@ import {
 import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import yaml from 'yaml';
 
-import { updateEvents } from './UpdateManager';
+import { updateEvents, updateManager } from './UpdateManager';
 import { readUpdateChannelState, recordPendingUpdate, recordUpdateFailure } from './channelState';
 import { launchMacInstaller, stageMacUpdate, type StagedMacUpdate } from './macSelfInstall';
 
@@ -58,6 +58,8 @@ let autoUpdater: AppUpdater;
 let updateTimer: NodeJS.Timeout;
 /** The update interval reported by the server. */
 let updateInterval = 0;
+/** Mirrors application.updater.enabled; stops the periodic re-check when off. */
+let autoChecks = true;
 
 let macStagingPromise: Promise<StagedMacUpdate> | undefined;
 
@@ -324,11 +326,25 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
 }
 
 mainEvent.on('settings-update', (settings: Settings) => {
-  if (settings.application.updater.enabled && state === State.CONFIGURED) {
-    // We have a configured updater, but haven't done the actual check yet.
-    // This means the setting was disabled when we configured the updater.
-    // Start checking now.
-    doInitialUpdateCheck();
+  const enabled = settings.application.updater.enabled;
+
+  autoChecks = enabled;
+  updateManager.setUpdaterEnabled(enabled);
+  if (!enabled) {
+    // Turning automatic checks off stops the scheduled re-check right away.
+    // Manual "Check now" still works through the UpdateManager.
+    if (updateTimer) timers.clearTimeout(updateTimer);
+    updateTimer = undefined as unknown as NodeJS.Timeout;
+
+    return;
+  }
+  if ((state === State.CONFIGURED || state === State.CHECKED) && !updateTimer) {
+    // The setting was off when the updater was configured, or was turned
+    // off and back on: start the periodic checks now.
+    state = State.CHECKED;
+    doInitialUpdateCheck().catch((err) => {
+      console.error('Automatic update check failed:', err);
+    });
   }
 });
 
@@ -358,6 +374,7 @@ export function reconfigureUpdater(): void {
  */
 export default async function setupUpdate(enabled: boolean): Promise<boolean> {
   console.debug(`Setting up updater... enabled=${ enabled }`);
+  autoChecks = enabled;
   if (state === State.UNCONFIGURED) {
     try {
       const newUpdater = await getUpdater();
@@ -412,6 +429,9 @@ async function doInitialUpdateCheck(): Promise<boolean> {
  * Trigger an update check, and set up the timer to re-check again later.
  */
 async function triggerUpdateCheck() {
+  if (!autoChecks) {
+    return;
+  }
   if (state !== State.DOWNLOADING) {
     const result = await autoUpdater.checkForUpdates();
 

@@ -66,13 +66,12 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   personality: 'name instructions soul system prompt user',
   heartbeat:   'heartbeat interval autonomous',
   voice:       'microphone mic transcription whisper speech voice tts kokoro speaker loopback secretary gateway',
-  workflows:   'workers concurrency external events wait',
+  workflows:   'workers concurrency',
   extensions:  'permissions hooks integrations use cases activity grants',
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
-  privacy:     'host access admin administrator telemetry usage',
-  docker:      'memory cpu disk rosetta virtual machine vz qemu virtiofs 9p sshfs engine moby containerd path images ' +
-    'network port',
+  privacy:     'host access telemetry usage',
+  docker:      'memory cpu virtual machine engine path terminal command line restart snapshots network',
   advanced: 'debug logs troubleshooting health extensions experimental vault proxy reset factory',
 };
 

@@ -112,10 +112,17 @@ function onStatus(_: unknown, providers: RoutingProviderInfo[]) {
   now.value = Date.now();
 }
 
-function value(e: Event) { return (e.target as HTMLInputElement).value; }
-async function saveNumber(setting: typeof retries, raw: string, min: number, max: number) {
-  const n = Math.round(Number(raw));
-  if (Number.isFinite(n) && n >= min && n <= max) { await setting.save(n); flashSaved(); } else await setting.reload();
+async function saveNumber(setting: typeof retries, event: Event, min: number, max: number) {
+  const input = event.target as HTMLInputElement;
+  const n = Math.round(Number(input.value));
+  if (Number.isFinite(n) && n >= min && n <= max) {
+    await setting.save(n);
+    if (!setting.error.value) flashSaved();
+    return;
+  }
+  await setting.reload();
+  input.value = String(setting.value.value);
+  setting.error.value = `Enter a whole number from ${ min } to ${ max }.`;
 }
 
 onMounted(() => {
@@ -242,7 +249,7 @@ onBeforeUnmount(() => {
             max="10"
             aria-label="Retries per provider"
             :value="retries.value.value"
-            @change="saveNumber(retries, value($event), 0, 10)"
+            @change="saveNumber(retries, $event, 0, 10)"
           >
         </PrefRow>
         <PrefRow
@@ -256,10 +263,16 @@ onBeforeUnmount(() => {
             max="600"
             aria-label="Request timeout in seconds"
             :value="timeout.value.value"
-            @change="saveNumber(timeout, value($event), 5, 600)"
+            @change="saveNumber(timeout, $event, 5, 600)"
           >
           <span class="dimc">sec</span>
         </PrefRow>
+        <p
+          v-if="retries.error.value || timeout.error.value"
+          class="note badc"
+        >
+          {{ retries.error.value || timeout.error.value }}
+        </p>
       </PrefMore>
     </section>
 
