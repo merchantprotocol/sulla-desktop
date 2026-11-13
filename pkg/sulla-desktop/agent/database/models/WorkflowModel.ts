@@ -443,4 +443,43 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
 
     return existing ? 'resynced' : 'inserted';
   }
+
+  /**
+   * Retire a core routine that no longer ships with Sulla Desktop.
+   *
+   * Archive, never delete: the row, its history and its executions stay for the
+   * record. The row keeps system = true, so no user surface can edit, re-promote
+   * or delete it, and status 'archive' + enabled = false keep every scheduler
+   * (in-app and the workflow manager) from arming it. Idempotent: an absent row
+   * or one that is already archived and disabled is left alone.
+   *
+   * Seeder-only. Returns 'retired' | 'already-retired' | 'absent'.
+   */
+  static async retireCoreRoutine(
+    id: string,
+    reason: string,
+    useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(),
+  ): Promise<'retired' | 'already-retired' | 'absent'> {
+    const existing = await WorkflowModel.findById(id);
+    if (!existing) return 'absent';
+    if (existing.attributes.status === 'archive' && existing.attributes.enabled === false) return 'already-retired';
+
+    await postgresClient.queryOne(
+      `UPDATE workflows SET status = 'archive', enabled = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    useCaseChanges.announce({ type: 'workflow', slug: id, change: 'updated' });
+    await WorkflowHistoryModel.recordChange({
+      workflowId:       id,
+      definitionBefore: existing.attributes.definition ?? null,
+      definitionAfter:  existing.attributes.definition ?? {},
+      changedBy:        'core-routine-seeder',
+      changeReason:     `core routine retired: ${ reason }`,
+    });
+    const { retireWorkflowExecutions } = await import('../../services/WorkflowRetirementService');
+    await retireWorkflowExecutions(id);
+    console.log(`[WorkflowModel.retireCoreRoutine] ← ok id=${ id } archived + disabled (${ reason })`);
+
+    return 'retired';
+  }
 }
