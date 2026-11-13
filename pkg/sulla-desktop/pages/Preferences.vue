@@ -66,7 +66,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   personality: 'name instructions soul system prompt user',
   heartbeat:   'heartbeat interval autonomous',
   voice:       'microphone mic transcription whisper speech voice tts kokoro speaker loopback secretary gateway',
-  workflows:   'workers concurrency external events wait',
+  workflows:   'workers concurrency',
   extensions:  'permissions hooks integrations use cases activity grants',
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
