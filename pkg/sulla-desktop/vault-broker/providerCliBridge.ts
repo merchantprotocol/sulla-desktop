@@ -300,7 +300,7 @@ export const PROVIDER_BRIDGE_RETRY_AFTER_SECONDS = 5;
 const TRANSIENT_BROKER_CODES = new Set(['upstream_failed', 'upstream_timeout', 'vault_unavailable', 'database_unavailable']);
 const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'EAI_AGAIN', 'ENOTFOUND',
-  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
 ]);
 
 export interface ProviderBridgeFailure {

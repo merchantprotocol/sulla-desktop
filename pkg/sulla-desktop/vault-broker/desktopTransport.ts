@@ -8,6 +8,9 @@ import path from 'node:path';
 
 import Electron from 'electron';
 
+import { PinnedVaultDispatcher } from './pinnedVaultDispatcher';
+
+import { vaultCertificateMetadataMatches } from '@pkg/main/vaultTlsVerifier';
 import paths from '@pkg/utils/paths';
 
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
@@ -16,30 +19,17 @@ const BROKER_TOKEN_FILE = 'vault-broker-token.enc';
 const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';
 const BROKER_SERVICE_ID = 'sulla-tools';
 const APPROVAL_SERVICE_ID = 'sulla-desktop-approval';
-const SESSION_PARTITION = 'sulla-vault-broker';
 
-let pinnedSession: Promise<Electron.Session> | undefined;
+let pinnedDispatcher: PinnedVaultDispatcher | undefined;
 
-async function getPinnedSession(): Promise<Electron.Session> {
-  pinnedSession ??= (async() => {
-    if (!Electron.safeStorage.isEncryptionAvailable()) {
-      throw new Error('OS-protected vault broker identity is unavailable');
-    }
-    const session = Electron.session.fromPartition(SESSION_PARTITION, { cache: false });
+function getPinnedDispatcher(): PinnedVaultDispatcher {
+  if (!pinnedDispatcher) {
     // Loaded only in Electron main. Keeping this require here avoids importing
     // Electron-only TLS code when the same broker package starts in tools.
-    const { configureVaultPinnedSession } = require('@pkg/main/vaultTls') as {
-      configureVaultPinnedSession(session: Electron.Session): Promise<void>;
-    };
-    await configureVaultPinnedSession(session);
-    return session;
-  })();
-  try {
-    return await pinnedSession;
-  } catch (error) {
-    pinnedSession = undefined;
-    throw error;
+    const { getPinnedFingerprint } = require('@pkg/main/vaultTls') as { getPinnedFingerprint(): Promise<string> };
+    pinnedDispatcher = new PinnedVaultDispatcher({ fingerprint: getPinnedFingerprint, verify: vaultCertificateMetadataMatches });
   }
+  return pinnedDispatcher;
 }
 
 /** Decrypt for the duration of one request; never persist plaintext identity. */
@@ -71,8 +61,14 @@ async function loadDesktopIdentity(fileName: string, serviceId: string): Promise
   return { serviceId, serviceToken };
 }
 
-/** Electron net transport pinned to the locally provisioned vault certificate. */
+/**
+ * Pinned Node transport to the local vault. Not Electron `session.fetch`:
+ * Chromium's 6-sockets-per-host limit let six streaming provider calls block
+ * every other vault request (see PinnedVaultDispatcher).
+ */
 export const desktopVaultFetch: VaultBrokerFetch = async(input, init) => {
-  const session = await getPinnedSession();
-  return session.fetch(input, init);
+  if (!Electron.safeStorage.isEncryptionAvailable()) {
+    throw new Error('OS-protected vault broker identity is unavailable');
+  }
+  return getPinnedDispatcher().fetch(input, init);
 };

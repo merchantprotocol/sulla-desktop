@@ -30,7 +30,8 @@ async function readPinnedFingerprint(): Promise<string> {
   return value;
 }
 
-async function getPinnedFingerprint(): Promise<string> {
+/** Current vault certificate pin; refreshed by refreshVaultPinnedSessions(). */
+export async function getPinnedFingerprint(): Promise<string> {
   for (;;) {
     const pending = pinnedFingerprint ??= readPinnedFingerprint();
     try {
