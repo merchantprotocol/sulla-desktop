@@ -43,10 +43,6 @@ interface ShareStreamContent {
   contentRange?: string;
 }
 
-const RELAY_MAX_BUFFERED_BYTES = 1024 * 1024;
-const RELAY_RESUME_BUFFERED_BYTES = RELAY_MAX_BUFFERED_BYTES / 2;
-const RELAY_BUFFER_POLL_MS = 10;
-
 function passwordHash(password:string):string {
   const salt = randomBytes(16); const digest = scryptSync(password, salt, 32);
   return `${ salt.toString('base64url') }:${ digest.toString('base64url') }`;

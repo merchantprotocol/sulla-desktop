@@ -35,7 +35,6 @@ export interface Config {
   tlsCertificatePath?:  string;
   tlsPrivateKeyPath?:   string;
   mode:                 'desktop';
-  fuseExperiment?:      boolean;
   deviceId:             string;
   userId:               string;
   orgId?:               string;
@@ -44,6 +43,7 @@ export interface Config {
   paused:               boolean;
   modelDir:             string;
   fileRoots?:           FileRootConfig[];
+  fuseExperiment?:      boolean;
 }
 
 export interface FileRootConfig {
@@ -121,7 +121,6 @@ export function loadConfig():Config {
     tlsCertificatePath: process.env.SULLA_FILES_TLS_CERTIFICATE_PATH,
     tlsPrivateKeyPath:  process.env.SULLA_FILES_TLS_PRIVATE_KEY_PATH,
     mode: 'desktop',
-    fuseExperiment: process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
     deviceId:         process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
     userId:           process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
     orgId:            process.env.SULLA_FILES_ORG_ID,
@@ -130,5 +129,6 @@ export function loadConfig():Config {
     paused:           process.env.SULLA_FILES_PAUSED === '1',
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
     fileRoots:        fileRoots(filesRoot),
+    fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
   };
 }
