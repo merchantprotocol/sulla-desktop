@@ -92,6 +92,9 @@ export class CloudVaultSyncHttpTransport {
   respondToEnrollmentRequest(vaultId: string, requestId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
     return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/respond`, vaultId, `enrollment-respond:${requestId}`, signature, body);
   }
+  denyEnrollmentRequest(vaultId: string, requestId: string, body: JsonRequestBody, signature: VaultSyncSignature): Promise<Record<string, unknown>> {
+    return this.signed('POST', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/enrollment/requests/${encodeURIComponent(requestId)}/deny`, vaultId, `enrollment-deny:${requestId}`, signature, body);
+  }
   getBundle(vaultId: string, deviceId: string): Promise<VaultBundleResponse> { return this.json('GET', `/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/bundle?deviceId=${encodeURIComponent(deviceId)}`, undefined, {}, this.maxLargeResponseBytes); }
   getRecords(vaultId: string, deviceId: string, scope = 'personal', since?: number, cursor?: string, limit?: number): Promise<VaultRecordsResponse> {
     const query = new URLSearchParams({ scope, deviceId });
