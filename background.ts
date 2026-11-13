@@ -56,6 +56,7 @@ import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploy
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
 import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
+import { IpcRegistrationGate } from '@pkg/main/ipcRegistrationGate';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { completeRestart, isRestartRequested, restartKind } from '@pkg/main/restartCoordinator';
@@ -156,6 +157,11 @@ clearLoggingDirectory();
 const SNAPSHOT_OPERATION = 'Snapshot operation in progress';
 
 const ipcMainProxy = getIpcMainProxy(console);
+// Resolved at the end of this module, after the top-level
+// `await onMainProxyLoad()` and every module-level handler below it.
+// Startup waits on it before opening any window; see IpcRegistrationGate.
+const mainIpcRegistration = new IpcRegistrationGate();
+const MAIN_IPC_REGISTRATION_TIMEOUT_MS = 30_000;
 /** One startup progress model for every window: backend tracker + service lifecycle. */
 function getStartupProgressHub() {
   return getStartupProgressHubInstance(snapshot => window.send('startup-progress', snapshot));
@@ -673,7 +679,16 @@ Electron.app.whenReady().then(async() => {
     // Install secrets are machine credentials, not wizard input. Generate them
     // before boot so the VM and managed services can start alongside onboarding.
     await ensureFirstLaunchInstallSecrets();
-    e2eTrace('opening UI');
+    // This handler can run while the module is still suspended on
+    // `await onMainProxyLoad()`; don't open a window whose renderer would
+    // invoke handlers that don't exist yet.
+    const ipcRegistration = await mainIpcRegistration.wait(MAIN_IPC_REGISTRATION_TIMEOUT_MS);
+
+    if (ipcRegistration.state !== 'registered') {
+      console.error(`[Startup] Opening the UI before every IPC handler is registered (${ ipcRegistration.state })`,
+        ipcRegistration.state === 'failed' ? ipcRegistration.error : '');
+    }
+    e2eTrace(`opening UI (ipc ${ ipcRegistration.state })`);
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -826,6 +841,33 @@ async function checkForBackendLock() {
 }
 
 async function initUI() {
+  // Registered before any window opens so a renderer never invokes a missing handler.
+  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
+  // Registers IPC handlers in the main process — no window reference needed.
+  try {
+    audioDriver.initialize();
+    console.log('[Audio Driver] Initialized');
+    registerCaptureStudioTracking();
+    registerCaptureStudioRpc();
+    registerTeleprompterIpc();
+    registerTeleprompterTrackingIpc();
+    registerTabContextMenuIpc();
+    registerMoreMenuIpc();
+    console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
+  } catch (err) {
+    console.error('[Audio Driver] Failed to initialize:', err);
+  }
+
+  // Initialize threat-proxy subsystem (URL filtering + prompt-injection scanning
+  // of agent web traffic by the sulla_threat_proxy container). Host side owns
+  // settings + URLhaus blocklist refresh; the backend delivers them to the guest.
+  try {
+    threatProxy.initialize();
+    console.log('[Threat Proxy] Initialized');
+  } catch (err) {
+    console.error('[Threat Proxy] Failed to initialize:', err);
+  }
+
   // Opening onboarding must not serialize the rest of app startup. In
   // particular, backend boot continues while the user works through the wizard.
   void doFirstRunDialog().then(() => {
@@ -861,32 +903,6 @@ async function initUI() {
 
   if (!cfg.application.hideNotificationIcon) {
     Tray.getInstance(cfg).show();
-  }
-
-  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
-  // Registers IPC handlers in the main process — no window reference needed.
-  try {
-    audioDriver.initialize();
-    console.log('[Audio Driver] Initialized');
-    registerCaptureStudioTracking();
-    registerCaptureStudioRpc();
-    registerTeleprompterIpc();
-    registerTeleprompterTrackingIpc();
-    registerTabContextMenuIpc();
-    registerMoreMenuIpc();
-    console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
-  } catch (err) {
-    console.error('[Audio Driver] Failed to initialize:', err);
-  }
-
-  // Initialize threat-proxy subsystem (URL filtering + prompt-injection scanning
-  // of agent web traffic by the sulla_threat_proxy container). Host side owns
-  // settings + URLhaus blocklist refresh; the backend delivers them to the guest.
-  try {
-    threatProxy.initialize();
-    console.log('[Threat Proxy] Initialized');
-  } catch (err) {
-    console.error('[Threat Proxy] Failed to initialize:', err);
   }
 
   if (cfg.application.startInBackground && Electron.app.dock) {
@@ -1641,7 +1657,10 @@ ipcMainProxy.handle('first-run-ai:connected', async(event, providerId: string) =
 // SULLA DESKTOP
 /// /////////////////////////////////////////////////////////////////////////////
 
-await onMainProxyLoad(ipcMainProxy);
+await onMainProxyLoad(ipcMainProxy).catch((error) => {
+  mainIpcRegistration.markFailed(error);
+  throw error;
+});
 
 // ModelProviderService is initialized via the service lifecycle in sulla.ts
 // (depends on 'database-manager' + 'redis' to guarantee DB is ready before loading state).
@@ -2834,3 +2853,6 @@ function isRoot(): boolean {
 
   return os.userInfo().uid === 0;
 }
+
+// Keep last: every module-level IPC handler above is now registered.
+mainIpcRegistration.markRegistered();
