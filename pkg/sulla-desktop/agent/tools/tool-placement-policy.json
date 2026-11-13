@@ -161,7 +161,6 @@
       "chat/launch_agent_tab",
       "chat/message_tab",
       "chat/return_contract",
-      "chat/route_agent",
       "chat/set_heartbeat",
       "desktop/act",
       "desktop/app",

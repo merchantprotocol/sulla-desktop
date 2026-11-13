@@ -140,9 +140,9 @@ export class PersonaAdapter {
       );
       const name = typeof route.name === 'string' && route.name.trim() ? route.name.trim() : route.agentId;
       this.controller.appendMessage({
-        id:        asMessageId(`reflex-route-${ String(route.decisionId || Date.now()) }`),
+        id:        asMessageId(`agent-route-${ Date.now() }`),
         kind:      'thinking',
-        thoughts:  [route.reason === 'default' ? `Chat opened with ${ name }` : `⚡ Reflex routed this chat to ${ name }`],
+        thoughts:  [`Chat opened with ${ name }`],
         startedAt: Date.now(),
         completed: true,
         createdAt: Date.now(),

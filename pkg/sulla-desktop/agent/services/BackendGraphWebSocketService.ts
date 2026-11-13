@@ -733,14 +733,27 @@ export class BackendGraphWebSocketService {
       newRoute = { agent: routedAgent };
     }
 
-    // The renderer allocates a threadId before its first send. Explicit agent
-    // selections and the Preferences default remain sticky; learned first-message
-    // routing has been retired.
+    // The renderer allocates a threadId before its first send, so first-turn
+    // detection must use actual graph/saved history rather than !threadIdFromMsg.
+    // Explicit persona picks always win, and only the human desktop chat may route.
+    // A brand-new chat opens on the New chats default (the user's selected agent,
+    // or Sulla with the chosen model). Any routed choice is stored on the thread
+    // so it stays sticky.
     else if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
       const liveState = GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
       const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
-      if (rememberedAgentId) agentId = rememberedAgentId;
+
+      if (rememberedAgentId) {
+        agentId = rememberedAgentId;
+      } else if (!priorState || priorState.messages.length === 0) {
+        const routedAgent = await resolveDefaultRouteAgent();
+        // A model default keeps Sulla but still has to be stored on the thread.
+        if (routedAgent.graphAgentId !== defaultAgentId || routedAgent.modelChoice) {
+          agentId = routedAgent.graphAgentId;
+          newRoute = { agent: routedAgent };
+        }
+      }
     }
 
     let state: AgentGraphState | undefined;
@@ -772,11 +785,8 @@ export class BackendGraphWebSocketService {
             type: 'agent_routed',
             data: {
               threadId,
-              agentId:    newRoute.agent.agentId,
-              name:       newRoute.agent.name,
-              confidence: null,
-              decisionId: null,
-              reason:     'default',
+              agentId: newRoute.agent.agentId,
+              name:    newRoute.agent.name,
             },
             timestamp: Date.now(),
           });

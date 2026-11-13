@@ -69,16 +69,6 @@ export const chatToolManifests: ToolManifest[] = [
     loader:         () => import('./list_tab_contracts'),
   },
   {
-    name:        'route_agent',
-    description: 'Select an enabled agent persona for this chat. The choice remains sticky for the thread; use "sulla" to return to the default persona.',
-    category:    'chat',
-    schemaDef:   {
-      agentId: { type: 'string', description: 'Enabled agent persona slug, or "sulla" for the default Sulla persona.' },
-    },
-    operationTypes: ['update'],
-    loader:         () => import('./route_agent'),
-  },
-  {
     name:        'set_heartbeat',
     description: 'Set the heartbeat for the current chat tab only. Use intervalMinutes=0 to turn it off. While the graph runs the timer is paused; after the graph stops, a fresh full interval starts. No held beat is delivered.',
     category:    'chat',

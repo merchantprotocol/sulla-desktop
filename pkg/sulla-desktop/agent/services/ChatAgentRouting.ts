@@ -15,7 +15,7 @@ export const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 export const DEFAULT_ROUTE_GRAPH_AGENT_ID = SULLA_DESKTOP_CHANNEL_ID;
 
 export interface RoutableAgent {
-  /** Stable agent identifier used in chat routing events. */
+  /** Persona slug, shown in routing receipts. */
   agentId:      string;
   /** Agent ID used to construct the graph. */
   graphAgentId: string;
@@ -43,8 +43,7 @@ export async function resolveRoutableAgent(agentId: string): Promise<RoutableAge
 /**
  * Like resolveRoutableAgent, but only for agents that may take a brand-new
  * chat: enabled, not archived, and marked front-door in the directory. Sulla
- * is always a valid front door. Retained (currently unused) so first-message
- * persona routing can be re-enabled by a new predictor without re-plumbing.
+ * is always a valid front door.
  */
 export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAgent | null> {
   const requested = agentId.trim();
@@ -73,7 +72,7 @@ export async function resolveDefaultRouteAgent(): Promise<RoutableAgent> {
 }
 
 /**
- * Shared state mutation used by both the route_agent tool and first-message dispatch. A route that
+ * Shared state mutation used by first-message dispatch and tab opening. A route that
  * carries a model choice stores it on the thread; any other route clears it, so the new agent's own
  * Model setting applies.
  */

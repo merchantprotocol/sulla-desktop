@@ -949,16 +949,6 @@
       "sideEffect": "write",
       "credential": "none"
     },
-    "chat/route_agent": {
-      "category": "chat",
-      "name": "route_agent",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
     "chat/set_heartbeat": {
       "category": "chat",
       "name": "set_heartbeat",
