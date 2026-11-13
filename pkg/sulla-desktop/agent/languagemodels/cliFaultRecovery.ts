@@ -7,7 +7,7 @@ import {
   AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited,
   legacyProviderFailure,
 } from './failures';
-import { InfrastructureFailure } from './providerRecovery';
+import { InfrastructureFailure, ProviderBridgeDeniedFailure, isProviderBridgeDenial } from './providerRecovery';
 
 export const CLI_RECOVERY_MAX_ATTEMPTS = 2;
 export const CLI_RECOVERY_BACKOFF_MS = 750;
@@ -202,6 +202,8 @@ export async function runWithCliFaultRecovery<T>(
     } catch (error) {
       if (isAbortFailure(error, options.signal)) throw abortError();
       if (isContainerLifecycleLost(error)) throw new ContainerLifecycleLostError(error);
+      // A denied bridge lease fails identically on every re-run: fail fast, once.
+      if (isProviderBridgeDenial(error)) throw error instanceof InfrastructureFailure ? error : new ProviderBridgeDeniedFailure(error);
       if (!isCliFault(error)) throw error;
       lastFault = error;
       if (attempt >= maxAttempts) break;

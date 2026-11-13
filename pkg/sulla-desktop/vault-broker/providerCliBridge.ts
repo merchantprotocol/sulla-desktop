@@ -260,6 +260,22 @@ function assertAdvertisedHost(raw: string): string {
   return host;
 }
 
+/**
+ * The bridge's owning lifecycle (job, container or CLI process) already ended.
+ * Sulla-side and permanent for that lifecycle: retrying the call or failing
+ * over to another model cannot help, so it carries the SULLA_INFRA code the
+ * model router treats as "stop here".
+ */
+export class ProviderBridgeRevokedError extends Error {
+  readonly code = 'SULLA_INFRA';
+  readonly providerBridgeRevoked = true;
+
+  constructor() {
+    super('Provider CLI bridge lifecycle is already revoked');
+    this.name = 'ProviderBridgeRevokedError';
+  }
+}
+
 function sendError(
   response: http.ServerResponse,
   status: number,
@@ -273,7 +289,8 @@ function sendError(
   }
   response.writeHead(status, { 'content-type': 'application/json', ...extra.headers });
   response.end(JSON.stringify({
-    error: { type: code, message: extra.message ?? 'Provider bridge request denied', ...(extra.reason ? { reason: extra.reason } : {}) },
+    // The CLI prints only `message`; carry the denial code so app logs say which gate refused.
+    error: { type: code, message: extra.message ?? `Provider bridge request denied (${ code })`, ...(extra.reason ? { reason: extra.reason } : {}) },
   }));
 }
 
@@ -345,7 +362,7 @@ export function classifyProviderBridgeFailure(error: unknown): ProviderBridgeFai
  */
 export async function createProviderCliBridge(options: ProviderCliBridgeOptions): Promise<ProviderCliBridgeLease> {
   const definition = assertIdentity(options);
-  if (options.signal?.aborted) throw new Error('Provider CLI bridge lifecycle is already revoked');
+  if (options.signal?.aborted) throw new ProviderBridgeRevokedError();
   const advertisedHost = options.advertisedHost ? assertAdvertisedHost(options.advertisedHost) : undefined;
   const listenHost = options.listenHost ?? (advertisedHost ? '0.0.0.0' : '127.0.0.1');
   if (!advertisedHost && ['0.0.0.0', '::'].includes(listenHost)) {

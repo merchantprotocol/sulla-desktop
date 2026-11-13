@@ -57,6 +57,7 @@ export type {
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 export {
   createProviderCliBridge,
+  ProviderBridgeRevokedError,
   type ProviderCliAuthMode,
   type ProviderCliBridgeIdentity,
   type ProviderCliBridgeLease,
