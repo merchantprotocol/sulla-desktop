@@ -9,8 +9,6 @@ import { PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
-export const DEFAULT_SUBCONSCIOUS_RECALL_MODE = 'v7' as const;
-
 interface Subject {
   slug: string;
   kind: string;

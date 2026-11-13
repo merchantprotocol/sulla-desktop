@@ -4,39 +4,34 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
- * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
+ * SubconsciousMiddleware — the work around the main agent's LLM call.
  *
- * Launches up to 4 parallel subconscious graphs:
- * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 3. Observation Recall Agent — surfaces relevant observations for context injection
- * 4. Tool-Result Digester — compresses stale tool_result blocks into
- *    trusted-citation digests so the primary model re-reads citations
- *    instead of verbatim dumps
+ * PRE-TURN (awaited, no memory LLM calls):
+ *   - v7 subject-memory recall (deterministic) -> brainMemoryContext
+ *   - team, installed-skill and subagent-directory hints (table reads)
+ *   - background Conversational Summarizer / Tool-Result Digester, applied
+ *     at the next turn boundary
  *
- * Results are merged back into the live state before the main agent call.
+ * POST-TURN (fire-and-forget, through the process-wide writer gate):
+ *   - v7 memory: elephant draft -> goldfish review (once) -> elephant final.
+ *     Two agents, at most three model calls per turn, single-flight per
+ *     conversation. See memory/V7MemoryTurnPipeline.ts.
+ *   - Reflex Trainer for human (non-sub-agent) turns.
  *
- * All agents are fully logged via the conversation logger (SullaLogger).
- * Each gets its own conversationId linked to the parent via parentConversationId.
- * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
+ * The legacy observation/identity memory agents (observation writer, seven
+ * identity observers, conversation writer and their per-domain recalls) are
+ * gone; their tables stay for the scheduled dreamer and existing tools.
  */
 
-import { ConversationKeywordsModel } from '../database/models/ConversationKeywordsModel';
-import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
-import { ObservationsModel } from '../database/models/ObservationsModel';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getAgentOverrideService, getPrimaryService, getSubconsciousService } from '../languagemodels';
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
-import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
-import { DEFAULT_SUBCONSCIOUS_RECALL_MODE, recallV7SubjectMemory } from '../memory/V7SubjectMemory';
+import { v7MemoryScheduler } from '../memory/V7MemoryAgents';
+import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
-import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
-import { formatDateOnly } from '../utils/formatDateOnly';
 import { latestUserText } from '../utils/latestUserText';
-import { extractRecallTerms } from '../utils/recallTerms';
 import { stripTurnContext } from '../prompts/turnContext';
 
 import Logging from '@pkg/utils/logging';
@@ -347,34 +342,15 @@ export async function runSubconsciousMiddleware(
   // needs, because starting a turn without the right context is worse than
   // starting it late (Jonathon, 2026-07-06).
   //
-  // 2026-08-19 subconscious prune (docs/user-observation-subsystem-PRD.md):
-  // Environment Brief, Episodic Recall, Security Conscience, and Conversation
-  // Recall were removed — they didn't perform reliably. The retained recall is
-  // the general Observation Writer + Observation Recall below, plus the focused
-  // domain observers (human first) dispatched alongside them.
+  // PRE-TURN = RECALLS ONLY. Memory writers run POST-TURN in
+  // runSubconsciousObservationWriters(), after the loop ends, so they observe
+  // the COMPLETED exchange and never compete with the reply for the model.
 
-  // PRE-TURN = RECALLS ONLY. The observation WRITERS (general writer + domain
-  // domain identity observers) moved to a POST-TURN pass:
-  // runSubconsciousObservationWriters(), which AgentNode invokes after the loop
-  // ends. Two reasons: (1) a writer that runs before the turn can only see up to
-  // the user's message — it misses the agent's response, the tools it ran, and
-  // any mid-turn correction; running after the loop lets each writer observe the
-  // COMPLETED exchange. (2) Writers no longer compete with recall for the shared
-  // model during the latency-critical prelude. Recalls MUST stay here — they
-  // inform the reply, so they run before it. Recalls run in parallel (awaited
-  // together below), so adding domains costs ~max(), not sum().
-
-  // R0. Ranked memory recall (default) — the top 16 of every memory domain
-  //     fills all eight observation contexts below. Replaces R1–R8,
-  //     which still run when subconsciousRecallMode is 'sql' or 'agent', and
-  //     as the in-task fallback when the bundled model is unavailable.
-  const recallModeForTurn = options.includeObservations && analyzable ? await recallMode() : 'sql';
-  const legacyRecall = options.includeObservations && analyzable && recallModeForTurn !== 'ranked' && recallModeForTurn !== 'v7';
-  if (options.includeObservations && analyzable && recallModeForTurn === 'ranked') {
-    launched.push('ranked-memory-recall');
-    awaitedTasks.push(timed('ranked-memory-recall', 'Recalling memories', runRankedMemoryRecall(recallState)));
-  }
-  if (options.includeObservations && analyzable && recallModeForTurn === 'v7') {
+  // Memory recall is v7 subject memory only: one deterministic lookup, no
+  // LLM call. The legacy per-domain observation/identity recalls (and the
+  // 'sql' / 'agent' / 'ranked' recall modes) were removed; any stored
+  // subconsciousRecallMode value now behaves as v7.
+  if (options.includeObservations && analyzable) {
     launched.push('v7-subject-memory');
     const threadId = String(meta.threadId || meta.conversationId || 'unknown');
     // A provider compaction or Sulla summary means the model no longer holds
@@ -397,78 +373,6 @@ export async function runSubconsciousMiddleware(
       recallMeta.observationContext = '';
       recallMeta.brainMemoryContext = '';
     })));
-  }
-
-  // R1. Observation Recall — awaited: surfaces relevant observations from the DB
-  //     table into state.metadata.observationContext.
-  if (legacyRecall) {
-    launched.push('observation-recall');
-    const obsRecallPromise = runObservationRecall(recallState);
-    awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { recallMeta.observationContext = ctx })));
-  }
-
-  // R2. Identity Observation Recall (human) — awaited: read-only recall of
-  //     relevant human-domain rows, injected as <user_observations>. Avoids a
-  //     fixed "last N" dump; relevance is turn-dependent.
-  if (legacyRecall) {
-    launched.push('identity-observation-recall');
-    const idRecallPromise = runIdentityObservationRecall(recallState, 'human');
-    awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { recallMeta.userObservationContext = ctx })));
-  }
-
-  // R3. Self Observation Recall (agent) — awaited: relevant `agent`-domain rows,
-  //     injected as <self_observations>.
-  if (legacyRecall) {
-    launched.push('self-observation-recall');
-    const selfRecallPromise = runIdentityObservationRecall(recallState, 'agent');
-    awaitedTasks.push(timed('self-observation-recall', 'Recalling how we work', selfRecallPromise.then(ctx => { recallMeta.selfObservationContext = ctx })));
-  }
-
-  // R4. Business Observation Recall (business) — awaited: relevant
-  //     `business`-domain rows, injected as <business_observations>.
-  if (legacyRecall) {
-    launched.push('business-observation-recall');
-    const bizRecallPromise = runIdentityObservationRecall(recallState, 'business');
-    awaitedTasks.push(timed('business-observation-recall', 'Recalling the business', bizRecallPromise.then(ctx => { recallMeta.businessObservationContext = ctx })));
-  }
-
-  // R5. Environment Observation Recall (environment) — awaited: relevant
-  //     `environment`-domain rows, injected as <environment_observations>.
-  if (legacyRecall) {
-    launched.push('environment-observation-recall');
-    const envRecallPromise = runIdentityObservationRecall(recallState, 'environment');
-    awaitedTasks.push(timed('environment-observation-recall', 'Recalling this environment', envRecallPromise.then(ctx => { recallMeta.environmentObservationContext = ctx })));
-  }
-
-  // R6. Projects Observation Recall (projects) — awaited: relevant
-  //     `projects`-domain rows, injected as <projects_observations>.
-  if (legacyRecall) {
-    launched.push('projects-observation-recall');
-    const projRecallPromise = runIdentityObservationRecall(recallState, 'projects');
-    awaitedTasks.push(timed('projects-observation-recall', 'Recalling the projects', projRecallPromise.then(ctx => { recallMeta.projectsObservationContext = ctx })));
-  }
-
-  // R7. World Observation Recall (world) — awaited: relevant `world`-domain
-  //     rows, injected as <world_observations>. Jonathon (2026-08-19): world
-  //     context (external events touching the human / Sulla / the business) is
-  //     important on every turn, so it recalls pre-turn like the other domains
-  //     rather than being written-only.
-  if (legacyRecall) {
-    launched.push('world-observation-recall');
-    const worldRecallPromise = runIdentityObservationRecall(recallState, 'world');
-    awaitedTasks.push(timed('world-observation-recall', 'Recalling the world', worldRecallPromise.then(ctx => { recallMeta.worldObservationContext = ctx })));
-  }
-
-  // R8. Skills Observation Recall (skills) — awaited: relevant `skills`-domain
-  //     rows (provenance/success/failure/gap/inventory for named skill
-  //     artifacts), injected as <skills_observations>. Also searches the
-  //     marketplace + the installed skills table (read-only) so recall can
-  //     surface a skill that fits the current turn even if it was never run
-  //     before, not just skills already logged.
-  if (legacyRecall) {
-    launched.push('skills-observation-recall');
-    const skillsRecallPromise = runIdentityObservationRecall(recallState, 'skills');
-    awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { recallMeta.skillsObservationContext = ctx })));
   }
 
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
@@ -502,17 +406,6 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('subagent-directory', 'Checking subagents', runSubagentDirectory(recallState)));
   }
 
-  // R13. Brain v2 recall — semantic recall from the specialist brain engine
-  // (typed knowledge nodes ingested from YouTube content). Direct HTTP call
-  // to the brain container's /recall endpoint, no LLM round-trip. Typically
-  // 300-400ms (dominated by embedding). Returns pre-formatted <brain_memory>
-  // XML that the engine already builds. Gated on the brainMemory setting.
-  // v7 owns brainMemoryContext; Brain v2 would race it and clear the block.
-  if (options.includeObservations && analyzable && recallModeForTurn !== 'v7') {
-    launched.push('brain-recall');
-    awaitedTasks.push(timed('brain-recall', 'Recalling brain knowledge', runBrainRecall(recallState)));
-  }
-
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Recall is intentionally unbounded per Jonathon's standing rule. Wait for
@@ -538,24 +431,17 @@ export async function runSubconsciousMiddleware(
 }
 
 /**
- * POST-TURN observation WRITERS. AgentNode invokes this AFTER the loop ends, so
- * each writer observes the COMPLETED exchange (the user's message + the agent's
- * response + the tools it ran + any mid-turn correction) instead of the pre-turn
- * state. All fire-and-forget: the user-facing response has already been
- * dispatched, so these add zero turn latency, never touch state.messages, and no
- * longer compete with recall for the shared model during the prelude.
+ * POST-TURN memory. AgentNode / HeartbeatNode invoke this AFTER the loop ends,
+ * so the writers observe the COMPLETED exchange. Fire-and-forget: the reply is
+ * already out, so this adds zero turn latency and never touches state.messages.
  *
- * Skipped inside workflows (same gate as the pre-turn recall pass) and when the
- * turn carried no analyzable user message. Writers are each scoped to write
- * only its own domain:
- *   - general Observation Writer   → observation + Projects work-state rows
- *   - Identity Observer  human      → the human user
- *   - Self Observer      agent      → Sulla + how this pair works together
- *   - Business Observer  business   → the human's business/employment
- *   - World Observer      world     → external events relevant to us (gated)
- *   - Environment Observer environment → this install/host + repeatable processes
- *   - Skills Observer     skills    → provenance + run outcomes of named skill artifacts
- *   - Conversation Writer           → searchable terms for the parent thread
+ * Per turn this launches at most:
+ *   - the v7 memory sequence (elephant draft -> goldfish -> elephant final),
+ *     single-flight per conversation and bounded by the writer gate, and
+ *   - the Reflex Trainer for human (non-sub-agent) turns.
+ *
+ * Skipped inside workflows (same gate as the pre-turn pass) and when the turn
+ * carried no analyzable user message.
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,
@@ -577,99 +463,11 @@ export function runSubconsciousObservationWriters(
 
   if (!options.includeObservations) return;
 
-  // v7 replaces the old observation writers with one subject-memory elephant.
-  // It uses the same Settings-backed subconscious model slot and is fully
-  // asynchronous through the process-wide writer gate.
-  // Every legacy writer still runs to completion with a model in the loop — the
-  // gate only bounds how many run concurrently PROCESS-WIDE (not just within
-  // this turn), so a burst of conversations completing close together
-  // (PM automation, Heartbeat, multiple chat/mobile sessions) can't fire
-  // dozens of background LLM calls at once and starve the primary turn's
-  // own model call. See SubconsciousWriterGate.ts.
-  const launch = (label: string, run: () => Promise<unknown>): void => {
-    Promise.resolve().then(() => runThroughWriterGate(run)).catch((error) => {
-      console.error(`[SubconsciousMiddleware] Post-turn ${ label } failed (fire-and-forget):`, error instanceof Error ? error.message : error);
-    });
-  };
-
-  SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE).then(mode => {
-    if (mode === 'v7') {
-      console.log('[V7Elephant] ' + JSON.stringify({
-        event: 'triggered',
-        threadId: String(meta.threadId || meta.conversationId || ''),
-        messages: state.messages.length,
-      }));
-      Promise.resolve().then(() => runThroughWriterGate(() => runV7Elephant(state))).catch(error => {
-        console.error('[V7Elephant] ' + JSON.stringify({
-          event: 'failed',
-          reason: error instanceof Error ? error.message : String(error),
-        }));
-      });
-      return;
-    }
-
-    launch('observation-writer', () => runObservationAgent(state));
-    launch('identity-observer-human', () => runIdentityObserver(state, 'human'));
-    launch('self-observer-agent', () => runIdentityObserver(state, 'agent'));
-    launch('business-observer', () => runIdentityObserver(state, 'business'));
-    launch('world-observer', () => runIdentityObserver(state, 'world'));
-    launch('environment-observer', () => runIdentityObserver(state, 'environment'));
-    launch('projects-observer', () => runIdentityObserver(state, 'projects'));
-    launch('skills-observer', () => runIdentityObserver(state, 'skills'));
-    launch('conversation-writer', () => runConversationWriter(state));
-
-    console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
-  }).catch(error => {
-    console.error('[SubconsciousMiddleware] Failed to resolve post-turn writer mode:', error instanceof Error ? error.message : error);
-  });
+  const threadId = String(meta.threadId || meta.conversationId || '');
+  if (!threadId) return;
+  v7MemoryScheduler.submit(threadId, state, String(meta.turnId || `m${ state.messages.length }`));
 }
 
-async function runV7Elephant(state: BaseThreadState): Promise<void> {
-  let subState: BaseThreadState | undefined;
-  try {
-    const created = await GraphRegistry.createV7Elephant(state);
-    subState = created.state;
-    await created.graph.execute(subState, 'subconscious', { maxIterations: 12 });
-    const response = (subState.metadata as any).v7ElephantOutput;
-    if (typeof response === 'string') {
-      const { appendV7ElephantOutput } = await import('../memory/V7SubjectMemoryWriter');
-      const result = await appendV7ElephantOutput(response);
-      console.log('[V7Elephant] ' + JSON.stringify({
-        event: result.accepted ? 'accepted' : 'rejected',
-        model: (subState.metadata as any).resolvedModel || (subState.metadata as any).llmModel || '',
-        provider: (subState.metadata as any).resolvedProvider || '',
-        iterations: (subState.metadata as any).iterations || 0,
-        episodes: result.episodes,
-        items: result.items,
-        evidence: result.evidence,
-        ...(result.reason ? { reason: result.reason } : {}),
-      }));
-      return;
-    }
-    console.warn('[V7Elephant] ' + JSON.stringify({
-      event: 'rejected',
-      model: (subState.metadata as any).resolvedModel || (subState.metadata as any).llmModel || '',
-      provider: (subState.metadata as any).resolvedProvider || '',
-      iterations: (subState.metadata as any).iterations || 0,
-      episodes: 0,
-      items: 0,
-      evidence: 0,
-      reason: 'model produced no elephant output',
-    }));
-  } catch (error) {
-    const metadata = (subState?.metadata || {}) as any;
-    console.error('[V7Elephant] ' + JSON.stringify({
-      event: 'failed',
-      model: metadata.resolvedModel || metadata.llmModel || '',
-      provider: metadata.resolvedProvider || '',
-      iterations: metadata.iterations || 0,
-      episodes: 0,
-      items: 0,
-      evidence: 0,
-      reason: error instanceof Error ? error.message : String(error),
-    }));
-  }
-}
 
 // ============================================================================
 // SUMMARIZER
@@ -858,107 +656,6 @@ async function runToolResultDigester(state: BaseThreadState, eligible: Digestibl
   return null;
 }
 
-// ============================================================================
-// OBSERVATION WRITER AGENT
-// ============================================================================
-
-async function runObservationAgent(state: BaseThreadState): Promise<void> {
-  const startTime = Date.now();
-
-  try {
-    // Load observation count from the DB table for logging.
-    // The agent itself uses search_observations / list_observations tools —
-    // we don't need to pre-load and pass the full blob anymore.
-    let existingCount = 0;
-    try {
-      const rows = await ObservationsModel.listActive(undefined, 1000);
-      existingCount = rows.length;
-    } catch {
-      // Table may not exist yet on first boot (migration pending). Proceed anyway;
-      // the tools will surface the same error gracefully.
-    }
-
-    const { graph, state: subState, threadId } = await GraphRegistry.createObservationAgent(state);
-    console.log(`[SubconsciousMiddleware:ObservationWriter] Started | threadId: ${ threadId } | active observations: ${ existingCount }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-
-    // The writer agent applies side effects via add/remove tools that write
-    // directly to the observations DB table. No state merge needed.
-    console.log(`[SubconsciousMiddleware:ObservationWriter] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:ObservationWriter] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-  }
-}
-
-// ============================================================================
-// OBSERVATION RECALL — DETERMINISTIC SQL FAST-PATH
-// ============================================================================
-
-/**
- * Max observation rows surfaced into <observation_context> per turn.
- * Observations are short, so a tight cap keeps the injection cheap while
- * still covering the handful the primary agent could plausibly need.
- */
-const OBSERVATION_RECALL_MAX_ROWS = 8;
-
-/**
- * Pull the text of the most recent REAL user message — the thing recall
- * exists to search against. Walks from the tail, skipping subconscious-
- * injected turns, and returns the joined text of the first user message
- * that carries any (string or text-block) content.
- */
-function extractLatestUserText(state: BaseThreadState): string {
-  const messages = state.messages;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m?.role !== 'user') continue;
-    if (m?.metadata?.source === 'subconscious') continue;
-
-    const c = m?.content;
-    if (typeof c === 'string') {
-      if (c.trim()) return c.trim();
-      continue;
-    }
-    if (Array.isArray(c)) {
-      const text = c
-        .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-        .map((b: any) => b.text)
-        .join('\n')
-        .trim();
-      if (text) return text;
-    }
-  }
-  return '';
-}
-
-/**
- * Observation recall used to spin up a full subconscious agent loop (up to
- * 10 LLM iterations) whose entire job was to keyword-search the observations
- * table and filter the hits. That cost 17-120s of BLOCKING prelude while the
- * underlying query runs in 3-17ms. The LLM added relevance filtering, but
- * observations are short and the primary agent is perfectly capable of
- * ignoring an off-topic line — so we trade a little precision for a ~1000x
- * latency win by querying the table directly.
- *
- * We tokenize the latest user message and run ObservationsModel.search
- * (word-level ILIKE, ranked phrase-hit → word-match count → recency),
- * formatting the top rows exactly as the old agent did:
- * `[id] priority date — content`. Returns null when nothing matches so no
- * <observation_context> block is injected.
- *
- * NOTE: this is not time-limited or fenced (per design) — a direct DB query
- * has no loop to cut short; it simply returns as fast as Postgres answers.
- * The old agent graph (GraphRegistry.createObservationRecall) and the
- * search_observations / list_observations tools remain in place for the
- * observation WRITER's dedup path; only the recall dispatch changed.
- */
 /**
  * Recent real user texts, newest first (subconscious-injected turns skipped).
  * Recall terms come from these so a short follow-up ("continue", "do it")
@@ -980,159 +677,6 @@ function recentUserTexts(state: BaseThreadState, count: number): string[] {
   }
 
   return out;
-}
-
-/** Recall terms for this turn: latest user message first, then earlier ones. */
-function turnRecallTerms(state: BaseThreadState): string[] {
-  return extractRecallTerms(recentUserTexts(state, 3));
-}
-
-/**
- * Pre-turn recall mode.
- *  - 'v7' (default): subject memory recall and the v7 writer.
- *  - 'ranked': one ranking across every memory domain — BM25 + local
- *    potion embeddings + a logistic-regression ranker, top 16 per domain (agent/memory/).
- *    Falls back to 'sql' automatically when the bundled model is unavailable.
- *  - 'sql': per-domain indexed SQL keyword recall (~0.1s), the #856 fast path.
- *  - 'agent': legacy one-LLM-agent-per-domain recall (~45s p50 each, measured
- *    2026-09-26), kept as a rollback switch.
- * Wherever the per-domain paths branch, anything other than 'agent' takes SQL.
- */
-async function recallMode(): Promise<'ranked' | 'sql' | 'agent' | 'v7'> {
-  try {
-    const mode = await SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE);
-
-    return mode === 'agent' || mode === 'sql' || mode === 'v7' ? mode : 'ranked';
-  } catch {
-    return DEFAULT_SUBCONSCIOUS_RECALL_MODE;
-  }
-}
-
-/** metadata key each memory domain is injected under (unchanged prompt tags). */
-const RECALL_CONTEXT_KEYS: Record<string, string> = {
-  [OBSERVATION_DOMAIN]: 'observationContext',
-  human:                'userObservationContext',
-  agent:                'selfObservationContext',
-  business:             'businessObservationContext',
-  environment:          'environmentObservationContext',
-  projects:             'projectsObservationContext',
-  world:                'worldObservationContext',
-  skills:               'skillsObservationContext',
-};
-
-/** Every recalled line carries a date; created_at is NOT NULL in both tables. */
-function formatRankedRecallLines(domain: string, hits: RecalledMemory[]): string {
-  if (domain === OBSERVATION_DOMAIN) {
-    return hits
-      .map(h => `[${ h.id }] ${ h.category ?? 'medium' } ${ h.date || 'undated' } — ${ h.content.replace(/\s+/g, ' ').trim() }`)
-      .join('\n');
-  }
-
-  return formatIdentityRecallLines(hits.map(h => ({
-    id: h.id, level: h.level ?? 1, category: h.category, content: h.content, basis: h.basis, created_at: h.date || 'undated',
-  })));
-}
-
-/**
- * Ranked memory recall: top 16 per memory domain, injected into the existing
- * per-domain contexts. Falls back to the per-domain SQL recalls when
- * ranked recall is unavailable, so a turn never loses its memory context.
- */
-async function runRankedMemoryRecall(state: BaseThreadState): Promise<void> {
-  const startTime = Date.now();
-  const threadId = (state.metadata as any).threadId;
-  const meta = state.metadata as any;
-  const hits = await recallRankedMemories(recentUserTexts(state, 3));
-
-  if (!hits) {
-    const [obs, ...identity] = await Promise.all([
-      runObservationRecall(state),
-      ...['human', 'agent', 'business', 'environment', 'projects', 'world', 'skills'].map(d => runIdentityObservationRecall(state, d)),
-    ]);
-    meta.observationContext = obs;
-    ['human', 'agent', 'business', 'environment', 'projects', 'world', 'skills'].forEach((d, k) => { meta[RECALL_CONTEXT_KEYS[d]] = identity[k] });
-    perf.log(`[RankedRecall] threadId=${ threadId } path=sql-fallback ms=${ Date.now() - startTime }`);
-
-    return;
-  }
-
-  const byDomain = new Map<string, RecalledMemory[]>();
-
-  for (const h of hits) {
-    if (!RECALL_CONTEXT_KEYS[h.domain]) continue;
-    const list = byDomain.get(h.domain) ?? [];
-
-    list.push(h);
-    byDomain.set(h.domain, list);
-  }
-  for (const [domain, key] of Object.entries(RECALL_CONTEXT_KEYS)) {
-    const list = byDomain.get(domain);
-
-    meta[key] = list?.length ? formatRankedRecallLines(domain, list) || null : null;
-  }
-  const counts = [...byDomain.entries()].map(([d, l]) => `${ d }:${ l.length }`).join(',');
-
-  perf.log(`[RankedRecall] threadId=${ threadId } matched=${ hits.length } domains=${ counts } ids=${ hits.map(h => h.id).join(',') } ms=${ Date.now() - startTime } path=ranked`);
-}
-
-async function runObservationRecall(state: BaseThreadState): Promise<string | null> {
-  const startTime = Date.now();
-  const threadId = (state.metadata as any).threadId;
-
-  try {
-    const query = extractLatestUserText(state);
-    if (!query) {
-      console.log('[SubconsciousMiddleware:ObservationRecall] No user text to search — skipped');
-      return null;
-    }
-
-    const rows = await ObservationsModel.search(query, OBSERVATION_RECALL_MAX_ROWS, false);
-    const elapsed = Date.now() - startTime;
-
-    if (!rows || rows.length === 0) {
-      perf.log(`[ObservationRecall] threadId=${ threadId } matched=0 ms=${ elapsed } path=sql-fast-path`);
-      console.log(`[SubconsciousMiddleware:ObservationRecall] No matching observations in ${ elapsed }ms (sql-fast-path)`);
-      return null;
-    }
-
-    const response = rows
-      .map((r) => `[${ r.id }] ${ r.priority } ${ formatDateOnly(r.created_at) } — ${ r.content }`)
-      .join('\n');
-
-    perf.log(`[ObservationRecall] threadId=${ threadId } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
-    console.log(`[SubconsciousMiddleware:ObservationRecall] Returning ${ rows.length } observations (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
-    return response;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:ObservationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-// ============================================================================
-// IDENTITY OBSERVER (domain-keyed — human first)
-// ============================================================================
-
-/**
- * Fire-and-forget writer for one identity domain. Same shape as
- * runObservationAgent: the agent applies its side effects via the
- * add/remove/search/list_identity_observation tools directly against the
- * identity_observations table — no state merge needed.
- */
-async function runIdentityObserver(state: BaseThreadState, domain: string): Promise<void> {
-  const startTime = Date.now();
-
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObserver(state, domain);
-    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-  }
 }
 
 /** Best effort: a query failure just means no team block this turn. */
@@ -1179,62 +723,6 @@ async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
   }
 }
 
-/** Brain v2 recall — semantic search over typed knowledge nodes. */
-async function runBrainRecall(state: BaseThreadState): Promise<void> {
-  const meta = state.metadata as any;
-  try {
-    const enabled = await SullaSettingsModel.get('brainMemory', 'on');
-    if (enabled === 'off') {
-      meta.brainMemoryContext = '';
-      return;
-    }
-    const brainUrl = process.env.BRAIN_V2_URL || 'http://127.0.0.1:7423';
-    const cue = extractLatestUserText(state);
-    if (!cue) {
-      meta.brainMemoryContext = '';
-      return;
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
-    try {
-      const res = await fetch(`${ brainUrl }/recall`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ cue, top_k: 20 }),
-        signal:  controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) {
-        console.warn(`[SubconsciousMiddleware] brain recall HTTP ${ res.status }`);
-        meta.brainMemoryContext = '';
-        return;
-      }
-      const data = await res.json() as { block?: string; items?: unknown[]; ms?: number };
-      if (data.block && typeof data.block === 'string') {
-        // The engine wraps the block in <brain_memory>...</brain_memory>;
-        // BaseNode re-wraps it, so strip the outer tags to avoid doubling.
-        meta.brainMemoryContext = data.block
-          .replace(/^<brain_memory[^>]*>\n?/, '')
-          .replace(/\n?<\/brain_memory>\s*$/, '');
-      } else {
-        meta.brainMemoryContext = '';
-      }
-      perf.log(`[BrainRecall] threadId=${ meta.threadId } items=${ data.items?.length ?? 0 } ms=${ data.ms ?? '?' }`);
-    } catch (fetchErr: any) {
-      clearTimeout(timer);
-      if (fetchErr?.name === 'AbortError') {
-        console.warn('[SubconsciousMiddleware] brain recall timed out (5s)');
-      } else {
-        console.warn('[SubconsciousMiddleware] brain recall fetch failed:', fetchErr?.message ?? fetchErr);
-      }
-      meta.brainMemoryContext = '';
-    }
-  } catch (err) {
-    console.warn('[SubconsciousMiddleware] brain recall failed:', err instanceof Error ? err.message : err);
-    meta.brainMemoryContext = '';
-  }
-}
-
 /** Fire-and-forget post-turn Reflex Trainer (teaches the Reflex engine). */
 async function runReflexTrainer(state: BaseThreadState): Promise<void> {
   const startTime = Date.now();
@@ -1246,138 +734,4 @@ async function runReflexTrainer(state: BaseThreadState): Promise<void> {
   } catch (error) {
     console.error('[SubconsciousMiddleware:ReflexTrainer] Failed:', error instanceof Error ? error.message : error);
   }
-}
-
-/** Fire-and-forget post-episode keyword indexer. */
-async function runConversationWriter(state: BaseThreadState): Promise<void> {
-  const startTime = Date.now();
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createConversationWriter(state);
-    console.log(`[SubconsciousMiddleware:ConversationWriter] Started | threadId: ${ threadId }`);
-    await graph.execute(subState, 'subconscious', { maxIterations: 3 });
-    console.log(`[SubconsciousMiddleware:ConversationWriter] Completed in ${ Date.now() - startTime }ms | iterations: ${ (subState.metadata as any).iterations || 0 }`);
-  } catch (error) {
-    console.error('[SubconsciousMiddleware:ConversationWriter] Failed:', error instanceof Error ? error.message : error);
-  }
-}
-
-/**
- * Read-only recall for one identity domain. The primary agent blocks on this
- * because the selected rows are injected as <xxx_observations> before the
- * main response starts — recall is never time-limited by design (Jonathon,
- * jJ76: "I expect to wait forever for the memory recall agents… help them do
- * their job more efficiently").
- *
- * A prior version of this function routed 5 of the 7 domains through a
- * deterministic SQL search with NO model in the loop, and gated skills'
- * marketplace-augmented recall behind a keyword prefilter that could skip
- * the LLM entirely. Jonathon reverted both (2026-08-20): "I want the model
- * to choose what to search and then choose what to provide to the primary
- * context. I explicitly want a model in the loop doing the searching. Sure
- * give them efficient tools, but I want a model deciding." Every domain
- * therefore always dispatches the LLM agent — it decides what to search
- * (via search_identity_observations / list_identity_observations, and for
- * projects/skills the extra live-tool grants), and decides what's relevant
- * enough to surface. "Efficient tools" means the SQL underneath those tools
- * stays fast (IdentityObservationsModel.search/listActive, both ms-scale) —
- * not that the model gets bypassed.
- *
- * The one thing still short-circuited below is dispatch on a domain with 0
- * logged rows — there is nothing for a model to find or decide over, so
- * this isn't the model being cut out of a judgment call, it's not asking a
- * question with a definitionally empty answer. Flag if you want that gone
- * too.
- */
-async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    const loggedCount = await IdentityObservationsModel.countActive(domain);
-    if (loggedCount === 0) {
-      const elapsed = Date.now() - startTime;
-      perf.log(`[IdentityRecall] threadId=${ (state.metadata as any).threadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent-skipped-empty`);
-      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Skipped — 0 logged rows (agent-skipped-empty)`);
-      return null;
-    }
-
-    if (await recallMode() !== 'agent') {
-      const terms = turnRecallTerms(state);
-      const hits = terms.length > 0 ? await IdentityObservationsModel.recallRelevant(domain, terms) : [];
-      const elapsed = Date.now() - startTime;
-      const response = formatIdentityRecallLines(hits);
-
-      perf.log(`[IdentityRecall] threadId=${ (state.metadata as any).threadId } domain=${ domain } matched=${ hits.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
-      return response || null;
-    }
-
-    const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
-    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
-
-    const elapsed = Date.now() - startTime;
-    const agentMeta = (subState.metadata as any).agent || {};
-    const response = dropMetaRecallOutput(typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '');
-
-    if (!response) {
-      perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent`);
-      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] No relevant rows in ${ elapsed }ms (agent)`);
-      return null;
-    }
-
-    perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } chars=${ response.length } ms=${ elapsed } path=agent`);
-    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ response.length } chars in ${ elapsed }ms (agent)`);
-    return response;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-// ============================================================================
-// RECALL FORMATTING
-// ============================================================================
-
-/** Per-domain injected-context budget — recall informs, it must not flood. */
-const IDENTITY_RECALL_MAX_CHARS = 3_000;
-
-/** `[id] L<level>·<category> date — content (basis: …)`, within the char budget. */
-export function formatIdentityRecallLines(hits: { id: string; level: number; category: string | null; content: string; basis: string | null; created_at: string | Date }[]): string {
-  const lines: string[] = [];
-  let used = 0;
-
-  for (const h of hits) {
-    const basis = h.basis ? ` (basis: ${ h.basis.replace(/\s+/g, ' ').slice(0, 160) })` : '';
-    const line = `[${ h.id }] L${ h.level }${ h.category ? `·${ h.category }` : '' } ${ formatDateOnly(h.created_at) } — ${ h.content.replace(/\s+/g, ' ').trim() }${ basis }`;
-
-    if (used + line.length > IDENTITY_RECALL_MAX_CHARS && lines.length > 0) break;
-    lines.push(line);
-    used += line.length + 1;
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Legacy LLM recall agents sometimes answered with a status line in the
- * primary agent's completion-wrapper style ("Recorded the relevant … —
- * Needs user input: no") instead of observation lines — measured as 100% of
- * identity-recall output in 3 days of logs (2026-09-26). That text is not
- * recall; never inject it.
- */
-export function dropMetaRecallOutput(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const kept = value
-    .split('\n')
-    .filter(line => !/^\s*\[?(recorded|relevant|no action|identified|extracted|memory observation|observations? (recorded|identified))\b.*\]?\s*(needs user input:.*)?$/i.test(line))
-    .filter(line => !/^\s*needs user input:/i.test(line))
-    .filter(line => !/^\s*\[1-3 sentence summary/i.test(line))
-    .join('\n')
-    .trim();
-
-  return kept;
 }
