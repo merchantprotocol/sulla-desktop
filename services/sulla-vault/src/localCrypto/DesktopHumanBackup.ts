@@ -3,6 +3,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { BackupEnvelopeCodec, HumanBackupEnvelope } from '@sulla/domain';
 
+/** A `bytea` column: a Buffer as node-postgres returns it, or its `Buffer#toJSON` shape once a backup is opened. */
+export type BackupBytea = Buffer | { type: 'Buffer'; data: number[] };
+
+/**
+ * The `users` row a backup carries: exactly the columns `PostgresVaultUserRepository.findById` selects.
+ * A type alias (not an interface) so it satisfies node-postgres' `QueryResultRow` constraint.
+ */
+export type VaultUserBackupRow = {
+  id:                    string;
+  email:                 string;
+  login_hash_salt:       BackupBytea;
+  login_hash_verifier:   BackupBytea;
+  public_key:            string;
+  encrypted_private_key: unknown;
+  encrypted_user_key:    unknown;
+  kdf:                   unknown;
+};
+
 /**
  * The clear payload inside a Desktop backup file: the `users` row, the owned `items` rows and the
  * `local_vault_recovery` row exactly as node-postgres returned them. `bytea` columns are serialized by
@@ -11,7 +29,7 @@ import type { BackupEnvelopeCodec, HumanBackupEnvelope } from '@sulla/domain';
  */
 export interface DesktopBackupPayload {
   version:  1;
-  user:     Record<string, any> & { id: string };
+  user:     VaultUserBackupRow;
   items:    Array<Record<string, any>>;
   recovery: Record<string, any> | null;
 }
