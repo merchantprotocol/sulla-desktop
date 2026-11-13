@@ -177,12 +177,13 @@ function select(id: string, index: number, label: string, multiple: boolean) {
   const previous = selected(id, index);
   choices.value[id + ':' + index] = multiple ? (previous.includes(label) ? previous.filter(v => v !== label) : [...previous, label]) : [label];
 }
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 async function openSettings() {
-  try { policies.value = await ipcRenderer.invoke('decisions:policies'); settings.value = true } catch { actionError.value = 'Could not load approval settings.' }
+  try { policies.value = await ipcRenderer.invoke('decisions:policies'); settings.value = true; actionError.value = '' } catch (e) { actionError.value = `Could not load approval settings: ${ reason(e) }` }
 }
 async function setPolicy(policy: Policy, required: boolean) {
   busy.value = policy.name;
-  try { await ipcRenderer.invoke('decisions:set-policy', policy.name, required); policy.required = required; actionError.value = '' } catch { actionError.value = 'Policy was not saved. Refresh and try again.' } finally { busy.value = '' }
+  try { await ipcRenderer.invoke('decisions:set-policy', policy.name, required); policy.required = required; actionError.value = '' } catch (e) { actionError.value = `Policy was not saved: ${ reason(e) }` } finally { busy.value = '' }
 }
 function openConversation(item: DecisionRecord) {
   const tab = restoreChatFromHistory({ id: item.conversationId, thread_id: item.conversationId, type: 'graph', title: item.title });
@@ -204,7 +205,7 @@ async function answer(item: DecisionRecord, action: DecisionResponse['action']) 
     actionError.value = '';
     await refresh();
     if (action !== 'deferred') openConversation(item);
-  } catch (e) { actionError.value = e instanceof Error ? e.message : 'Decision was not accepted.' } finally { busy.value = '' }
+  } catch (e) { actionError.value = reason(e) || 'Decision was not accepted.' } finally { busy.value = '' }
 }
 </script>
 <style scoped>
