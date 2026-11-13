@@ -18,11 +18,21 @@
  * printed tarball names, then commit them with MANIFEST.json and the tarballs.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, createHash, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-class CoreVendor {
+// Names a vendored tarball from the package's real version so a version bump in
+// sulla-core never leaves a stale hardcoded filename behind.
+export class VendoredTarballName {
+  static for(directory, version, shortSha) {
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version ?? '')) throw new Error(`invalid package version for ${ directory }: ${ version }`);
+    return `sulla-${ directory }-${ version }-${ shortSha }.tgz`;
+  }
+}
+
+export class CoreVendor {
   constructor(ref, clone) {
     if (!ref) throw new Error('usage: node scripts/vendor-sulla-core.mjs <ref> [path-to-sulla-core-clone]');
     this.ref = ref;
@@ -36,10 +46,10 @@ class CoreVendor {
     const checkout = mkdtempSync(join(tmpdir(), 'sulla-core-vendor-'));
     this.git(['worktree', 'add', '--detach', checkout, sourceCommit]);
     try {
-      const packages = [
-        { name: '@sulla/foundation', directory: 'foundation', file: `sulla-foundation-0.1.0-${shortSha}.tgz` },
-        { name: '@sulla/domain', directory: 'domain', file: `sulla-domain-0.1.0-${shortSha}.tgz` },
-      ];
+      const packages = ['foundation', 'domain'].map((directory) => {
+        const { name, version } = JSON.parse(readFileSync(join(checkout, 'packages', directory, 'package.json'), 'utf8'));
+        return { name, directory, version, file: VendoredTarballName.for(directory, version, shortSha) };
+      });
       mkdirSync(this.destination, { recursive: true });
       for (const packageInfo of packages) {
         this.exec('npm', ['run', 'build', '-w', packageInfo.name], checkout);
@@ -58,9 +68,9 @@ class CoreVendor {
         sourceRepository: 'https://github.com/merchantprotocol/sulla-core',
         sourceRef: this.ref,
         sourceCommit,
-        packages: packages.map(({ name, file }) => ({
+        packages: packages.map(({ name, version, file }) => ({
           package: name,
-          version: '0.1.0',
+          version,
           file,
           sha256: createHash('sha256').update(readFileSync(join(this.destination, file))).digest('hex'),
         })),
@@ -77,4 +87,6 @@ class CoreVendor {
   exec(command, args, cwd) { execFileSync(command, args, { cwd, stdio: 'inherit' }); }
 }
 
-new CoreVendor(process.argv[2], process.argv[3]).run();
+if (process.argv[1]?.endsWith('vendor-sulla-core.mjs')) {
+  new CoreVendor(process.argv[2], process.argv[3]).run();
+}
