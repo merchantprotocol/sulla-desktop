@@ -1429,9 +1429,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       };
     }
 
-    // Desktop is a single-node Sulla Server. The manager and its ephemeral
-    // runners use the same image that the server deployment will use; only
-    // the launcher driver differs (Docker here, Kubernetes on the server).
+    // Desktop runs its own local workflow manager and ephemeral runner processes
+    // inside the local Docker network. Remote workflows remain client records
+    // managed through Desktop UI/model code, not by a Desktop server mode.
     const workflowImage = resolveSullaServiceImage(
       'sulla-workflows', process.cwd(), Electron.app.getVersion(), process.env.SULLA_WORKFLOW_IMAGE,
     );

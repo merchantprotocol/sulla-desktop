@@ -19,7 +19,6 @@ services:
       redis:
         condition: service_healthy
     environment:
-      SULLA_WORKFLOW_ROLE: manager
       SULLA_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
       SULLA_REDIS_URL: redis://redis:6379
       SULLA_MANAGER_URL: http://sulla_workflow_manager:8788
