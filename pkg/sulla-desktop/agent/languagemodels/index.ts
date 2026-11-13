@@ -28,6 +28,7 @@ import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
 import { ModelDispatchService } from './ModelDispatchService';
 import { ModelRouteService } from './ModelRouteService';
+import { ModelRequestSettings } from './ModelRequestSettings';
 
 // Provider factory map — lazy-loaded to avoid circular imports
 export const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
@@ -67,7 +68,10 @@ function tryGetModelProviderService(): any | null {
 }
 
 export class LLMRegistryImpl {
-  constructor(private readonly routes: () => ModelRouteService = () => modelRouteService) {}
+  constructor(
+    private readonly routes: () => ModelRouteService = () => modelRouteService,
+    private readonly requestSettings: ModelRequestSettings = new ModelRequestSettings(SullaSettingsModel),
+  ) {}
   private services = new Map<string, BaseLanguageModel>();
 
   /**
@@ -129,6 +133,10 @@ export class LLMRegistryImpl {
       this.services.set(key, svc);
       svc.initialize().catch(console.error);
     }
+    // Preferences → AI models → Request settings. Re-read every time so a change applies to the next request.
+    await this.requestSettings.applyTo(svc as any).catch((err) => {
+      console.warn('[LLMRegistry] Could not apply request settings:', err);
+    });
     return svc;
   }
 
