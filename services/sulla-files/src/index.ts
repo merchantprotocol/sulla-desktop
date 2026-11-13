@@ -6,7 +6,6 @@
 import { startVectorBackfill } from './vectorBackfill.js';
 import { startSearchCleanup } from './searchCleanup.js';
 import { startRetiredSystemAreaCleanup } from './retiredSystemAreas.js';
-import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import http, { type RequestListener } from 'node:http';
 import https from 'node:https';
@@ -18,7 +17,7 @@ import { createApp } from './app.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
 import { loadConfig } from './config.js';
-import { connect, connectOptional, migrate } from './db.js';
+import { connect, migrate } from './db.js';
 import { storedIndexSource } from './indexSource.js';
 import { IndexingQueue } from './indexing.js';
 import { FilesKeyBundleRecovery } from './keyBundleRecovery.js';
@@ -85,7 +84,6 @@ const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
   : undefined;
-const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);
 const indexer = new IndexingQueue(db, storedIndexSource(db, config, chunkStore), embedder);
 const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer, undefined, chunkStore) : undefined;
@@ -168,35 +166,8 @@ const bootstrapAuthority = config.mode === 'desktop'
 const cloudSync = cloudBroker && config.keyring instanceof FilesKeyring
   ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker)
   : undefined;
-if (config.mode === 'server') {
-  if (!config.serverMasterKey || !/^[A-Za-z0-9_-]{43}$/.test(config.serverMasterKey)) {
-    throw new Error('SULLA_FILES_MASTER_KEY must be a 32-byte base64url key in server mode');
-  }
-  const master = Buffer.from(config.serverMasterKey, 'base64url');
-  if (master.length !== 32 || master.toString('base64url') !== config.serverMasterKey) {
-    master.fill(0);
-    throw new Error('SULLA_FILES_MASTER_KEY must use canonical base64url encoding');
-  }
-  for (const secret of [config.capabilitySigningKey, config.serverJwtSecret]) {
-    if (secret === undefined) continue;
-    const bytes = Buffer.isBuffer(secret) ? Buffer.from(secret) : Buffer.from(secret, 'utf8');
-    try {
-      if (bytes.length === master.length && timingSafeEqual(bytes, master)) {
-        master.fill(0);
-        throw new Error('SULLA_FILES_MASTER_KEY must be distinct from service authentication secrets');
-      }
-      if (typeof secret === 'string' && secret === config.serverMasterKey) {
-        master.fill(0);
-        throw new Error('SULLA_FILES_MASTER_KEY must be distinct from service authentication secrets');
-      }
-    } finally { bytes.fill(0) }
-  }
-  config.serverMasterKey = undefined;
-  delete process.env.SULLA_FILES_MASTER_KEY;
-  try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
-}
 if (chunkStore instanceof CachingStore) await chunkStore.start();
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
+const app = createApp(db, config, manager, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
 requestHandler = app;
 startSearchCleanup(db);
 startRetiredSystemAreaCleanup(db, (collectionId, chunkId) => chunkStore.delete(collectionId, chunkId));
@@ -221,7 +192,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     server.closeAllConnections();
     server.close(() => {
       lifecycle.lock().finally(() => {
-        return Promise.all([db.end(), identityDb?.end()]).finally(() => process.exit(0));
+        return db.end().finally(() => process.exit(0));
       }).catch(() => process.exit(1));
     });
   });

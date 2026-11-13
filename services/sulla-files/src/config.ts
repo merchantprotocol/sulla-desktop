@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
@@ -16,7 +15,6 @@ export interface Config {
   legacyPreflight?: LegacyPreflightStatus;
   port:                 number;
   databaseUrl:          string;
-  vaultDatabaseUrl?:    string;
   vaultAuthorityUrl?:    string;
   vaultAuthorityId?:     string;
   vaultAuthorityToken?:  string;
@@ -31,19 +29,13 @@ export interface Config {
   caseInsensitiveRoot:  boolean;
   backupTarget?:        string;
   capabilitySigningKey: string | Buffer;
-  serverJwtSecret?:     string;
-  accounts?: {
-    url:          string;
-    serviceToken: string;
-    audience:     string;
-  };
   localToken?:          string;
   bootstrapServiceId?:  string;
   bootstrapToken?:      string;
   tlsCertificatePath?:  string;
   tlsPrivateKeyPath?:   string;
-  serverMasterKey?:     string;
-  mode:                 'desktop' | 'server';
+  mode:                 'desktop';
+  fuseExperiment?:      boolean;
   deviceId:             string;
   userId:               string;
   orgId?:               string;
@@ -52,7 +44,6 @@ export interface Config {
   paused:               boolean;
   modelDir:             string;
   fileRoots?:           FileRootConfig[];
-  fuseExperiment?:      boolean;
 }
 
 export interface FileRootConfig {
@@ -104,31 +95,12 @@ export function loadConfig():Config {
     process.env.SULLA_FILES_INTERNAL_TOKEN ||
     (installationSecret ? deriveCapabilitySigningKey(installationSecret) : '');
   if (Buffer.byteLength(capabilitySigningKey) < 32) throw new Error('SULLA_FILES_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
-  const mode = process.env.SULLA_FILES_MODE === 'server' ? 'server' : 'desktop';
-  const accountsUrl = process.env.SULLA_FILES_ACCOUNTS_URL?.trim();
-  const accountsTokenFile = process.env.SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE?.trim();
-  if (Boolean(accountsUrl) !== Boolean(accountsTokenFile)) throw new Error('Files Accounts URL and service token file must be configured together');
-  let accounts:Config['accounts'];
-  if (accountsUrl && accountsTokenFile) {
-    const url = new URL(accountsUrl);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-      throw new Error('SULLA_FILES_ACCOUNTS_URL must be an HTTP(S) origin');
-    }
-    const stat = statSync(accountsTokenFile);
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error('SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE must be private');
-    const serviceToken = readFileSync(accountsTokenFile, 'utf8').trim();
-    if (Buffer.byteLength(serviceToken) < 32) throw new Error('SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE must contain at least 32 bytes');
-    accounts = { url: url.origin, serviceToken, audience: process.env.SULLA_FILES_ACCOUNTS_AUDIENCE?.trim() || 'sulla-files' };
-    if (accounts.audience !== 'sulla-files') throw new Error('SULLA_FILES_ACCOUNTS_AUDIENCE must be sulla-files');
-  }
-
-  const filesRoot = mode === 'desktop' && process.env.SULLA_FILES_STORED_ONLY !== '1'
+  const filesRoot = process.env.SULLA_FILES_STORED_ONLY !== '1'
     ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files')
     : undefined;
   return {
     port:             Number(process.env.SULLA_FILES_PORT ?? 8792),
     databaseUrl,
-    vaultDatabaseUrl:    process.env.SULLA_FILES_VAULT_DATABASE_URL,
     vaultAuthorityUrl:   process.env.SULLA_FILES_VAULT_AUTHORITY_URL,
     vaultAuthorityId:    process.env.SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID,
     vaultAuthorityToken: process.env.SULLA_FILES_VAULT_AUTHORITY_TOKEN,
@@ -143,15 +115,13 @@ export function loadConfig():Config {
     caseInsensitiveRoot: process.env.SULLA_FILES_CASE_INSENSITIVE_ROOT === '1',
     backupTarget:     process.env.SULLA_FILES_BACKUP_TARGET ? resolve(process.env.SULLA_FILES_BACKUP_TARGET) : undefined,
     capabilitySigningKey,
-    serverJwtSecret:  process.env.SULLA_FILES_JWT_SECRET,
-    accounts,
     localToken:       process.env.SULLA_FILES_LOCAL_TOKEN,
     bootstrapServiceId: process.env.SULLA_FILES_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-files-bootstrap',
     bootstrapToken:     process.env.SULLA_FILES_BOOTSTRAP_TOKEN,
     tlsCertificatePath: process.env.SULLA_FILES_TLS_CERTIFICATE_PATH,
     tlsPrivateKeyPath:  process.env.SULLA_FILES_TLS_PRIVATE_KEY_PATH,
-    serverMasterKey:    process.env.SULLA_FILES_MASTER_KEY,
-    mode,
+    mode: 'desktop',
+    fuseExperiment: process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
     deviceId:         process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
     userId:           process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
     orgId:            process.env.SULLA_FILES_ORG_ID,
@@ -159,7 +129,6 @@ export function loadConfig():Config {
     cloudUrl:         (process.env.SULLA_CLOUD_API_URL ?? 'https://sulla-workers.merchantprotocol.workers.dev').replace(/\/+$/, ''),
     paused:           process.env.SULLA_FILES_PAUSED === '1',
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
-    fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
-    fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
+    fileRoots:        fileRoots(filesRoot),
   };
 }
