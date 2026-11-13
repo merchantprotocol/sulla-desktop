@@ -30,6 +30,7 @@ import yaml from 'yaml';
 
 import type { Graph } from '@pkg/agent/nodes/Graph';
 import { workflowTerminalResult } from '@pkg/agent/services/WorkflowTerminalResult';
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
@@ -350,7 +351,7 @@ function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record
 export function initSullaRoutineTemplateEvents(): void {
   ipcMainProxy.handle('routines-template-list', async() => {
     const WorkflowModel = await importWorkflowModel();
-    const rows = await WorkflowModel.listAll();
+    const rows = await getDatabaseReadGuard().run('routines-template-list', () => WorkflowModel.listAll(), []);
 
     return rows.map(row => ({
       slug:         row.id,
