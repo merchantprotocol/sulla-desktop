@@ -1179,6 +1179,25 @@ export const GraphRegistry = {
   },
 
   /**
+   * v7 scheduled Dreamer: one tool-less, silent subconscious pass over a batch
+   * of recent memories (rendered into userMessage by V7Dreamer). Returns data
+   * only, captured in metadata.v7DreamerOutput for V7Dreamer to validate.
+   */
+  createV7Dreamer: async function(systemPrompt: string, userMessage: string): Promise<{
+    graph: Graph<BaseThreadState>; state: BaseThreadState; threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt, tools: [], userMessage,
+      agentLabel: 'v7-dreamer', silent: true,
+      responseHandler(response: string, responseState: BaseThreadState) {
+        (responseState.metadata as any).v7DreamerOutput = response;
+      },
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
    * Create a Tool-Result Digester graph — single-pass compression of stale
    * tool_result blocks into trusted-citation digests. Uses a responseHandler
    * to parse XML <DIGEST> instructions into a tool_use_id → digest map; the

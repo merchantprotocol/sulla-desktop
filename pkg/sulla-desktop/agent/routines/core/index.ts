@@ -13,15 +13,33 @@
  * tools). Deleting a row from the DB self-heals on the next launch.
  *
  * To add a new core routine: author its WorkflowDefinition as a TS module in
- * this directory and add it to CORE_ROUTINES below.
+ * this directory and add it to CORE_ROUTINES below. To stop shipping one, move
+ * its id to RETIRED_CORE_ROUTINE_IDS: the seeder then archives and disables the
+ * already-seeded row on boot instead of deleting it.
  */
 
-import { DREAM_ABOUT_HUMAN_DEFINITION } from './dreamAboutHuman';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
+import { DREAMER_DEFINITION } from './dreamer';
 
 export const CORE_ROUTINES: readonly Record<string, any>[] = [
-  DREAM_ABOUT_HUMAN_DEFINITION,
+  DREAMER_DEFINITION,
 ];
+
+/**
+ * Core routines that no longer ship. Their rows are kept (history, executions)
+ * but archived + disabled on every boot so no scheduler arms them again.
+ */
+export const RETIRED_CORE_ROUTINES: readonly { id: string; reason: string }[] = [
+  // Per-domain nightly identity dreamer over the legacy identity_observations
+  // table; replaced by the single hourly batching Dreamer over v7 memory.
+  { id: 'core-routine-dream-about-human', reason: 'replaced by the single batching Dreamer (core-routine-dreamer)' },
+];
+
+for (const retired of RETIRED_CORE_ROUTINES) {
+  if (CORE_ROUTINES.some(routine => routine.id === retired.id)) {
+    throw new Error(`Core routine ${ retired.id } cannot be both shipped and retired`);
+  }
+}
 
 for (const routine of CORE_ROUTINES) {
   const customAgentNode = routine.nodes?.find((node: any) =>
