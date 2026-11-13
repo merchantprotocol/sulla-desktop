@@ -92,6 +92,18 @@ export function initConversationHistoryIpc(): void {
     }
   });
 
+  // An acknowledged path for the History dialog. Keep the legacy send
+  // listener above for existing callers, but never guess completion by timer.
+  ipcMain.handle('conversation-history:clear-confirmed', async(_event, olderThan?: string) => {
+    const cutoff = olderThan ? new Date(olderThan) : undefined;
+    const deleted = await ConversationHistoryModel.clearHistory(cutoff);
+    await cleanupFiles(deleted);
+    mainEvents.emit('conversation-history:cleared' as any, olderThan);
+    mainEvents.emit('conversation-history:changed' as any);
+
+    return { success: true };
+  });
+
   // ── Invoke handlers (renderer → main, with return value) ──
 
   // Read handlers below return [] while the database is still starting; HistoryTab reloads on `database:available`.
@@ -133,12 +145,7 @@ export function initConversationHistoryIpc(): void {
   });
 
   ipcMain.handle('conversation-history:search', async(_event, query: string, options?: { view?: 'active' | 'archived' | 'deleted'; type?: string }) => {
-    try {
-      return await getDatabaseReadGuard().run('conversation-history:search', () => options ? ConversationHistoryModel.searchView(query, options.view, options.type as any) : ConversationHistoryModel.search(query), []);
-    } catch (err) {
-      console.error('[ConversationHistoryIpc] Failed to search:', err);
-      return [];
-    }
+    return await getDatabaseReadGuard().run('conversation-history:search', () => options ? ConversationHistoryModel.searchView(query, options.view, options.type as any) : ConversationHistoryModel.search(query), []);
   });
 
   ipcMain.handle('conversation-history:get-by-date-range', async(_event, from: string, to: string) => {

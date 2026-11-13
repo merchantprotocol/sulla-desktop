@@ -389,6 +389,18 @@ function getInspectMenu(): MenuItem {
   });
 }
 
+/** Real channel + running version; was a hard-coded "LTS · v1.7.5". */
+function updateChannelLabel(): string {
+  let channel = 'LTS';
+  try {
+    channel = updateManager.getState().channel === 'nightly' ? 'Nightly' : 'LTS';
+  } catch {
+    // The update manager may not be initialised yet; LTS is its default.
+  }
+
+  return `Update channel: ${ channel } · v${ Electron.app.getVersion() }`;
+}
+
 function getSupportMenu(): MenuItem {
   return new MenuItem({
     label: '&Support',
@@ -403,7 +415,7 @@ function getSupportMenu(): MenuItem {
       { label: 'Request Remote Support…', click: () => openSupportCenter('remote') },
       { type: 'separator' },
       { label: 'Privacy and Metrics…', click: () => openSupportCenter('privacy') },
-      { label: 'Update channel: LTS · v1.7.5', enabled: false },
+      { label: updateChannelLabel(), enabled: false },
     ],
   });
 }

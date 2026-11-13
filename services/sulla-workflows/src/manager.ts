@@ -30,12 +30,15 @@ import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js'
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../packages/workflow-engine/src/WorkflowPlaybook.js';
 import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/workflowConcurrency.js';
+import { AbandonedRunReaper } from './AbandonedRunReaper.js';
 import { agentOccurrence } from './agentInvocation.js';
 
 import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
+import { StartupDatabaseWait } from './StartupDatabaseWait.js';
+import { WorkflowConcurrencyLimitError } from './WorkflowConcurrencyLimitError.js';
 
 import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
@@ -51,6 +54,15 @@ const jobs = new Map<string, { job: schedule.Job; identity: RequestIdentity }>()
 const launches = new Map<string, Promise<string>>();
 let schedulerLeader = false;
 const managerStartedAt = new Date();
+const abandonedRuns = new AbandonedRunReaper({
+  db:          pool,
+  lockPool:    advisoryLockPool,
+  launcher,
+  emit:        emitEvent,
+  isLaunching: executionId => launches.has(executionId),
+  managerStartedAt,
+  location:    config.mode,
+});
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface ScheduleGrantRow {
@@ -328,79 +340,8 @@ async function issueRunToken(run: any, allowedTools: string[]): Promise<string> 
   return token;
 }
 
-async function reconcileAbandonedRuns(workflowId?: string): Promise<string[]> {
-  const params: unknown[] = [managerStartedAt];
-  const workflowFilter = workflowId ? `AND e.workflow_id=$${ params.push(workflowId) }` : '';
-  const rows = (await pool.query(
-    `SELECT e.execution_id,e.status,e.runner_id,e.started_at,e.lease_expires_at,e.owner_id,e.lease_token,e.heartbeat_at,
-            e.wait_kind,e.resume_at,
-            EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id) AS has_checkpoint
-       FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
-      WHERE e.status IN ('running','suspended') AND w.location=$${ params.push(config.mode) }
-        ${ workflowFilter }
-        AND (
-          (e.runner_id IS NOT NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL
-            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
-          OR
-          (e.runner_id IS NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL AND e.started_at < $1
-            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
-          OR
-          (e.runner_id IS NOT NULL AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at <= NOW()
-            AND NOT (e.status='suspended' AND e.wait_kind IS NOT NULL))
-        )`, params,
-  )).rows;
-  const settled: string[] = [];
-  for (const row of rows) {
-    if (launches.has(row.execution_id)) continue;
-    const lockClient = await advisoryLockPool.connect();
-    let reason: string | null = null;
-    let didSettle: { rows: any[]; rowCount: number | null } | null = null;
-    try {
-      const acquired = (await lockClient.query(
-        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
-        [`workflow-launch:${ row.execution_id }`],
-      )).rows[0]?.acquired === true;
-      if (!acquired) continue;
-      if (row.lease_expires_at && new Date(row.lease_expires_at).getTime() <= Date.now()) {
-        reason = 'runner_lease_expired';
-      } else if (!row.runner_id) {
-        reason = 'manager_restarted_before_launch';
-      } else if (new Date(row.started_at).getTime() < managerStartedAt.getTime()) {
-        reason = 'manager_restarted_before_handshake';
-      } else if (!await launcher.runnerExists(row.runner_id)) {
-        reason = 'abandoned_without_live_runner';
-      }
-      if (!reason) continue;
-      didSettle = await lockClient.query(
-        `UPDATE workflow_executions
-          SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
-              terminal_at=COALESCE(terminal_at,NOW()),terminal_reason=$2,error=COALESCE(error,$2),
-              runner_id=NULL,owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
-        WHERE execution_id=$1 AND status=$3
-          AND runner_id IS NOT DISTINCT FROM $4::text
-          AND owner_id IS NOT DISTINCT FROM $5::text
-          AND lease_token IS NOT DISTINCT FROM $6::text
-          AND heartbeat_at IS NOT DISTINCT FROM $7::timestamptz
-          AND lease_expires_at IS NOT DISTINCT FROM $8::timestamptz
-          AND wait_kind IS NOT DISTINCT FROM $9::text
-          AND resume_at IS NOT DISTINCT FROM $10::timestamptz
-          AND (EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=workflow_executions.execution_id))=$11
-          AND NOT (status='suspended' AND wait_kind IS NOT NULL)
-        RETURNING workflow_id`, [
-          row.execution_id, reason, row.status, row.runner_id, row.owner_id, row.lease_token,
-          row.heartbeat_at, row.lease_expires_at, row.wait_kind, row.resume_at, row.has_checkpoint,
-        ],
-      );
-    } finally {
-      await lockClient.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`workflow-launch:${ row.execution_id }`]).catch(() => {});
-      lockClient.release();
-    }
-    if (!reason || !didSettle?.rowCount) continue;
-    if (row.runner_id) await launcher.stopRunner(row.runner_id).catch(() => {});
-    await emitEvent(row.execution_id, didSettle.rows[0].workflow_id, 'workflow_failed', { error: reason });
-    settled.push(row.execution_id);
-  }
-  return settled;
+function reconcileAbandonedRuns(workflowId?: string): Promise<string[]> {
+  return abandonedRuns.reap(workflowId);
 }
 
 async function launchUnchecked(executionId: string): Promise<string> {
@@ -557,7 +498,7 @@ async function startRun(params: {
         ORDER BY started_at ASC LIMIT $2`, [workflow.id, maxConcurrentRuns],
     );
     if (active.rows.length >= maxConcurrentRuns) {
-      throw new Error(`Workflow has reached its ${ maxConcurrentRuns } concurrent run limit; active executions: ${ active.rows.map(row => row.execution_id).join(', ') }.`);
+      throw new WorkflowConcurrencyLimitError(maxConcurrentRuns, active.rows.map(row => row.execution_id));
     }
     inserted = await client.query(
       `INSERT INTO workflow_executions
@@ -634,7 +575,11 @@ async function refreshSchedules(visibleTo?: RequestIdentity): Promise<any[]> {
             scheduleNodeId:           node.id,
           }, delegated.identity);
         } catch (error) {
-          console.error(`[workflow-manager] Schedule ${ key } failed:`, error);
+          if (error instanceof WorkflowConcurrencyLimitError) {
+            console.log(`[workflow-manager] Schedule ${ key } skipped: at concurrency limit (${ error.activeExecutionIds.join(', ') })`);
+          } else {
+            console.error(`[workflow-manager] Schedule ${ key } failed:`, error);
+          }
         }
       });
       if (job) {
@@ -666,20 +611,32 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
       if (exists.rowCount) results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'already-fired' });
       else if (dryRun) results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'missed' });
       else {
-        const delegated = await resolveScheduleGrant(workflow, node.id);
-        results.push({
-          workflowId: workflow.id,
-          expectedAt: previous.toISOString(),
-          status:     'dispatched',
-          ...(await startRun({
-            workflowId:               workflow.id,
-            message:                  `Catch-up for ${ previous.toISOString() }`,
-            triggerKey:               key,
-            delegatedGrantToken:      delegated.grantToken ?? undefined,
-            delegatedGrantWorkflowId: workflow.id,
-            scheduleNodeId:           node.id,
-          }, delegated.identity)),
-        });
+        try {
+          const delegated = await resolveScheduleGrant(workflow, node.id);
+          results.push({
+            workflowId: workflow.id,
+            expectedAt: previous.toISOString(),
+            status:     'dispatched',
+            ...(await startRun({
+              workflowId:               workflow.id,
+              message:                  `Catch-up for ${ previous.toISOString() }`,
+              triggerKey:               key,
+              delegatedGrantToken:      delegated.grantToken ?? undefined,
+              delegatedGrantWorkflowId: workflow.id,
+              scheduleNodeId:           node.id,
+            }, delegated.identity)),
+          });
+        } catch (error) {
+          // One workflow at its limit (or failing) must not abort catch-up for the rest.
+          if (error instanceof WorkflowConcurrencyLimitError) {
+            console.log(`[workflow-manager] Catch-up ${ workflow.id } skipped: at concurrency limit (${ error.activeExecutionIds.join(', ') })`);
+            results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'skipped', reason: 'at_concurrency_limit', activeExecutions: error.activeExecutionIds });
+          } else {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[workflow-manager] Catch-up ${ workflow.id } failed: ${ message }`);
+            results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'failed', error: message });
+          }
+        }
       }
     }
   }
@@ -1085,6 +1042,10 @@ app.post('/internal/agents/runs/status', async(request: AuthenticatedRequest, re
 });
 
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+  if (error instanceof WorkflowConcurrencyLimitError) {
+    response.status(409).json({ error: error.message, code: 'concurrency_limit', activeExecutions: error.activeExecutionIds });
+    return;
+  }
   console.error('[workflow-manager]', error);
   response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
 });
@@ -1181,6 +1142,8 @@ async function establishLegacyOwnership(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
+  await new StartupDatabaseWait({ name: 'workflow-manager' }).until('connect', () => pool.query('SELECT 1'));
   await migrate();
   await establishLegacyOwnership();
   const reconciled = await reconcileAbandonedRuns();
