@@ -542,7 +542,7 @@ exit 1`;
   ];
   // Same versioning as the VM relay: a container left by an older build keeps
   // running its old script, so replace it when the script or its healthcheck changes.
-  const bridgeVersion = crypto.createHash('sha256').update(bridge).update(healthProbe).digest('hex').slice(0, 12);
+  const bridgeVersion = crypto.createHash('sha256').update(bridge).update(healthProbe).update('compose-project:sulla;compose-service:host-relay').digest('hex').slice(0, 12);
   const inspectRelay = () => guestExec(['docker', 'inspect', '--format',
     `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}} {{.State.Running}}`, HOST_RELAY_NAME])
     .then(({ stdout }) => {
@@ -563,7 +563,9 @@ exit 1`;
   await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
   try {
     await guestExec(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
-      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`, ...healthArgs,
+      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
+      '--label', 'com.docker.compose.project=sulla',
+      '--label', 'com.docker.compose.service=host-relay', ...healthArgs,
       '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   } catch (error) {
