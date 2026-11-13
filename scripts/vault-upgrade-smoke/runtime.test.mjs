@@ -40,5 +40,12 @@ test('the sulla runtime matches repo and tag exactly, so a registry port is not 
   assert.equal(runtime.hasImage('sulla-vault:dev'), false);
   assert.equal(runtime.hasImage('localhost:5000/sulla-vault'), false);
   assert.deepEqual(imageRepoTag('localhost:5000/sulla-vault'), null);
+});
+
+test('the sulla runtime also reads the Docker 29 single IMAGE column', () => {
+  const runtime = new SullaToolRuntime();
+  runtime.tool = () => 'Docker Images (All):\nIMAGE                                    ID             DISK USAGE\nsulla-vault:agent-job-1-m3-abc1234       027327d3b515   275MB\n';
+  assert.equal(runtime.hasImage('sulla-vault:agent-job-1-m3-abc1234'), true);
+  assert.equal(runtime.hasImage('sulla-vault:other'), false);
   assert.deepEqual(imageRepoTag('img@sha256:abc'), null);
 });

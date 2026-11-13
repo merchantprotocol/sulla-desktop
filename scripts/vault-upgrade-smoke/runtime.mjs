@@ -92,9 +92,10 @@ export class SullaToolRuntime {
   hasImage(image) {
     const ref = imageRepoTag(image);
     if (!ref) return false;
+    // Docker 29 prints one IMAGE column (repo:tag); older CLIs print REPOSITORY and TAG columns.
     return this.tool('images', { all: true }).split('\n').some(line => {
-      const [repo, tag] = line.trim().split(/\s+/);
-      return repo === ref.repo && tag === ref.tag;
+      const [first, second] = line.trim().split(/\s+/);
+      return first === image || (first === ref.repo && second === ref.tag);
     });
   }
 
