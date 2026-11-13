@@ -161,6 +161,11 @@ interface MainEventNames {
   'sulla-backend-start-failed'(failure: { reason: string; message: string }): void;
   /** The user asked to repair the managed services: retry them now. */
   'sulla-managed-services-repair'(): void;
+  /**
+   * The person stopped, started, restarted or deleted containers from the Docker tab.
+   * Supervision leaves Sulla containers they stopped alone until they start them again.
+   */
+  'sulla-container-intent'(intent: import('@pkg/backend/sullaContainerHealth').ContainerIntent, names: string[]): void;
 
   /**
    * Quit the application.

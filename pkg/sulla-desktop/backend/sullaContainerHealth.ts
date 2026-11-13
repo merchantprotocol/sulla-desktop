@@ -170,3 +170,45 @@ export class ContainerHealPlanner {
     return undefined;
   }
 }
+
+/** What the person did to a container from the Docker tab. */
+export type ContainerIntent = 'stop' | 'start' | 'restart' | 'remove';
+
+/**
+ * Sulla containers the person stopped on purpose. Supervision (the missing-service
+ * reconcile and the unhealthy-container heal) leaves these stopped until they start,
+ * restart or remove them again, or until Docker itself is restarted. Without this a
+ * Stop from the Docker tab was undone by the reconcile within a minute.
+ */
+export class UserStoppedContainers {
+  readonly #names = new Set<string>();
+
+  /** Record a Docker tab action on these containers (names or `/names`). */
+  record(intent: ContainerIntent, names: ReadonlyArray<string>): void {
+    for (const raw of names) {
+      const name = UserStoppedContainers.normalize(raw);
+
+      if (!name) continue;
+      if (intent === 'stop') this.#names.add(name);
+      else this.#names.delete(name);
+    }
+  }
+
+  has(name: string): boolean {
+    return this.#names.has(UserStoppedContainers.normalize(name));
+  }
+
+  /** The entries whose container the person did not stop on purpose. */
+  withoutStopped<T extends { container: string }>(entries: ReadonlyArray<T>): T[] {
+    return entries.filter(entry => !this.has(entry.container));
+  }
+
+  /** Forget every stop (Docker restarted, so everything comes back). */
+  clear(): void {
+    this.#names.clear();
+  }
+
+  private static normalize(name: string): string {
+    return String(name ?? '').trim().replace(/^\//, '');
+  }
+}

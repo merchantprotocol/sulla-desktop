@@ -1346,6 +1346,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
     mainEvents.emit('sulla-managed-services-repair');
   });
+  ipcMainProxy.handle('docker/container-intent', async(_event: unknown, intent: unknown, names: unknown) => {
+    if (typeof intent !== 'string' || !['stop', 'start', 'restart', 'remove'].includes(intent) || !Array.isArray(names)) {
+      throw new Error('Unknown container action');
+    }
+    const { default: mainEvents } = await import('@pkg/main/mainEvents');
+
+    mainEvents.emit(
+      'sulla-container-intent',
+      intent as import('@pkg/backend/sullaContainerHealth').ContainerIntent,
+      names.filter((name): name is string => typeof name === 'string'),
+    );
+  });
   ipcMainProxy.handle('sulla-runtime:start-failure', async() => {
     const { sullaRuntimeStartFailure } = await import('@pkg/backend/sullaRuntime/state');
 

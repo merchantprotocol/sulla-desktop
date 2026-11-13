@@ -44,3 +44,10 @@ export function imageName(image: any) {
     tag:        hasTag ? raw.slice(separator + 1) : '<none>',
   };
 }
+
+/** Health from a `docker ps` status line: "Up 2 hours (healthy)", "Up 5 seconds (health: starting)". */
+export function healthFromStatus(status: string | undefined): 'healthy' | 'unhealthy' | 'starting' | undefined {
+  const match = /\((healthy|unhealthy|health: starting)\)/.exec(status ?? '')?.[1];
+
+  return match === 'health: starting' ? 'starting' : match as 'healthy' | 'unhealthy' | undefined;
+}
