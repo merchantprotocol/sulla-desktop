@@ -717,7 +717,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float);
 }
 .composer-card:focus-within {
-  box-shadow: inset 0 0 0 1px var(--accent-border), 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent), var(--elev-float);
+  /* Clear "you can type here" ring: solid accent edge plus a visible halo. */
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent), var(--elev-float);
 }
 .composer-top {
   display: flex;

@@ -13,7 +13,7 @@
       type="button"
       class="heartbeat-heart"
       :class="{ enabled: isOn, paused: isOn && (status.paused || controller.isRunning.value) }"
-      :title="`Chat heartbeat — ${label}`"
+      :data-tip="open ? undefined : `Chat heartbeat: ${label}`"
       :aria-label="`Chat heartbeat: ${label}`"
       :aria-expanded="open"
       @click="open = !open"
@@ -306,8 +306,23 @@ onBeforeUnmount(() => {
   border-radius: 50%; color: var(--text-dim); opacity: 1; font-size: 15px;
 }
 .heartbeat-heart:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Hover label: what the heart is and its current state (off, next wake-up, paused). */
+.heartbeat-heart { position: relative; }
+.heartbeat-heart[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 40;
+  padding: 5px 9px; border-radius: 7px; white-space: nowrap; pointer-events: none;
+  background: var(--bg-elevated, var(--bg-surface)); color: var(--text-primary);
+  border: 1px solid var(--border-default); box-shadow: var(--elev-float);
+  font: 500 11.5px/1.3 var(--font-body); text-shadow: none;
+  opacity: 0; transform: translate(-50%, 2px); transition: opacity .12s ease, transform .12s ease;
+}
+.heartbeat-heart[data-tip]:is(:hover, :focus-visible)::after { opacity: 1; transform: translate(-50%, 0); transition-delay: .25s; }
+/* --accent-hover is a faint hover tint in some themes; the on state needs a solid colour. */
 .heartbeat-heart.enabled {
-  color: var(--accent-hover); text-shadow: 0 0 10px color-mix(in srgb, var(--accent-hover) 70%, transparent);
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
   animation: noir-heartbeat 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
 }
 @keyframes noir-heartbeat {
@@ -323,41 +338,44 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .heartbeat-heart.enabled { animation: none; }
 }
-/* On, but the graph is running — the heart rests until it stops. */
-.heartbeat-heart.enabled.paused,
-.heartbeat-heart.enabled.paused { animation: none; opacity: 0.55; text-shadow: none; }
+/* On, but the graph is running: the heart stops beating but stays clearly lit. */
+.heartbeat-heart.enabled.paused { animation: none; text-shadow: none; }
 .heartbeat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .heartbeat-switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
   border: 0; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;
 }
 .heartbeat-switch.enabled { color: var(--accent); }
+/* Off must read as a switch too: visible track edge and a light thumb, not surface-on-surface. */
 .track {
-  position: relative; width: 34px; height: 20px; border-radius: 999px;
-  background: var(--surface-3); border: 1px solid var(--border); transition: background 0.15s;
+  position: relative; width: 34px; height: 20px; border-radius: 999px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 60%, transparent); transition: background 0.15s;
 }
 .thumb {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--bg-elevated); transition: transform 0.15s, background 0.15s;
+  background: var(--text-secondary); transition: transform 0.15s, background 0.15s;
 }
 .heartbeat-switch.enabled .track { background: var(--accent); border-color: var(--accent); }
-.heartbeat-switch.enabled .thumb { transform: translateX(14px); background: var(--bg); }
-.heartbeat-error { margin-top: 10px; color: var(--warning); }
+.heartbeat-switch.enabled .thumb { transform: translateX(14px); background: var(--text-on-accent, #fff); }
+.heartbeat-switch:focus-visible .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.heartbeat-error { margin-top: 10px; color: var(--status-warning); }
 .heartbeat-popover {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 30;
   width: min(360px, 80vw); padding: 14px; border-radius: 12px;
-  background: var(--surface-1); color: var(--text); border: 1px solid var(--border);
+  /* Tokens every theme defines; --surface-1/--text are missing in Ocean, Nord and Default, which left the popup transparent. */
+  background: var(--bg-elevated, var(--bg-surface)); color: var(--text-primary); border: 1px solid var(--border-default);
   box-shadow: var(--elev-float); font-family: var(--font-body); font-size: 12px;
 }
 .heartbeat-title { font-weight: 700; }
 label { display: grid; gap: 6px; margin-top: 10px; color: var(--text-muted); }
 select, input, textarea {
-  width: 100%; box-sizing: border-box; border: 1px solid var(--border-muted); border-radius: 8px;
-  padding: 8px; background: var(--surface-2); color: var(--text); font: inherit;
+  width: 100%; box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 8px;
+  padding: 8px; background: var(--bg-surface); color: var(--text-primary); font: inherit;
 }
 textarea { resize: vertical; line-height: 1.4; }
 .heartbeat-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
-.heartbeat-actions button { border: 1px solid var(--border-muted); border-radius: 8px; padding: 7px 10px; font: inherit; cursor: pointer; }
-.off-button { background: var(--surface-2); color: var(--text-muted); }
-.save-button { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.heartbeat-actions button { border: 1px solid var(--border-default); border-radius: 8px; padding: 7px 10px; font: inherit; cursor: pointer; }
+.off-button { background: var(--bg-surface); color: var(--text-muted); }
+.save-button { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
 </style>

@@ -100,12 +100,35 @@ export class CliExhausted extends ProviderFailure {
   }
 }
 
+/**
+ * Sulla's Password Vault, not the model provider, is the problem. These are
+ * classified as infrastructure so they never mark a provider unhealthy or
+ * prompt the user to reconnect a model.
+ */
 export class VaultLocked extends ProviderFailure {
   readonly retryable = false;
   readonly code = 'vault_locked';
   constructor(providerId = 'vault', options: ProviderFailureOptions = { status: 423 }) {
-    super(providerId, 'Your secure account is unavailable. Sign out and sign in again.', options.status ?? 423, options.exitCode, options.cause);
+    super(providerId, 'Your Password Vault is locked, so Sulla can\'t reach your AI models. Unlock the vault and your work will continue.', options.status ?? 423, options.exitCode, options.cause);
   }
+}
+
+export class VaultUnreachable extends ProviderFailure {
+  readonly retryable = true;
+  readonly code = 'vault_unreachable';
+  constructor(providerId = 'vault', options: ProviderFailureOptions = { status: 503 }) {
+    super(providerId, 'Sulla can\'t reach its Password Vault, so it can\'t reach your AI models. This usually means Sulla\'s engine is restarting or overloaded; your model connections are fine.', options.status ?? 503, options.exitCode, options.cause);
+  }
+}
+
+/** The vault failure anywhere in an error's cause chain, if there is one. */
+export function findVaultFailure(error: unknown): VaultLocked | VaultUnreachable | undefined {
+  let current: any = error;
+  for (let depth = 0; current && depth < 8; depth++) {
+    if (current instanceof VaultLocked || current instanceof VaultUnreachable) return current;
+    current = current.cause;
+  }
+  return undefined;
 }
 
 export class Unknown extends ProviderFailure {

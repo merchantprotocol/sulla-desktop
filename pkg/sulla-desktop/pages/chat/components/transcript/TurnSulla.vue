@@ -64,6 +64,7 @@ import ChatContextMenu from '../../ChatContextMenu.vue';
 import ChatFileCard from '../files/ChatFileCard.vue';
 import { useChatController } from '../../controller/useChatController';
 import { renderMarkdown } from '../../messages/markdown';
+import { structureReply } from '../../messages/replyStructure';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
@@ -92,7 +93,8 @@ const timeLabel = computed(() => {
 
 const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
-const rendered = computed(() => renderMarkdown(props.msg.text));
+// Long replies are regrouped into Summary / Issues / Next steps sections for scanning.
+const rendered = computed(() => structureReply(renderMarkdown(props.msg.text)));
 const fileReferences = computed(() => {
   const refs = [...(props.msg.fileReferences ?? [])].map(item => ({ ...item.fileRef!, name: item.name })).filter(item => item.fileId);
   refs.push(...parseDurableFileReferences(props.msg.text));

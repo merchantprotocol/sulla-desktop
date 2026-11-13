@@ -223,7 +223,7 @@ defineExpose({ show, hide });
   box-shadow: 0 16px 48px var(--bg-page), 0 0 1px var(--status-success-soft);
   padding: 6px 0;
   animation: chatCtxFadeIn 0.15s ease-out;
-  font-family: var(--ifm-font-family-monospace, var(--font-mono));
+  font-family: var(--type-menus-font, var(--ifm-font-family-monospace, var(--font-mono)));
 }
 
 @keyframes chatCtxFadeIn {
@@ -239,8 +239,8 @@ defineExpose({ show, hide });
   padding: 7px 14px;
   border: none;
   background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
+  color: var(--type-menus-color, var(--text-primary));
+  font-size: var(--type-menus-size, 13px);
   font-family: inherit;
   cursor: pointer;
   text-align: left;

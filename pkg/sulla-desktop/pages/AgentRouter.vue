@@ -358,6 +358,11 @@ function onBookmarksShortcut(event: KeyboardEvent) {
   }
 }
 
+/** Lets banners elsewhere in the window open a mode tab, e.g. the Password Vault to unlock it. */
+function onOpenMode(event: CustomEvent<{ mode?: string }>) {
+  if (event.detail?.mode === 'vault') onModeRailSelect('vault');
+}
+
 function onModeRailSelect(mode: string, subTab?: string) {
   // Always spawn a new tab for the clicked mode instead of mutating the
   // active one — rail clicks should behave like "open a new <mode> tab".
@@ -744,6 +749,7 @@ onMounted(async() => {
 
   // Register sub-tab change listener
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.addEventListener('sulla:open-mode', onOpenMode as EventListener);
   window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.addEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);
@@ -800,6 +806,7 @@ onUnmounted(() => {
     clearInterval(footerStatsTimer);
   }
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.removeEventListener('sulla:open-mode', onOpenMode as EventListener);
   window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.removeEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);

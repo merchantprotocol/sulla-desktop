@@ -148,10 +148,10 @@
 .chat-turn.you > .chat-role { display: none; }
 .chat-turn.you .chat-body {
   color: var(--text-primary);
-  font-family: var(--font-body);
-  font-size: 14px;
+  font-family: var(--type-output-font, var(--font-body));
+  font-size: var(--type-output-size, 14px);
   font-style: normal;
-  line-height: 1.5;
+  line-height: var(--type-output-leading, 1.5);
 }
 .chat-turn.you .noir-time {
   display: block;
@@ -200,12 +200,12 @@
 }
 .chat-turn.sulla .chat-body {
   color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-family: var(--type-output-font, var(--font-body));
+  font-size: var(--type-output-size, 14.5px);
+  line-height: var(--type-output-leading, 1.65);
   letter-spacing: 0;
 }
-.chat-turn.sulla .chat-body { color: var(--text-primary); }
+.chat-turn.sulla .chat-body { color: var(--type-output-color, var(--text-primary)); }
 .chat-turn.sulla .chat-body p { margin: 0 0 10px; }
 .chat-turn.sulla .chat-body strong {
   color: var(--text-primary);
@@ -219,7 +219,8 @@
   border-radius: 5px;
   color: var(--text-muted);
   background: var(--border-subtle);
-  font-size: 12.5px;
+  font-family: var(--type-code-font, var(--font-mono));
+  font-size: var(--type-code-size, 12.5px);
 }
 .chat-turn.sulla .chat-body li { margin: 3px 0; }
 .chat-turn.sulla .chat-body li::marker { color: var(--accent); }
@@ -231,8 +232,97 @@
   color: var(--text-muted);
   background: var(--bg-surface-alt);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 62.5%, transparent);
-  font: 12px/1.75 var(--font-mono);
+  font: var(--type-code-size, 12px)/1.75 var(--type-code-font, var(--font-mono));
 }
+/* ─── Structured replies (see messages/replyStructure.ts) ───
+   Long replies are grouped into cards so the outcome, problems and next
+   steps stand apart instead of running together as one block of text. */
+.chat-turn.sulla .chat-body .reply-section {
+  --reply-tone: var(--text-muted);
+  margin: 0 0 12px;
+  padding: 12px 16px 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--border-default) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--reply-tone), inset 0 0 0 1px var(--border-subtle);
+}
+.chat-turn.sulla .chat-body .reply-section:last-child { margin-bottom: 0; }
+.chat-turn.sulla .chat-body .reply-section > :is(h2, h3):first-child {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-family: var(--font-body); font-style: normal; font-weight: 600;
+  font-size: 13.5px; letter-spacing: 0;
+}
+.chat-turn.sulla .chat-body .reply-section > :is(h2, h3):first-child::before {
+  content: '•';
+  display: grid; place-items: center; flex: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  color: var(--reply-tone);
+  background: color-mix(in srgb, var(--reply-tone) 16%, transparent);
+  font: 700 11px/1 var(--font-body);
+}
+.chat-turn.sulla .chat-body .reply-section > :last-child { margin-bottom: 0; }
+.chat-turn.sulla .chat-body .reply-section :is(ul, ol) { margin: 4px 0 8px; padding-left: 20px; }
+/* The app's CSS reset strips list markers; reports need bullets and step numbers back. */
+.chat-turn.sulla .chat-body .reply-section ul { list-style: disc; }
+.chat-turn.sulla .chat-body .reply-section ol { list-style: decimal; }
+.chat-turn.sulla .chat-body .reply-section li + li { margin-top: 6px; }
+.chat-turn.sulla .chat-body .reply-section h4 { margin: 12px 0 6px; font-size: 12.5px; color: var(--text-secondary); }
+
+.chat-turn.sulla .chat-body .reply-summary {
+  --reply-tone: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.chat-turn.sulla .chat-body .reply-summary > :is(h2, h3):first-child::before { content: '◆'; }
+.chat-turn.sulla .chat-body .reply-done { --reply-tone: var(--status-success); }
+.chat-turn.sulla .chat-body .reply-done > :is(h2, h3):first-child::before { content: '✓'; }
+.chat-turn.sulla .chat-body .reply-issues { --reply-tone: var(--status-warning); }
+.chat-turn.sulla .chat-body .reply-issues > :is(h2, h3):first-child::before { content: '!'; }
+.chat-turn.sulla .chat-body .reply-decisions {
+  --reply-tone: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.chat-turn.sulla .chat-body .reply-decisions > :is(h2, h3):first-child::before { content: '?'; }
+.chat-turn.sulla .chat-body .reply-next > :is(h2, h3):first-child::before { content: '→'; }
+
+/* Issue bullets that open with a bold severity read as tagged rows. */
+.chat-turn.sulla .chat-body .reply-issues li.reply-issue {
+  --sev: var(--text-muted);
+  list-style: none;
+  margin-left: -20px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sev) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--sev);
+}
+.chat-turn.sulla .chat-body .reply-issues li.reply-issue > strong:first-child {
+  display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 6px;
+  color: var(--sev); background: color-mix(in srgb, var(--sev) 16%, transparent);
+  font-size: 0.85em; font-style: normal;
+}
+/* Opening line of a structured reply: the bottom line, read first. */
+.chat-turn.sulla .chat-body p.reply-lead { margin-bottom: 14px; color: var(--text-primary); font-weight: 500; }
+/* "**Label:** text" rows: the label reads as a term, rows get breathing room. */
+.chat-turn.sulla .chat-body p.reply-labeled { margin: 0 0 8px; padding-left: 10px; box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-muted) 35%, transparent); }
+.chat-turn.sulla .chat-body p.reply-labeled > strong:first-child { color: var(--text-primary); }
+/* Labels that name a problem stand out wherever they appear. */
+.chat-turn.sulla .chat-body :is(p, li).reply-flag {
+  padding: 7px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--status-warning) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--status-warning);
+}
+.chat-turn.sulla .chat-body :is(p, li).reply-flag > strong:first-child { color: var(--status-warning); }
+
+.chat-turn.sulla .chat-body .reply-issues li.reply-issue-blocker { --sev: var(--status-error); }
+.chat-turn.sulla .chat-body .reply-issues li.reply-issue-problem { --sev: var(--status-warning); }
+
+/* These have no single fallback value, so they apply only while the user has set them. */
+.type-has-link-color .chat-turn.sulla .chat-body a { color: var(--type-link-color); }
+.type-has-heading-color .chat-turn.sulla .chat-body :is(h1, h2, h3, h4, h5, h6) { color: var(--type-heading-color); }
+.type-has-heading-scale .chat-turn.sulla .chat-body h1 { font-size: calc(1.6em * var(--type-heading-scale)); }
+.type-has-heading-scale .chat-turn.sulla .chat-body h2 { font-size: calc(1.35em * var(--type-heading-scale)); }
+.type-has-heading-scale .chat-turn.sulla .chat-body h3 { font-size: calc(1.17em * var(--type-heading-scale)); }
+.type-has-heading-scale .chat-turn.sulla .chat-body :is(h4, h5, h6) { font-size: calc(1em * var(--type-heading-scale)); }
 
 /* Turn actions */
 .turn-actions {

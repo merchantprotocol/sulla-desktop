@@ -1,0 +1,25 @@
+/*
+ * Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * "Sulla" is a trademark. See TRADEMARK.md.
+ */
+
+/*
+ * Focus cue for every text field: once a field is focused its placeholder
+ * fades back and the caret takes the field's own text colour, so it is
+ * obvious which field will receive typing. `:root` lifts specificity over
+ * the theme files' `!important` placeholder and caret rules.
+ */
+:root :is(input, textarea, [contenteditable="true"])::placeholder {
+  transition: opacity 0.15s ease;
+}
+:root :is(input, textarea, [contenteditable="true"]):focus::placeholder {
+  opacity: 0.35 !important;
+}
+:root :is(input:not([type="range"], [type="checkbox"], [type="radio"], [type="color"]), textarea, [contenteditable="true"]):focus {
+  caret-color: currentColor !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root :is(input, textarea, [contenteditable="true"])::placeholder { transition: none; }
+}
