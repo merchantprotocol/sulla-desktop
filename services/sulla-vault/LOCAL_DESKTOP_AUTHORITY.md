@@ -2,7 +2,7 @@
 
 Status: implementation contract for `feat/vault-container-authority`.
 
-This contract applies only when `SULLA_VAULT_MODE=desktop`. Server mode keeps
+This contract applies to the Desktop vault (`SULLA_VAULT_MODE=desktop`, the only mode this service runs in). Server mode moved to merchantprotocol/sulla-server and keeps
 its existing client-side encryption protocol and claims. A server deployment
 must only claim zero-knowledge while it has no configured decryption authority.
 
