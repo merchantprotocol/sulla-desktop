@@ -38,12 +38,16 @@ import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCa
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { ProcessGuard } from './ProcessGuard.js';
 import { FilesCloudBroker } from './cloudBroker.js';
 import { FilesCloudChunkSource } from './cloudSync/chunkSource.js';
 import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
 import { CloudRootKeyStore } from './cloudSync/keyStore.js';
 import { CloudSyncService } from './cloudSync/service.js';
 
+// Crash -> non-zero exit -> Docker's restart policy. Files keeps its own signal handling
+// below: it refuses to exit before live text is persisted.
+new ProcessGuard({ name: 'SullaFiles' }).catchCrashes();
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }

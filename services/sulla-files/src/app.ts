@@ -59,6 +59,7 @@ import type { FileSearch } from './search.js';
 import type { CloudSyncService } from './cloudSync/service.js';
 import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import { homeQuery } from './sullaCollectionMigration.js';
+import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
@@ -499,7 +500,14 @@ export function createApp(
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status())));
+  // 503 while Postgres is unreachable (Desktop treats that as temporarily unavailable and
+  // retries); the body keeps the unlock-handshake fields either way.
+  const databaseHealth = new DatabaseHealthRepository(db);
+  app.get('/healthz', async(_request, response) => {
+    const payload = healthPayload(config, ready(), filesLifecycle?.status());
+    if (await databaseHealth.reachable()) response.json(payload);
+    else response.status(503).json({ ...payload, ok: false, error: 'database_unavailable' });
+  });
   app.use('/v1/local/backups',(_request,response,next)=>config.mode==='desktop'?next():response.sendStatus(404));
   const backupRuntime=new BackupRuntimeRequests();
   const backupVault=configuredVaultFilesKeyBundleAuthority(config);

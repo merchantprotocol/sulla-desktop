@@ -6,8 +6,11 @@
 import http from 'node:http';
 
 import { loadConfig } from './config.js';
+import { ProcessGuard } from './ProcessGuard.js';
 import { RelayService } from './relay.js';
 
+// Crash -> non-zero exit -> Docker's restart policy; a Redis that is down at boot fails start the same way.
+const guard = new ProcessGuard({ name: 'sulla-relay' }).catchCrashes();
 const config = loadConfig();
 const relay = new RelayService(config);
 await relay.start();
@@ -22,10 +25,8 @@ const server = http.createServer((request, response) => {
 server.on('upgrade', (request, socket, head) => relay.upgrade(request, socket, head));
 server.listen(config.port, '0.0.0.0', () => console.log(`[sulla-relay] ${ config.replicaId } listening on :${ config.port }`));
 
-async function shutdown(): Promise<void> {
+// relay.stop() tolerates an already-closed Redis (#2250); the guard's deadline covers anything else that hangs.
+guard.handleSignals(async() => {
   server.close();
   await relay.stop();
-  process.exit(0);
-}
-process.once('SIGTERM', () => { shutdown().catch((error) => { console.error('[sulla-relay] shutdown failed:', error); process.exit(1) }) });
-process.once('SIGINT', () => { shutdown().catch((error) => { console.error('[sulla-relay] shutdown failed:', error); process.exit(1) }) });
+});

@@ -15,6 +15,9 @@ export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
 
 export async function connectDatabase(databaseUrl: string, mode: 'desktop' = 'desktop'): Promise<Database> {
   const db = new Pool({ connectionString: databaseUrl, max: 10, options: `-c sulla.accounts_mode=${mode}` });
+  // An idle client dropped by Postgres (restart, admin terminate) is discarded and the next
+  // query reconnects; without a listener the 'error' event would kill Accounts.
+  db.on('error', error => console.warn('[sulla-accounts] idle database connection lost; reconnecting on next use:', error.message));
   await db.query('SELECT 1');
   return db;
 }
