@@ -642,6 +642,7 @@ function onAgentCommand(_event: any, args: any) {
       if (result?.canceled) return;
       if (result?.error) {
         console.warn('[Routines] Import failed:', result.error);
+        window.alert(`Import failed: ${ result.error }`);
 
         return;
       }
@@ -651,6 +652,7 @@ function onAgentCommand(_event: any, args: any) {
       router.push(`/Browser/${ tab.id }`);
     }).catch((err: unknown) => {
       console.error('[Routines] Import IPC error:', err);
+      window.alert(`Import failed: ${ err instanceof Error ? err.message : String(err) }`);
     });
     break;
   }
@@ -658,9 +660,13 @@ function onAgentCommand(_event: any, args: any) {
     const id = args.id;
     if (!id) break;
     (ipcRenderer.invoke as any)('routines-export', id).then((result: any) => {
-      if (result?.error) console.warn('[Routines] Export failed:', result.error);
+      if (result?.error) {
+        console.warn('[Routines] Export failed:', result.error);
+        window.alert(`Export failed: ${ result.error }`);
+      }
     }).catch((err: unknown) => {
       console.error('[Routines] Export IPC error:', err);
+      window.alert(`Export failed: ${ err instanceof Error ? err.message : String(err) }`);
     });
     break;
   }
@@ -668,9 +674,13 @@ function onAgentCommand(_event: any, args: any) {
     const slug = args.slug;
     if (!slug) break;
     (ipcRenderer.invoke as any)('routines-export-template', slug).then((result: any) => {
-      if (result?.error) console.warn('[Routines] Template export failed:', result.error);
+      if (result?.error) {
+        console.warn('[Routines] Template export failed:', result.error);
+        window.alert(`Export failed: ${ result.error }`);
+      }
     }).catch((err: unknown) => {
       console.error('[Routines] Template export IPC error:', err);
+      window.alert(`Export failed: ${ err instanceof Error ? err.message : String(err) }`);
     });
     break;
   }

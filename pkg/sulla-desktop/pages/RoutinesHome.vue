@@ -194,6 +194,10 @@ async function loadAll() {
     routinesController.load(),
     loadRunSummaries(),
   ]);
+  // load() swallows the error into controller state and empties the list;
+  // without this the page shows "No workflows yet" for a failed read.
+  const err = routinesController.error.value;
+  if (err) showFeedback('error', `Couldn't load workflows: ${ err }`);
 }
 
 // ── Workflows list run data ─────────────────────────────────────────
@@ -302,12 +306,34 @@ async function onRunNow(id: string) {
 function onNewBlank() {
   emit('new-blank');
 }
+function routineName(id: string): string {
+  return routinesController.routines.value.find(r => r.id === id)?.name ?? id;
+}
+
+function controllerError(): string {
+  const err = routinesController.error.value;
+
+  return err ? `: ${ err }` : '.';
+}
+
 async function onDuplicate(id: string) {
-  await routinesController.duplicate(id);
+  const name = routineName(id);
+  const newId = await routinesController.duplicate(id);
+  if (newId) {
+    showFeedback('success', `Duplicated "${ name }".`);
+  } else {
+    showFeedback('error', `Couldn't duplicate "${ name }"${ controllerError() }`);
+  }
 }
 
 async function onToggleArchive(id: string) {
-  await routinesController.toggleArchive(id);
+  const name = routineName(id);
+  const wasArchived = routinesController.routines.value.find(r => r.id === id)?.status === 'archive';
+  if (await routinesController.toggleArchive(id)) {
+    showFeedback('success', wasArchived ? `Restored "${ name }".` : `Archived "${ name }".`);
+  } else {
+    showFeedback('error', `Couldn't ${ wasArchived ? 'restore' : 'archive' } "${ name }"${ controllerError() }`);
+  }
 }
 
 function onPublishById(id: string) {
@@ -369,7 +395,13 @@ async function onPublishRoutine(routine: { id: string; name: string }) {
 // Archive tab uses its own "Restore" affordance. Restoring just flips
 // archive → draft via the existing toggleArchive action.
 async function onRestoreRoutine(id: string) {
-  await routinesController.toggleArchive(id);
+  const name = routineName(id);
+  if (!await routinesController.toggleArchive(id)) {
+    showFeedback('error', `Couldn't restore "${ name }"${ controllerError() }`);
+
+    return;
+  }
+  showFeedback('success', `Restored "${ name }".`);
   emit('restore-routine', id);
 }
 
@@ -384,8 +416,16 @@ async function onExport(id: string) {
   // failure through the inline toast so the view stays consistent with
   // other IPC failure paths.
   try {
-    await ipcRenderer.invoke('routines-export', id);
-    showFeedback('success', 'Export saved.');
+    // The handler answers { canceled } / { error } / { path } instead of
+    // throwing for the expected outcomes, so read the shape.
+    const result = await ipcRenderer.invoke('routines-export', id) as { path?: string; canceled?: boolean; error?: string } | undefined;
+    if (result?.canceled) return;
+    if (result?.error || !result?.path) {
+      showFeedback('error', `Export failed: ${ result?.error ?? 'no file was written' }`);
+
+      return;
+    }
+    showFeedback('success', `Exported to ${ result.path }.`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Routines] Export failed:', err);
