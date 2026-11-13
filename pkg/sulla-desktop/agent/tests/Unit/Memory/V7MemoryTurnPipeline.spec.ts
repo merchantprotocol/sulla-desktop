@@ -14,16 +14,28 @@ const agents = (overrides: Partial<V7MemoryAgents> = {}): V7MemoryAgents => ({ e
 
 describe('v7 per-turn memory behavior', () => {
   it.each([
-    ['goldfish fails', { goldfish: vi.fn(async () => { throw new Error('offline') }) }, 2],
-    ['elephant-final fails', { elephantFinal: vi.fn(async () => { throw new Error('offline') }) }, 3],
+    ['goldfish fails', { goldfish: vi.fn(async () => { throw new Error('private transcript sentinel') }) }, 2],
+    ['elephant-final fails', { elephantFinal: vi.fn(async () => { throw new Error('private transcript sentinel') }) }, 3],
   ])('appends the validated draft exactly once when %s', async (_failure, failure, calls) => {
     // risk: memory loss if a downstream model failure prevents a valid draft from being persisted
     const writer = store();
     const model = agents(failure);
-    const pipeline = new V7MemoryTurnPipeline(model, writer, new V7MemoryRunLog(() => undefined));
+    const logLines: string[] = [];
+    const pipeline = new V7MemoryTurnPipeline(model, writer, new V7MemoryRunLog(line => logLines.push(line)));
     await expect(pipeline.run(input())).resolves.toMatchObject({ outcome: 'draft-fallback', calls, covered: true });
+    expect(logLines.join(' ')).not.toContain('private transcript sentinel');
     expect(writer.append).toHaveBeenCalledTimes(1);
     expect(writer.append).toHaveBeenCalledWith(write);
+  });
+
+  it('does not write storage error messages into run logs', async () => {
+    // risk: database/provider exceptions can include private memory or transcript text
+    const logLines: string[] = [];
+    const writer = store(vi.fn(async () => { throw new Error('private append payload'); }));
+    const model = agents({ goldfish: vi.fn(async () => '{"issues":[]}') });
+    const pipeline = new V7MemoryTurnPipeline(model, writer, new V7MemoryRunLog(line => logLines.push(line)));
+    await expect(pipeline.run(input())).resolves.toMatchObject({ outcome: 'failed' });
+    expect(logLines.join(' ')).not.toContain('private append payload');
   });
 
   it('coalesces turns during an active run and starts one latest-wins run with a widened window', async () => {

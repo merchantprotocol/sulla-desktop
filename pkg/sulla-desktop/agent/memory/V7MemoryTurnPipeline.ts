@@ -187,7 +187,7 @@ export class V7MemoryTurnPipeline {
 
     const draftValidation = await this.store.validate(draft.value);
     if (!draftValidation.ok) {
-      this.logStage('elephant-draft', input, { ...draft, outcome: 'error', reason: `invalid: ${ draftValidation.reason }` });
+      this.logStage('elephant-draft', input, { ...draft, outcome: 'error', reason: 'invalid output' });
       // Repair once: the elephant rewrites its own draft from the validator's
       // reason. Goldfish has nothing valid to review, so it is not called.
       calls++;
@@ -231,7 +231,7 @@ export class V7MemoryTurnPipeline {
     }
     const validation = await this.store.validate(stage.value);
     if (!validation.ok) {
-      this.logStage('elephant-final', input, { ...stage, outcome: 'error', reason: `invalid: ${ validation.reason }` });
+      this.logStage('elephant-final', input, { ...stage, outcome: 'error', reason: 'invalid output' });
       return null;
     }
     this.logStage('elephant-final', input, stage, this.counts(validation.write));
@@ -242,12 +242,12 @@ export class V7MemoryTurnPipeline {
     try {
       const appended = await this.store.append(write);
       if (!appended.accepted) {
-        this.log.write({ agent: 'sequence', thread: input.threadId, turn: input.turnId, ms: 0, outcome: 'append-rejected', reason: appended.reason || '' });
+        this.log.write({ agent: 'sequence', thread: input.threadId, turn: input.turnId, ms: 0, outcome: 'append-rejected', reason: 'writer rejected append' });
         return { outcome: 'failed', calls, covered: false };
       }
       return { outcome, calls, covered: true };
     } catch (error) {
-      this.log.write({ agent: 'sequence', thread: input.threadId, turn: input.turnId, ms: 0, outcome: 'append-failed', reason: error instanceof Error ? error.message : String(error) });
+      this.log.write({ agent: 'sequence', thread: input.threadId, turn: input.turnId, ms: 0, outcome: 'append-failed', reason: error instanceof Error ? error.name : 'unknown error' });
       return { outcome: 'failed', calls, covered: false };
     }
   }
@@ -267,7 +267,8 @@ export class V7MemoryTurnPipeline {
       const text = typeof value === 'string' && value.trim() ? value : null;
       return { value: text, outcome: text ? 'ok' : 'empty', ms: this.now() - started };
     } catch (error) {
-      return { value: null, outcome: 'error', ms: this.now() - started, reason: error instanceof Error ? error.message : String(error) };
+      // Error messages from model providers may contain prompts or response excerpts.
+      return { value: null, outcome: 'error', ms: this.now() - started, reason: error instanceof Error ? error.name : 'unknown error' };
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -384,7 +385,7 @@ export class V7MemoryScheduler {
       if (result.covered) slot.rememberedThrough = startLength;
     }).catch((error) => {
       const reason = (error as any)?.reason;
-      this.log.write({ agent: 'scheduler', thread: threadId, turn: turn.turnId, ms: this.now() - queuedAt, outcome: reason === 'dropped' || reason === 'expired' ? reason : 'failed', reason: error instanceof Error ? error.message : String(error) });
+      this.log.write({ agent: 'scheduler', thread: threadId, turn: turn.turnId, ms: this.now() - queuedAt, outcome: reason === 'dropped' || reason === 'expired' ? reason : 'failed', reason: reason === 'dropped' || reason === 'expired' ? reason : error instanceof Error ? error.name : 'unknown error' });
     }).finally(() => {
       slot.running = false;
       const next = slot.pending;
