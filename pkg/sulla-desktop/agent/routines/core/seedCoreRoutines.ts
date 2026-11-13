@@ -9,8 +9,8 @@
  * Idempotent and self-healing: for each bundled core routine it calls
  * WorkflowModel.seedCoreRoutine, which inserts an absent routine, silently
  * re-syncs a drifted one from the bundle, and leaves an unchanged one alone —
- * always preserving the human's enabled/disabled choice. After seeding it
- * re-arms the workflow scheduler so any newly-seeded schedule fires without an
+ * always preserving the human's enabled/disabled choice. Retired core routines
+ * are archived + disabled (never deleted). After seeding it re-arms the workflow scheduler so any newly-seeded schedule fires without an
  * app restart.
  *
  * Non-fatal by contract: a failure here must never block DB init, so callers
@@ -19,7 +19,7 @@
 
 import { WorkflowModel } from '@pkg/agent/database/models/WorkflowModel';
 
-import { CORE_ROUTINES } from './index';
+import { CORE_ROUTINES, RETIRED_CORE_ROUTINES } from './index';
 
 export async function seedCoreRoutines(): Promise<void> {
   let inserted = 0;
@@ -37,11 +37,20 @@ export async function seedCoreRoutines(): Promise<void> {
     }
   }
 
-  console.log(`[seedCoreRoutines] core routines: ${ inserted } inserted, ${ resynced } re-synced, ${ unchanged } unchanged`);
+  let retired = 0;
+  for (const { id, reason } of RETIRED_CORE_ROUTINES) {
+    try {
+      if (await WorkflowModel.retireCoreRoutine(id, reason) === 'retired') retired++;
+    } catch (err) {
+      console.error(`[seedCoreRoutines] failed to retire '${ id }':`, err);
+    }
+  }
 
-  // Re-arm the scheduler so a freshly-seeded schedule trigger is live now,
-  // not only after the next restart. Non-fatal.
-  if (inserted > 0 || resynced > 0) {
+  console.log(`[seedCoreRoutines] core routines: ${ inserted } inserted, ${ resynced } re-synced, ${ unchanged } unchanged, ${ retired } retired`);
+
+  // Re-arm the scheduler so a freshly-seeded schedule trigger is live now and
+  // a retired one is disarmed, not only after the next restart. Non-fatal.
+  if (inserted > 0 || resynced > 0 || retired > 0) {
     try {
       const { getWorkflowSchedulerService } = await import('@pkg/agent/services/WorkflowSchedulerService');
       await getWorkflowSchedulerService().refresh();
