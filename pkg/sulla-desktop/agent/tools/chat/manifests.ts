@@ -70,7 +70,7 @@ export const chatToolManifests: ToolManifest[] = [
   },
   {
     name:        'route_agent',
-    description: 'Select an enabled agent persona for a chat. Reflex uses this as a training target for first-message routing; it is not executed by the normal mid-chat Reflex action engine.',
+    description: 'Select an enabled agent persona for this chat. The choice remains sticky for the thread; use "sulla" to return to the default persona.',
     category:    'chat',
     schemaDef:   {
       agentId: { type: 'string', description: 'Enabled agent persona slug, or "sulla" for the default Sulla persona.' },

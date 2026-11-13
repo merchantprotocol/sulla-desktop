@@ -159,7 +159,7 @@ export class CodexService extends BaseLanguageModel {
      * Host path of a per-run instructions file (cliSystemPromptFile), passed
      * as -c model_instructions_file. It REPLACES codex's base instructions,
      * so it is only used for subconscious agents — their caller-built prompt
-     * (observer / Reflex Trainer role) is otherwise dropped, since AGENTS.md
+     * (observer role) is otherwise dropped, since AGENTS.md
      * carries only the general Sulla prompt.
      */
     instructionsPath?: string | null;

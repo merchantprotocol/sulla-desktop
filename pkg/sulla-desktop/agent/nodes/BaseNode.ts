@@ -825,8 +825,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -877,7 +877,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['installed_skills', 'skillRecallContext'],
       // Remote support restrictions are control context, not historical recall.
       ['support_context', 'supportContext'],
-      ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],
       ['brain_memory', 'brainMemoryContext'],
@@ -1631,16 +1630,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         chars: event.resultChars,
         error: event.isError || undefined,
       });
-      // Keep this turn's CLI-internal tool calls on state so post-turn
-      // observers (the Reflex Trainer) can see what actually ran — these
-      // never appear as tool_use blocks in state.messages.
-      const meta = state.metadata as any;
-      const events = Array.isArray(meta.turnToolEvents) ? meta.turnToolEvents : (meta.turnToolEvents = []);
-      if (events.length < 50) {
-        let input = '';
-        try { input = JSON.stringify(event.input ?? {}).slice(0, 2000) } catch { /* unserializable input */ }
-        events.push({ toolName: event.toolName, input, isError: !!event.isError });
-      }
     };
     const onToolStarted = (): void => { providerToolStarted = true };
 

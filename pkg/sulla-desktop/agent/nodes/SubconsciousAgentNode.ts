@@ -170,7 +170,7 @@ export class SubconsciousAgentNode extends BaseNode {
 
     // Close thinking bubble before tool cards so thinking appears between them.
     // Every tool actually granted to a subconscious agent (GraphRegistry.ts
-    // *_TOOLS lists and reflexTrainerPolicy)
+    // *_TOOLS lists)
     // renders as thinking, not a card — the subconscious is never supposed to
     // surface visible tool cards in the parent chat. Keep this set in sync
     // with those grants; a name missing here silently leaks a tool card.
@@ -184,8 +184,6 @@ export class SubconsciousAgentNode extends BaseNode {
       'search_identity_observations', 'list_identity_observations',
       // Conversation Writer
       'upsert_conversation_keywords',
-      // Reflex Trainer
-      'reflex_predict', 'reflex_teach', 'reflex_correct', 'reflex_list_examples', 'reflex_forget',
       'vault_list', 'vault_is_enabled', 'search_conversations',
       'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',

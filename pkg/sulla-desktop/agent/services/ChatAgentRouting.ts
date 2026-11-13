@@ -15,7 +15,7 @@ export const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 export const DEFAULT_ROUTE_GRAPH_AGENT_ID = SULLA_DESKTOP_CHANNEL_ID;
 
 export interface RoutableAgent {
-  /** ID used by Reflex examples and shown in routing receipts. */
+  /** Stable agent identifier used in chat routing events. */
   agentId:      string;
   /** Agent ID used to construct the graph. */
   graphAgentId: string;
@@ -43,7 +43,8 @@ export async function resolveRoutableAgent(agentId: string): Promise<RoutableAge
 /**
  * Like resolveRoutableAgent, but only for agents that may take a brand-new
  * chat: enabled, not archived, and marked front-door in the directory. Sulla
- * is always a valid front door.
+ * is always a valid front door. Retained (currently unused) so first-message
+ * persona routing can be re-enabled by a new predictor without re-plumbing.
  */
 export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAgent | null> {
   const requested = agentId.trim();
@@ -56,7 +57,7 @@ export async function resolveFrontDoorAgent(agentId: string): Promise<RoutableAg
 }
 
 /**
- * Where a new chat lands when the human picked no agent and Reflex has no confident route: the
+ * Where a new chat lands when the human picked no agent: the
  * New chats default (Preferences → AI models → Defaults). An agent default routes to that agent (Sulla
  * if it's gone or turned off); a model default routes to Sulla carrying that model choice for the thread.
  */

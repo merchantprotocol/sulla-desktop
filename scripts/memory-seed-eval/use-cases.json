@@ -1193,17 +1193,6 @@
   "coverage": "partial"
  },
  {
-  "cue": "you keep choosing the wrong tool for this, learn it",
-  "area": "Memory, rules and identity",
-  "subjects": [
-   "tool-reflex"
-  ],
-  "skills": [
-   "sulla-tool-reflex"
-  ],
-  "coverage": "covered"
- },
- {
   "cue": "make a workflow that runs every morning",
   "area": "Workflows, functions and automation (being improved)",
   "subjects": [
