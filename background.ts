@@ -2818,6 +2818,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
   }
 
   async createSnapshot(context: CommandWorkerInterface.CommandContext, snapshot: Snapshot) {
+    Snapshots.assertSupported();
     await k8smanager.stop();
     try {
       return await Snapshots.create(snapshot);
@@ -2827,6 +2828,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
   }
 
   async restoreSnapshot(context: CommandWorkerInterface.CommandContext, name: string) {
+    Snapshots.assertSupported();
     await k8smanager.stop();
     try {
       return await Snapshots.restore(name);
