@@ -37,7 +37,6 @@ let keyDir: FixedDeviceKeyDir;
 beforeEach(() => {
   vi.useFakeTimers({ now: 1_770_000_000_123, toFake: ['Date'] });
   keyDir = new FixedDeviceKeyDir();
-  fs.writeFileSync(path.join(keyDir.dir, 'device-id'), 'device-0001', { mode: 0o600 });
   env.deviceDir = keyDir.dir;
   env.cloud = new FakeEnrollmentCloud(VAULT);
   env.broker = new FakeVaultBroker();
