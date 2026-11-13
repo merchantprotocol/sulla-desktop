@@ -1331,6 +1331,7 @@ const fetchSelectOptions = async(property: { key: string; selectBoxId?: string; 
   if (!integration.value || !property.selectBoxId) return;
 
   selectOptionsLoading.value[property.key] = true;
+  delete errors.value[property.key];
   try {
     const depValues: Record<string, string> = {};
     for (const depKey of (property.selectDependsOn ?? [])) {
@@ -1349,6 +1350,8 @@ const fetchSelectOptions = async(property: { key: string; selectBoxId?: string; 
   } catch (err) {
     console.error(`Failed to fetch select options for ${ property.key }:`, err);
     selectOptions.value[property.key] = [];
+    // Say why the list is empty instead of leaving a silent blank dropdown.
+    errors.value[property.key] = `Couldn't load the options: ${ err instanceof Error ? err.message : String(err) }`;
   } finally {
     selectOptionsLoading.value[property.key] = false;
   }

@@ -631,10 +631,15 @@ async function hydrateConnectionStatus(entries: Record<string, Integration>) {
 
 // Watch category changes → lazy-load or return to popular
 watch(activeCategory, async(newCategory) => {
-  if (newCategory === null) {
-    await loadPopularView();
-  } else {
-    await loadCategoryView(newCategory);
+  loadError.value = '';
+  try {
+    if (newCategory === null) {
+      await loadPopularView();
+    } else {
+      await loadCategoryView(newCategory);
+    }
+  } catch (error) {
+    loadError.value = `Couldn't load integrations: ${ error instanceof Error ? error.message : String(error) }`;
   }
 });
 
