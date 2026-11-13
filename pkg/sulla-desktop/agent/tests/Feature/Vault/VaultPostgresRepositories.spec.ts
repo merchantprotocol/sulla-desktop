@@ -15,7 +15,7 @@ import { PostgresIntegrationStateRepository, PostgresVaultMigrationRepository, P
 const { Pool } = pg;
 class EmbeddedClient {
   constructor(private readonly db: PGlite) {}
-  async query<T>(sql: string, values?: unknown[]) { const r = await this.db.query<T>(sql, values) as { rows: T[]; affectedRows?: number }; return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
+  async query<T>(sql: string, values?: unknown[]) { const r = await this.db.query<T>(sql, values) as { rows: T[]; affectedRows?: number }; return { rows: r.rows, rowCount: r.rows.length > 0 ? r.rows.length : r.affectedRows ?? 0 }; }
   release() {}
 }
 class VaultDatabase {
