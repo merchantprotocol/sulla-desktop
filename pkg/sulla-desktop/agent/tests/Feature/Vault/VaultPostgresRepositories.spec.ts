@@ -26,7 +26,8 @@ class VaultDatabase {
     else { this.pglite = new PGlite(); const client = new EmbeddedClient(this.pglite); this.database = Object.assign(client, { connect: async() => client }) as unknown as Database; }
     const dir = resolve(process.cwd(), 'services/sulla-vault/migrations');
     for (const file of (await readdir(dir)).filter(f => /^\d{3}_.+\.sql$/.test(f)).sort()) { let sql = await readFile(resolve(dir,file),'utf8'); if (this.pglite) { sql = sql.replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;', ''); await this.pglite.exec(sql); } else await this.db.query(sql); }
-    await this.db.query(SYNC_SCHEMA_SQL);
+    if (this.pglite) await this.pglite.exec(SYNC_SCHEMA_SQL);
+    else await this.db.query(SYNC_SCHEMA_SQL);
   }
   get db(): Database { if (!this.database) throw new Error('database not initialized'); return this.database; }
   async seed(userId: string, orgId: string) {

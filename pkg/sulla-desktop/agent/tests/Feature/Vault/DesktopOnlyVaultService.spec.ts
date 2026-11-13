@@ -53,6 +53,7 @@ class DesktopVaultServer {
       controlServiceToken:   'control_' + 'b'.repeat(64),
       approvalServiceToken:  'approval_' + 'c'.repeat(64),
       brokerServiceToken:    'broker_' + 'd'.repeat(64),
+      filesServiceId:        'sulla-files',
       filesServiceToken:     'files_' + 'e'.repeat(64),
     };
     this.server = http.createServer(createApp(database, config, { localAuthority: authority }));
