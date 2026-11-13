@@ -21,7 +21,7 @@ import {
   type RequestIdentity,
 } from './auth.js';
 import { config } from './config.js';
-import { advisoryLockPool, migrate, pool } from './db.js';
+import { advisoryLockPool, closeDb, migrate, pool } from './db.js';
 import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
 import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
@@ -30,9 +30,13 @@ import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/
 
 import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
+import { ProcessGuard } from './ProcessGuard.js';
+import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 
 import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
+const guard = new ProcessGuard({ name: 'workflow-manager' }).catchCrashes();
+const databaseHealth = new DatabaseHealthRepository(pool);
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -468,7 +472,11 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
   return results;
 }
 
-app.get('/healthz', (_request, response) => response.json({ ok: true, service: 'workflows' }));
+// Unhealthy while Postgres is unreachable; Desktop restarts the container if it stays that way.
+app.get('/healthz', async(_request, response) => {
+  if (await databaseHealth.reachable()) response.json({ ok: true, service: 'workflows' });
+  else response.status(503).json({ ok: false, service: 'workflows', error: 'database_unavailable' });
+});
 app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
 app.use('/ui', (_request, response, next) => {
   response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
@@ -832,15 +840,26 @@ async function main(): Promise<void> {
   const reconciled = await reconcileAbandonedRuns();
   if (reconciled.length) console.warn(`[workflow-manager] Settled ${ reconciled.length } abandoned workflow run(s) at startup`);
   const lockClient = await pool.connect();
+  // The scheduler lock lives on this one connection. If Postgres drops it the lock is gone
+  // too, so the leader exits and comes back through the restart policy to take it again.
+  lockClient.on('error', (error) => {
+    if (schedulerLeader) guard.fatal('scheduler lock connection lost', error);
+    else console.warn('[workflow-manager] idle scheduler lock connection lost:', error.message);
+  });
   schedulerLeader = (await lockClient.query(`SELECT pg_try_advisory_lock(hashtext('sulla-workflow-manager')) AS acquired`)).rows[0].acquired === true;
   if (!schedulerLeader) console.warn('[workflow-manager] Another manager owns triggers; API remains healthy without scheduling');
   await refreshSchedules();
   setInterval(() => resumeDueRuns().catch(error => console.error('[workflow-manager] wait scan failed:', error)), 1_000).unref();
   setInterval(() => reconcileAbandonedRuns().catch(error => console.error('[workflow-manager] runner reconciliation failed:', error)), 5_000).unref();
-  app.listen(config.port, '0.0.0.0', () => console.log(`[workflow-manager] listening on :${ config.port }; schedulerLeader=${ schedulerLeader }`));
+  const server = app.listen(config.port, '0.0.0.0', () => console.log(`[workflow-manager] listening on :${ config.port }; schedulerLeader=${ schedulerLeader }`));
+  guard.handleSignals(async() => {
+    server.closeIdleConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    lockClient.release();
+    await closeDb();
+  });
 }
 
-main().catch(error => {
-  console.error('[workflow-manager] fatal:', error);
-  process.exitCode = 1;
-});
+// A failed start (Postgres unreachable, migration error) must end the process so Docker
+// restarts it; leaving it running would keep a container with no API.
+main().catch(error => guard.fatal('startup failed', error));

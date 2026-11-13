@@ -13,6 +13,9 @@ import { Pool } from 'pg';
 import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToolExecutionContext } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
+import { ProcessGuard } from './ProcessGuard.js';
+import { RedisHealthProbe } from './RedisHealthProbe.js';
+import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { HttpDesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
@@ -29,9 +32,17 @@ const lateToolResults = new LateToolResultStore();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
 process.env.SULLA_REDIS_URL = config.redisUrl;
 
+const guard = new ProcessGuard({ name: 'sulla-tools' }).catchCrashes();
 const app = express();
+// ioredis reconnects with backoff on its own; the listener keeps a dropped connection from
+// being reported as an unhandled error and /healthz reports it until Redis is back.
 const redis = new Redis(config.redisUrl, { maxRetriesPerRequest: 2 });
+redis.on('error', error => console.warn('[sulla-tools] Redis connection error; reconnecting:', error.message));
 const pool = new Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 2_000 });
+// An idle client dropped by Postgres is discarded and the next query reconnects.
+pool.on('error', error => console.warn('[sulla-tools] idle database connection lost; reconnecting on next use:', error.message));
+const databaseHealth = new DatabaseHealthRepository(pool);
+const redisHealth = new RedisHealthProbe(redis);
 const revocations = new RedisRevocationStore(redis);
 const requests = new RequestStore(redis, pool);
 const desktop: DesktopExecutor = config.relayUrl && config.relayToken
@@ -54,13 +65,12 @@ async function assertAgentContainerCaller(request: express.Request, ctx: ToolExe
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+// Unhealthy while Redis or Postgres is unreachable; Desktop restarts the container if it stays that way.
 app.get('/healthz', async(_request, response) => {
-  try {
-    await Promise.all([redis.ping(), pool.query('SELECT 1')]);
-    response.json({ status: 'ok' });
-  } catch {
-    response.status(503).json({ status: 'unhealthy' });
-  }
+  const [redisUp, databaseUp] = await Promise.all([redisHealth.reachable(), databaseHealth.reachable()]);
+
+  if (redisUp && databaseUp) response.json({ status: 'ok' });
+  else response.status(503).json({ status: 'unhealthy', redis: redisUp, database: databaseUp });
 });
 
 function help(category?: string): string {
@@ -177,11 +187,15 @@ app.use((error: any, _request: express.Request, response: express.Response, _nex
 async function main(): Promise<void> {
   await initializeCatalog();
   await requests.initialize();
-  app.listen(config.port, '0.0.0.0', () => console.log(`[sulla-tools] listening on :${ config.port }`));
+  const server = app.listen(config.port, '0.0.0.0', () => console.log(`[sulla-tools] listening on :${ config.port }`));
+  guard.handleSignals(async() => {
+    server.closeIdleConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    // Redis may already be gone; a hard disconnect still lets shutdown finish.
+    await redis.quit().catch(() => redis.disconnect());
+    await pool.end();
+  });
 }
 
-main().catch(async(error) => {
-  console.error('[sulla-tools] fatal', error);
-  await Promise.allSettled([redis.quit(), pool.end()]);
-  process.exitCode = 1;
-});
+// A failed start must end the process so Docker restarts it.
+main().catch(error => guard.fatal('startup failed', error));

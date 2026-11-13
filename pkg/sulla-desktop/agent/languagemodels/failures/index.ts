@@ -135,6 +135,9 @@ export function legacyProviderFailure(providerId: string, value: unknown, option
   if (/timeout|timed out|etimedout|stalled/.test(message)) return make(TimedOut);
   if (/no response|empty response|returned empty|no extractable prompt/.test(message)) return make(EmptyResponse);
   if (message.includes('workspace routing discovery failed')) return make(RoutingUnavailable);
+  // Sulla's own bridge refused the lease (it answers 401/403). The provider
+  // account is fine, so this must never read as an expired sign-in.
+  if (message.includes('provider bridge request denied')) return make(Unknown);
   // Generic forbidden/access-denied transport text is not proof that credentials were revoked.
   if (/(?:oauth|credential|token|access) (?:was |has been )?revoked|revoked (?:oauth|credential|token|access)/.test(message)) return make(AuthRevoked);
   if (/unauthorized|invalid api key|expired token|not logged in|sign.?in required|\b401\b/.test(message)) return make(AuthExpired);

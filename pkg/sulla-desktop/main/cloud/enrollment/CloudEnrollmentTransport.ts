@@ -31,10 +31,16 @@ export class FixedEnrollmentUser implements EnrollmentUserSource {
  * wire contract (sulla-workers `src/routes/cloud-vault-sync.ts`): op strings, one serialisation per body
  * (the signed hash covers the bytes sent), the device signature on every call, and error mapping:
  * - consume: ANY 409 means "not approved yet", mapped to the domain pending code so polling continues;
+ *   410 means an approver denied the request, mapped to `enrollment_denied` so polling stops at once;
+ * - deny: 404 means this Cloud has no deny route yet (or the request is already gone), so it resolves and the
+ *   request expires on Cloud as before;
  * - every other HTTP error becomes `VaultTransportError(code, status)` with the same message code as before.
  * Status, bundle and records are plain passthroughs the approver needs.
  */
 export class CloudEnrollmentTransport implements VaultEnrollmentPort {
+  /** The requester's terminal error when an approver denied its request (Cloud consume 410). */
+  static readonly DENIED = 'enrollment_denied' as VaultErrorCode;
+
   constructor(
     private readonly http: CloudVaultSyncHttpTransport,
     private readonly signer: VaultSyncRequestSigner,
@@ -74,6 +80,7 @@ export class CloudEnrollmentTransport implements VaultEnrollmentPort {
       return await this.call(async() => this.http.consumeEnrollmentRequest(vaultId, requestId, body, await this.sign(vaultId, `enrollment-consume:${ requestId }`, body))) as EnrollmentConsumeDto;
     } catch (error) {
       if (error instanceof VaultTransportError && error.status === 409) throw new VaultTransportError('request_not_found_or_consumed', 409, { cause: error });
+      if (error instanceof VaultTransportError && error.status === 410) throw new VaultTransportError(CloudEnrollmentTransport.DENIED, 410, { cause: error });
       throw error;
     }
   }
@@ -89,11 +96,18 @@ export class CloudEnrollmentTransport implements VaultEnrollmentPort {
   }
 
   /**
-   * sulla-workers has no enrollment deny route (re-checked on main 3e7f8cf, 2026-11-12), so a declined prompt sends
-   * nothing and the request expires on Cloud. Desktop never calls this.
+   * Tells Cloud the human declined (sulla-workers `POST .../enrollment/requests/:id/deny`), so the requester's poll
+   * ends now instead of at expiry. A Cloud without the route answers 404: that is "not supported", not a failure,
+   * and the request simply expires there as it did before the route existed.
    */
-  async denyEnrollmentRequest(_vaultId: string, _requestId: string, _request: EnrollmentDenyDto): Promise<void> {
-    throw new VaultTransportError('enrollment_deny_unsupported' as VaultErrorCode, 501);
+  async denyEnrollmentRequest(vaultId: string, requestId: string, request: EnrollmentDenyDto): Promise<void> {
+    const body = new JsonRequestBody(request.reason === undefined ? {} : { reason: request.reason });
+    try {
+      await this.call(async() => this.http.denyEnrollmentRequest(vaultId, requestId, body, await this.sign(vaultId, `enrollment-deny:${ requestId }`, body)));
+    } catch (error) {
+      if (error instanceof VaultTransportError && error.status === 404) return;
+      throw error;
+    }
   }
 
   async bundle(vaultId: string): Promise<VaultBundleResponse> {

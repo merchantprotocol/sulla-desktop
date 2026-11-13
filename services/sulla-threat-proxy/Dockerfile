@@ -27,5 +27,5 @@ ENV SULLA_PROXY_STATE_DIR=/var/lib/sulla-threat-proxy \
     PYTHONPATH=/opt/sulla-threat-proxy/addons
 USER 10010:10010
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-  CMD ["python3", "-c", "import os, socket; socket.create_connection(('127.0.0.1', int(os.environ.get('SULLA_PROXY_LISTEN_PORT', '8890'))), 2).close()"]
+  CMD ["python3", "-c", "import os, socket; assert os.path.getsize(os.environ.get('SULLA_PROXY_STATE_DIR', '/var/lib/sulla-threat-proxy') + '/public/ca-bundle.pem') > 0; socket.create_connection(('127.0.0.1', int(os.environ.get('SULLA_PROXY_LISTEN_PORT', '8890'))), 2).close()"]
 ENTRYPOINT ["/usr/local/bin/sulla-threat-proxy"]

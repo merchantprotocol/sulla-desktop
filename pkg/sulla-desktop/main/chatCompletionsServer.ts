@@ -119,6 +119,13 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
 
 export class ChatCompletionsServer {
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
+  /** Grace for in-flight responses before open sockets are cut on stop. */
+  static readonly CONNECTION_DRAIN_MS = 1_000;
+  /** Upper bound on the agent-container sweep that runs on stop. */
+  static readonly REAP_BUDGET_MS = 20_000;
+  /** Lifecycle stop budget: drain + sweep, plus headroom so the sweep is never cut off mid-way. */
+  static readonly STOP_TIMEOUT_MS = ChatCompletionsServer.CONNECTION_DRAIN_MS + ChatCompletionsServer.REAP_BUDGET_MS + 4_000;
+
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
@@ -1986,18 +1993,33 @@ export class ChatCompletionsServer {
       const server = this.server;
       this.server = null;
 
+      // close() stops accepting, but its callback waits for every active
+      // request, and a streaming chat response can stay open indefinitely.
+      // Give in-flight responses a short grace, then cut what is left.
       await new Promise<void>((resolve) => {
+        const force = setTimeout(() => server.closeAllConnections(), ChatCompletionsServer.CONNECTION_DRAIN_MS);
+
         server.close(() => {
+          clearTimeout(force);
           console.log('[ChatCompletionsAPI] Server stopped');
           resolve();
         });
       });
     }
 
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+
     await Promise.race([
       import('@pkg/agent/services/AgentContainerLauncher').then(({ reapOrphanAgentContainers }) => reapOrphanAgentContainers()),
-      new Promise<void>(resolve => setTimeout(resolve, 20_000).unref?.()),
-    ]).catch(error => console.warn('[ChatCompletionsAPI] Agent container cleanup on stop skipped:', error));
+      new Promise<void>((resolve) => {
+        reapTimer = setTimeout(() => {
+          console.warn(`[ChatCompletionsAPI] Agent container cleanup still running after ${ ChatCompletionsServer.REAP_BUDGET_MS }ms; continuing shutdown`);
+          resolve();
+        }, ChatCompletionsServer.REAP_BUDGET_MS);
+        reapTimer.unref?.();
+      }),
+    ]).catch(error => console.warn('[ChatCompletionsAPI] Agent container cleanup on stop skipped:', error))
+      .finally(() => clearTimeout(reapTimer));
   }
 }
 

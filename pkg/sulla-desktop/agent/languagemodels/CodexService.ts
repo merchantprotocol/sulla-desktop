@@ -263,6 +263,11 @@ export class CodexService extends BaseLanguageModel {
     return this.model || 'codex';
   }
 
+  /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
+  private launchModel(): string {
+    return this.model && this.model !== 'codex' ? this.model : '';
+  }
+
   override getProviderName(): string {
     return 'OpenAI Codex';
   }
@@ -618,6 +623,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'codex',
+      model:             this.launchModel(),
       conversationId:    convId,
       state:             options.state,
       providerSessionId: existingSession,
@@ -702,6 +708,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'codex',
+        model:             this.launchModel(),
         conversationId:    convId,
         state:             options.state,
         providerSessionId: existingSession,

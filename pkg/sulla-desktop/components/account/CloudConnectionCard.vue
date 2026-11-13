@@ -42,7 +42,7 @@ function openFiles(){const existing=tabs.find(t=>t.mode==='files');const tab=exi
 const showDevices=ref(false);
 const channelLabel=computed(()=>({connected:'Connected',connecting:'Connecting…',error:status.value?.channel?.lastError?`Reconnecting — ${status.value.channel.lastError}`:'Reconnecting',stopped:'Off'} as Record<string,string>)[status.value?.channel?.state??'stopped']);
 function revoke(clientId:string){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:revoke-client',clientId))}
-function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/cloud/devices.html')}
+function openDesktopsPage(){void ipcRenderer.invoke('sulla-cloud-connection:open-devices-page').catch(()=>undefined)}
 const groups=[
  {title:'Activity',items:[['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
  {title:'Private data',items:[privateRow('conversations','✉','Chat history','Your linked chat history','🔒 End-to-end encrypted'),privateRow('memory','⌘','Memory','What Sulla remembers about you and your business','🔒 End-to-end encrypted'),{...privateRow('files','▤','Files','Choose folders in File Manager','🔒 End-to-end encrypted'),link:openFiles},privateRow('vault','⚿','Passwords','Opens only with your master password','🔒 Zero-knowledge')]},

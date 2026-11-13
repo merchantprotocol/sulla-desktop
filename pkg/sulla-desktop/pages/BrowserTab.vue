@@ -210,7 +210,7 @@
         <AgentIntegrations
           v-else
           embedded
-          @switch-to-vault="onSetMode('vault')"
+          @back-to-vault="onSetMode('vault')"
           @create-account="onIntegrationsCreateAccount"
         />
       </div>
