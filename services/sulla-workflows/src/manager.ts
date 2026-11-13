@@ -13,10 +13,8 @@ import schedule from 'node-schedule';
 
 import {
   authenticateRequest,
-  boundedJson,
   identityParams,
   identitySql,
-  requestBearer,
   requireMutationRole,
   requireOwner,
   type AuthenticatedRequest,
@@ -27,23 +25,18 @@ import { advisoryLockPool, closeDb, migrate, pool } from './db.js';
 import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
 import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
-import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../packages/workflow-engine/src/WorkflowPlaybook.js';
 import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/workflowConcurrency.js';
-import { AbandonedRunReaper } from './AbandonedRunReaper.js';
-import { agentOccurrence } from './agentInvocation.js';
-
-import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
-import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 import { WorkflowConcurrencyLimitError } from './WorkflowConcurrencyLimitError.js';
 
+import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
+import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
+
 import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
-const guard = new ProcessGuard({ name: 'workflow-manager' }).catchCrashes();
-const databaseHealth = new DatabaseHealthRepository(pool);
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -54,28 +47,8 @@ const jobs = new Map<string, { job: schedule.Job; identity: RequestIdentity }>()
 const launches = new Map<string, Promise<string>>();
 let schedulerLeader = false;
 const managerStartedAt = new Date();
-const abandonedRuns = new AbandonedRunReaper({
-  db:          pool,
-  lockPool:    advisoryLockPool,
-  launcher,
-  emit:        emitEvent,
-  isLaunching: executionId => launches.has(executionId),
-  managerStartedAt,
-  location:    config.mode,
-});
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-interface ScheduleGrantRow {
-  workflow_id:      string;
-  schedule_node_id: string;
-  grant_id:         string;
-  grant_token:      string;
-  expires_at:       Date | string;
-  owner_issuer:     string;
-  owner_subject:    string;
-  authority_id:     string;
-  organization_id:  string;
-}
+const guard = new ProcessGuard({ name: 'workflow-manager' }).catchCrashes();
+const databaseHealth = new DatabaseHealthRepository(pool);
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -87,7 +60,7 @@ function canonicalToolScope(toolName: string): string {
 }
 
 function runnerTools(nodes: any[]): string[] {
-  const allowedTools = new Set<string>(config.mode === 'desktop' ? ['meta/spawn_agent', 'agents/check_agent_jobs'] : []);
+  const allowedTools = new Set<string>(['meta/spawn_agent', 'agents/check_agent_jobs']);
   for (const node of nodes) {
     const toolName = node?.data?.config?.toolName;
     if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) {
@@ -131,51 +104,6 @@ function sameIdentity(left: RequestIdentity, right: RequestIdentity): boolean {
   return identityParams(left).every((value, index) => value === identityParams(right)[index]);
 }
 
-function serviceHeaders(): Record<string, string> {
-  return {
-    'Content-Type':          'application/json',
-    'X-Sulla-Service-Id':    config.accountsServiceId,
-    'X-Sulla-Service-Token': config.accountsServiceToken,
-  };
-}
-
-async function agentsJson(pathname: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const raw = JSON.stringify(body);
-  const timestamp = String(Date.now());
-  const nonce = crypto.randomUUID();
-  const digest = crypto.createHash('sha256').update(raw).digest('hex');
-  const signature = crypto.createHmac('sha256', config.agentsServiceToken)
-    .update(`POST\n${ pathname }\n${ timestamp }\n${ nonce }\n${ digest }`)
-    .digest('base64url');
-  const response = await fetch(`${ config.agentsUrl }${ pathname }`, {
-    method:  'POST',
-    headers: {
-      'Content-Type':              'application/json',
-      'X-Sulla-Service-Id':        'sulla-workflows',
-      'X-Sulla-Service-Timestamp': timestamp,
-      'X-Sulla-Service-Nonce':     nonce,
-      'X-Sulla-Service-Signature': signature,
-    },
-    body: raw,
-    redirect: 'error',
-    signal:  AbortSignal.timeout(30_000),
-  });
-  const json = await boundedJson(response, 512 * 1024);
-  if (!response.ok) throw Object.assign(new Error(`Agents request failed (${ response.status })`), { status: response.status });
-  return json;
-}
-
-async function accountsJson(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(`${ config.accountsUrl }${ path }`, {
-    ...init,
-    redirect: 'error',
-    signal:   AbortSignal.timeout(5_000),
-  });
-  const body = await boundedJson(response);
-  if (!response.ok) throw new Error(`Accounts denied workflow delegation (${ response.status })`);
-  return body;
-}
-
 async function boundedText(response: Response, maxBytes = 10 * 1024 * 1024): Promise<string> {
   const declaredLength = Number(response.headers.get('content-length') ?? 0);
   if (declaredLength > maxBytes) throw new Error('tool response is too large');
@@ -199,129 +127,6 @@ async function boundedText(response: Response, maxBytes = 10 * 1024 * 1024): Pro
   return new TextDecoder().decode(bytes);
 }
 
-function scheduleNodes(workflow: any): { id: string }[] {
-  if (workflow.location !== 'server' || workflow.status !== 'production' || workflow.enabled !== true) return [];
-  const found = new Map<string, { id: string }>();
-  for (const node of workflow.definition?.nodes ?? []) {
-    if (node?.data?.category === 'trigger' && node?.data?.subtype === 'schedule' &&
-        typeof node.id === 'string' && node.id.trim() === node.id && node.id.length > 0 && node.id.length <= 255) {
-      found.set(node.id, { id: node.id });
-    }
-  }
-  return [...found.values()];
-}
-
-async function issueScheduleGrant(identity: RequestIdentity, bearerToken: string, workflowId: string,
-  scheduleNodeId: string, replaceGrantId?: string): Promise<{ grantId: string; grantToken: string; expiresAt: string }> {
-  if (!bearerToken) throw new Error('user bearer is required to delegate a schedule');
-  const expiresAt = new Date(Date.now() + 89 * 86_400_000).toISOString();
-  const request = scheduleGrantIssueRequest({
-    authorityId:    identity.authorityId,
-    organizationId: identity.organizationId,
-    audience:       config.audience,
-    serviceId:      config.accountsServiceId,
-    workflowId,
-    scheduleNodeId,
-    requiredRoles:  config.requiredRoles,
-    expiresAt,
-    ...(replaceGrantId ? { replaceGrantId } : {}),
-  }, bearerToken, serviceHeaders());
-  const result = await accountsJson(request.path, request.init);
-  const returnedExpiry = typeof result.expiresAt === 'string' ? Date.parse(result.expiresAt) : Number.NaN;
-  if (typeof result.grantId !== 'string' || !UUID.test(result.grantId) ||
-      typeof result.grantToken !== 'string' || result.grantToken.length < 32 || result.grantToken.length > 2_048 ||
-      typeof result.expiresAt !== 'string' || !Number.isFinite(returnedExpiry) || returnedExpiry <= Date.now() ||
-      returnedExpiry > Date.parse(expiresAt) + 1_000) {
-    throw new Error('Accounts returned an invalid schedule grant');
-  }
-  return { grantId: result.grantId, grantToken: result.grantToken, expiresAt: result.expiresAt };
-}
-
-async function revokeScheduleGrant(grantToken: string): Promise<void> {
-  const response = await fetch(`${ config.accountsUrl }/v1/private/schedule-grants/revoke`, {
-    method:   'POST',
-    headers:  serviceHeaders(),
-    body:     JSON.stringify({ grantToken }),
-    redirect: 'error',
-    signal:   AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new Error(`Accounts refused schedule grant revocation (${ response.status })`);
-}
-
-async function reconcileScheduleGrants(workflow: any, identity: RequestIdentity, bearerToken: string, renew = false): Promise<void> {
-  if (config.mode !== 'server') return;
-  const wanted = new Set(scheduleNodes(workflow).map(node => node.id));
-  const existing = (await pool.query(
-    `SELECT * FROM workflow_schedule_grants WHERE workflow_id=$5 AND ${ identitySql }`,
-    [...identityParams(identity), workflow.id],
-  )).rows as ScheduleGrantRow[];
-
-  for (const grant of existing) {
-    if (wanted.has(grant.schedule_node_id)) continue;
-    await revokeScheduleGrant(grant.grant_token);
-    await pool.query(
-      `DELETE FROM workflow_schedule_grants WHERE workflow_id=$5 AND schedule_node_id=$6 AND ${ identitySql }`,
-      [...identityParams(identity), workflow.id, grant.schedule_node_id],
-    );
-  }
-
-  for (const scheduleNodeId of wanted) {
-    const prior = existing.find(grant => grant.schedule_node_id === scheduleNodeId);
-    const renewSoon = !prior || Date.parse(String(prior.expires_at)) < Date.now() + 14 * 86_400_000;
-    if (!renew && !renewSoon) continue;
-    const issued = await issueScheduleGrant(identity, bearerToken, workflow.id, scheduleNodeId, prior?.grant_id);
-    await pool.query(
-      `INSERT INTO workflow_schedule_grants
-         (workflow_id,schedule_node_id,grant_id,grant_token,expires_at,owner_issuer,owner_subject,authority_id,organization_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (workflow_id,schedule_node_id) DO UPDATE SET
-         grant_id=EXCLUDED.grant_id,grant_token=EXCLUDED.grant_token,expires_at=EXCLUDED.expires_at,updated_at=NOW()
-       WHERE workflow_schedule_grants.owner_issuer=EXCLUDED.owner_issuer
-         AND workflow_schedule_grants.owner_subject=EXCLUDED.owner_subject
-         AND workflow_schedule_grants.authority_id=EXCLUDED.authority_id
-         AND workflow_schedule_grants.organization_id=EXCLUDED.organization_id`,
-      [workflow.id, scheduleNodeId, issued.grantId, issued.grantToken, issued.expiresAt, ...identityParams(identity)],
-    );
-  }
-}
-
-async function resolveScheduleGrant(workflow: any, scheduleNodeId: string,
-  grantToken?: string): Promise<{ identity: RequestIdentity; grantToken: string | null }> {
-  if (config.mode === 'desktop') return { identity: identityFromRow(workflow), grantToken: null };
-  let token = grantToken;
-  if (!token) {
-    const grant = (await pool.query(
-      `SELECT grant_token FROM workflow_schedule_grants WHERE workflow_id=$5 AND schedule_node_id=$6 AND ${ identitySql }`,
-      [...identityParams(identityFromRow(workflow)), workflow.id, scheduleNodeId],
-    )).rows[0];
-    token = grant?.grant_token;
-  }
-  if (!token) throw new Error('workflow schedule has no delegated grant');
-  const context = await accountsJson('/v1/private/schedule-grants/resolve', {
-    method: 'POST', headers: serviceHeaders(), body: JSON.stringify({ grantToken: token }),
-  });
-  const roles = Array.isArray(context.roles) && context.roles.every(value => typeof value === 'string' && value.length > 0) ? context.roles as string[] : null;
-  const groups = Array.isArray(context.groups) && context.groups.every(value => typeof value === 'string' && value.length > 0) ? context.groups as string[] : null;
-  if (context.issuer !== workflow.owner_issuer || context.subject !== workflow.owner_subject ||
-      context.authorityId !== workflow.authority_id || context.organizationId !== workflow.organization_id ||
-      context.audience !== config.audience || context.workflowId !== workflow.id || context.scheduleNodeId !== scheduleNodeId ||
-      !roles || !groups || config.requiredRoles.some(role => !roles.includes(role))) {
-    throw new Error('Accounts returned a schedule grant outside its bound context');
-  }
-  return {
-    identity: {
-      kind:           'owner',
-      issuer:         context.issuer as string,
-      subject:        context.subject as string,
-      authorityId:    context.authorityId as string,
-      organizationId: context.organizationId as string,
-      roles,
-      groups,
-    },
-    grantToken: token,
-  };
-}
-
 async function issueRunToken(run: any, allowedTools: string[]): Promise<string> {
   if (!config.capabilitySigningKey) throw new Error('Workflow manager requires SULLA_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN');
   const token = issueCapabilityToken({
@@ -340,8 +145,79 @@ async function issueRunToken(run: any, allowedTools: string[]): Promise<string> 
   return token;
 }
 
-function reconcileAbandonedRuns(workflowId?: string): Promise<string[]> {
-  return abandonedRuns.reap(workflowId);
+async function reconcileAbandonedRuns(workflowId?: string): Promise<string[]> {
+  const params: unknown[] = [managerStartedAt];
+  const workflowFilter = workflowId ? `AND e.workflow_id=$${ params.push(workflowId) }` : '';
+  const rows = (await pool.query(
+    `SELECT e.execution_id,e.status,e.runner_id,e.started_at,e.lease_expires_at,e.owner_id,e.lease_token,e.heartbeat_at,
+            e.wait_kind,e.resume_at,
+            EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id) AS has_checkpoint
+       FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
+      WHERE e.status IN ('running','suspended') AND w.location='desktop'
+        ${ workflowFilter }
+        AND (
+          (e.runner_id IS NOT NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
+          OR
+          (e.runner_id IS NULL AND e.owner_id IS NULL AND e.lease_token IS NULL AND e.heartbeat_at IS NULL AND e.started_at < $1
+            AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=e.execution_id))
+          OR
+          (e.runner_id IS NOT NULL AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at <= NOW()
+            AND NOT (e.status='suspended' AND e.wait_kind IS NOT NULL))
+        )`, params,
+  )).rows;
+  const settled: string[] = [];
+  for (const row of rows) {
+    if (launches.has(row.execution_id)) continue;
+    const lockClient = await advisoryLockPool.connect();
+    let reason: string | null = null;
+    let didSettle: { rows: any[]; rowCount: number | null } | null = null;
+    try {
+      const acquired = (await lockClient.query(
+        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
+        [`workflow-launch:${ row.execution_id }`],
+      )).rows[0]?.acquired === true;
+      if (!acquired) continue;
+      if (row.lease_expires_at && new Date(row.lease_expires_at).getTime() <= Date.now()) {
+        reason = 'runner_lease_expired';
+      } else if (!row.runner_id) {
+        reason = 'manager_restarted_before_launch';
+      } else if (new Date(row.started_at).getTime() < managerStartedAt.getTime()) {
+        reason = 'manager_restarted_before_handshake';
+      } else if (!await launcher.runnerExists(row.runner_id)) {
+        reason = 'abandoned_without_live_runner';
+      }
+      if (!reason) continue;
+      didSettle = await lockClient.query(
+        `UPDATE workflow_executions
+          SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
+              terminal_at=COALESCE(terminal_at,NOW()),terminal_reason=$2,error=COALESCE(error,$2),
+              runner_id=NULL,owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
+        WHERE execution_id=$1 AND status=$3
+          AND runner_id IS NOT DISTINCT FROM $4::text
+          AND owner_id IS NOT DISTINCT FROM $5::text
+          AND lease_token IS NOT DISTINCT FROM $6::text
+          AND heartbeat_at IS NOT DISTINCT FROM $7::timestamptz
+          AND lease_expires_at IS NOT DISTINCT FROM $8::timestamptz
+          AND wait_kind IS NOT DISTINCT FROM $9::text
+          AND resume_at IS NOT DISTINCT FROM $10::timestamptz
+          AND (EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.execution_id=workflow_executions.execution_id))=$11
+          AND NOT (status='suspended' AND wait_kind IS NOT NULL)
+        RETURNING workflow_id`, [
+          row.execution_id, reason, row.status, row.runner_id, row.owner_id, row.lease_token,
+          row.heartbeat_at, row.lease_expires_at, row.wait_kind, row.resume_at, row.has_checkpoint,
+        ],
+      );
+    } finally {
+      await lockClient.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`workflow-launch:${ row.execution_id }`]).catch(() => {});
+      lockClient.release();
+    }
+    if (!reason || !didSettle?.rowCount) continue;
+    if (row.runner_id) await launcher.stopRunner(row.runner_id).catch(() => {});
+    await emitEvent(row.execution_id, didSettle.rows[0].workflow_id, 'workflow_failed', { error: reason });
+    settled.push(row.execution_id);
+  }
+  return settled;
 }
 
 async function launchUnchecked(executionId: string): Promise<string> {
@@ -349,16 +225,12 @@ async function launchUnchecked(executionId: string): Promise<string> {
     `SELECT e.execution_id,e.playbook_state,e.owner_issuer,e.owner_subject,e.authority_id,e.organization_id,
             e.status,e.runner_id,e.owner_id,e.lease_token,e.wait_kind,e.resume_at
        FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
-      WHERE e.execution_id=$1 AND e.status IN ('running','suspended') AND w.status <> 'archive'`,
+      WHERE e.execution_id=$1 AND e.status IN ('running','suspended') AND w.location='desktop' AND w.status <> 'archive'`,
     [executionId],
   )).rows[0];
   if (!run?.owner_issuer || !run?.owner_subject) throw new Error('workflow execution has no owner');
   if (run.runner_id || run.owner_id || run.lease_token) throw new Error(`workflow execution ${ executionId } is already launching or owned`);
   const allowedTools = runnerTools(run?.playbook_state?.definition?.nodes ?? []);
-  if (config.mode === 'server') {
-    const forbidden = allowedTools.filter(scope => !config.allowedRunnerScopes.has(scope));
-    if (forbidden.length) throw new Error(`Workflow requests runner scopes outside server policy: ${ forbidden.join(', ') }`);
-  }
   const token = await issueRunToken(run, allowedTools);
   let runnerId: string | null = null;
   let assigned = false;
@@ -430,25 +302,15 @@ async function startRun(params: {
   triggerKey?:               string;
   parentExecutionId?:        string;
   playbookState?:            WorkflowPlaybookState;
-  delegatedGrantToken?:      string;
-  delegatedGrantWorkflowId?: string;
-  scheduleNodeId?:           string;
-}, identity: RequestIdentity): Promise<{ executionId: string; runnerId: string; deduplicated?: boolean }> {
-  let delegatedGrantToken = params.delegatedGrantToken;
-  let delegatedGrantWorkflowId = params.delegatedGrantWorkflowId;
-  let scheduleNodeId = params.scheduleNodeId;
   if (identity.kind === 'runner' && params.parentExecutionId !== identity.executionId) {
     throw new Error('runner may only start an explicitly linked child workflow');
   }
   if (identity.kind === 'runner') {
     const parent = (await pool.query(
-      `SELECT playbook_state,delegated_grant_token,delegated_grant_workflow_id,schedule_node_id
+      `SELECT playbook_state
          FROM workflow_executions WHERE execution_id=$5 AND status='running' AND ${ identitySql }`,
       [...identityParams(identity), identity.executionId],
     )).rows[0];
-    delegatedGrantToken = parent?.delegated_grant_token ?? undefined;
-    delegatedGrantWorkflowId = parent?.delegated_grant_workflow_id ?? undefined;
-    scheduleNodeId = parent?.schedule_node_id ?? undefined;
     const allowedChildren = new Set<string>();
     for (const node of parent?.playbook_state?.definition?.nodes ?? []) {
       for (const value of [node?.data?.config?.workflowId, node?.data?.config?.targetWorkflowId]) {
@@ -459,12 +321,12 @@ async function startRun(params: {
   }
   const workflowResult = await pool.query(
     `SELECT * FROM workflows
-     WHERE (id = $5 OR definition->>'slug' = $5) AND enabled = TRUE AND status <> 'archive' AND location = $6 AND ${ identitySql }
+     WHERE (id = $5 OR definition->>'slug' = $5) AND enabled = TRUE AND status <> 'archive' AND location = 'desktop' AND ${ identitySql }
      LIMIT 1`,
-    [...identityParams(identity), params.workflowId, config.mode],
+    [...identityParams(identity), params.workflowId],
   );
   const workflow = workflowResult.rows[0];
-  if (!workflow) throw new Error(`Enabled ${ config.mode } workflow "${ params.workflowId }" was not found`);
+  if (!workflow) throw new Error(`Enabled Desktop workflow "${ params.workflowId }" was not found`);
   if (identity.kind === 'runner') {
     const parentScopes = new Set(identity.allowedTools ?? []);
     const widenedScopes = runnerTools(workflow.definition?.nodes ?? []).filter(scope => !parentScopes.has(scope));
@@ -504,13 +366,13 @@ async function startRun(params: {
       `INSERT INTO workflow_executions
        (execution_id, workflow_id, workflow_name, workflow_slug, status, auto_restart,
         trigger_input, parent_execution_id, trigger_key, playbook_state,
-        owner_issuer,owner_subject,authority_id,organization_id,delegated_grant_token,delegated_grant_workflow_id,schedule_node_id,started_at,updated_at)
-     VALUES ($1,$2,$3,$4,'running',$16,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())
+        owner_issuer,owner_subject,authority_id,organization_id,started_at,updated_at)
+     VALUES ($1,$2,$3,$4,'running',$13,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,NOW(),NOW())
      ON CONFLICT (trigger_key) WHERE trigger_key IS NOT NULL DO NOTHING
      RETURNING execution_id`,
     [executionId, workflow.id, workflow.name, definition.slug ?? workflow.id, params.message ?? null,
       params.parentExecutionId ?? null, params.triggerKey ?? null, JSON.stringify(state),
-      ...identityParams(identity), delegatedGrantToken ?? null, delegatedGrantWorkflowId ?? null, scheduleNodeId ?? null, autoRestart],
+      ...identityParams(identity), autoRestart],
     );
     await client.query('COMMIT');
   } catch (error) {
@@ -536,15 +398,15 @@ function cancelSchedules(visibleTo?: RequestIdentity): void {
 async function refreshSchedules(visibleTo?: RequestIdentity): Promise<any[]> {
   if (!schedulerLeader) return [];
   cancelSchedules(visibleTo);
-  const scheduledWorkflows = config.mode === 'server' && visibleTo
+  const scheduledWorkflows = visibleTo
     ? await pool.query(
-      `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location=$5
+      `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location='desktop'
          AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL AND ${ identitySql }`,
-      [...identityParams(visibleTo), config.mode],
+      identityParams(visibleTo),
     )
     : await pool.query(
-      `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location=$1
-         AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL`, [config.mode],
+      `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location='desktop'
+         AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL`,
     );
   const rows = scheduledWorkflows.rows;
   const armed: any[] = [];
@@ -555,31 +417,16 @@ async function refreshSchedules(visibleTo?: RequestIdentity): Promise<any[]> {
       if (!cron) continue;
       const timezone = String(node.data.config?.timezone ?? '').trim() || 'UTC';
       const key = `${ workflow.id }:${ node.id }`;
-      if (config.mode === 'server') {
-        const delegated = await pool.query(
-          `SELECT 1 FROM workflow_schedule_grants WHERE workflow_id=$5 AND schedule_node_id=$6 AND ${ identitySql }`,
-          [...identityParams(identityFromRow(workflow)), workflow.id, node.id],
-        );
-        if (!delegated.rowCount) continue;
-      }
       const job = schedule.scheduleJob({ rule: cron, tz: timezone }, async(fireDate: Date) => {
         const triggerKey = `schedule:${ key }:${ fireDate.toISOString() }`;
         try {
-          const delegated = await resolveScheduleGrant(workflow, node.id);
           await startRun({
             workflowId:               workflow.id,
             message:                  `Scheduled trigger ${ node.data.label ?? node.id }`,
             triggerKey,
-            delegatedGrantToken:      delegated.grantToken ?? undefined,
-            delegatedGrantWorkflowId: workflow.id,
-            scheduleNodeId:           node.id,
-          }, delegated.identity);
+          }, identityFromRow(workflow));
         } catch (error) {
-          if (error instanceof WorkflowConcurrencyLimitError) {
-            console.log(`[workflow-manager] Schedule ${ key } skipped: at concurrency limit (${ error.activeExecutionIds.join(', ') })`);
-          } else {
-            console.error(`[workflow-manager] Schedule ${ key } failed:`, error);
-          }
+          console.error(`[workflow-manager] Schedule ${ key } failed:`, error);
         }
       });
       if (job) {
@@ -593,8 +440,8 @@ async function refreshSchedules(visibleTo?: RequestIdentity): Promise<any[]> {
 
 async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays = 7): Promise<any> {
   const rows = (await pool.query(
-    `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location=$5 AND ${ identitySql }`,
-    [...identityParams(identity), config.mode],
+    `SELECT * FROM workflows WHERE status='production' AND enabled=TRUE AND location='desktop' AND ${ identitySql }`,
+    identityParams(identity),
   )).rows;
   const results: any[] = [];
   const now = new Date();
@@ -611,42 +458,25 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
       if (exists.rowCount) results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'already-fired' });
       else if (dryRun) results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'missed' });
       else {
-        try {
-          const delegated = await resolveScheduleGrant(workflow, node.id);
-          results.push({
-            workflowId: workflow.id,
-            expectedAt: previous.toISOString(),
-            status:     'dispatched',
-            ...(await startRun({
-              workflowId:               workflow.id,
-              message:                  `Catch-up for ${ previous.toISOString() }`,
-              triggerKey:               key,
-              delegatedGrantToken:      delegated.grantToken ?? undefined,
-              delegatedGrantWorkflowId: workflow.id,
-              scheduleNodeId:           node.id,
-            }, delegated.identity)),
-          });
-        } catch (error) {
-          // One workflow at its limit (or failing) must not abort catch-up for the rest.
-          if (error instanceof WorkflowConcurrencyLimitError) {
-            console.log(`[workflow-manager] Catch-up ${ workflow.id } skipped: at concurrency limit (${ error.activeExecutionIds.join(', ') })`);
-            results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'skipped', reason: 'at_concurrency_limit', activeExecutions: error.activeExecutionIds });
-          } else {
-            const message = error instanceof Error ? error.message : String(error);
-            console.warn(`[workflow-manager] Catch-up ${ workflow.id } failed: ${ message }`);
-            results.push({ workflowId: workflow.id, expectedAt: previous.toISOString(), status: 'failed', error: message });
-          }
-        }
+        results.push({
+          workflowId: workflow.id,
+          expectedAt: previous.toISOString(),
+          status:     'dispatched',
+          ...(await startRun({
+            workflowId:               workflow.id,
+            message:                  `Catch-up for ${ previous.toISOString() }`,
+            triggerKey:               key,
+          }, identity)),
+        });
       }
     }
   }
   return results;
 }
 
-// Unhealthy while Postgres is unreachable; Desktop restarts the container if it stays that way.
 app.get('/healthz', async(_request, response) => {
-  if (await databaseHealth.reachable()) response.json({ ok: true, service: 'workflows' });
-  else response.status(503).json({ ok: false, service: 'workflows', error: 'database_unavailable' });
+  const ok = await databaseHealth.reachable();
+  response.status(ok ? 200 : 503).json({ ok, service: 'workflows' });
 });
 app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
 app.use('/ui', (_request, response, next) => {
@@ -719,7 +549,6 @@ app.put('/v1/workflows/:id', requireOwner, requireMutationRole, async(request: A
         identity.subject, ...identityParams(identity)],
     );
     cancelSchedules(identity);
-    await reconcileScheduleGrants(row, identity, requestBearer(request), true);
     await refreshSchedules(identity);
     response.json(row);
   } catch (error) { next(error) }
@@ -733,7 +562,6 @@ app.delete('/v1/workflows/:id', requireOwner, requireMutationRole, async(request
     )).rows[0];
     if (!workflow) return response.status(404).json({ error: 'workflow not found' });
     cancelSchedules(identity);
-    if (config.mode === 'server') await reconcileScheduleGrants({ ...workflow, enabled: false }, identity, requestBearer(request));
     await pool.query(
       `DELETE FROM workflows WHERE id=$5 AND ${ identitySql }`,
       [...identityParams(identity), request.params.id],
@@ -752,7 +580,6 @@ app.patch('/v1/workflows/:id/location', requireOwner, requireMutationRole, async
     )).rows[0];
     if (!row) return response.status(404).json({ error: 'workflow not found' });
     cancelSchedules(request.identity);
-    await reconcileScheduleGrants(row, request.identity!, requestBearer(request), true);
     await refreshSchedules(request.identity);
     response.json(row);
   } catch (error) { next(error) }
@@ -788,7 +615,6 @@ app.patch('/v1/workflows/:id/status', requireOwner, requireMutationRole, async(r
       }));
     }
     cancelSchedules(identity);
-    await reconcileScheduleGrants(row, identity, requestBearer(request), true);
     await refreshSchedules(identity);
     response.json(row);
   } catch (error) { next(error) }
@@ -839,7 +665,9 @@ app.post('/v1/runs/:id/stop', requireOwner, requireMutationRole, async(request: 
       `UPDATE workflow_executions SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
               terminal_at=COALESCE(terminal_at,NOW()),terminal_reason='user_cancelled',error=COALESCE(error,'user_cancelled'),
               owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
-        WHERE execution_id=$5 AND status IN ('running','suspended') AND ${ identitySql } RETURNING runner_id`,
+        WHERE execution_id=$5 AND status IN ('running','suspended') AND ${ identitySql }
+          AND EXISTS (SELECT 1 FROM workflows w WHERE w.id=workflow_executions.workflow_id AND w.location='desktop')
+        RETURNING runner_id`,
       [...identityParams(identity), request.params.id],
     )).rows[0];
     if (!run) return response.status(409).json({ error: 'run is not active or was not found' });
@@ -860,7 +688,8 @@ app.post('/v1/runs/:id/resume', requireOwner, requireMutationRole, async(request
            SELECT 1 FROM workflows
             WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
          )
-         AND ${ identitySql }`,
+         AND ${ identitySql }
+         AND EXISTS (SELECT 1 FROM workflows w WHERE w.id=workflow_executions.workflow_id AND w.location='desktop')`,
       [...identityParams(request.identity!), executionId],
     )).rows[0];
     if (!row) return response.status(404).json({ error: 'run not found' });
@@ -870,10 +699,7 @@ app.post('/v1/runs/:id/resume', requireOwner, requireMutationRole, async(request
       `UPDATE workflow_executions
           SET playbook_state=$2::jsonb,resume_input=NULL,status='running',updated_at=NOW()
         WHERE execution_id=$1 AND status IN ('running','suspended')
-          AND NOT EXISTS (
-            SELECT 1 FROM workflows
-             WHERE workflows.id=workflow_executions.workflow_id AND workflows.status='archive'
-          )
+          AND EXISTS (SELECT 1 FROM workflows WHERE workflows.id=workflow_executions.workflow_id AND workflows.location='desktop' AND workflows.status <> 'archive')
         RETURNING execution_id`,
       [executionId, JSON.stringify(state)],
     );
@@ -901,10 +727,6 @@ app.post('/v1/runs/:id/restart', requireOwner, requireMutationRole, async(reques
 app.post('/v1/schedules/refresh', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const identity = request.identity!;
-    if (config.mode === 'server') {
-      const rows = (await pool.query(`SELECT * FROM workflows WHERE ${ identitySql }`, identityParams(identity))).rows;
-      for (const workflow of rows) await reconcileScheduleGrants(workflow, identity, requestBearer(request));
-    }
     response.json({ schedules: await refreshSchedules(identity) });
   } catch (error) { next(error) }
 });
@@ -942,105 +764,6 @@ app.post('/internal/tools/:category/:tool', async(request, response, next) => {
   } catch (error) { next(error) }
 });
 
-app.use('/internal/agents', authenticateRequest);
-app.use('/internal/agents', (request: AuthenticatedRequest, response, next) => {
-  if (request.identity?.kind !== 'runner' || !request.identity.executionId) {
-    response.status(403).json({ error: 'workflow_runner_context_required' }); return;
-  }
-  next();
-});
-
-app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response, next) => {
-  try {
-    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
-    const identity = request.identity!;
-    const agentId = typeof request.body?.agentId === 'string' ? request.body.agentId.trim() : '';
-    const prompt = typeof request.body?.prompt === 'string' ? request.body.prompt.trim() : '';
-    const label = typeof request.body?.label === 'string' ? request.body.label.trim() : '';
-    if (!agentId || agentId.length > 300 || !prompt || prompt.length > 100_000 || label.length > 500) {
-      return response.status(400).json({ error: 'bounded agentId and prompt are required' });
-    }
-    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId : '';
-    const execution = (await pool.query(
-      `SELECT playbook_state FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
-      [...identityParams(identity), identity.executionId],
-    )).rows[0];
-    const occurrence = request.body?.occurrence;
-    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || occurrence !== agentOccurrence(execution?.playbook_state ?? {}, nodeId)) {
-      return response.status(409).json({ error: 'stale workflow agent occurrence' });
-    }
-    const declaredNode = execution?.playbook_state?.definition?.nodes?.find((node: any) => node.id === nodeId);
-    const subtype = declaredNode?.data?.subtype;
-    const expectedAgent = subtype === 'agent' ? (declaredNode.data.config?.agentId || 'sulla-desktop') : 'sulla-desktop';
-    if (!declaredNode || !['agent', 'router', 'condition', 'loop', 'orchestrator-prompt', 'response'].includes(subtype) || agentId !== expectedAgent) {
-      return response.status(403).json({ error: 'agent is outside this workflow node scope' });
-    }
-    const inserted = await pool.query(
-      `INSERT INTO workflow_agent_runs
-         (execution_id,node_id,invocation_id,owner_issuer,owner_subject,authority_id,organization_id,occurrence)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (execution_id,node_id,occurrence) DO NOTHING
-       RETURNING invocation_id,agent_run_id`,
-      [identity.executionId, nodeId, crypto.randomUUID(), ...identityParams(identity), occurrence],
-    );
-    const binding = inserted.rows[0] ?? (await pool.query(
-      `SELECT invocation_id,agent_run_id FROM workflow_agent_runs
-        WHERE execution_id=$5 AND node_id=$6 AND occurrence=$7 AND ${ identitySql }`,
-      [...identityParams(identity), identity.executionId, nodeId, occurrence],
-    )).rows[0];
-    if (!binding?.invocation_id) throw new Error('Could not bind workflow node to an agent invocation');
-    const invocationId = String(binding.invocation_id);
-    const launched = await agentsJson('/internal/workflow-runs', {
-      invocationId,
-      agentId,
-      prompt,
-      label,
-      workflowExecutionId: identity.executionId,
-      issuer:              identity.issuer,
-      subject:             identity.subject,
-      authorityId:         identity.authorityId,
-      organizationId:      identity.organizationId,
-    });
-    const runId = typeof launched.id === 'string' && launched.id.length <= 300 && launched.id.trim() === launched.id ? launched.id : '';
-    if (!runId) throw new Error('Agents returned an invalid run id');
-    const recorded = await pool.query(
-      `UPDATE workflow_agent_runs SET agent_run_id=$7
-        WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }
-          AND occurrence=$8 AND (agent_run_id IS NULL OR agent_run_id=$7)
-        RETURNING agent_run_id`,
-      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
-    );
-    if (!recorded.rowCount) throw new Error('Agents returned a run outside the workflow node binding');
-    response.status(202).json({ id: runId, status: launched.status ?? 'starting' });
-  } catch (error) { next(error) }
-});
-
-app.post('/internal/agents/runs/status', async(request: AuthenticatedRequest, response, next) => {
-  try {
-    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
-    const identity = request.identity!;
-    const runId = typeof request.body?.runId === 'string' ? request.body.runId.trim() : '';
-    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId.trim() : '';
-    const occurrence = request.body?.occurrence;
-    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || !runId || runId.length > 300 || !nodeId || nodeId.length > 300) {
-      return response.status(400).json({ error: 'bounded runId and nodeId are required' });
-    }
-    const owned = await pool.query(
-      `SELECT 1 FROM workflow_agent_runs
-        WHERE execution_id=$5 AND node_id=$6 AND agent_run_id=$7 AND occurrence=$8 AND ${ identitySql }`,
-      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
-    );
-    if (!owned.rowCount) return response.status(404).json({ error: 'agent run not found' });
-    const run = await agentsJson('/internal/workflow-runs/status', {
-      runId,
-      workflowExecutionId: identity.executionId,
-      authorityId:         identity.authorityId,
-      organizationId:      identity.organizationId,
-    });
-    response.json({ id: runId, status: run.status, output: run.output, error: run.error });
-  } catch (error) { next(error) }
-});
-
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   if (error instanceof WorkflowConcurrencyLimitError) {
     response.status(409).json({ error: error.message, code: 'concurrency_limit', activeExecutions: error.activeExecutionIds });
@@ -1056,30 +779,18 @@ async function resumeDueRuns(): Promise<void> {
     `SELECT e.execution_id FROM workflow_executions e
      JOIN workflows w ON w.id=e.workflow_id
      WHERE e.status='suspended' AND e.resume_at IS NOT NULL AND e.resume_at <= NOW()
-       AND w.status <> 'archive'
+       AND w.location='desktop' AND w.status <> 'archive'
        AND e.owner_issuer IS NOT NULL AND e.owner_subject IS NOT NULL
      FOR UPDATE SKIP LOCKED`,
   )).rows;
   for (const row of due) {
     try {
       const current = (await pool.query(
-        `SELECT w.*,e.execution_id,e.workflow_id,e.wait_payload,e.delegated_grant_token,
-                e.delegated_grant_workflow_id,e.schedule_node_id
+        `SELECT w.*,e.execution_id,e.workflow_id,e.wait_payload
            FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id
           WHERE e.execution_id=$1`,
         [row.execution_id],
       )).rows[0];
-      if (config.mode === 'server') {
-        const delegatedFields = [current?.delegated_grant_token, current?.delegated_grant_workflow_id, current?.schedule_node_id];
-        if (delegatedFields.some(Boolean) && !delegatedFields.every(Boolean)) throw new Error('server continuation has an incomplete delegated schedule grant');
-        if (delegatedFields.every(Boolean)) {
-          await resolveScheduleGrant(
-            { ...current, id: current.delegated_grant_workflow_id },
-            current.schedule_node_id,
-            current.delegated_grant_token,
-          );
-        }
-      }
       if (current?.wait_payload?.nodeId) {
         await emitEvent(row.execution_id, current.workflow_id, 'node_completed', { output: 'wait elapsed' }, current.wait_payload.nodeId);
       }
@@ -1096,19 +807,6 @@ async function resumeDueRuns(): Promise<void> {
 }
 
 async function establishLegacyOwnership(): Promise<void> {
-  if (config.mode === 'server') {
-    const ambiguous = await pool.query(
-      `SELECT
-         (SELECT count(*) FROM workflows WHERE owner_issuer IS NULL OR owner_subject IS NULL) +
-         (SELECT count(*) FROM workflow_executions WHERE owner_issuer IS NULL OR owner_subject IS NULL) +
-         (SELECT count(*) FROM workflow_history WHERE owner_issuer IS NULL OR owner_subject IS NULL) AS count`,
-    );
-    if (Number(ambiguous.rows[0]?.count ?? 0) > 0) {
-      throw new Error('Server mode refuses ambiguous legacy workflow ownership; migrate these rows through authenticated desktop ownership first');
-    }
-    return;
-  }
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1142,15 +840,12 @@ async function establishLegacyOwnership(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
   await new StartupDatabaseWait({ name: 'workflow-manager' }).until('connect', () => pool.query('SELECT 1'));
   await migrate();
   await establishLegacyOwnership();
   const reconciled = await reconcileAbandonedRuns();
   if (reconciled.length) console.warn(`[workflow-manager] Settled ${ reconciled.length } abandoned workflow run(s) at startup`);
   const lockClient = await pool.connect();
-  // The scheduler lock lives on this one connection. If Postgres drops it the lock is gone
-  // too, so the leader exits and comes back through the restart policy to take it again.
   lockClient.on('error', (error) => {
     if (schedulerLeader) guard.fatal('scheduler lock connection lost', error);
     else console.warn('[workflow-manager] idle scheduler lock connection lost:', error.message);
@@ -1169,6 +864,4 @@ async function main(): Promise<void> {
   });
 }
 
-// A failed start (Postgres unreachable, migration error) must end the process so Docker
-// restarts it; leaving it running would keep a container with no API.
 main().catch(error => guard.fatal('startup failed', error));

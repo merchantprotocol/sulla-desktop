@@ -4798,7 +4798,7 @@
       "rules": {
         "long-file": 1193,
         "mutable-state": 3,
-        "raw-sql": 107
+        "raw-sql": 86
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
