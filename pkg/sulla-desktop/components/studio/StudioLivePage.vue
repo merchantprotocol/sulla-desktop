@@ -124,6 +124,7 @@
         <div v-if="killController.switchOn.value" class="kill-banner"><b>All agent launches paused</b><span>Turn off Kill All to allow new launches.</span></div>
         <p v-if="killController.notice.value" class="action-feedback ok-text">{{ killController.notice.value }}</p>
         <p v-if="killController.error.value" class="action-feedback error-text">{{ killController.error.value }}</p>
+        <p v-if="actionError && !messageTarget && !stopTarget" class="action-feedback error-text">{{ actionError }}</p>
         <p v-if="client.error.value" class="action-feedback error-text">Couldn't load live agents: {{ client.error.value }}</p>
         <div class="stats">
           <div class="card stat">
@@ -263,13 +264,14 @@
         </div>
       </div>
     </div>
-    <div v-if="killConfirmRoot" class="overlay" @click.self="killConfirmRoot = null"><div class="card modal compact"><h2>Kill this agent tree?</h2><p>The live agents in this root chat will stop and their results won't be delivered.</p><div class="modal-actions"><button class="btn" type="button" @click="killConfirmRoot = null">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="confirmKillRoot">Kill all</button></div></div></div>
-    <div v-if="confirmSwitchOn" class="overlay" @click.self="confirmSwitchOn = false"><div class="card modal compact"><h2>Kill every live agent?</h2><p>This pauses all agent launches and prevents results from waking parent chats.</p><div class="modal-actions"><button class="btn" type="button" @click="confirmSwitchOn = false">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="enableKillSwitch">Kill all and pause</button></div></div></div>
+    <div v-if="killConfirmRoot" class="overlay" @click.self="killConfirmRoot = null"><div class="card modal compact"><h2>Kill this agent tree?</h2><p>The live agents in this root chat will stop and their results won't be delivered.</p><p v-if="killController.error.value" class="error-text" role="alert">{{ killController.error.value }}</p><div class="modal-actions"><button class="btn" type="button" @click="killConfirmRoot = null">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="confirmKillRoot">Kill all</button></div></div></div>
+    <div v-if="confirmSwitchOn" class="overlay" @click.self="confirmSwitchOn = false"><div class="card modal compact"><h2>Kill every live agent?</h2><p>This pauses all agent launches and prevents results from waking parent chats.</p><p v-if="killController.error.value" class="error-text" role="alert">{{ killController.error.value }}</p><div class="modal-actions"><button class="btn" type="button" @click="confirmSwitchOn = false">Cancel</button><button class="btn danger" type="button" :disabled="killController.busy.value" @click="enableKillSwitch">Kill all and pause</button></div></div></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
 import StudioTopbar from './StudioTopbar.vue';
 
@@ -284,6 +286,7 @@ import type { AgentStateRow, AgentRowState } from '@pkg/shared/agentState/AgentS
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { LiveAgentsKillController } from './LiveAgentsKillController';
 import { AgentDetailFeed, type FeedDetail } from './live/AgentDetailFeed';
+import { LiveAgentOpener } from './live/LiveAgentOpener';
 
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
@@ -301,7 +304,7 @@ function groupName(tree: readonly AgentTreeNode[]): string { return tree[0]?.row
 function pendingKey(action: 'message' | 'stop', row: AgentStateRow): string { return `${ action }:${ action === 'stop' ? row.jobId : row.key }` }
 function isPending(action: 'message' | 'stop', row: AgentStateRow): boolean { return pending.value.has(pendingKey(action, row)) }
 function rootLiveCount(rootThreadId: string): number { return client.snapshot.value.rows.filter(row => row.rootThreadId === rootThreadId && liveStates.has(row.state)).length }
-function requestSwitchChange(event: Event): void { const on = (event.target as HTMLInputElement).checked; if (on) confirmSwitchOn.value = true; else void killController.setSwitch(false) }
+function requestSwitchChange(event: Event): void { const input = event.target as HTMLInputElement; const on = input.checked; input.checked = killController.switchOn.value; if (on) confirmSwitchOn.value = true; else void killController.setSwitch(false) }
 async function enableKillSwitch(): Promise<void> { if (await killController.setSwitch(true)) confirmSwitchOn.value = false }
 async function confirmKillRoot(): Promise<void> { const root = killConfirmRoot.value; if (root && await killController.killTree(root)) killConfirmRoot.value = null }
 const invoke = (channel: string, ...args: unknown[]) => (ipcRenderer as unknown as { invoke: (name: string, ...values: unknown[]) => Promise<unknown> }).invoke(channel, ...args);
@@ -312,12 +315,19 @@ const detailFeed = new AgentDetailFeed(invoke, document, setInterval, clearInter
   if (container && !snapshot.loading) void nextTick(() => { container.scrollTop = atBottom ? container.scrollHeight : scrollTop });
 });
 function selectRow(row: AgentStateRow): void { selected.value = row; selectedMissing.value = false; actionError.value = '' }
-async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
-async function stopRun(): Promise<void> { const row = stopTarget.value; if (!row || !actions.canStop(row)) return; const key = pendingKey('stop', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.stop(row); if (result.stale) { stopTarget.value = null; selected.value = null; return } if (!result.ok) { actionError.value = result.error || 'The run could not be stopped.'; return } stopTarget.value = null; selected.value = null } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
+async function sendMessage(row: AgentStateRow): Promise<void> { if (!message.value.trim() || !actions.canMessage(row)) return; const key = pendingKey('message', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.message(row, message.value.trim()); if (result.stale) { messageTarget.value = null; actionError.value = result.error || 'This run is no longer live, so the message was not delivered.'; return } if (!result.ok) { actionError.value = result.error || 'The message could not be delivered.'; return } message.value = ''; messageTarget.value = null } catch (error) { actionError.value = `The message could not be delivered: ${ error instanceof Error ? error.message : String(error) }` } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
+async function stopRun(): Promise<void> { const row = stopTarget.value; if (!row || !actions.canStop(row)) return; const key = pendingKey('stop', row); pending.value = new Set(pending.value).add(key); actionError.value = ''; try { const result = await actions.stop(row); if (result.stale) { stopTarget.value = null; selected.value = null; actionError.value = result.error || 'This run had already finished.'; return } if (!result.ok) { actionError.value = result.error || 'The run could not be stopped.'; return } stopTarget.value = null; selected.value = null } catch (error) { actionError.value = `The run could not be stopped: ${ error instanceof Error ? error.message : String(error) }` } finally { const next = new Set(pending.value); next.delete(key); pending.value = next } }
+const router = useRouter();
+const opener = new LiveAgentOpener(invoke, async(threadId, title) => {
+  const { restoreChatFromHistory } = await import('@pkg/pages/chat/services/historyRestore');
+  const tab = restoreChatFromHistory({ id: threadId, thread_id: threadId, type: 'graph', title });
+  if (!router) throw new Error('Navigation is not available here.');
+  await router.push(`/Browser/${ tab.id }`);
+});
 async function openRow(row: AgentStateRow): Promise<void> {
-  const parent = row.parentJobId === null || row.parentTaskIndex === null ? null : client.snapshot.value.rows.find(candidate => candidate.jobId === row.parentJobId && candidate.taskIndex === row.parentTaskIndex);
-  const parentThreadId = parent?.threadId ?? row.rootThreadId;
-  if (row.canOpen && parentThreadId) await ipcRenderer.invoke('agents:open-job-in-tab' as any, row.jobId, parentThreadId, row.taskIndex);
+  actionError.value = '';
+  const result = await opener.open(row, client!.snapshot.value.rows);
+  if (!result.ok) actionError.value = result.error || 'The run could not be opened.';
 }
 function statusClass(state: AgentRowState): string { return ['working', 'queued', 'parked', 'done'].includes(state) ? 'run' : ['failed', 'blocked', 'lost'].includes(state) ? 'bad' : 'warn' }
 function stopAttribution(row: AgentStateRow): string { return rowPresenter.stopAttribution(row) }

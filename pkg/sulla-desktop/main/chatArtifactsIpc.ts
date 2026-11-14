@@ -9,6 +9,7 @@ import { ChatArtifactModel } from '@pkg/agent/database/models/ChatArtifactModel'
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import { configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
 import { getChatArtifactFilesRegistration } from '@pkg/main/chatArtifactFilesRegistration';
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import type { ChatArtifactStatus } from '@pkg/shared/chatArtifacts';
 
 function text(value: unknown): string {
@@ -19,8 +20,10 @@ export function initChatArtifactsIpc(): void {
   configureChatArtifactFilesRegistration(getChatArtifactFilesRegistration());
   const service = getChatArtifactService();
 
+  // null = database not reachable yet: the renderer keeps what it shows and
+  // reloads on `database:available` (an empty list would close open artifacts).
   ipcMain.handle('chat-artifacts:list', (_event, input: { threadId: string; includeClosed?: boolean }) =>
-    service.list(text(input?.threadId), !!input?.includeClosed));
+    getDatabaseReadGuard().run('chat-artifacts:list', () => service.list(text(input?.threadId), !!input?.includeClosed), null));
 
   ipcMain.handle('chat-artifacts:get', (_event, input: { threadId: string; idOrName: string }) =>
     service.get(text(input?.threadId), text(input?.idOrName)));

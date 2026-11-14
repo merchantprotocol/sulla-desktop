@@ -32,6 +32,8 @@ import type {
 } from '@pkg/types/routines';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import { useDatabaseAvailableReload } from './useDatabaseAvailableReload';
+
 /**
  * Minimal row shape returned by the `workflow-db-list` IPC handler.
  * Mirrors WorkflowListRow in the model so the mapper is the only place
@@ -200,6 +202,9 @@ export function useRoutines() {
     return load();
   }
 
+  // workflow-db-list returns [] while the database is starting; refill when it is up.
+  useDatabaseAvailableReload(load, 'useRoutines');
+
   /**
    * Permanently delete a routine. Always reloads the list from the DB
    * after the call so the UI reflects the authoritative state, even if
@@ -245,15 +250,28 @@ export function useRoutines() {
    * the active set; the inverse puts it back as a draft so the user
    * can decide whether to promote to production.
    */
-  async function toggleArchive(id: string): Promise<void> {
+  async function toggleArchive(id: string): Promise<boolean> {
     const row = routines.value.find(r => r.id === id);
-    if (!row) return;
+    if (!row) {
+      error.value = `Workflow not found: ${ id }`;
+
+      return false;
+    }
     const nextStatus = row.status === 'archive' ? 'draft' : 'archive';
     try {
-      await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      const result = await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      if (!result?.success) {
+        throw new Error('The workflow status did not change');
+      }
       await load();
+
+      // load() deliberately captures IPC failures rather than throwing.
+      // Do not announce success when the refreshed list could not be read.
+      return error.value === null;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
+
+      return false;
     }
   }
 

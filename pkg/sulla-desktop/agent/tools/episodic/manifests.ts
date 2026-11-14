@@ -38,4 +38,14 @@ export const episodicToolManifests: ToolManifest[] = [
     },
     loader: () => import('./recall'),
   },
+  {
+    name:           'dream_recent_memories',
+    category:       'memory',
+    operationTypes: ['create'],
+    description:    'Run the Dreamer once: consolidate the memories written since the last dream (up to 24 h) in one batch. Skips when nothing new was written, when not due, or when a dream is already running.',
+    schemaDef:      {
+      force: { type: 'boolean', optional: true, description: 'Dream now even if the dreamerIntervalMinutes interval has not elapsed.' },
+    },
+    loader: () => import('./dream'),
+  },
 ];

@@ -47,6 +47,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     this.retryCount = Math.max(0, Math.min(10, count));
   }
 
+  /** Seconds to wait for a request when the caller passes no timeout. */
+  public setDefaultTimeoutSeconds(seconds: number): void {
+    this.defaultTimeoutMs = Math.max(1, seconds) * 1000;
+  }
+
   /**
    * Lightweight health check — verifies config presence.
    * Override in subclass for real ping if needed.

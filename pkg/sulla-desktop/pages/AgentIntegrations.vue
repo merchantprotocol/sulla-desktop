@@ -154,6 +154,13 @@
 
               <!-- Integration Grid -->
               <div class="flex-1 min-w-0">
+                <p
+                  v-if="loadError"
+                  role="alert"
+                  class="mb-4 text-sm text-[var(--status-error)]"
+                >
+                  {{ loadError }}
+                </p>
                 <!-- Search results: grouped by category -->
                 <template v-if="isSearching">
                   <div
@@ -440,6 +447,7 @@ function isImageIcon(icon?: string): boolean {
 const search = ref('');
 const activeCategory = ref<string | null>(null);
 const categoryLoading = ref(false);
+const loadError = ref('');
 
 const integrationsList = ref<Integration[]>([]);
 const mergedIntegrations = ref<Record<string, Integration>>({});
@@ -455,12 +463,6 @@ function buildCategoryCounts() {
   }
   allCategoryCounts.value = counts;
 }
-
-// Cache of already-loaded category data so we don't re-import
-const categoryCache = new Map<string, Record<string, Integration>>();
-
-// Whether the activepieces integration gate is connected
-const activepiecesEnabled = ref(false);
 
 // All known categories (static list so sidebar renders immediately)
 const allCategories = [
@@ -482,6 +484,8 @@ const allCategories = [
   'Design',
   'AI & ML',
   'Database',
+  'Paid Ads',
+  'Security',
 ];
 
 const categoriesWithCounts = computed(() => {
@@ -564,57 +568,17 @@ const searchResultsByCategory = computed(() => {
   return groups;
 });
 
-// Map category display name → file slug for dynamic imports
-const categoryFileMap: Record<string, string> = {
-  Communication:        'communication',
-  Productivity:         'productivity',
-  'Project Management': 'project_management',
-  'Developer Tools':    'developer_tools',
-  'CRM & Sales':        'crm_sales',
-  'Customer Support':   'customer_support',
-  Marketing:            'marketing',
-  Finance:              'finance',
-  'File Storage':       'file_storage',
-  'Social Media':       'social_media',
-  'E-Commerce':         'ecommerce',
-  'HR & Recruiting':    'hr_recruiting',
-  Analytics:            'analytics',
-  Automation:           'automation',
-  Design:               'design',
-  'AI & ML':            'ai_ml',
-  Database:             'database',
-  'AI Infrastructure':  'ai_infrastructure',
-};
-
-/** Lazy-load a category's integrations (activepieces if enabled) */
-async function loadCategory(categoryName: string): Promise<Record<string, Integration>> {
-  const cacheKey = `${ categoryName }:ap=${ activepiecesEnabled.value }`;
-  if (categoryCache.has(cacheKey)) {
-    return categoryCache.get(cacheKey)!;
-  }
-
-  const slug = categoryFileMap[categoryName];
-  if (!slug) return {};
-
+/**
+ * A category's integrations, from the same full catalog the sidebar counts
+ * come from, so the list always matches its count (the old per-file imports
+ * missed integrations defined outside their category's file).
+ */
+function loadCategory(categoryName: string): Record<string, Integration> {
   const result: Record<string, Integration> = {};
-
-  // Load native category file (always available — slack, github, AI providers, etc.)
-  try {
-    const nativeMod = await import(`@pkg/agent/integrations/native/${ slug }.ts`);
-    const nativeEntries: Record<string, Integration> = Object.values(nativeMod)[0] as any || {};
-    Object.assign(result, nativeEntries);
-  } catch { /* no native file for this category */ }
-
-  // Load activepieces-backed integrations only if AP extension is connected
-  if (activepiecesEnabled.value) {
-    try {
-      const apMod = await import(`@pkg/agent/integrations/activepieces/${ slug }.ts`);
-      const apEntries: Record<string, Integration> = Object.values(apMod)[0] as any || {};
-      Object.assign(result, apEntries);
-    } catch { /* no activepieces file for this category */ }
+  for (const [id, integration] of Object.entries(fullCatalog)) {
+    if (integration.category === categoryName) result[id] = integration;
   }
 
-  categoryCache.set(cacheKey, result);
   return result;
 }
 
@@ -640,8 +604,7 @@ async function loadPopularView() {
 async function loadCategoryView(categoryName: string) {
   categoryLoading.value = true;
   try {
-    const categoryData = await loadCategory(categoryName);
-    const merged: Record<string, Integration> = { ...categoryData };
+    const merged: Record<string, Integration> = { ...loadCategory(categoryName) };
     await hydrateConnectionStatus(merged);
     mergedIntegrations.value = merged;
     integrationsList.value = Object.values(merged);
@@ -668,10 +631,15 @@ async function hydrateConnectionStatus(entries: Record<string, Integration>) {
 
 // Watch category changes → lazy-load or return to popular
 watch(activeCategory, async(newCategory) => {
-  if (newCategory === null) {
-    await loadPopularView();
-  } else {
-    await loadCategoryView(newCategory);
+  loadError.value = '';
+  try {
+    if (newCategory === null) {
+      await loadPopularView();
+    } else {
+      await loadCategoryView(newCategory);
+    }
+  } catch (error) {
+    loadError.value = `Couldn't load integrations: ${ error instanceof Error ? error.message : String(error) }`;
   }
 });
 
@@ -714,18 +682,11 @@ onMounted(async() => {
   try {
     await integrationService.initialize();
 
-    // Check if activepieces gate is enabled
-    try {
-      const apStatus = await integrationService.getConnectionStatus('activepieces');
-      activepiecesEnabled.value = apStatus.connected;
-    } catch {
-      activepiecesEnabled.value = false;
-    }
-
     // Load the popular/default view
     await loadPopularView();
   } catch (error) {
     console.error('Failed to load integrations:', error);
+    loadError.value = `Couldn't load your integrations: ${ error instanceof Error ? error.message : String(error) }`;
   }
 });
 </script>

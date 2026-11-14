@@ -51,6 +51,8 @@ interface ServiceDefinition {
   requiresVault?:    boolean;
   /** If false, a failed start is terminal — no automatic retry is scheduled. */
   retry?:            boolean;
+  /** How long stop() may run before it is reported as timed out. Defaults to 5s. */
+  stopTimeoutMs?:    number;
 }
 
 type StopMode = 'full' | 'restart';
@@ -72,6 +74,7 @@ export interface LifecycleBeginEvent {
 }
 
 const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
+const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 
 export class ServiceLifecycleManager extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
@@ -97,7 +100,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     dependencies: string[],
     start: () => Promise<void>,
     stop: () => Promise<void>,
-    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean },
+    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number },
   ): void {
     if (this.services.has(name)) {
       console.warn(`[Lifecycle] Service '${ name }' already registered, overwriting`);
@@ -110,6 +113,7 @@ export class ServiceLifecycleManager extends EventEmitter {
       persistOnRestart: opts?.persistOnRestart ?? false,
       requiresVault:    opts?.requiresVault ?? false,
       retry:            opts?.retry ?? true,
+      stopTimeoutMs:    opts?.stopTimeoutMs,
     });
     if (opts?.alreadyStarted) {
       this.started.add(name);
@@ -123,7 +127,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     dependencies: string[],
     start: () => Promise<void>,
     stop: () => Promise<void>,
-    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean },
+    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number },
   ): void {
     if (this.services.has(name)) return;
     this.register(name, dependencies, start, stop, opts);
@@ -197,7 +201,7 @@ export class ServiceLifecycleManager extends EventEmitter {
       for (const svc of gated.reverse()) {
         this.cancelRetry(svc.name);
         if (this.started.delete(svc.name)) {
-          await this.stopWithTimeout(svc.name, svc.stop);
+          await this.stopWithTimeout(svc.name, svc.stop, svc.stopTimeoutMs);
         }
         this.transition(svc.name, 'waiting-on-unlock', 'Vault is locked');
       }
@@ -265,7 +269,7 @@ export class ServiceLifecycleManager extends EventEmitter {
         this.started.add(name);
         if (this._shuttingDown) {
           if (!(this._stopMode === 'restart' && svc.persistOnRestart)) {
-            await this.stopWithTimeout(name, svc.stop);
+            await this.stopWithTimeout(name, svc.stop, svc.stopTimeoutMs);
             this.started.delete(name);
             this.transition(name, 'pending', 'Stopped');
           }
@@ -363,7 +367,7 @@ export class ServiceLifecycleManager extends EventEmitter {
 
       if (!svc) continue;
       if (mode === 'restart' && svc.persistOnRestart) continue;
-      await this.stopWithTimeout(name, svc.stop);
+      await this.stopWithTimeout(name, svc.stop, svc.stopTimeoutMs);
       this.started.delete(name);
       this.transition(name, 'pending', 'Stopped');
       this.emit('service:stopped', name);
@@ -453,18 +457,22 @@ export class ServiceLifecycleManager extends EventEmitter {
   /**
    * Stop a single service with a timeout.
    */
-  private async stopWithTimeout(name: string, stopFn: () => Promise<void>, timeoutMs = 5000): Promise<void> {
+  private async stopWithTimeout(name: string, stopFn: () => Promise<void>, timeoutMs = DEFAULT_STOP_TIMEOUT_MS): Promise<void> {
     const t = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       await Promise.race([
         stopFn(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`${ name } stop timed out after ${ timeoutMs }ms`)), timeoutMs)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${ name } stop timed out after ${ timeoutMs }ms`)), timeoutMs);
+        }),
       ]);
       console.log(`[Lifecycle] '${ name }' stopped (${ Date.now() - t }ms)`);
     } catch (err: any) {
       console.warn(`[Lifecycle] '${ name }' stop failed/timed out (${ Date.now() - t }ms):`, err.message || err);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

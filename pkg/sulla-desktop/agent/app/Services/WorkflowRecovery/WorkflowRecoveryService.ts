@@ -52,8 +52,31 @@ export class WorkflowRecoveryService extends Service {
     if (this.state === 'stopped' || this.state === 'stopping') return;
     this.state = 'stopping';
     if (this.timer) { this.clock.clearTimeout(this.timer); this.timer = null; }
-    await this.gracefulShutdown();
-    this.state = 'stopped';
+    try {
+      await this.gracefulShutdown();
+    } catch (error) {
+      // The database is already gone (it crashed, or the VM went down first),
+      // so nothing can be marked suspended and retrying cannot help. Auto-restart
+      // executions left 'running' are picked up by findStaleExecutions once
+      // their lease expires. Any other failure is real and still propagates.
+      if (!WorkflowRecoveryService.isDatabaseUnreachable(error)) throw error;
+      console.warn(`[WorkflowRecovery] database unreachable on stop (${ (error as Error).message }); could not suspend running executions`);
+    } finally {
+      this.state = 'stopped';
+    }
+  }
+
+  private static readonly UNREACHABLE_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENOTCONN', 'EPIPE']);
+
+  /** True when the store could not be reached at all, as opposed to a query that failed. */
+  static isDatabaseUnreachable(error: unknown): boolean {
+    const nested = (error as { errors?: unknown } | null)?.errors;
+
+    // net.connect with several candidate addresses rejects with an AggregateError.
+    if (Array.isArray(nested) && nested.length) return nested.every(inner => WorkflowRecoveryService.isDatabaseUnreachable(inner));
+    const code = (error as { code?: unknown } | null)?.code;
+
+    return typeof code === 'string' && WorkflowRecoveryService.UNREACHABLE_CODES.has(code);
   }
 
   async gracefulShutdown(): Promise<void> { await this.executions.suspendAllRunning(); }

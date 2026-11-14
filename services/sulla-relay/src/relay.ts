@@ -9,6 +9,7 @@ import { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { bearerToken, tokenMatches, verifyDeviceToken } from './auth.js';
+import { RedisHealthProbe } from './RedisHealthProbe.js';
 
 import type { RelayConfig } from './config.js';
 import type {
@@ -79,6 +80,7 @@ export class RelayService {
   readonly webSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   private readonly redis:      Redis;
   private readonly subscriber: Redis;
+  private readonly redisHealth: RedisHealthProbe;
   private readonly devices = new Map<string, DeviceConnection>();
   private readonly pendingHttp = new Map<string, PendingHttp>();
   private readonly localRoutes = new Map<string, LocalRoute>();
@@ -86,6 +88,11 @@ export class RelayService {
   constructor(private readonly config: RelayConfig) {
     this.redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 2 });
     this.subscriber = this.redis.duplicate();
+    // ioredis reconnects (and resubscribes) with backoff; /healthz reports the outage meanwhile.
+    for (const [label, client] of [['command', this.redis], ['subscriber', this.subscriber]] as const) {
+      client.on('error', (error: Error) => console.warn(`[sulla-relay] Redis ${ label } connection error; reconnecting:`, error.message));
+    }
+    this.redisHealth = new RedisHealthProbe(this.redis);
   }
 
   async start(): Promise<void> {
@@ -107,11 +114,15 @@ export class RelayService {
     this.pendingHttp.clear();
     this.localRoutes.clear();
     this.webSockets.close();
-    await Promise.all([this.redis.quit(), this.subscriber.quit()]);
+    // Redis may already be closed (it is stopped alongside the relay); quit() then rejects
+    // with "Connection is closed". Fall back to a hard disconnect so shutdown always completes.
+    await Promise.all([this.redis, this.subscriber].map(async client => {
+      try { await client.quit() } catch { client.disconnect() }
+    }));
   }
 
   async healthy(): Promise<boolean> {
-    return await this.redis.ping() === 'PONG';
+    return await this.redisHealth.reachable();
   }
 
   upgrade(request: IncomingMessage, socket: any, head: Buffer): void {
@@ -133,9 +144,9 @@ export class RelayService {
   async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://relay');
     if (request.method === 'GET' && url.pathname === '/healthz') {
-      try { sendJson(response, 200, { ok: await this.healthy(), replicaId: this.config.replicaId, devices: this.devices.size }) } catch {
-        sendJson(response, 503, { ok: false, error: 'redis_unavailable' });
-      }
+      // 503 while Redis is unreachable so the container healthcheck (and Desktop) see it.
+      if (await this.healthy()) sendJson(response, 200, { ok: true, replicaId: this.config.replicaId, devices: this.devices.size });
+      else sendJson(response, 503, { ok: false, error: 'redis_unavailable' });
       return;
     }
     const match = /^\/v1\/devices\/([^/]+)\/tools\/([^/]+)\/([^/]+)$/.exec(url.pathname);

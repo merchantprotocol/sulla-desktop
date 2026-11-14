@@ -15,6 +15,10 @@
       :can-toggle-mode="canToggleMode"
     />
 
+    <div v-if="browserActionError" role="alert" class="mx-4 rounded border border-red-500 p-2 text-sm">
+      {{ browserActionError }}
+      <button type="button" class="ml-3 underline" @click="browserActionError = ''">Dismiss</button>
+    </div>
     <!-- Browser toolbar — always visible in welcome and browser modes -->
     <template v-if="tabMode === 'welcome' || tabMode === 'browser'">
       <div class="flex items-center gap-2 px-4 py-2 browser-toolbar">
@@ -210,7 +214,7 @@
         <AgentIntegrations
           v-else
           embedded
-          @switch-to-vault="onSetMode('vault')"
+          @back-to-vault="onSetMode('vault')"
           @create-account="onIntegrationsCreateAccount"
         />
       </div>
@@ -545,6 +549,7 @@ async function onNewBlankRoutine() {
     activeRoutineId.value = result.id;
   } catch (err) {
     console.error('[BrowserTab] Failed to create blank routine:', err);
+    browserActionError.value = `Couldn't create workflow: ${ err instanceof Error ? err.message : String(err) }`;
   }
 }
 
@@ -826,6 +831,7 @@ function setPageUrl(url: string) {
   if (!addressBarFocused.value) addressBarUrl.value = url;
 }
 const loading = ref(false);
+const browserActionError = ref('');
 const canGoBack = ref(false);
 const canGoForward = ref(false);
 const viewCreated = ref(false);
@@ -948,8 +954,14 @@ function ensureView(url: string) {
     // if it already exists, this navigates to `url`). Then apply the
     // chrome-derived bounds. Splitting creation from positioning means the
     // agent can open a tab before the UI knows where to render it.
-    ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds);
-    ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds);
+    void ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds).catch((err: unknown) => {
+      viewCreated.value = false;
+      loading.value = false;
+      browserActionError.value = `Couldn't open browser view: ${ err instanceof Error ? err.message : String(err) }`;
+    });
+    void ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds).catch((err: unknown) => {
+      browserActionError.value = `Couldn't position browser view: ${ err instanceof Error ? err.message : String(err) }`;
+    });
 
     // Do NOT call browser-tab-view:focus here. The `shouldShowView`
     // computed + watch below is the single source of truth; flipping
@@ -968,6 +980,7 @@ function ensureView(url: string) {
 }
 
 function navigate() {
+  browserActionError.value = '';
   const input = addressBarUrl.value.trim();
   if (!input) return;
 
@@ -988,7 +1001,10 @@ function navigate() {
   if (!viewCreated.value) {
     ensureView(url);
   } else {
-    ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
+    void ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url).catch((err: unknown) => {
+      loading.value = false;
+      browserActionError.value = `Couldn't navigate: ${ err instanceof Error ? err.message : String(err) }`;
+    });
   }
 }
 
@@ -1017,6 +1033,7 @@ const canBookmarkPage = computed(() => /^(https?|file):/i.test(pageUrl.value || 
 const currentBookmark = computed(() => findByUrl(pageUrl.value));
 
 async function onStarClick() {
+  browserActionError.value = '';
   promote();
   let id = currentBookmark.value?.id;
   if (!id) {
@@ -1025,6 +1042,7 @@ async function onStarClick() {
       id = created.id;
     } catch (err) {
       console.error('[BrowserTab] Failed to bookmark page:', err);
+      browserActionError.value = `Couldn't bookmark this page: ${ err instanceof Error ? err.message : String(err) }`;
 
       return;
     }
@@ -1033,20 +1051,36 @@ async function onStarClick() {
 }
 
 function goBack() {
-  ipcRenderer.invoke('browser-tab-view:go-back', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:go-back', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function goForward() {
-  ipcRenderer.invoke('browser-tab-view:go-forward', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:go-forward', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function reload() {
+  browserActionError.value = '';
   loading.value = true;
-  ipcRenderer.invoke('browser-tab-view:reload', props.tabId);
+  void ipcRenderer.invoke('browser-tab-view:reload', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function stop() {
-  ipcRenderer.invoke('browser-tab-view:stop', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:stop', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
   loading.value = false;
 }
 

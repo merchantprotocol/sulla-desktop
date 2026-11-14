@@ -8,6 +8,7 @@ import { FunctionDefinitionModel, IntegrationDefinitionModel } from '../agent/da
 import { EXTENSION_HOOKS, ExtensionHookName, listExtensionHookAuditEvents, setExtensionHookGrant } from '../agent/extensions/HookRegistry';
 import { extensionUI, ExtensionUISlot } from '../agent/extensions/ExtensionUIRegistry';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
+import { getDatabaseReadGuard } from './DatabaseReadGuard';
 
 async function listPermissions() {
   const [functions, integrations, grants, integrationGrants, hiddenRailItems] = await Promise.all([
@@ -44,7 +45,7 @@ export function initExtensionUiIpc(): void {
     if (event.outcome === 'permission_denied') for (const win of BrowserWindow.getAllWindows()) win.webContents.send('extension-permission-needed', event);
   }));
   ipcMain.handle('extensions-ui:list', (_event, slot?: ExtensionUISlot) => extensionUI.list(slot));
-  ipcMain.handle('extension-permissions:list', listPermissions);
+  ipcMain.handle('extension-permissions:list', () => getDatabaseReadGuard().run('extension-permissions:list', listPermissions, []));
   ipcMain.handle('extension-permissions:audit', () => listExtensionHookAuditEvents());
   ipcMain.handle('extension-permissions:set-hook', async(_event, input: { extensionId: string; hook: ExtensionHookName; granted: boolean }) => {
     if (!(input.hook in EXTENSION_HOOKS)) throw new Error(`Unknown extension hook: ${ input.hook }`);

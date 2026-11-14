@@ -33,6 +33,7 @@ export class FakeEnrollmentCloud {
   bundleReply: FakeCloudReply = { status: 200, body: { bundle: { epoch: 3, mac: 'bundle-mac' } } };
   recordsReply: FakeCloudReply = { status: 200, body: { records: [{ id: 'r1' }], head: { mac: 'head-mac', vaultId: '' } } };
   respondReply: FakeCloudReply = { status: 200, body: { ok: true } };
+  denyReply: FakeCloudReply = { status: 200, body: { ok: true, denied: true } };
   private nextRequest = 1;
 
   constructor(readonly vaultId: string, readonly epoch = 3) {
@@ -64,6 +65,7 @@ export class FakeEnrollmentCloud {
     if (pathname.endsWith('/consume')) return this.consumeReplies.shift() ?? { status: 409, body: { error: 'request_not_found_or_consumed' } };
     if (pathname.endsWith('/confirm')) return this.confirmReply;
     if (pathname.endsWith('/respond')) return this.respondReply;
+    if (pathname.endsWith('/deny') && method === 'POST') return this.denyReply;
     if (pathname === `${ base }/bundle`) return this.bundleReply;
     if (pathname === `${ base }/records`) return this.recordsReply;
     return { status: 404, body: { error: 'not_found' } };

@@ -121,7 +121,18 @@ export class ExtensionManagerImpl implements ExtensionManager {
     });
 
     this.setMainListener('extensions/spawn/streaming', (event, options) => {
-      this.execStreaming(event, options, this.spawnDockerCli(event, options));
+      let process: ReadableChildProcess;
+
+      try {
+        process = this.spawnDockerCli(event, options);
+      } catch (error) {
+        // A send() listener has no reply; report it so logs and the shell don't wait forever.
+        console.error(`Could not run docker ${ options?.command?.[0] ?? '' }:`, error);
+        event.senderFrame?.send?.('extensions/spawn/error', options?.execId, { message: (error as Error)?.message ?? String(error) } as any);
+
+        return;
+      }
+      this.execStreaming(event, options, process);
     });
 
     this.setMainHandler('extensions/spawn/blocking', (event, options) => {
