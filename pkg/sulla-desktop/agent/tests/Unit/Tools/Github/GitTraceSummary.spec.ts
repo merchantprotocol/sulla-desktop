@@ -15,12 +15,14 @@ describe('GitTraceSummary', () => {
       '> Cookie: session=private',
       '< HTTP/2 200',
       '< content-type: application/x-git-upload-pack-advertisement',
-      '== Info: transfer closed after 12345 bytes received',
+      '== Info: transfer closed with outstanding data remaining',
+      'curl: (18) 12345 bytes of body are still expected',
     ].join('\n');
     const summary = GitTraceSummary.redact(trace, `http://host.sulla.internal:4123/${ token }/acme/repo.git`);
     expect(summary).toContain('HTTP/2 200');
     expect(summary).toContain('content-type');
     expect(summary).toContain('12345 bytes');
+    expect(summary).toContain('outstanding data remaining');
     expect(summary).not.toContain(token);
     expect(summary).not.toContain('abc123');
     expect(summary).not.toContain('session=private');

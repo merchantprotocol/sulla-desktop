@@ -18,7 +18,7 @@ export class GitTraceSummary {
   static redact(trace: string, brokerUrl?: string): string {
     const safe = this.redactCredentials(trace, brokerUrl);
     const relevant = safe.split(/\r?\n/).filter(line =>
-      /(?:HTTP\/[0-9.]+|HTTP\/2|(?:^|\s)[<>] (?:HTTP\/|(?:content-type|content-length|content-encoding|server|date|transfer-encoding|accept-ranges|etag):)|(?:Info|Trace):.*(?:connected|connect|SSL|TLS|time|bytes|recv|receive|send|upload|download|server|HTTP))/i.test(line),
+      /(?:HTTP\/[0-9.]+|HTTP\/2|(?:^|\s)[<>] (?:HTTP\/|(?:content-type|content-length|content-encoding|server|date|transfer-encoding|accept-ranges|etag):)|(?:Info|Trace):.*(?:connected|connect|SSL|TLS|time|bytes|recv|receive|send|upload|download|server|HTTP|closed|remaining)|curl: \(\d+\)|early EOF|still expected|transfer closed)/i.test(line),
     );
     return relevant.slice(-80).join('\n').slice(0, 12_000);
   }
