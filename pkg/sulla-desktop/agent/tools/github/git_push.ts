@@ -9,6 +9,27 @@ import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
 
+class GitPushNameValidator {
+  static isBranchName(value: unknown): value is string {
+    return typeof value === 'string'
+      && value.length > 0
+      && value.length <= 255
+      && /^[A-Za-z0-9._/-]+$/.test(value)
+      && !value.startsWith('-')
+      && !value.includes('..')
+      && !value.includes('//')
+      && !value.endsWith('/')
+      && !value.toLowerCase().endsWith('.lock');
+  }
+
+  static isRemoteName(value: unknown): value is string {
+    return typeof value === 'string'
+      && value.length > 0
+      && /^[A-Za-z0-9._-]+$/.test(value)
+      && !value.startsWith('-');
+  }
+}
+
 /**
  * Git Push Tool - Push commits to a remote repository.
  * Runs inside the Sulla VM for filesystem consistency with exec tool.
@@ -26,6 +47,9 @@ export class GitPushWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
+    if (!GitPushNameValidator.isRemoteName(remote) || (branch !== undefined && !GitPushNameValidator.isBranchName(branch))) {
+      return { successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' };
+    }
     const localAuthority = usesContainerVaultAuthority();
     if (localAuthority && !this.executionContext) {
       return { successBoolean: false, responseString: 'Git push failed: github.git requires a verified tool execution context' };
@@ -58,6 +82,9 @@ export class GitPushWorker extends BaseTool {
           { runInGuest: true, timeoutMs: 30_000 },
         );
         targetBranch = branchResult.stdout.trim();
+      }
+      if (!GitPushNameValidator.isBranchName(targetBranch)) {
+        return { successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' };
       }
 
       // Fetch PAT from vault and build an authenticated (token-free-on-the-wire)

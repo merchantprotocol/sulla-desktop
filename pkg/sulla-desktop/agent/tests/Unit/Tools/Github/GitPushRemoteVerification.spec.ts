@@ -17,7 +17,7 @@ const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as an
   if (command.includes('rev-parse --abbrev-ref')) return { stdout: 'main', stderr: '', exitCode: 0 };
   if (command.includes('remote get-url')) return { stdout: 'https://github.com/org/repo.git', stderr: '', exitCode: 0 };
   if (command.includes('rev-parse HEAD')) return { stdout: `${ localHead }\n`, stderr: '', exitCode: 0 };
-  if (command.includes('ls-remote')) return { stdout: remoteHead ? `${ remoteHead }\trefs/heads/main\n` : '', stderr: '', exitCode: 0 };
+  if (command.includes('ls-remote')) return { stdout: remoteHead ? `${ remoteHead }\trefs/heads/${ command.match(/refs\/heads\/([^\s]+)/)?.[1] || 'main' }\n` : '', stderr: '', exitCode: 0 };
   if (command.includes(' push ')) return { stdout: '', stderr: pushExitCode ? 'transport failed' : '', exitCode: pushExitCode };
   return { stdout: '', stderr: `unexpected command: ${ command }`, exitCode: 1 };
 });
@@ -61,4 +61,40 @@ describe('GitPushWorker remote verification', () => {
     expect(result.successBoolean).toBe(true);
     expect(result.responseString).toContain('reported an error');
   });
+
+  it.each(['a;b', '$(id)', '`id`', 'a b', '-f', 'a..b'])(
+    'rejects unsafe branch name %s before invoking git', async(branch) => {
+      // risk: command injection — caller-controlled branch names must never reach shell command construction.
+      const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch });
+      expect(result).toEqual({ successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' });
+      expect(runCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects unsafe remote names before invoking git', async() => {
+    // risk: command injection — caller-controlled remote names must not reach git command arguments.
+    const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', remote: 'origin;id' });
+    expect(result).toEqual({ successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsafe current branch before constructing push commands', async() => {
+    // risk: command injection — repository-derived branch names must pass the same shell-safety boundary.
+    (runCommand as any).mockImplementation(async(command: string) => command.includes('rev-parse --abbrev-ref')
+      ? { stdout: 'bad;name', stderr: '', exitCode: 0 }
+      : { stdout: '/repo', stderr: '', exitCode: 0 });
+    const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo' });
+    expect(result).toEqual({ successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' });
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['fix/f6-reliability-port', 'feature/a_b.c', 'main'])(
+    'continues to push valid branch name %s', async(branch) => {
+      // risk: availability — safe, conventional branch names must retain push behavior.
+      mockCommands(localHead);
+      const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch });
+      expect(result.successBoolean).toBe(true);
+      expect(runCommand).toHaveBeenCalledWith(expect.stringContaining(`push origin ${ branch }`), [], expect.any(Object));
+    },
+  );
 });
