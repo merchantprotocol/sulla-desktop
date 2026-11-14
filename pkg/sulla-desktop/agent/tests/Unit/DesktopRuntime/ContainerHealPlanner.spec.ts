@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ContainerHealPlanner, HEALTHY_RESET_MS, MAX_AUTO_RECREATES, STATEFUL_GRACE_MS, STATELESS_GRACE_MS,
+  ContainerHealPlanner, HEALTHY_RESET_MS, MAX_AUTO_RECREATES, STATEFUL_GRACE_MS, STATELESS_GRACE_MS, UNHEALTHY_TICKS_BEFORE_RESTART,
   type ManagedContainerRow, UserStoppedContainers,
 } from '@pkg/backend/sullaContainerHealth';
 
@@ -30,7 +30,7 @@ describe('ContainerHealPlanner', () => {
     const unhealthy = [...healthyDeps, row({ health: 'unhealthy', runningForMs: 2 * MIN })];
     const kinds: string[] = [];
 
-    for (let tick = 0; tick < MAX_AUTO_RECREATES + 3; tick++) {
+    for (let tick = 0; tick < MAX_AUTO_RECREATES + UNHEALTHY_TICKS_BEFORE_RESTART + 1; tick++) {
       kinds.push(...planner.plan(unhealthy).map(action => action.kind));
     }
 
@@ -45,20 +45,23 @@ describe('ContainerHealPlanner', () => {
     expect(planner.plan([...healthyDeps, row({
       container: 'sulla_files', service: 'sulla_files', health: 'unhealthy', runningForMs: STATEFUL_GRACE_MS - 1,
     })])).toEqual([]);
-    expect(planner.plan([...healthyDeps, row({
-      container: 'sulla_files', service: 'sulla_files', health: 'unhealthy', runningForMs: STATEFUL_GRACE_MS,
-    })]).map(action => action.kind)).toEqual(['restart']);
+    const files = [...healthyDeps, row({ container: 'sulla_files', service: 'sulla_files', health: 'unhealthy', runningForMs: STATEFUL_GRACE_MS })];
+    expect(planner.plan(files)).toEqual([]);
+    expect(planner.plan(files)).toEqual([]);
+    expect(planner.plan(files).map(action => action.kind)).toEqual(['restart']);
   });
 
   // risk: cascading restarts — dependents are not touched while Postgres or Redis is down
   it('heals only the dependency while postgres is unhealthy', () => {
     const planner = new ContainerHealPlanner();
-    const actions = planner.plan([
+    const rows = [
       row({ container: 'sulla_postgres', service: 'postgres', health: 'unhealthy', runningForMs: STATEFUL_GRACE_MS }),
       row({ container: 'sulla_redis', service: 'redis' }),
       row({ health: 'unhealthy' }),
       row({ container: 'sulla_files_fuse', service: 'sulla_files_fuse', health: 'unhealthy' }),
-    ]);
+    ];
+    planner.plan(rows); planner.plan(rows);
+    const actions = planner.plan(rows);
 
     expect(actions.map(action => action.container)).toEqual(['sulla_postgres']);
   });
@@ -68,6 +71,8 @@ describe('ContainerHealPlanner', () => {
     const tools = row({ health: 'unhealthy' });
 
     expect(planner.plan([healthyDeps[0], row({ container: 'sulla_redis', service: 'redis', health: 'starting' }), tools])).toEqual([]);
+    planner.plan([...healthyDeps, tools]);
+    expect(planner.plan([...healthyDeps, tools])).toEqual([]);
     expect(planner.plan([...healthyDeps, tools]).map(action => action.container)).toEqual(['sulla_tools']);
   });
 
@@ -95,18 +100,23 @@ describe('ContainerHealPlanner', () => {
   it('starts a fresh incident after the container stays healthy long enough', () => {
     const planner = new ContainerHealPlanner();
 
-    planner.plan([...healthyDeps, row({ health: 'unhealthy' })]);
+    const unhealthy = [...healthyDeps, row({ health: 'unhealthy' })];
+    planner.plan(unhealthy); planner.plan(unhealthy); planner.plan(unhealthy);
     planner.plan([...healthyDeps, row({ health: 'healthy', runningForMs: HEALTHY_RESET_MS - 1 })]);
     expect(planner.attempts('sulla_tools')).toBe(1);
     planner.plan([...healthyDeps, row({ health: 'healthy', runningForMs: HEALTHY_RESET_MS })]);
     expect(planner.attempts('sulla_tools')).toBe(0);
-    expect(planner.plan([...healthyDeps, row({ health: 'unhealthy' })]).map(action => action.kind)).toEqual(['restart']);
+    const renewed = [...healthyDeps, row({ health: 'unhealthy' })];
+    planner.plan(renewed); planner.plan(renewed);
+    expect(planner.plan(renewed).map(action => action.kind)).toEqual(['restart']);
   });
 
   it('marks containers Desktop runs directly so they are repaired outside compose', () => {
     const planner = new ContainerHealPlanner();
     const relay = row({ container: 'sulla-host-relay', service: 'sulla-host-relay', managedBy: 'docker', health: 'unhealthy' });
 
+    expect(planner.plan([...healthyDeps, relay])).toEqual([]);
+    expect(planner.plan([...healthyDeps, relay])).toEqual([]);
     expect(planner.plan([...healthyDeps, relay])[0]).toMatchObject({ managedBy: 'docker', kind: 'restart', attempt: 1 });
     expect(planner.plan([...healthyDeps, relay])[0]).toMatchObject({ managedBy: 'docker', kind: 'recreate', attempt: 2 });
   });
