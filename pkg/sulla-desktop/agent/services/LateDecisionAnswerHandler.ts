@@ -25,7 +25,7 @@ export interface LateAnswerReceipt {
 /** Delivers a post-timeout question answer exactly once without reviving the parked tool. */
 export class LateDecisionAnswerHandler {
   constructor(
-    private readonly decisions: Pick<PendingDecisionRepository, 'claimLateAnswer'>,
+    private readonly decisions: Pick<PendingDecisionRepository, 'claimLateAnswer' | 'releaseLateAnswer'>,
     private readonly conversations: LateAnswerConversationRepository,
     private readonly sender: LateAnswerMessageSender,
   ) {}
@@ -42,16 +42,26 @@ export class LateDecisionAnswerHandler {
       return { settled: true, conversationId: record.conversationId, late: true, reason: 'answered late — sent as a new message' };
     }
     const answerText = answers.map(answer => `${ answer.question }: ${ answer.selected.join(', ') }`).join('; ');
-    await this.sender.send(record.channel, {
-      type: 'assistant_message',
-      data: {
-        content: `Late answer to ${ record.title }: ${ answerText }`,
-        role: 'user',
-        kind: 'notice',
-        thread_id: record.conversationId,
-        timestamp: Date.now(),
-      },
-    });
+    try {
+      const delivered = await this.sender.send(record.channel, {
+        type: 'assistant_message',
+        data: {
+          content: `Late answer to ${ record.title }: ${ answerText }`,
+          role: 'user',
+          kind: 'notice',
+          thread_id: record.conversationId,
+          timestamp: Date.now(),
+        },
+      });
+      if (!delivered) {
+        throw new Error('Late answer message was not accepted for delivery.');
+      }
+    } catch (error) {
+      // A failed sender must not leave the durable once-only marker set.
+      // Release is conditional in storage so a later retry can safely claim it.
+      await this.decisions.releaseLateAnswer(record.id);
+      throw error;
+    }
     return { settled: true, conversationId: record.conversationId, late: true, reason: 'answered late — sent as a new message' };
   }
 

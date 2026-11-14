@@ -19,17 +19,42 @@ describe('LateDecisionAnswerHandler', () => {
     // risk: user communication — a timeout answer must not be silently lost or duplicated.
     const claim = vi.fn().mockResolvedValue(true);
     const send = vi.fn().mockResolvedValue(true);
-    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: claim }, { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) }, { send });
+    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: claim, releaseLateAnswer: vi.fn() }, { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) }, { send });
     await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true, reason: 'answered late — sent as a new message' });
     expect(claim).toHaveBeenCalledWith('question-1');
     expect(send).toHaveBeenCalledWith('sulla-desktop', expect.objectContaining({ data: expect.objectContaining({ content: 'Late answer to Pick a color: Color?: Blue', thread_id: 'thread-1' }) }));
+  });
+
+
+  it('releases the once-only claim when the sender refuses delivery', async() => {
+    // risk: user communication — false delivery must remain retryable, not appear delivered.
+    const releaseLateAnswer = vi.fn().mockResolvedValue(undefined);
+    const handler = new LateDecisionAnswerHandler(
+      { claimLateAnswer: vi.fn().mockResolvedValue(true), releaseLateAnswer },
+      { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) },
+      { send: vi.fn().mockResolvedValue(false) },
+    );
+    await expect(handler.handle(record, response)).rejects.toThrow('not accepted for delivery');
+    expect(releaseLateAnswer).toHaveBeenCalledWith('question-1');
+  });
+
+  it('releases the once-only claim when the sender throws', async() => {
+    // risk: user communication — transient sender failures must not permanently discard an answer.
+    const releaseLateAnswer = vi.fn().mockResolvedValue(undefined);
+    const handler = new LateDecisionAnswerHandler(
+      { claimLateAnswer: vi.fn().mockResolvedValue(true), releaseLateAnswer },
+      { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) },
+      { send: vi.fn().mockRejectedValue(new Error('offline')) },
+    );
+    await expect(handler.handle(record, response)).rejects.toThrow('offline');
+    expect(releaseLateAnswer).toHaveBeenCalledWith('question-1');
   });
 
   it('closes the card when the original thread is gone', async() => {
     // risk: data correctness — never emit a late answer into a replacement or unrelated thread.
     const claim = vi.fn();
     const send = vi.fn();
-    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: claim }, { find: vi.fn().mockResolvedValue(null) }, { send });
+    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: claim, releaseLateAnswer: vi.fn() }, { find: vi.fn().mockResolvedValue(null) }, { send });
     await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true, closed: true });
     expect(claim).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
@@ -38,7 +63,7 @@ describe('LateDecisionAnswerHandler', () => {
   it('does not send a duplicate when another click already claimed delivery', async() => {
     // risk: duplicate messaging — double-clicks must produce at most one new message.
     const send = vi.fn();
-    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: vi.fn().mockResolvedValue(false) }, { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) }, { send });
+    const handler = new LateDecisionAnswerHandler({ claimLateAnswer: vi.fn().mockResolvedValue(false), releaseLateAnswer: vi.fn() }, { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) }, { send });
     await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true });
     expect(send).not.toHaveBeenCalled();
   });

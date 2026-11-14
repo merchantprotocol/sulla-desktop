@@ -129,6 +129,29 @@ export class GitPushWorker extends BaseTool {
         })()
         : await runCommand(cmd, [], { runInGuest: true, timeoutMs: 120_000 });
 
+      // Verify the target ref rather than trusting a transport exit code: a
+      // broker can fail after the remote accepted the push, or report success
+      // without updating it.
+      if (!tags) {
+        const localHead = await runCommand(`git -C "${ repoRoot }" rev-parse HEAD`, [], { runInGuest: true, timeoutMs: 10_000 });
+        const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
+        let remoteHead = { stdout: '', stderr: '', exitCode: 1 };
+        if (remoteUrl.exitCode === 0) {
+          const verify = (proxyUrl: string) => runCommand(`git -C "${ repoRoot }" ls-remote "${ proxyUrl }" refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
+          remoteHead = localAuthority
+            ? await withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), verify)
+            : await runCommand(`git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
+        }
+        const expectedHead = localHead.stdout.trim();
+        const actualHead = remoteHead.exitCode === 0 ? remoteHead.stdout.trim().split(/\s+/)[0] : '';
+        if (localHead.exitCode === 0 && remoteHead.exitCode === 0 && actualHead === expectedHead) {
+          const note = result.exitCode === 0 ? `Pushed to ${ remote }/${ targetBranch }` : `Push reported an error, but ${ remote }/${ targetBranch } now points to local HEAD ${ expectedHead }`;
+          return { successBoolean: true, responseString: redact(`${ note }.`, token) };
+        }
+        const failure = result.stderr || result.stdout || 'remote ref did not match local HEAD';
+        return { successBoolean: false, responseString: redact(`Git push failed: ${ failure } (remote ref did not match local HEAD)`, token) };
+      }
+
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: redact(`Git push failed: ${ result.stderr || result.stdout }`, token) };
       }

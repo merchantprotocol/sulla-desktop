@@ -28,6 +28,13 @@ export class PendingDecisionRepository {
     return rows.length > 0;
   }
 
+  async releaseLateAnswer(id: string): Promise<void> {
+    await this.client.query(`UPDATE human_decisions
+      SET record = record #- '{payload,lateAnswerDelivered}', updated_at = NOW()
+      WHERE id = $1 AND status = 'expired'
+        AND COALESCE((record->'payload'->>'lateAnswerDelivered')::boolean, false) = true`, [id]);
+  }
+
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
       WHERE status IN ('pending', 'deferred') AND session_id=$1 AND record->>'kind'='approval'
