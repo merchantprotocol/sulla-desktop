@@ -1,3 +1,7 @@
+// Sulla Desktop · https://sulladesktop.com.
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 export interface ListingPageResponse {
   setHeader(name:string,value:string):unknown;
 }
@@ -5,6 +9,9 @@ export interface ListingPageResponse {
 export class ListingPage {
   static readonly defaultSize=250;
   static readonly maxSize=500;
+  static readonly legacyMaxRows=20_000;
+
+  static isRequested(limitValue:unknown,cursorValue:unknown):boolean { return limitValue !== undefined || cursorValue !== undefined }
 
   private constructor(readonly limit:number, readonly after:string) {}
 
