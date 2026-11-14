@@ -23,6 +23,10 @@ export class FilesRequestPublishWorker extends FilesTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     if (!input.file_id || !input.version_id) throw new Error('file_id and version_id are required');
+    // Check the calling conversation before creating a Files publish request,
+    // so a refused call never leaves an orphan request behind.
+    const callerMetadata = (this.state as any)?.metadata ?? {};
+    if (!callerMetadata.threadId) throw new Error('Approval requires the original conversation. No action was executed.');
     const draft = await this.containerJson<{ file?: { path?: string }; content_base64?: string }>(`/v1/agent-files/${ encodeURIComponent(input.file_id) }?versionId=${ encodeURIComponent(input.version_id) }`, input);
     const path = draft.file?.path ?? `file ${ input.file_id }`;
     const match = /^Sulla\/Use Cases\/(agents|skills|workflows|functions|recipes)\/([^/]+)/.exec(path);
