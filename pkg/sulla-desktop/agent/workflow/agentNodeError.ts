@@ -42,3 +42,14 @@ export function detectAgentNodeError(
 
   return null;
 }
+
+// A turn that died posts "Agent error: …" after its graph has already
+// unwound. Treating that bubble as activity left the chat "running" forever,
+// which also paused the chat heartbeat that should wake it back up.
+export function isTerminalRunError(msg: { type?: string; data?: unknown }): boolean {
+  if (msg.type !== 'assistant_message') return false;
+  const data = msg.data as any;
+  const content = typeof data === 'string' ? data : data?.content;
+  if (data && typeof data === 'object' && data.runEnded === true) return true;
+  return typeof content === 'string' && content.trimStart().startsWith('Agent error:');
+}
