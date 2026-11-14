@@ -15,7 +15,7 @@ export class FilesListWorker extends FilesTool {
     if (!input.collection_id && input.path) {
       const resolved = await this.resolvePath(input);
       if (!resolved) throw new Error('That Sulla Files path was not found');
-      input = { ...input, collection_id: resolved.collectionId, path: resolved.kind === 'file' ? (resolved.folderPath ?? '') : (resolved.folderPath ?? '') };
+      input = { ...input, collection_id: resolved.collectionId, path: resolved.folderPath ?? '' };
     }
     const suppliedPath = typeof input.path === 'string' ? input.path.replaceAll('\\', '/').replace(/^\/mnt\/sulla-files\//, '').replace(/^\/+/, '') : '';
     const collectionId = input.collection_id || (await this.containerJson<any[]>('/v1/collections', input)).find(collection => !collection.systemArea && (collection.is_default || collection.explorer_path === ''))?.id;
