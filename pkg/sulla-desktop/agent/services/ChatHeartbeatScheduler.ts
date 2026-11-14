@@ -11,6 +11,10 @@ import {
 } from '@pkg/shared/chatHeartbeat';
 
 const BUSY_RETRY_MS = 1_000;
+// How often a paused heartbeat re-checks a renderer "busy" claim against the
+// backend, and how long the two may disagree before the claim is dropped.
+export const STALE_BUSY_CHECK_MS = 15_000;
+export const STALE_BUSY_LIMIT_MS = 60_000;
 
 export interface ChatHeartbeatRegistration {
   threadId:  string;
@@ -30,6 +34,8 @@ interface Runtime extends ChatHeartbeatRegistration {
   nextAt:     number | null;
   timer:      ReturnType<typeof setTimeout> | null;
   delivering: boolean;
+  watchdog:   ReturnType<typeof setTimeout> | null;
+  idleSince:  number | null;
 }
 
 export interface ChatHeartbeatSchedulerDeps {
@@ -56,6 +62,7 @@ export class ChatHeartbeatScheduler {
   register(input: ChatHeartbeatRegistration): ChatHeartbeatStatus {
     const existing = this.runtimes.get(input.threadId);
     if (existing?.timer) this.clearTimer(existing.timer);
+    if (existing?.watchdog) this.clearTimer(existing.watchdog);
     const runtime: Runtime = {
       ...input,
       config:     existing?.config ?? normalizeChatHeartbeatConfig(input.config),
@@ -65,6 +72,8 @@ export class ChatHeartbeatScheduler {
       nextAt:     null,
       timer:      null,
       delivering: false,
+      watchdog:   null,
+      idleSince:  null,
     };
     this.runtimes.set(input.threadId, runtime);
     this.deps.setActive?.(input.threadId, runtime.config.intervalMinutes !== null);
@@ -76,6 +85,7 @@ export class ChatHeartbeatScheduler {
   unregister(threadId: string): void {
     const runtime = this.runtimes.get(threadId);
     if (runtime?.timer) this.clearTimer(runtime.timer);
+    if (runtime?.watchdog) this.clearTimer(runtime.watchdog);
     this.runtimes.delete(threadId);
     this.deps.setActive?.(threadId, false);
   }
@@ -101,7 +111,10 @@ export class ChatHeartbeatScheduler {
     if (!runtime) return null;
     runtime.busy = busy;
     if (busy) this.pause(runtime);
-    else if (runtime.paused) this.resume(runtime);
+    else {
+      this.stopWatchdog(runtime);
+      if (runtime.paused) this.resume(runtime);
+    }
     return this.emitStatus(runtime);
   }
 
@@ -118,6 +131,46 @@ export class ChatHeartbeatScheduler {
     runtime.nextAt = null;
     runtime.pending = false;
     runtime.paused = runtime.config.intervalMinutes !== null;
+    if (runtime.busy && runtime.paused) this.startWatchdog(runtime);
+  }
+
+  // A turn that dies on an error can leave the renderer claiming "busy"
+  // forever, which would pause the heartbeat for good — exactly when the
+  // chat most needs waking. The backend graph is the source of truth: once
+  // it has had no live turn for STALE_BUSY_LIMIT_MS, drop the stale claim.
+  private startWatchdog(runtime: Runtime): void {
+    if (runtime.watchdog) return;
+    runtime.idleSince = null;
+    const check = () => {
+      runtime.watchdog = null;
+      if (!this.runtimes.has(runtime.threadId) || !runtime.busy || runtime.config.intervalMinutes === null) {
+        runtime.idleSince = null;
+        return;
+      }
+      if (this.deps.isGraphBusy(runtime.threadId)) {
+        runtime.idleSince = null;
+      } else {
+        runtime.idleSince ??= this.now();
+        if (this.now() - runtime.idleSince >= STALE_BUSY_LIMIT_MS) {
+          console.warn(`[ChatHeartbeat] thread ${ runtime.threadId } reported busy but its graph is idle; resuming heartbeat`);
+          runtime.busy = false;
+          runtime.idleSince = null;
+          this.resume(runtime);
+          this.emitStatus(runtime);
+          return;
+        }
+      }
+      runtime.watchdog = this.setTimer(check, STALE_BUSY_CHECK_MS);
+      runtime.watchdog.unref?.();
+    };
+    runtime.watchdog = this.setTimer(check, STALE_BUSY_CHECK_MS);
+    runtime.watchdog.unref?.();
+  }
+
+  private stopWatchdog(runtime: Runtime): void {
+    if (runtime.watchdog) this.clearTimer(runtime.watchdog);
+    runtime.watchdog = null;
+    runtime.idleSince = null;
   }
 
   // The graph stopped: start a full interval from now, so the ping only

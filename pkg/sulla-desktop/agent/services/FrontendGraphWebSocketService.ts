@@ -264,6 +264,10 @@ export class FrontendGraphWebSocketService {
         }
       } else {
         console.error('[FrontendGraphWS] Error:', err?.message);
+        if (isCurrentRun()) {
+          state.metadata.cycleComplete = true;
+          state.metadata.waitingForUser = true;
+        }
         this.emitSystemMessage(`Error: ${ err.message || String(err) }`, threadId);
       }
     } finally {

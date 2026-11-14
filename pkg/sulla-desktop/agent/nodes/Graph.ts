@@ -14,6 +14,7 @@ import { PlaybookController } from '../controllers/PlaybookController';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
+import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
@@ -487,7 +488,12 @@ export class Graph<TState = BaseThreadState> {
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'failed', { error: error?.message || String(error) });
         }
-        // Re-throw non-abort errors
+        // A failed turn is still a finished turn. Mark it complete and tell
+        // the chat, or the thread looks "running" forever and its heartbeat
+        // never fires to wake it back up.
+        // Container loss is retried on the same state by the caller, so it
+        // must not be marked finished here.
+        if (!isReentry && !isContainerLifecycleLost(error)) this.finishFailedRun(state);
         throw error;
       }
     }
@@ -506,7 +512,13 @@ export class Graph<TState = BaseThreadState> {
     // workflow to orchestrate. If so, process next steps and potentially
     // re-enter the agent loop with new messages.
     if (!isReentry) {
-      state = await this.playbookController.processWorkflowPlaybook(state);
+      try {
+        state = await this.playbookController.processWorkflowPlaybook(state);
+      } catch (error) {
+        (state as any).metadata._isPlaybookReentry = prevReentryFlag;
+        if (!isContainerLifecycleLost(error)) this.finishFailedRun(state);
+        throw error;
+      }
     }
 
     // Conversation logging — graph completed (skip on playbook re-entry)
@@ -539,6 +551,27 @@ export class Graph<TState = BaseThreadState> {
     (state as any).metadata._isPlaybookReentry = prevReentryFlag;
 
     return state;
+  }
+
+  /**
+   * End a turn that threw: mark the cycle complete so the backend no longer
+   * reports the thread busy, and emit graph_execution_complete so the chat
+   * leaves its running state. Best effort — the original error still wins.
+   */
+  private finishFailedRun(state: TState): void {
+    const metadata = (state as any).metadata;
+    metadata.cycleComplete = true;
+    metadata.waitingForUser = true;
+    const warn = (err: unknown) => console.warn('[Graph] Could not signal completion after a failed run:', err);
+    try {
+      Promise.resolve(getWebSocketClientService().send(metadata.wsChannel || 'heartbeat', {
+        type: 'transfer_data',
+        data: { role: 'system', content: 'graph_execution_complete', stopReason: 'error', waitingForUser: true, thread_id: metadata.threadId },
+      })).catch(warn);
+    } catch (err) {
+      warn(err);
+    }
+    metadata.stopReason = null;
   }
 
   // ── Playbook methods have been extracted to PlaybookController ──

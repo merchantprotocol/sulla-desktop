@@ -22,6 +22,7 @@ import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientServic
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
+import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
@@ -190,7 +191,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // but must not flip graphRunning, otherwise stop button visibility
   // gets driven by background activity instead of the user's own loop.
   if (msg.type !== 'subconscious_message') {
-    ctx.graphRunning.value = true;
+    ctx.graphRunning.value = !isTerminalRunError(msg);
+    if (!ctx.graphRunning.value) ctx.registry.setLoading(agentId, false);
   }
 
   // user_message: already pushed locally before send — skip
