@@ -673,7 +673,7 @@ export class CloudSyncService {
 
   private async queueCommit(sync:SyncRow, session:UploadSession | UploadSession[], root:Uint8Array, batch?:RecursiveDeleteMetadata):Promise<void> {
     const sessions=Array.isArray(session)?session:[session];
-    const commit = await buildCommitBatch(sync, sessions, await this.repository.cloudHeads(sync.collectionId), root, batch);
+    const commit = await buildCommitBatch(sync, sessions, this.repository.cloudHeadPages(sync.collectionId), root, batch);
     await this.repository.queue(sync.collectionId, 'commit', `${ BASE }/collections/${ sync.collectionId }/commit`, 'POST', commit.body, commit.sha256, randomUUID(), { head: commit.head });
   }
 

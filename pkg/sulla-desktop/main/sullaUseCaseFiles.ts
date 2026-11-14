@@ -18,6 +18,9 @@ import Logging from '@pkg/utils/logging';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
+import { FilesListingPager } from './FilesListingPager';
+
+const USE_CASE_ROW_LIMIT = 20_000;
 
 const console = Logging.background;
 const ROOT = 'Use Cases';
@@ -108,11 +111,18 @@ export class SullaUseCaseFiles {
     return response.json();
   }
 
+  /**
+   * The full Use Cases subtree, read page by page. scan() disables anything it does not
+   * see, so a partial list must never be returned: past the cap the scan fails instead.
+   * Memory is bounded by the Use Cases folder (USE_CASE_ROW_LIMIT rows), not the collection.
+   */
   private async list(collectionId:string):Promise<FilesRow[]> {
-    const query = new URLSearchParams({ collectionId, path: ROOT });
-    const response = await this.request(`/v1/files?${ query }`);
-    if (!response.ok) throw new Error(`Use Cases listing failed (${ response.status })`);
-    return response.json();
+    const rows:FilesRow[] = [];
+    for await (const page of FilesListingPager.pages<FilesRow>(url => this.request(url), '/v1/files', { collectionId, path: ROOT })) {
+      if (rows.length + page.length > USE_CASE_ROW_LIMIT) throw new Error(`Use Cases folder exceeds ${ USE_CASE_ROW_LIMIT } files; nothing was activated or disabled`);
+      rows.push(...page);
+    }
+    return rows;
   }
 
   private async content(file:FilesRow, versionId:string):Promise<Buffer> {

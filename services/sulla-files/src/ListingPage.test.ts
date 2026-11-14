@@ -1,7 +1,18 @@
+// Sulla Desktop · https://sulladesktop.com.
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import { describe,expect,it,vi } from 'vitest';
 import { ListingPage } from './ListingPage.js';
 
 describe('ListingPage',()=>{
+  it('keeps paging opt-in so legacy callers are not silently truncated',()=>{
+    // risk: data loss from clients treating a partial listing as complete.
+    expect(ListingPage.isRequested(undefined,undefined)).toBe(false);
+    expect(ListingPage.isRequested('250',undefined)).toBe(true);
+    expect(ListingPage.isRequested(undefined,'cursor')).toBe(true);
+  });
+
   it('caps page size and decodes a path cursor for keyset continuation',()=>{
     // risk: memory grows with collection size if a client can request an unbounded page.
     const page=ListingPage.parse('900000',Buffer.from('folder/file-250.txt').toString('base64url'));

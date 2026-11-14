@@ -9,6 +9,7 @@ import { getSullaFilesClient } from './sullaFilesClient';
 
 import type { ArtifactFilesRegistration, FilesRegistrationResult } from '@pkg/agent/services/ChatArtifactService';
 import type { ChatArtifactKind, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
+import { FilesListingPager } from './FilesListingPager';
 
 const AGENT_ID = 'sulla-desktop-artifacts';
 const MAX_ATTEMPTS = 3;
@@ -155,10 +156,15 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
     const candidates = collections.filter(collection => collection.id === artifact.filesCollectionId);
     const parentPath = path.posix.dirname(targetPath);
     for (const collection of candidates) {
-      const filesResponse = await artifactRequest(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(parentPath === '.' ? '' : parentPath) }&trash=false`, artifact);
-      if (!filesResponse.ok) continue;
-      const files = await filesResponse.json() as { id: string; path: string; current_version_id: string; created_by_type?: string; created_by_id?: string }[];
-      const file = files.find(candidate => candidate.path === targetPath);
+      type ListedFile = { id: string; path: string; current_version_id: string; created_by_type?: string; created_by_id?: string };
+      // Page under the parent folder and stop at the first match; one page is held at a time.
+      let file:ListedFile | undefined;
+      try {
+        for await (const files of FilesListingPager.pages<ListedFile>(url => artifactRequest(url, artifact), '/v1/files', { collectionId: collection.id, path: parentPath === '.' ? '' : parentPath, trash: 'false' })) {
+          file = files.find(candidate => candidate.path === targetPath);
+          if (file) break;
+        }
+      } catch { continue; }
       if (!file) continue;
       if ((artifact.filesFileId && file.id !== artifact.filesFileId) || file.created_by_type !== 'agent-run' || file.created_by_id !== AGENT_ID) {
         throw new ArtifactFilesPathConflictError('Files already contains a different item at this artifact path. Nothing was overwritten.', targetPath);

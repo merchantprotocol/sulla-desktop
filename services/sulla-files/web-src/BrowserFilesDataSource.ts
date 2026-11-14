@@ -47,7 +47,11 @@ export class BrowserFilesDataSource implements FilesDataSource {
   readonly onlineOnlyReason='Server files remain available from the server.';
   private controller=new AbortController();
   private readonly urls=new Set<string>();
+  static readonly pageSize=250;
   private files:FilesItem[]=[];
+  private filesCursor:string|null=null;
+  private filesHasMore=false;
+  private loadingMore=false;
   private collectionId='';
   private collection:ContainerCollection|undefined;
   private collections:ContainerCollection[]=[];
@@ -61,13 +65,29 @@ export class BrowserFilesDataSource implements FilesDataSource {
 
   destroy():void{this.generation+=1;this.controller.abort();this.token='';this.files=[];this.collections=[];this.resetOperationCapabilities();for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear()}
 
-  private async request<T>(path:string,options:RequestInit={},generation=this.generation):Promise<T>{
+  /** One keyset page of the active listing; the File Manager asks for more via loadMore(). */
+  private async filesPage(collectionId:string,cursor:string|null,generation=this.generation):Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>{
+    const query=new URLSearchParams({collectionId,limit:String(BrowserFilesDataSource.pageSize)});if(cursor)query.set('cursor',cursor);
+    const headers:{next:string|null;hasMore:boolean}={next:null,hasMore:false};
+    const files=await this.request<FilesApiFile[]>(`/v1/files?${query}`,{},generation,response=>{headers.next=response.headers.get('X-Next-Cursor');headers.hasMore=response.headers.get('X-Has-More')==='true'});
+    return{files,nextCursor:headers.next,hasMore:headers.hasMore&&Boolean(headers.next)};
+  }
+
+  async loadMore():Promise<FilesItem[]>{
+    if(this.loadingMore||!this.filesHasMore||!this.collectionId)return this.files;
+    const generation=this.generation;this.loadingMore=true;
+    try{const page=await this.filesPage(this.collectionId,this.filesCursor,generation);this.assertCurrent(generation);this.files.push(...page.files.map(value=>filesItem(value)));this.filesCursor=page.nextCursor;this.filesHasMore=page.hasMore;return this.files}
+    finally{this.loadingMore=false}
+  }
+
+  private async request<T>(path:string,options:RequestInit={},generation=this.generation,onResponse?:(response:Response)=>void):Promise<T>{
     if(!this.token)throw new Error('Files is locked. Sign in again.');
     const url=await this.apiUrl(path);this.assertCurrent(generation);
     const response=await fetch(url,{...options,cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,...(options.headers??{})}});
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
     if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}
     if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string;code?:string;currentVersionId?:string};if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');throw Object.assign(new Error(body.error??`Files request failed (${response.status})`),{status:response.status,code:body.code,currentVersionId:body.currentVersionId})}
+    onResponse?.(response);
     if(response.status===204)return undefined as T;
     const body=await response.json() as T;
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
@@ -82,11 +102,13 @@ export class BrowserFilesDataSource implements FilesDataSource {
     this.collectionId=collection.id;
     const operationCapabilities=await this.operationCapabilities(collection.id);
     this.assertCurrent(generation);Object.assign(this.capabilities,{durableOperations:operationCapabilities.enabled,folderReceipts:operationCapabilities.folderReceipts,nativeFolderReceipts:operationCapabilities.nativeFolderReceipts,folderCollisionPolicies:operationCapabilities.folderCollisionPolicies,crossCollectionOperations:operationCapabilities.crossCollectionOperations});
-    const [active,trash]=await Promise.all([this.request<FilesApiFile[]>(`/v1/files?collectionId=${encodeURIComponent(collection.id)}`,{},generation),this.request<FilesApiRecord[]>(`/v1/trash?collectionId=${encodeURIComponent(collection.id)}`,{},generation)]);
+    const [activePage,trash]=await Promise.all([this.filesPage(collection.id,null,generation),this.request<FilesApiRecord[]>(`/v1/trash?collectionId=${encodeURIComponent(collection.id)}`,{},generation)]);
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
     const trashItems=trash.map(trashItem);
-    this.files=active.map(value=>filesItem(value));
-    const folders=await this.request<FilesFolderState[]>(`/v1/folders?collectionId=${encodeURIComponent(collection.id)}&details=true`,{},generation);
+    this.files=activePage.files.map(value=>filesItem(value));this.filesCursor=activePage.nextCursor;this.filesHasMore=activePage.hasMore;
+    // Folder rows are read in bounded pages (the tree needs every folder, not every file).
+    const folders:FilesFolderState[]=[];let folderCursor:string|null=null;
+    do{const query=new URLSearchParams({collectionId:collection.id,details:'true',limit:'500'});if(folderCursor)query.set('cursor',folderCursor);let next:string|null=null;folders.push(...await this.request<FilesFolderState[]>(`/v1/folders?${query}`,{},generation,response=>{next=response.headers.get('X-Has-More')==='true'?response.headers.get('X-Next-Cursor'):null}));folderCursor=next===folderCursor?null:next}while(folderCursor);
     this.assertCurrent(generation);
     const shares=Array.isArray(collection.shared_folders)?collection.shared_folders:[];const files=Array.isArray(collection.shared_files)?collection.shared_files:[];const scopedRole=[...shares,...files].some((share:FilesApiRecord)=>share.role==='edit')?'file-or-folder-edit':shares.length||files.length?'file-or-folder-view':undefined;
     const indexing=indexCoverage(this.files.filter(file=>!file.deletedAt));
