@@ -670,20 +670,14 @@ export class ClaudeCodeService extends BaseLanguageModel {
   /**
    * Build a <sulla_context> prefix for the outgoing user message.
    *
-   * Two tiers:
-   *   - Stable context (platform rules + critical/high observational memory):
-   *     sent on the first turn of a session and again ONLY when its content
-   *     changes. Each send becomes permanent conversation history, so
-   *     repeating it verbatim every turn multiplies token cost with zero
-   *     information gain.
-   *   - Recall context (subconscious middleware output for THIS turn): always
-   *     included when present — it's the per-turn payload the recall agent
-   *     produced specifically so the primary agent doesn't have to research.
+   * Stable context (platform rules + environment) is sent on the first turn
+   * of a session and again ONLY when its content changes. Each send becomes
+   * permanent conversation history, so repeating it verbatim every turn
+   * multiplies token cost with zero information gain.
    *
-   * Injecting in the user turn rather than relying solely on
-   * --append-system-prompt ensures Claude weights it properly, and fixes the
-   * resumed-session gap: --resume sends only the latest user message, so
-   * recall context merged into prior assistant messages was silently dropped.
+   * Memory and recall do not travel here. They arrive as the synthetic
+   * assistant context message that precedes the user message, which
+   * extractLatestUserMessage replays on resumed (--resume) turns.
    */
   private async buildUserMessageContextPrefix(
     state: BaseThreadState | undefined,

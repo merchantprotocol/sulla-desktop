@@ -61,13 +61,14 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * on PATH in the VM). State-mutating Sulla tools are supplied through the
  * same short-lived, graph-bound MCP bridge used by Claude Code.
  *
- * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
- * scheduled token refresh. The host home is mounted into the Sulla VM, and
- * every spawn exports CODEX_HOME/HOME to that host path — sulla-runtime exec
- * otherwise sets HOME to the guest path (/home/<user>.linux), which would
- * hide the auth file and 401 every request. The CLI also self-refreshes
- * tokens in place. With ChatGPT sign-in, usage draws from the user's
- * ChatGPT Plus/Pro plan — no API billing.
+ * Auth: by default the ChatGPT sign-in lives in Sulla's vault. Each spawn
+ * gets only a provider-bridge capability (SULLA_PROVIDER_BRIDGE_TOKEN) and a
+ * model_providers.sulla override pointing at the bridge, which injects and
+ * refreshes the real token upstream. Legacy non-vault mode copies Sulla's
+ * own auth.json into the guest $CODEX_HOME. The Mac home folder is not
+ * shared into the VM, and the user's own ~/.codex is never used. With
+ * ChatGPT sign-in, usage draws from the user's ChatGPT Plus/Pro plan, not
+ * API billing.
  *
  * Token strategy — hybrid (first-turn seed + `exec resume` thereafter):
  *   - First turn for a conversation: serialize the full curated
@@ -156,11 +157,9 @@ export class CodexService extends BaseLanguageModel {
     mcpSession?:       RegisteredSession | null;
     readOnly?:         boolean;
     /**
-     * Host path of a per-run instructions file (cliSystemPromptFile), passed
-     * as -c model_instructions_file. It REPLACES codex's base instructions,
-     * so it is only used for subconscious agents — their caller-built prompt
-     * (observer role) is otherwise dropped, since AGENTS.md
-     * carries only the general Sulla prompt.
+     * Per-run instructions file (cliSystemPromptFile) holding the caller-built
+     * Sulla prompt, passed as -c model_instructions_file on every spawn. It
+     * replaces Codex's base instructions. No AGENTS.md is written or read.
      */
     instructionsPath?: string | null;
     /** VM-side pidfile the launched codex records its PID in. */
@@ -526,11 +525,12 @@ export class CodexService extends BaseLanguageModel {
   }
 
   /**
-   * Build a <sulla_context> prefix for the outgoing user message — same
-   * two-tier strategy as ClaudeCodeService: the stable tier (platform rules
-   * + high-priority memories) is sent on the first turn and again only when
-   * its content changes; per-turn recall/observation context always rides
-   * along when present.
+   * Build a <sulla_context> prefix for the outgoing user message, same
+   * strategy as ClaudeCodeService: the stable tier (platform rules,
+   * environment and, for spawned agents, their role instructions) is sent on
+   * the first turn and again only when its content changes. Memory and recall
+   * do not travel here; they arrive as the synthetic assistant context message
+   * that precedes the user message.
    *
    * Returns the stable-tier hash alongside the prefix; the caller commits it
    * to lastStableContextHash only after a successful run, so changed context
