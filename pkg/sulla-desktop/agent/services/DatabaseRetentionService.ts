@@ -32,7 +32,7 @@ export class DatabaseRetentionService {
     try {
       await this.sentLedger.deleteExpiredBatch();
       await WorkflowCheckpointModel.deleteExpiredBatch();
-      await this.agentJobs.deleteExpiredBatch();
+      await this.agentJobs.drainExpired();
     } catch (error) {
       console.warn('[DatabaseRetention] Bounded retention pass failed:', error);
     } finally {
