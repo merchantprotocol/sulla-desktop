@@ -5,10 +5,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+// Run with --experimental-transform-types so the harness measures the exact SQL the service runs.
+const { AutomergeSnapshotRetention } = await import('../src/automergeSnapshotRetention.ts');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../../..');
-const scale = process.argv.includes('--scale') ? 1_000_000 : 200_000;
+const filesFlag = process.argv.indexOf('--files');
+const scale = filesFlag > 0 ? Number(process.argv[filesFlag + 1]) : process.argv.includes('--scale') ? 1_000_000 : 200_000;
+if (!Number.isSafeInteger(scale) || scale < 1000) throw new Error('--files must be an integer >= 1000');
 const folderCount = Math.ceil(scale / 20);
 const versionCount = scale * 3;
 const pgUrl = process.env.PGURL;
@@ -29,9 +33,17 @@ async function sizeGuard() {
 }
 async function runCase(name, sql, params = []) {
   const before = process.memoryUsage();
+  // Data-modifying statements (e.g. the retention UPDATE) can't be wrapped in a subquery, and
+  // EXPLAIN ANALYZE executes them: plan inside a rolled-back savepoint so the measured run
+  // still sees the real candidates. The caller wraps them in BEGIN/ROLLBACK.
+  const modifying = /\b(UPDATE|DELETE|INSERT)\b/i.test(sql);
+  if (modifying) await client.query('SAVEPOINT harness_plan');
   const plan = await client.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) ${sql}`, params);
+  if (modifying) await client.query('ROLLBACK TO SAVEPOINT harness_plan');
   const result = await client.query(sql, params);
-  const physical = await client.query(`SELECT count(*)::bigint AS rows, COALESCE(sum(pg_column_size(q)),0)::bigint AS bytes FROM (${sql}) q`, params);
+  const physical = modifying
+    ? { rows: [{ rows: result.rowCount, bytes: result.rows.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row)), 0) }] }
+    : await client.query(`SELECT count(*)::bigint AS rows, COALESCE(sum(pg_column_size(q)),0)::bigint AS bytes FROM (${sql}) q`, params);
   const after = process.memoryUsage();
   const resultBytes = result.rows.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row)), 0);
   const memoryDelta = Math.max(0, ...['rss','heapUsed','external','arrayBuffers'].map(k => after[k] - before[k]));
@@ -84,6 +96,7 @@ try {
   }
   await client.query('ANALYZE');
 
+  const liveFileId = (await client.query('SELECT file_id FROM file_automerge_docs LIMIT 1')).rows[0]?.file_id;
   const samples = [
     ['FUSE tree snapshot files (unbounded query from app.ts loadFuseTreeSnapshot)', `SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id WHERE c.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) ORDER BY f.collection_id,f.path`, [collection]],
     ['File listing (collection page)', `SELECT id,path,mime,size,current_version_id FROM files WHERE collection_id=$1 AND deleted_at IS NULL ORDER BY path LIMIT 1000`, [collection]],
@@ -92,7 +105,11 @@ try {
     ['Version history page', `SELECT id,parent_version_id,size,created_at,message FROM file_versions WHERE file_id=(SELECT id FROM files WHERE collection_id=$1 ORDER BY path LIMIT 1) ORDER BY created_at DESC LIMIT 1000`, [collection]],
     ['Automerge save current document read', `SELECT document,heads FROM file_automerge_docs WHERE file_id=(SELECT id FROM files WHERE collection_id=$1 ORDER BY path LIMIT 1)`, [collection]],
     ['Search candidates', `SELECT f.id,f.path,f.mime,f.size FROM files f JOIN file_search_text s ON s.file_id=f.id WHERE f.collection_id=$1 AND s.search_vector @@ plainto_tsquery('simple',$2) ORDER BY f.path LIMIT 1000`, [collection, 'synthetic scale']],
-    ['Automerge snapshot retention prune candidates (#2302)', `WITH candidates AS (SELECT av.version_id FROM file_automerge_versions av WHERE av.document IS NOT NULL AND NOT EXISTS(SELECT 1 FROM files f WHERE f.id=av.file_id AND f.current_version_id=av.version_id) AND (SELECT COUNT(*) FROM file_automerge_versions newer WHERE newer.file_id=av.file_id AND newer.document IS NOT NULL AND (newer.created_at,newer.version_id)>(av.created_at,av.version_id)) >= $1 AND (av.created_at < NOW()-($2::text||' days')::interval OR NOT EXISTS(SELECT 1 FROM file_automerge_versions daily WHERE daily.file_id=av.file_id AND daily.document IS NOT NULL AND daily.created_at::date=av.created_at::date AND (daily.created_at,daily.version_id)>(av.created_at,av.version_id))) ORDER BY av.created_at,av.version_id LIMIT $3 FOR UPDATE SKIP LOCKED) SELECT version_id FROM candidates`, [50,30,100]],
+    ['FUSE directory page (#2306 /v1/fuse/directory, root of the collection)', `SELECT * FROM (
+      SELECT 'file' AS kind,f.id,f.path,f.mime,f.size,f.updated_at FROM files f WHERE f.collection_id=$1 AND f.parent_path='' AND f.deleted_at IS NULL
+      UNION ALL SELECT 'directory' AS kind,d.id,d.path,NULL,0,d.updated_at FROM file_folders d WHERE d.collection_id=$1 AND d.parent_path='' AND d.deleted_at IS NULL
+    ) direct_children WHERE path>'' ORDER BY path LIMIT 501`, [collection]],
+    ['Automerge snapshot retention, one file (merged #2302 per-file pass)', AutomergeSnapshotRetention.FILE_PRUNE_SQL, [liveFileId, 50, 30, 100]],
   ];
   for (const [name, sql, params] of samples) {
     if (name.includes('retention')) await client.query('BEGIN');
