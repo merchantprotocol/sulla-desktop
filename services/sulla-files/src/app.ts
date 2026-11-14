@@ -803,6 +803,48 @@ export function createApp(
     fuseTreeSnapshotRequests.set(area,request);
     return request;
   };
+  // FUSE v2 reads one directory at a time. The generated parent_path indexes
+  // make both the keyset cursor and direct-child predicate bounded by the page.
+  app.get('/v1/fuse/directory', async(request:RequestWithIdentity, response, next) => { try {
+    requireFuseExperiment(); mountIdentity(request, 'list');
+    const path=cleanPath(String(request.query.path??''),true);
+    const area='';
+    const collectionId=String(request.query.collectionId??'') || String((await db.query(`SELECT h.id FROM collections h WHERE h.owner_user_id=$1 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1`,[config.userId])).rows[0]?.id??'');
+    if(!collectionId) throw new HttpError(404,'Files collection not found');
+    await requireCollection(request, collectionId, 'view');
+    const revision=String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision??'0');
+    const etag=`"dir:${collectionId}:${path}:${revision}"`; response.setHeader('ETag',etag); response.setHeader('Cache-Control','private, no-cache');
+    if(request.header('if-none-match')===etag) return response.status(304).end();
+    const rawLimit=Number(request.query.limit??500); const limit=Math.min(500,Math.max(1,Number.isFinite(rawLimit)?Math.floor(rawLimit):500));
+    const cursor=String(request.query.cursor??'');
+    const rows=await db.query(`SELECT * FROM (
+      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id AS "versionId"
+        FROM files f JOIN collections c ON c.id=f.collection_id
+        WHERE f.collection_id=$1 AND f.parent_path=$2 AND f.deleted_at IS NULL
+          AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
+          AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+      UNION ALL
+      SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId"
+        FROM file_folders d JOIN collections c ON c.id=d.collection_id
+        WHERE d.collection_id=$1 AND d.parent_path=$2 AND d.deleted_at IS NULL
+    ) direct_children WHERE path>$3 ORDER BY path LIMIT $4`,[collectionId,path,cursor,limit+1]);
+    const entries=rows.rows.slice(0,limit); const hasMore=rows.rows.length>limit;
+    response.json({rootCollectionId:collectionId,entries,nextCursor:hasMore?entries[entries.length-1].path:null,revision});
+  } catch(error) { next(error) } });
+  app.get('/v1/fuse/entry', async(request:RequestWithIdentity, response, next) => { try {
+    requireFuseExperiment(); mountIdentity(request, 'list');
+    const collectionId=String(request.query.collectionId??'') || String((await db.query(`SELECT h.id FROM collections h WHERE h.owner_user_id=$1 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1`,[config.userId])).rows[0]?.id??'');
+    const path=cleanPath(String(request.query.path??''),false);
+    if(!collectionId) throw new HttpError(404,'Files collection not found');
+    await requireCollection(request, collectionId, 'view');
+    const result=await db.query(`SELECT * FROM (
+      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
+      WHERE f.collection_id=$1 AND f.path=$2 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+        AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
+      UNION ALL SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId" FROM file_folders d WHERE d.collection_id=$1 AND d.path=$2 AND d.deleted_at IS NULL
+    ) entry LIMIT 1`,[collectionId,path]);
+    if(!result.rows[0]) throw new HttpError(404,'Files entry not found'); response.json(result.rows[0]);
+  } catch(error) { next(error) } });
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
