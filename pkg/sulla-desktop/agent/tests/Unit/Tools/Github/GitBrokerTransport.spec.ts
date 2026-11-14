@@ -66,6 +66,7 @@ describe('GitHub broker HTTP transport', () => {
     expect(record.requestId).toEqual(expect.any(String));
     expect(record.durationMs).toEqual(expect.any(Number));
     expect(record.startedAt).toEqual(expect.any(String));
+    expect(executeStream.mock.calls.at(-1)?.[0].headers['x-sulla-git-request-id']).toBe(record.requestId);
     expect(String(info.mock.calls.at(-1)?.[0])).not.toContain(token);
   });
 });

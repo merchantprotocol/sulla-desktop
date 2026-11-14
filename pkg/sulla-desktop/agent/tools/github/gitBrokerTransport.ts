@@ -137,7 +137,7 @@ export async function withGitHubBrokerRemote<T>(
         ref:          { integrationId: 'github', accountId },
         url:          `https://github.com${ incoming.pathname.slice(transportToken.length + 1) }${ incoming.search }`,
         method:       request.method ?? 'GET',
-        headers,
+        headers: { ...headers, 'x-sulla-git-request-id': requestId },
         ...(body === undefined ? {} : { body, bodyEncoding: 'base64' as const }),
         injections:   [{ field: 'token', target: 'header', name: 'authorization', scheme: 'GitHubBasic' }],
         responseType: 'binary-stream',

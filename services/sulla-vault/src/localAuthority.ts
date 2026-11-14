@@ -3164,7 +3164,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     sink: BrokerStreamSink,
   ): Promise<void> {
     const method = input.method.toUpperCase();
-    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
+    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie', 'x-sulla-git-request-id']);
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
     headers['accept-encoding'] = 'identity';
     const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
@@ -3176,7 +3176,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
     const binary = input.responseType === 'binary-stream';
     const redactor = binary ? null : new StreamingRedactor(prepared.secrets);
-    const requestId = randomUUID();
+    const requestedId = Object.entries(input.headers ?? {}).find(([name]) => name.toLowerCase() === 'x-sulla-git-request-id')?.[1];
+    const requestId = typeof requestedId === 'string' && /^[0-9a-f-]{36}$/i.test(requestedId) ? requestedId : randomUUID();
     const startedAt = Date.now();
     let received = 0;
     let logged = false;
