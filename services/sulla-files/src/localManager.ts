@@ -204,6 +204,11 @@ export class LocalFilesManager {
     // history, but do not let an obsolete root turn ordinary Files database
     // operations into native publication attempts.
     if (!row.enabled || row.state==='detached') return null;
+    // A Desktop-brokered root lives on the host; this container has no path to it (attachBrokeredRoot
+    // never adds it to this.roots), so there is no container-side native root to check or publish to.
+    // Desktop owns the host-side effects. Without this every rename/move in the home collection failed
+    // closed with 'Tracked root is unavailable'.
+    if (typeof row.mount_path==='string' && row.mount_path.startsWith('/brokered/')) return null;
     const root=this.roots.find(root=>root.id===row.id);
     if (!root || row.state==='offline' || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) {
       if (await hasNativeCustody()) throw new Error('Tracked root is unavailable');
