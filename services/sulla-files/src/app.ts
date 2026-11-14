@@ -1006,7 +1006,7 @@ export function createApp(
     const resolver = new FilesPathResolver();
     for (const candidate of resolver.candidates(collections,relative)) {
       const file=candidate.path?(await db.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rows[0]:undefined;
-      const folderExists=!candidate.path||(await db.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rowCount>0;
+      const folderExists=!candidate.path||((await db.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rowCount??0)>0;
       if (!file && !folderExists) continue;
       try { await requirePath(request,candidate.collectionId,candidate.path,'view'); } catch (error) { if (error instanceof HttpError && (error.status===403 || error.status===404)) continue; throw error; } // skip collections the caller cannot view; never reveal them
       if(file) return response.json({collectionId:candidate.collectionId,fileId:file.id,folderPath:candidate.path.includes('/')?candidate.path.slice(0,candidate.path.lastIndexOf('/')):'',kind:'file'});
