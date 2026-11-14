@@ -1,5 +1,3 @@
-# Sulla Agents core
+# Sulla Agents service
 
-GPL-2.0-or-later Agents service shared by Desktop. Desktop remains the default mode and its token, definitions, UI, tool grants and runner behavior are unchanged.
-
-`src/adapter.ts` defines Agents adapter API v1. Sulla Server's tenant auth, tenant tables, run persistence and launch policy live in the separately licensed `merchantprotocol/sulla-server` adapter and the digest-pinned `ghcr.io/merchantprotocol/sulla-server-agents` derived image. The shared service imports runtime primitives only from `packages/runtime-protocol`; it has no Electron-tree build dependency.
+GPL-2.0-or-later Agents service used by Sulla Desktop. It authenticates the local Desktop API token and manages Desktop agent definitions; execution is coordinated through Desktop's local runtime and workflow manager. Worker containers continue to use the separate `SULLA_AGENT_MODE=transport` capability protocol.
