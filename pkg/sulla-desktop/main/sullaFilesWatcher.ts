@@ -13,6 +13,7 @@ import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
+import { FilesListingPager } from './FilesListingPager';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
@@ -419,9 +420,14 @@ class SullaFilesWatcher {
     try{
       await state('scanning'); let count=0;
       if(!this.brokeredFingerprintsLoaded){const saved=await SullaSettingsModel.get('sullaFilesRootFingerprints',{});if(saved&&typeof saved==='object'&&!Array.isArray(saved))for(const [key,value] of Object.entries(saved))if(typeof value==='string')this.brokeredFingerprints.set(key,value);this.brokeredFingerprintsLoaded=true}
-      const currentResponse=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);
-      if(!currentResponse.ok)throw new Error(`Could not read tracked collection (${currentResponse.status})`);
-      const current=new Map((await currentResponse.json() as {path:string;size:number}[]).map(file=>[file.path,Number(file.size)]));
+      // `current` is only a skip-unchanged cache (never used to infer deletions). It is
+      // capped at the same 100k budget the local walk enforces; each response is one page.
+      const current=new Map<string,number>();
+      const query=new URLSearchParams({collectionId:root.collectionId,path:'',trash:'false'});
+      for await(const rows of FilesListingPager.pages<{path:string;size:number}>(url=>this.requestFiles(url),'/v1/files',query)) {
+        if(current.size+rows.length>100_000)throw new Error('Tracked collection exceeds the 100,000-file reconciliation safety limit');
+        for(const file of rows)current.set(file.path,Number(file.size));
+      }
       const walk=async(directory:string):Promise<void>=>{for(const entry of await fs.promises.readdir(directory,{withFileTypes:true})){
         const absolute=path.join(directory,entry.name); const relative=path.relative(rootPath,absolute).split(path.sep).join('/');
         if(ignored(relative,DEFAULT_IGNORES)||ignored(relative,root.exclusions)||isSensitiveTrackedPath(relative))continue;
@@ -644,12 +650,14 @@ class SullaFilesWatcher {
       if(!badges){badges=new FinderBadgeSync(root.path,async(target,state)=>{const{setAttribute}=await import('@napi-rs/xattr');await setAttribute(target,FINDER_BADGE_ATTRIBUTE,state)});this.finderBadges.set(root.id,badges)}
       if(!badges.begin())continue;
       try{
-        const response=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);if(!response.ok)continue;
-        const files=await response.json() as {path:string;sync_state?:string}[];
         // Backed up to Cloud / indexed by Sulla / still processing; local sync problems still win.
         const badgeResponse=await this.requestFiles(`/v1/desktop/cloud-sync/finder-badges?collectionId=${encodeURIComponent(root.collectionId)}`).catch(()=>null);
         const processed=new Map((badgeResponse?.ok?await badgeResponse.json() as {path:string;state:string}[]:[]).map(item=>[item.path,item.state]));
-        await badges.apply(files.map(file=>({path:file.path,sync_state:['conflict','syncing','online-only'].includes(file.sync_state??'')?file.sync_state:processed.get(file.path)??file.sync_state})));
+        const query=new URLSearchParams({collectionId:root.collectionId,path:'',trash:'false'});
+        for await(const files of FilesListingPager.pages<{path:string;sync_state?:string}>(url=>this.requestFiles(url),'/v1/files',query)) {
+          // One listing page at a time; FinderBadgeSync applies badges per row.
+          await badges.apply(files.map(file=>({path:file.path,sync_state:['conflict','syncing','online-only'].includes(file.sync_state??'')?file.sync_state:processed.get(file.path)??file.sync_state})));
+        }
       }finally{badges.end()}
     }
   }
