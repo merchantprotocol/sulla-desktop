@@ -7,7 +7,7 @@ import { traceAsync, traceEvent } from '@pkg/utils/startupTrace';
 import { EventEmitter } from 'node:events';
 
 import type { VMExecutor } from '@pkg/backend/backend';
-import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
+import { SULLA_FILES_GUEST_MOUNT_PATH, isGuestPathUsable, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 import { sullaFilesNativeSourceGrant, sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
@@ -215,6 +215,14 @@ export class SullaFilesMountManager extends EventEmitter {
       // This does not authorize an agent; that admission remains disabled
       // until Files can enforce a grant-scoped per-agent/job view.
       await executor.execCommand({}, 'sh', '-c', 'ls -A "$1" >/dev/null', 'sh', MOUNT_PATH);
+      // Docker rslave binds capture the topmost mount (the FUSE layer), not
+      // the shared tmpfs anchor underneath it. Reattach stale agent namespaces
+      // after every adapter generation so long-lived jobs survive recreation.
+      await this.reattachStaleAgentMounts(executor).catch(error => {
+        // Agent namespace repair is best-effort: do not make a healthy Files
+        // mount unavailable to new work because one old namespace was busy.
+        console.warn(`[SullaFiles] Could not reattach every running agent mount: ${ error instanceof Error ? error.message : String(error) }`);
+      });
       this.publish('ready', undefined, MOUNT_PATH);
       this.armRefresh(credentialGeneration);
     } catch (error) {
@@ -319,7 +327,10 @@ export class SullaFilesMountManager extends EventEmitter {
     this.refreshTimer = setInterval(() => {
       this.refreshCredentials(generation).catch(error => {
         if (generation !== this.credentialGeneration) return;
-        this.runtimeFailure(generation, `FUSE capability refresh failed: ${ error instanceof Error ? error.message : String(error) }`);
+        // A transient Files/API timeout does not invalidate an already-live
+        // capability or mount. Retry on the next interval; health probing is
+        // responsible for deciding whether the mount itself has died.
+        console.warn(`[SullaFiles] FUSE capability refresh failed; keeping the current mount: ${ error instanceof Error ? error.message : String(error) }`);
       });
     }, TOKEN_REFRESH_MS);
     this.refreshTimer.unref?.();
@@ -329,11 +340,37 @@ export class SullaFilesMountManager extends EventEmitter {
 
       if (!executor || generation !== this.credentialGeneration || !this.statusValue.ready) return;
       // An unreadable mount table is not evidence the adapter is gone.
-      probeFilesAnchor(executor, MOUNT_PATH).then((probe) => {
-        if (probe.state !== 'adapter') this.runtimeFailure(generation, 'The guest Files adapter mount disappeared');
+      probeFilesAnchor(executor, MOUNT_PATH).then(async(probe) => {
+        if (probe.state !== 'adapter') {
+          this.runtimeFailure(generation, 'The guest Files adapter mount disappeared');
+          return;
+        }
+        if (!await isGuestPathUsable(executor, MOUNT_PATH)) {
+          this.runtimeFailure(generation, 'The guest Files adapter mount is not responding');
+        }
       }, () => undefined);
     }, HEALTH_CHECK_MS);
     this.healthTimer.unref?.();
+  }
+
+  private async reattachStaleAgentMounts(executor:VMExecutor):Promise<void> {
+    const names = (await executor.execCommand(
+      { root: true, capture: true, expectFailure: true }, 'docker', 'ps', '--format', '{{.Names}}',
+    )).split('\n').map(name => name.trim()).filter(name => /^sulla-agent-/.test(name));
+    const python = 'import ctypes,os,sys; libc=ctypes.CDLL(None,use_errno=True); pid=int(sys.argv[1]); path=sys.argv[2].encode(); fd=libc.syscall(428,-100,ctypes.c_char_p(path),0x80000|0x8000|1); assert fd>=0,os.strerror(ctypes.get_errno()); ns=os.open("/proc/%d/ns/mnt"%pid,os.O_RDONLY); assert libc.setns(ns,0x00020000)==0,os.strerror(ctypes.get_errno()); [libc.umount2(ctypes.c_char_p(path),2) for _ in range(5)]; assert libc.syscall(429,fd,b"", -100,ctypes.c_char_p(path),0x00000004)==0,os.strerror(ctypes.get_errno())';
+    for (const name of names) {
+      const pid = (await executor.execCommand(
+        { root: true, capture: true, expectFailure: true }, 'docker', 'inspect', '-f', '{{.State.Pid}}', name,
+      )).trim();
+      if (!/^\d+$/.test(pid)) continue;
+      const healthy = await executor.execCommand(
+        { root: true, expectFailure: true }, 'nsenter', '-t', pid, '-m', '--', 'sh', '-c', 'ls -A /mnt/sulla-files >/dev/null',
+      ).then(() => true, () => false);
+      if (healthy) continue;
+      await executor.execCommand(
+        { root: true }, 'python3', '-c', python, pid, MOUNT_PATH,
+      );
+    }
   }
 
   /** A live mount failed: drain what is left of it and recover on the retry schedule. */
