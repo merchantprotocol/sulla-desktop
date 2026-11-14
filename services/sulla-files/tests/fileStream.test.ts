@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { sendFileStream } from '../src/fileStream.js';
+import { sendFileStream } from '../src/sendFileStream.js';
 
 class CapturingResponse extends EventEmitter {
   readonly writes:Buffer[] = [];

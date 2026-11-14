@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import * as chunkCrypto from './crypto.js';
 import { publishUploadChunk } from './uploadCleanup.js';
 import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
+import { PlaintextChunkReader } from './plaintextChunkReader.js';
+export { PlaintextChunkReader } from './plaintextChunkReader.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config } from './config.js';
@@ -15,7 +17,6 @@ import type { Store } from './store.js';
 import type { Readable } from 'node:stream';
 import type pg from 'pg';
 
-const CHUNK_BYTES = 4 * 1024 * 1024;
 
 interface WinnerAwareCrypto {
   maxEncryptedChunkBytes(plainSize:number):number;
@@ -58,39 +59,6 @@ async function assertChunkMetadata(client:pg.PoolClient, collectionId:string, ch
   const existing = (await client.query('SELECT size,stored_size,location FROM chunks WHERE collection_id=$1 AND id=$2', [collectionId, chunk.id])).rows[0];
   if (!existing || Number(existing.size) !== chunk.size || Number(existing.stored_size) !== chunk.storedSize || existing.location !== location) {
     throw new Error('Existing chunk metadata does not match uploaded content');
-  }
-}
-
-export class PlaintextChunkReader {
-  constructor(private readonly body:Readable, private readonly expectedBytes?:number, private readonly maxBytes = Number.MAX_SAFE_INTEGER, private readonly observeBufferedBytes?:(bytes:number)=>void) {}
-
-  async * chunks():AsyncGenerator<Buffer> {
-    // Copy at most one fixed-size chunk. Incoming stream frames are borrowed and
-    // never concatenated, so a large frame cannot cause a second whole-file copy.
-    let pending = Buffer.allocUnsafe(CHUNK_BYTES);
-    let used = 0;
-    let total = 0;
-    this.observeBufferedBytes?.(CHUNK_BYTES);
-    for await (const value of this.body) {
-      const incoming = Buffer.isBuffer(value) ? value : Buffer.from(value);
-      total += incoming.byteLength;
-      if (total > this.maxBytes || (this.expectedBytes !== undefined && total > this.expectedBytes)) throw new Error('Upload exceeded its declared size');
-      let offset = 0;
-      while (offset < incoming.byteLength) {
-        const copied = Math.min(CHUNK_BYTES - used, incoming.byteLength - offset);
-        incoming.copy(pending, used, offset, offset + copied);
-        used += copied;
-        offset += copied;
-        this.observeBufferedBytes?.(CHUNK_BYTES);
-        if (used === CHUNK_BYTES) {
-          yield pending;
-          pending = Buffer.allocUnsafe(CHUNK_BYTES);
-          used = 0;
-        }
-      }
-    }
-    if (this.expectedBytes !== undefined && total !== this.expectedBytes) throw new Error('Upload did not match its declared size');
-    if (used || total === 0) yield pending.subarray(0, used);
   }
 }
 
