@@ -46,6 +46,22 @@ describe('github_update_repo registered tool', () => {
     expect(update).toHaveBeenCalledWith({ owner: 'acme', repo: 'repo', name: 'new-name' });
   });
 
+  it('reports metadata success when replacing topics fails', async() => {
+    // risk: data accuracy — callers must know a metadata mutation succeeded despite a later topics failure.
+    const { tool, update, replaceAllTopics } = await setup();
+    replaceAllTopics.mockRejectedValueOnce(new Error('topics unavailable'));
+    const result = await tool.call({ owner: 'acme', repo: 'repo', name: 'new-name', topics: ['alpha'] });
+    expect(update).toHaveBeenCalled();
+    expect(replaceAllTopics).toHaveBeenCalledWith({ owner: 'acme', repo: 'new-name', names: ['alpha'] });
+    expect(result.success).toBe(false);
+    const detail = result.error || result.result;
+    expect(detail).toContain('partially completed');
+    expect(detail).toContain('repository metadata update succeeded');
+    expect(detail).toContain('acme/new-name');
+    expect(detail).toContain('topic replacement failed');
+    expect(detail).toContain('topics unavailable');
+  });
+
   it('rejects an empty change set and reports GitHub 403/404 errors', async() => {
     const { tool, update } = await setup();
     const empty = await tool.call({ owner: 'acme', repo: 'repo' });

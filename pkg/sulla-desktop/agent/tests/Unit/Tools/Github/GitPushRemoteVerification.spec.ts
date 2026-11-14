@@ -8,7 +8,8 @@ import { runCommand } from '../../../../tools/util/CommandRunner';
 
 vi.mock('../../../../tools/util/CommandRunner', () => ({ runCommand: vi.fn() }));
 vi.mock('../../../../../vault-broker', () => ({ usesContainerVaultAuthority: () => false }));
-vi.mock('../../../../services/IntegrationService', () => ({ getIntegrationService: () => ({ getIntegrationValue: vi.fn().mockResolvedValue(undefined) }) }));
+const { getIntegrationValue } = vi.hoisted(() => ({ getIntegrationValue: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../../../services/IntegrationService', () => ({ getIntegrationService: () => ({ getIntegrationValue }) }));
 
 const localHead = 'a'.repeat(40);
 const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as any).mockImplementation(async(command: string) => {
@@ -22,7 +23,7 @@ const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as an
 });
 
 describe('GitPushWorker remote verification', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); getIntegrationValue.mockResolvedValue(undefined); });
 
   it('accepts a push only when the remote branch matches local HEAD', async() => {
     // risk: data loss — a reported push must correspond to the exact local commit on the remote ref.
@@ -31,6 +32,18 @@ describe('GitPushWorker remote verification', () => {
     expect(result.successBoolean).toBe(true);
     expect(result.responseString).toContain('Pushed to origin/main');
     expect(runCommand).toHaveBeenCalledWith(expect.stringContaining('ls-remote'), [], expect.any(Object));
+  });
+
+  it('authenticates private-remote verification and redacts the token', async() => {
+    // risk: availability and credential confidentiality — private verification must work without exposing the PAT.
+    const token = 'test-private-token';
+    getIntegrationValue.mockResolvedValue({ value: token });
+    mockCommands(localHead);
+    const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo' });
+    expect(result.successBoolean).toBe(true);
+    const verification = (runCommand as any).mock.calls.find(([command]: [string]) => command.includes('ls-remote'))[0];
+    expect(verification).toContain(`GH_PAT='${ token }'`);
+    expect(result.responseString).not.toContain(token);
   });
 
   it('fails when the remote branch does not match local HEAD', async() => {

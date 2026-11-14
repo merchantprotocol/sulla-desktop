@@ -34,6 +34,7 @@ export class GitPushWorker extends BaseTool {
     const redact = (s: string, secret?: string): string =>
       secret ? (s || '').split(secret).join('***') : (s || '');
 
+    let token: string | undefined;
     try {
       // Get repo root
       const rootResult = await runCommand(
@@ -64,7 +65,6 @@ export class GitPushWorker extends BaseTool {
       let pushTarget = remote;
       let authPrefix = '';
       let credFlags = '';
-      let token: string | undefined;
       if (!localAuthority) {
         const integrationService = getIntegrationService();
         const tokenValue = await integrationService.getIntegrationValue('github', 'token');
@@ -140,7 +140,7 @@ export class GitPushWorker extends BaseTool {
           const verify = (proxyUrl: string) => runCommand(`git -C "${ repoRoot }" ls-remote "${ proxyUrl }" refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
           remoteHead = localAuthority
             ? await withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), verify)
-            : await runCommand(`git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
+            : await runCommand(`${ authPrefix }git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
         }
         const expectedHead = localHead.stdout.trim();
         const actualHead = remoteHead.exitCode === 0 ? remoteHead.stdout.trim().split(/\s+/)[0] : '';
@@ -161,7 +161,7 @@ export class GitPushWorker extends BaseTool {
         responseString: redact(result.stderr.trim() || result.stdout.trim() || `Pushed to ${ remote }/${ targetBranch }`, token),
       };
     } catch (error: any) {
-      return { successBoolean: false, responseString: `Git push failed: ${ error.message }` };
+      return { successBoolean: false, responseString: redact(`Git push failed: ${ error.message }`, token) };
     }
   }
 }

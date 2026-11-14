@@ -39,16 +39,21 @@ export class GitHubUpdateRepoWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Nothing to change. Provide name, description, homepage, or topics.' };
     }
 
+    let fullName = `${ owner }/${ repo }`;
+    let completedStep: string | undefined;
+    let currentStep = 'repository metadata update';
     try {
       const octokit = await createGitHubOctokit(this.executionContext);
-      let fullName = `${ owner }/${ repo }`;
       if (changedFields.some(field => field !== 'topics')) {
         const response = await octokit.repos.update(updateParams as any);
         fullName = response.data.full_name || fullName;
+        completedStep = 'repository metadata update';
       }
       if (input.topics !== undefined) {
+        currentStep = 'topic replacement';
         const currentRepo = fullName.split('/').pop() || repo;
         await octokit.repos.replaceAllTopics({ owner, repo: currentRepo, names: input.topics });
+        completedStep = 'topic replacement';
       }
       return {
         successBoolean: true,
@@ -57,6 +62,12 @@ export class GitHubUpdateRepoWorker extends BaseTool {
     } catch (err: any) {
       const status = err?.status ?? err?.response?.status;
       const detail = err?.response?.data?.message || err?.message || String(err);
+      if (completedStep) {
+        return {
+          successBoolean: false,
+          responseString: `Repository update partially completed: ${ completedStep } succeeded for ${ fullName }; ${ currentStep } failed${ status ? ` (${ status })` : ''}: ${ detail }`,
+        };
+      }
       return { successBoolean: false, responseString: `Update repo failed${ status ? ` (${ status })` : ''}: ${ detail }` };
     }
   }
