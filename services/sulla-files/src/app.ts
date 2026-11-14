@@ -835,7 +835,7 @@ export function createApp(
     const rawLimit=Number(request.query.limit??500); const limit=Math.min(500,Math.max(1,Number.isFinite(rawLimit)?Math.floor(rawLimit):500));
     const cursor=String(request.query.cursor??'');
     const rows=await db.query(`SELECT * FROM (
-      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id AS "versionId"
+      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id::text AS "versionId"
         FROM files f JOIN collections c ON c.id=f.collection_id
         WHERE f.collection_id=$1 AND f.parent_path=$2 AND f.deleted_at IS NULL
           AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
@@ -855,7 +855,7 @@ export function createApp(
     if(!collectionId) throw new HttpError(404,'Files collection not found');
     await requireCollection(request, collectionId, 'view');
     const result=await db.query(`SELECT * FROM (
-      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
+      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id::text AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
       WHERE f.collection_id=$1 AND f.path=$2 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
         AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
       UNION ALL SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId" FROM file_folders d WHERE d.collection_id=$1 AND d.path=$2 AND d.deleted_at IS NULL
