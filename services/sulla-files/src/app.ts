@@ -62,6 +62,7 @@ import { homeQuery } from './sullaCollectionMigration.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
+import { ListingPage } from './ListingPage.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -1567,9 +1568,11 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? '');
     if (!collectionId) throw new HttpError(400, 'collectionId is required');
     await requireCollection(request, collectionId, 'view', true, true);
-    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL ORDER BY path", [collectionId]);
+    let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
+    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL AND path>$2 ORDER BY path LIMIT $3", [collectionId,pageRequest.after,pageRequest.limit+1]);
+    const hasMore=rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,pageRequest.limit); pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const visible:(string|{folderId:string;path:string;revision:string;description:string|null;namingHint:string|null;needsDescription:boolean})[] = [];
-    for (const row of rows.rows) {
+    for (const row of page) {
       try { await requirePath(request, collectionId, row.path, 'view'); visible.push(request.query.details==='true'?{folderId:row.id,path:row.path,revision:row.revision,description:row.description,namingHint:row.naming_hint,needsDescription:row.needs_description}:row.path) }
       catch (error:any) { if (error.status !== 403) throw error }
     }
@@ -1664,6 +1667,7 @@ export function createApp(
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
+    let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
     const params:any[] = [collectionId, path ? `${ path }/` : ''];
     let filter = '';
     if (typeof request.query.deviceId === 'string' && request.query.deviceId) {
@@ -1672,9 +1676,10 @@ export function createApp(
     }
     const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params);
+      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2)) AND f.path>$${params.push(pageRequest.after)}${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path LIMIT $${params.push(pageRequest.limit+1)}`, params);
+    const hasMore=rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,pageRequest.limit); pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const actor = identity(request); const visible = [];
-    for (const row of rows.rows.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
+    for (const row of page.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
       const role = access.role;
       const versionId = row.current_version_id;
       if (!versionId) continue;
