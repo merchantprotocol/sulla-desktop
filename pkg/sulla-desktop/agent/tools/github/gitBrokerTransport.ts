@@ -5,14 +5,16 @@
 
 import crypto from 'node:crypto';
 import http from 'node:http';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import Logging from '@pkg/utils/logging';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type { ToolExecutionContext } from '../executionContext';
 
+const logger = Logging.background;
 const MAX_GIT_REQUEST_BYTES = 128 * 1024 * 1024;
 const HOP_BY_HOP_HEADERS = new Set([
   'authorization',
@@ -103,13 +105,24 @@ export async function withGitHubBrokerRemote<T>(
   const broker = requireConfiguredCredentialBroker();
 
   const server = http.createServer(async(request, response) => {
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    let forwardedBytes = 0;
+    let logged = false;
+    const service = (request.url ?? '').includes('git-receive-pack') ? 'receive-pack' : 'upload-pack';
+    const logEnd = (endedBy: string, reason?: unknown) => {
+      if (logged) return;
+      logged = true;
+      const error = reason instanceof Error ? { name: reason.name, code: (reason as NodeJS.ErrnoException).code, message: reason.message.split(transportToken).join('[broker token redacted]') } : reason;
+      logger.info(JSON.stringify({ component: 'github.git.broker', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), bytesForwarded: forwardedBytes, durationMs: Date.now() - startedAt, endedBy, ...(error ? { reason: error } : {}) }));
+    };
     const abort = new AbortController();
-    request.once('aborted', () => abort.abort());
+    request.once('aborted', () => { abort.abort(new Error('downstream request aborted')); logEnd('downstream-abort', 'request aborted'); });
     request.once('close', () => {
-      if (!request.complete) abort.abort();
+      if (!request.complete) { abort.abort(new Error('downstream request closed before completion')); logEnd('downstream-close', 'request closed before completion'); }
     });
     response.once('close', () => {
-      if (!response.writableEnded) abort.abort();
+      if (!response.writableEnded) { abort.abort(new Error('downstream response closed')); logEnd('downstream-close', 'response closed before end'); }
     });
     try {
       const incoming = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -131,10 +144,13 @@ export async function withGitHubBrokerRemote<T>(
       });
       const upstream = await broker.executeStream(brokerRequest, abort.signal);
       response.writeHead(upstream.status, brokerHeaders(upstream.headers));
-      if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
-      else response.end();
+      if (upstream.body) {
+        const counter = new Transform({ transform(chunk, _encoding, callback) { forwardedBytes += chunk.length; callback(null, chunk); } });
+        await pipeline(Readable.fromWeb(upstream.body as any), counter, response);
+      } else response.end();
+      logEnd('upstream-end');
     } catch (error) {
-      console.warn('[github.git broker] request failed:', error instanceof Error ? error.message : error);
+      logEnd(abort.signal.aborted ? 'abort-signal' : response.headersSent ? 'pipeline-error' : 'upstream-error', error);
       abort.abort();
       if (response.headersSent) {
         response.destroy();
