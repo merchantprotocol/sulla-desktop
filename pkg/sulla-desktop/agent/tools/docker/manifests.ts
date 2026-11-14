@@ -7,6 +7,24 @@ import type { ToolManifest } from '../registry';
 
 export const dockerToolManifests: ToolManifest[] = [
   {
+    name: 'docker_stats', description: 'Read one-shot Docker CPU, memory, I/O and PID statistics.', category: 'docker',
+    schemaDef: { container: { type: 'array', optional: true, items: { type: 'string' }, description: 'Optional container name(s)' }, sort: { type: 'enum', enum: ['cpu', 'mem', 'pids'], optional: true }, limit: { type: 'number', optional: true } },
+    operationTypes: ['read'], loader: () => import('./docker_stats'),
+  },
+  {
+    name: 'docker_inspect_health', description: 'Inspect container state, health checks, restarts, OOM and resource policy.', category: 'docker',
+    schemaDef: { container: { type: 'array', optional: true, items: { type: 'string' }, description: 'Optional container name(s); omitted means all containers' } },
+    operationTypes: ['read'], loader: () => import('./docker_inspect_health'),
+  },
+  {
+    name: 'docker_system_df', description: 'Summarize Docker image, container, volume and build-cache disk usage.', category: 'docker',
+    schemaDef: {}, operationTypes: ['read'], loader: () => import('./docker_system_df'),
+  },
+  {
+    name: 'docker_vm_snapshot', description: 'Read-only VM load, memory, mounts and process resource snapshot.', category: 'docker',
+    schemaDef: {}, operationTypes: ['read'], loader: () => import('./docker_vm_snapshot'),
+  },
+  {
     name:        'docker_build',
     description: 'Build a Docker image from a Dockerfile.',
     category:    'docker',

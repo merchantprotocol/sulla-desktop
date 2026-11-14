@@ -260,7 +260,7 @@
     "result": null,
     "card": {
       "label": "Browser",
-      "summary": "Filling '' → ''"
+      "summary": "Filling '' \u2192 ''"
     },
     "output": {}
   },
@@ -271,7 +271,7 @@
     },
     "card": {
       "label": "Browser",
-      "summary": "Filling '' → ''"
+      "summary": "Filling '' \u2192 ''"
     },
     "output": {
       "output": "done"
@@ -612,7 +612,7 @@
     "result": null,
     "card": {
       "label": "Git",
-      "summary": "Blaming lines ?–?"
+      "summary": "Blaming lines ?\u2013?"
     },
     "output": {}
   },
@@ -623,7 +623,7 @@
     },
     "card": {
       "label": "Git",
-      "summary": "Blaming lines ?–?"
+      "summary": "Blaming lines ?\u2013?"
     },
     "output": {
       "output": "done"
@@ -2667,6 +2667,94 @@
     "card": {
       "label": "Tool",
       "summary": "Mystery Tool"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_stats",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Reading container resource statistics"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_stats",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Reading container resource statistics"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_inspect_health",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Inspecting container health"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_inspect_health",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Inspecting container health"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_system_df",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Reading Docker disk usage"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_system_df",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Reading Docker disk usage"
+    },
+    "output": {
+      "output": "done"
+    }
+  },
+  {
+    "name": "docker_vm_snapshot",
+    "result": null,
+    "card": {
+      "label": "Docker",
+      "summary": "Reading VM resource snapshot"
+    },
+    "output": {}
+  },
+  {
+    "name": "docker_vm_snapshot",
+    "result": {
+      "responseString": "done"
+    },
+    "card": {
+      "label": "Docker",
+      "summary": "Reading VM resource snapshot"
     },
     "output": {
       "output": "done"

@@ -20,7 +20,7 @@ export class DockerExecWorker extends BaseTool {
 
   private buildExecArgs(container: string, command: string): string[] {
     // Route through container shell so quoted values / spaces are preserved.
-    return ['exec', container, 'sh', '-lc', command];
+    return ['exec', container, 'sh', '-c', command];
   }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
