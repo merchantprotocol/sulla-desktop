@@ -17,6 +17,7 @@ import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { assertSystemAreaWritable } from './systemAreas.js';
 
 import { CollectionRoleGate, resolveCollectionAccess } from './acl.js';
+import { FilesPathResolver } from './filesPathResolver.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
@@ -1000,13 +1001,18 @@ export function createApp(
   app.get('/v1/files/resolve',async(request:RequestWithIdentity,response,next)=>{try{
     identity(request); const absolute=String(request.query.path??''); const prefix='/mnt/sulla-files/';
     if(!absolute.startsWith(prefix)) throw new HttpError(400,'path must be under /mnt/sulla-files');
-    const relative=cleanPath(absolute.slice(prefix.length),false); const [root,...parts]=relative.split('/');
-    const collection=(await db.query(`SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE AND (name=$1 OR explorer_path=$1) ORDER BY is_default DESC LIMIT 1`,[root])).rows[0];
-    if(!collection) throw new HttpError(404,'collection not found'); const inner=parts.join('/'); await requirePath(request,collection.id,inner,'view');
-    const file=inner?(await db.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[collection.id,inner])).rows[0]:undefined;
-    if(file) return response.json({collectionId:collection.id,fileId:file.id,folderPath:inner.includes('/')?inner.slice(0,inner.lastIndexOf('/')):'',kind:'file'});
-    const folderExists=!inner||(await db.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[collection.id,inner])).rowCount;
-    if(!folderExists) throw new HttpError(404,'Files path not found'); response.json({collectionId:collection.id,folderPath:inner,kind:'folder'});
+    const relative=cleanPath(absolute.slice(prefix.length),false);
+    const collections=(await db.query(`SELECT id,name,explorer_path,is_default FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC`)).rows;
+    const resolver = new FilesPathResolver();
+    for (const candidate of resolver.candidates(collections,relative)) {
+      const file=candidate.path?(await db.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rows[0]:undefined;
+      const folderExists=!candidate.path||(await db.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rowCount>0;
+      if (!file && !folderExists) continue;
+      try { await requirePath(request,candidate.collectionId,candidate.path,'view'); } catch (error) { if (error instanceof HttpError && (error.status===403 || error.status===404)) continue; throw error; } // skip collections the caller cannot view; never reveal them
+      if(file) return response.json({collectionId:candidate.collectionId,fileId:file.id,folderPath:candidate.path.includes('/')?candidate.path.slice(0,candidate.path.lastIndexOf('/')):'',kind:'file'});
+      return response.json({collectionId:candidate.collectionId,folderPath:candidate.path,kind:'folder'});
+    }
+    throw new HttpError(404,'Files path not found');
   }catch(error){next(error)}});
   app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
   app.post('/v1/local/roots', async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.status(201).json(await manager.attachBrokeredRoot(request.body))}catch(error){next(error)}});
