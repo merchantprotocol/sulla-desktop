@@ -5,7 +5,8 @@
 
 import { statfs } from 'node:fs/promises';
 
-export const DEFAULT_CACHE_MAX_BYTES = 20 * 1024 ** 3;
+// Bound the resident chunk cache independently of filesystem capacity.
+export const DEFAULT_CACHE_MAX_BYTES = 64 * 1024 ** 2;
 
 export function cacheMaxBytes(value = process.env.SULLA_FILES_CACHE_MAX_BYTES):number {
   if (!value) return DEFAULT_CACHE_MAX_BYTES;
