@@ -624,6 +624,21 @@ export const githubToolManifests: ToolManifest[] = [
     loader:         () => import('./github_create_repo'),
   },
   {
+    name:        'github_update_repo',
+    description: 'Update a GitHub repository name, description, homepage, or topics without changing visibility.',
+    category:    'github',
+    schemaDef:   {
+      owner:       { type: 'string', description: 'Repository owner (username or organization)' },
+      repo:        { type: 'string', description: 'Current repository name' },
+      name:        { type: 'string', optional: true, description: 'New repository name' },
+      description: { type: 'string', optional: true, description: 'Repository description (empty clears it)' },
+      homepage:    { type: 'string', optional: true, description: 'Repository homepage URL (empty clears it)' },
+      topics:      { type: 'array', items: { type: 'string' }, optional: true, description: 'Complete replacement topic list' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./github_update_repo'),
+  },
+  {
     name:        'github_get_repo',
     description: 'Get metadata and stats for a GitHub repository — stars, forks, language, topics, default branch, license, push times.',
     category:    'github',
