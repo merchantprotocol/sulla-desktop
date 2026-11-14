@@ -116,7 +116,26 @@
               <path :d="tab.iconPath" />
             </svg>
           </span>
-          <span class="tab-label">{{ tab.label }}</span>
+          <input
+            v-if="renamingTabId === tab.id"
+            ref="renameInput"
+            v-model="renameDraft"
+            class="tab-rename"
+            type="text"
+            maxlength="80"
+            aria-label="Tab name"
+            :placeholder="tab.pageTitle"
+            @pointerdown.stop
+            @click.stop.prevent
+            @dblclick.stop
+            @keydown.enter.prevent="commitRename"
+            @keydown.esc.prevent="cancelRename"
+            @blur="onRenameBlur"
+          >
+          <span
+            v-else
+            class="tab-label"
+          >{{ tab.label }}</span>
           <button
             v-if="tab.closeable"
             class="tab-close"
@@ -900,6 +919,8 @@ interface HeaderTab {
   browserId?: string;
   /** Bookmark preview tab — replaced by the next bookmark until interacted with. */
   preview?:   boolean;
+  /** The page's own title, shown as the placeholder while renaming. */
+  pageTitle?: string;
 }
 
 /**
@@ -958,7 +979,8 @@ const allTabsById = computed(() => {
 
     map.set(id, {
       id,
-      label:      bt.title || 'New Tab',
+      label:      bt.customTitle || bt.title || 'New Tab',
+      pageTitle:  bt.title || 'New Tab',
       route:      `/Browser/${ bt.id }`,
       isActive:   route.path === `/Browser/${ bt.id }`,
       favicon:    bt.favicon,
@@ -1214,7 +1236,10 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   // Build the list of menu items for this tab
-  const items: string[] = [tab.pinned ? 'unpin' : 'pin', '---'];
+  const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
+
+  if (tab.browserId) items.push('rename');
+  items.push('---');
 
   if (tab.closeable) items.push('close');
   items.push('closeOther', 'closeRight');
@@ -1242,6 +1267,53 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   });
 }
 
+// ── Rename (right-click → Rename Tab) ──
+// The tab label turns into a text field. Enter or clicking away saves, Esc
+// cancels, and an empty name goes back to the page's own title.
+const renamingTabId = ref<string | null>(null);
+const renameDraft = ref('');
+let renameOriginal = '';
+const renameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+
+function startRename(tab: HeaderTab): void {
+  renamingTabId.value = tab.id;
+  renameDraft.value = tab.label;
+  renameOriginal = tab.label;
+  void nextTick(() => {
+    const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value;
+    // Every page keeps its own header; only the visible one edits, or a hidden
+    // copy would take the keyboard focus.
+    const box = input?.getBoundingClientRect();
+    const onTop = box && box.width > 0 && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === input;
+    if (!input || !onTop) {
+      renamingTabId.value = null;
+      return;
+    }
+    input.focus();
+    input.select();
+  });
+}
+
+function commitRename(): void {
+  const id = renamingTabId.value;
+  if (!id) return;
+  renamingTabId.value = null;
+  const draft = renameDraft.value.trim();
+  // An untouched name must not be saved: it would freeze the page's live title.
+  if (draft === renameOriginal) return;
+  const browserId = orderedTabs.value.find(t => t.id === id)?.browserId;
+  if (browserId) updateTab(browserId, { customTitle: draft || undefined });
+}
+
+/** Clicking elsewhere in the app saves; the window itself losing focus (menu closing, app switch) does not. */
+function onRenameBlur(): void {
+  if (document.hasFocus()) commitRename();
+}
+
+function cancelRename(): void {
+  renamingTabId.value = null;
+}
+
 /** Handle a context-menu action forwarded back from the popup window via IPC. */
 function handleTabContextMenuAction(
   _event: Electron.IpcRendererEvent,
@@ -1263,6 +1335,10 @@ function handleTabContextMenuAction(
 
   case 'unpin':
     setTabPinned(tabId, false);
+    break;
+
+  case 'rename':
+    if (headerTab?.browserId) startRename(headerTab);
     break;
 
   case 'close':
@@ -2021,6 +2097,19 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-pinned-boundary::before {
   background: var(--border-strong, var(--border-default));
+}
+
+.tab-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  outline: none;
+  color: var(--text-primary);
+  background: var(--bg-page, var(--bg-surface));
+  font: inherit;
 }
 
 .app-titlebar .tab-new {

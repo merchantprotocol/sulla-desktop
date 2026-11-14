@@ -37,6 +37,8 @@ export interface BrowserTab {
   studioSection?: StudioSection;
   /** Section a Preferences or Docker tab should show next. The tab clears it once it has navigated. */
   section?: string;
+  /** Name the user gave the tab; shown instead of the page title, which keeps changing. */
+  customTitle?: string;
   /**
    * Last time something touched this tab (create, updateTab, URL/title/content
    * change from backend). Used for idle-close of agent tabs. Only populated
