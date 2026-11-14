@@ -48,6 +48,7 @@ import { BackupRuntimeRequests } from './backup/runtime.js';
 import { AwsS3BackupClient } from './backup/s3.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
+import { AutomergeSnapshotRetention } from './automergeSnapshotRetention.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
 import type { Config } from './config.js';
@@ -157,6 +158,9 @@ export function createApp(
   cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
+  const snapshotPruner = setInterval(() => { void snapshotRetention.prune().catch(error => console.warn('[SullaFiles] Automerge snapshot retention failed:', error)); }, 60_000);
+  snapshotPruner.unref();
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.locals.catalogSync = new CatalogSyncService(db, config, ready);
   app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
@@ -381,12 +385,10 @@ export function createApp(
       ON CONFLICT(file_id) DO UPDATE SET document=EXCLUDED.document,heads=EXCLUDED.heads,updated_at=EXCLUDED.updated_at`,[fileId,bytes,JSON.stringify(heads)]);
     await client.query(`INSERT INTO file_automerge_versions(version_id,file_id,document,heads) VALUES($1,$2,NULL,$3)
       ON CONFLICT(version_id) DO UPDATE SET document=NULL,heads=EXCLUDED.heads`,[versionId,fileId,JSON.stringify(heads)]);
-    // A version snapshot can be discarded only when every version head is
-    // represented in the authoritative document. Unreachable heads (for
-    // example, after a document reset) retain their legacy snapshot.
-    const allChanges=new Set(Automerge.getAllChanges(document).map(change=>Automerge.decodeChange(change).hash));
-    const old=(await client.query('SELECT version_id,heads FROM file_automerge_versions WHERE file_id=$1 AND document IS NOT NULL AND version_id<>$2',[fileId,versionId])).rows;
-    for(const row of old){const versionHeads=Array.isArray(row.heads)?row.heads:JSON.parse(row.heads);if(versionHeads.every((head:string)=>allChanges.has(head)))await client.query('UPDATE file_automerge_versions SET document=NULL WHERE version_id=$1',[row.version_id]);}
+    // Saving touches only this version row. Scanning every snapshot here made
+    // write latency and native Automerge allocations grow with file history.
+    // Historical payloads are trimmed by the bounded background retention job;
+    // their heads remain available for stale-base merges.
   }
 
   async function currentAutomergeDocument(client:pg.PoolClient,fileId:string,versionId:string):Promise<Automerge.Doc<TextDocument>|undefined> {
