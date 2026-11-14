@@ -17,6 +17,7 @@ import { up as up_0151, down as down_0151 } from './0151_agent_task_reopen_found
 import { up as up_0152, down as down_0152 } from './0152_create_agent_stranded_episodes';
 import { up as up_0154, down as down_0154 } from './0154_create_agent_job_review_items';
 import { up as up_0155, down as down_0155 } from './0155_normalize_agent_job_tasks';
+import { up as up_0156, down as down_0156 } from './0156_prune_database_retention_tables';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -286,4 +287,5 @@ export const migrationsRegistry = [
   { name: '0152_create_agent_stranded_episodes', up: up_0152, down: down_0152 },
   { name: '0154_create_agent_job_review_items', up: up_0154, down: down_0154 },
   { name: '0155_normalize_agent_job_tasks', up: up_0155, down: down_0155 },
+  { name: '0156_prune_database_retention_tables', up: up_0156, down: down_0156 },
 ] as const;
