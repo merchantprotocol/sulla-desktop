@@ -1662,7 +1662,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           : []),
       ],
       restart: 'unless-stopped',
-      mem_limit: '1g',
+      // 1g OOM-killed Files every ~90s on 2026-11-13: steady state is ~1.2g (512 MiB heap plus ~700 MiB native: Potion table, chunk buffers).
+      mem_limit: '2g',
       healthcheck: {
         test: [
           'CMD', 'node', '-e',
