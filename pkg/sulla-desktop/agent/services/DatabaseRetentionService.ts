@@ -38,8 +38,4 @@ export class DatabaseRetentionService {
   }
 }
 
-let service: DatabaseRetentionService | undefined;
-export function getDatabaseRetentionService(): DatabaseRetentionService {
-  service ??= new DatabaseRetentionService();
-  return service;
-}
+export const databaseRetentionService = new DatabaseRetentionService();
