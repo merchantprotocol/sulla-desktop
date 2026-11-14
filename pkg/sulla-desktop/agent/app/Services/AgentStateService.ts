@@ -11,6 +11,9 @@ function isOpenBlocker(task: AgentJobTask): boolean { return task.status === 'bl
 function isLiveTask(task: AgentJobTask): boolean { return ['queued', 'running', 'parked'].includes(task.status) || isOpenBlocker(task); }
 export interface AgentStateStore {
   allJobs(): Promise<AgentJob[]>;
+  /** Running/parked jobs only (bounded working set). Optional so test doubles may omit it. */
+  liveJobs?(): Promise<AgentJob[]>;
+  jobsForParentThread?(parentThreadId: string): Promise<AgentJob[]>;
   lineageForParentThread?(parentThreadId: string, limit?: number): Promise<AgentJob[]>;
   job(jobId: string): Promise<AgentJob | undefined>;
   jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]>;
@@ -49,6 +52,7 @@ export class AgentStateService {
   private readonly clock:() => number;
   private readonly descendantReads = new Map<string, { expiresAt:number; jobs:AgentJob[] }>();
   private refreshInFlight?: Promise<AgentJob[]>;
+  private liveRefreshInFlight?: Promise<AgentJob[]>;
   private readonly changes = new EventEmitter();
   private readiness: () => Promise<void> = async() => undefined;
   private readonly pendingTerminalWrites = new Set<string>();
@@ -72,19 +76,25 @@ export class AgentStateService {
     return () => this.changes.off('change', listener);
   }
 
-  private refreshUnsafe(): Promise<AgentJob[]> {
-    if (this.refreshInFlight) return this.refreshInFlight;
-    const refresh = this.loadJobs().finally(() => {
-      if (this.refreshInFlight === refresh) this.refreshInFlight = undefined;
+  private refreshUnsafe(live = false): Promise<AgentJob[]> {
+    const useLive = live && Boolean(this.store.liveJobs);
+    const slot = useLive ? 'liveRefreshInFlight' : 'refreshInFlight';
+    if (this[slot]) return this[slot]!;
+    const refresh = this.loadJobs(useLive).finally(() => {
+      if (this[slot] === refresh) this[slot] = undefined;
     });
-    this.refreshInFlight = refresh;
+    this[slot] = refresh;
     return refresh;
   }
 
-  private async loadJobs(): Promise<AgentJob[]> {
-    const durable = await this.store.allJobs();
+  /** `live` reads only running/parked rows; a full read parses every job ever run (tens of MB). */
+  private async loadJobs(live = false): Promise<AgentJob[]> {
+    const durable = live ? await this.store.liveJobs!() : await this.store.allJobs();
     const durableIds = new Set(durable.map(job => job.jobId));
-    for (const cachedId of this.cache.jobs.keys()) if (!durableIds.has(cachedId)) this.cache.jobs.delete(cachedId);
+    for (const [cachedId, cached] of this.cache.jobs) {
+      // A live read says nothing about terminal rows, which stay cached until trimmed.
+      if (!durableIds.has(cachedId) && (!live || ['running', 'parked'].includes(cached.status))) this.cache.jobs.delete(cachedId);
+    }
     const jobs: AgentJob[] = [];
     for (const persisted of durable) {
       const derived = this.withDerivedStatus(persisted);
@@ -109,9 +119,17 @@ export class AgentStateService {
   }
 
   /** Reconciliation-only read, used to establish the readiness gate itself. */
-  async jobsBeforeReady(): Promise<AgentJob[]> { return this.refreshUnsafe(); }
+  async jobsBeforeReady(): Promise<AgentJob[]> { return this.refreshUnsafe(true); }
   async refresh(): Promise<AgentJob[]> { await this.ready(); return this.refreshUnsafe(); }
+  /** Bounded refresh of the running/parked working set; use instead of refresh() on hot paths. */
+  async refreshLive(): Promise<AgentJob[]> { await this.ready(); return this.refreshUnsafe(true); }
   async jobs(): Promise<AgentJob[]> { return this.refresh(); }
+  /** Visible jobs launched from one conversation: one indexed read, never the whole table. */
+  async jobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
+    await this.ready();
+    if (!this.store.jobsForParentThread) return (await this.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt);
+    return (await this.store.jobsForParentThread(parentThreadId)).map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
+  }
   /**
    * Read-only, bounded view for the Live Agents projection. Deliberately does not wait for runtime
    * (Docker) inventory: showing agents must never depend on container inspection succeeding, and it must not

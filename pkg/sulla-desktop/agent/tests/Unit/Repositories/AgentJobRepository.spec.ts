@@ -382,4 +382,34 @@ dbDescribe('AgentJobRepository', () => {
     };
     expect(await repository.hasQueuedOrRunningChildren(completedParent)).toBe(false);
   });
+
+  it('reads live jobs, thread jobs, task-thread owners and pending completions without scanning history', async() => {
+    // risk: polling cost grows with every historical job (seq scan + jsonb detoast)
+    const live = job('poll-live');
+    const done = { ...job('poll-done'), status: 'completed' as const, finishedAt: Date.now() };
+    const stale = { ...job('poll-stale'), parentThreadId: 'poll-parent', parentChannel: 'sulla-desktop' };
+    stale.tasks[0] = { ...stale.tasks[0], threadId: 'poll-task-thread',
+      completion: { label: 'lane', status: 'completed', output: 'ok', threadId: 'poll-task-thread', contract: 'result' } };
+    for (const item of [live, done, stale]) await repository.insertJob(item);
+    await repository.complete({ ...stale, status: 'completed', finishedAt: Date.now() });
+    expect((await repository.liveJobs()).map(item => item.jobId)).toContain('poll-live');
+    expect((await repository.liveJobs()).map(item => item.jobId)).not.toContain('poll-done');
+    expect((await repository.findByTaskThread('poll-task-thread'))?.jobId).toBe('poll-stale');
+    const pending = await repository.pendingCompletions(10);
+    expect(pending.map(item => item.jobId)).toContain('poll-stale');
+    expect(await repository.pendingCompletions(1)).toHaveLength(1);
+    await repository.markCompletionDelivered('poll-stale');
+    expect((await repository.pendingCompletions()).map(item => item.jobId)).not.toContain('poll-stale');
+  });
+
+  it('keeps the lineage recursion on typed task rows and returns each descendant once', async() => {
+    // risk: lineage poll copied task jsonb through every recursion level (275 ms mean, 5k calls)
+    const root = 'lineage-bound-root';
+    const mid = { ...job('lineage-bound-mid'), parentThreadId: root };
+    mid.tasks[0] = { ...mid.tasks[0], threadId: 'lineage-bound-mid-thread' };
+    const leaf = { ...job('lineage-bound-leaf'), parentThreadId: 'lineage-bound-mid-thread' };
+    await repository.insertJob(mid); await repository.insertJob(leaf);
+    const rows = await repository.lineageForParentThread(root);
+    expect(rows.map(item => item.jobId)).toEqual(['lineage-bound-mid', 'lineage-bound-leaf']);
+  });
 });
