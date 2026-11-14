@@ -10,7 +10,9 @@ describe('SullaFilesMountManager agent mount recovery', () => {
   it('reattaches stale running agents after a remount and leaves healthy agents alone', async() => {
     // risk: availability — live jobs must recover their Files view without restarting healthy containers
     const calls:string[][] = [];
-    const execCommand = vi.fn(async(_options:unknown, ...args:string[]) => {
+    const execCommand = vi.fn(async(_options:unknown, ...raw:string[]) => {
+      // Probes and reattaches run under `timeout N`; record the wrapped command.
+      const args = raw[0] === 'timeout' ? raw.slice(2) : raw;
       calls.push(args);
       if (args[0] === 'docker' && args[1] === 'ps') return 'sulla-agent-healthy\nsulla-agent-stale\nother-container';
       if (args[0] === 'docker' && args[1] === 'inspect') return args.at(-1) === 'sulla-agent-healthy' ? '101' : '202';

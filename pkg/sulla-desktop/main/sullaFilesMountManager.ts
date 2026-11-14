@@ -335,20 +335,23 @@ export class SullaFilesMountManager extends EventEmitter {
     }, TOKEN_REFRESH_MS);
     this.refreshTimer.unref?.();
     // Notice an adapter that disappears (container exit, external unmount).
+    let probing = false;
     this.healthTimer = setInterval(() => {
       const executor = this.executor;
 
-      if (!executor || generation !== this.credentialGeneration || !this.statusValue.ready) return;
+      // A hung FUSE layer can stall a probe; never stack a second one on it.
+      if (probing || !executor || generation !== this.credentialGeneration || !this.statusValue.ready) return;
+      probing = true;
       // An unreadable mount table is not evidence the adapter is gone.
       probeFilesAnchor(executor, MOUNT_PATH).then(async(probe) => {
         if (probe.state !== 'adapter') {
           this.runtimeFailure(generation, 'The guest Files adapter mount disappeared');
           return;
         }
-        if (!await isGuestPathUsable(executor, MOUNT_PATH)) {
+        if (!await isGuestPathUsable(executor, MOUNT_PATH, 5)) {
           this.runtimeFailure(generation, 'The guest Files adapter mount is not responding');
         }
-      }, () => undefined);
+      }, () => undefined).finally(() => { probing = false });
     }, HEALTH_CHECK_MS);
     this.healthTimer.unref?.();
   }
@@ -364,12 +367,12 @@ export class SullaFilesMountManager extends EventEmitter {
       )).trim();
       if (!/^\d+$/.test(pid)) continue;
       const healthy = await executor.execCommand(
-        { root: true, expectFailure: true }, 'nsenter', '-t', pid, '-m', '--', 'sh', '-c', 'ls -A /mnt/sulla-files >/dev/null',
+        { root: true, expectFailure: true }, 'timeout', '5', 'nsenter', '-t', pid, '-m', '--', 'sh', '-c', '[ -n "$(ls -A /mnt/sulla-files)" ]',
       ).then(() => true, () => false);
       if (healthy) continue;
       await executor.execCommand(
-        { root: true }, 'python3', '-c', python, pid, MOUNT_PATH,
-      );
+        { root: true, expectFailure: true }, 'timeout', '10', 'python3', '-c', python, pid, MOUNT_PATH,
+      ).catch(error => console.warn(`[SullaFiles] Could not reattach Files in ${ name }: ${ error instanceof Error ? error.message : String(error) }`));
     }
   }
 
