@@ -38,6 +38,10 @@ export class DockerToolCardFormatter extends MappedToolCardFormatter {
   docker_images(args) {
     return { label: 'Docker', summary: `Listing ${ args.all ? 'all ' : '' }images` };
   },
+  docker_stats(args) { return { label: 'Docker', summary: 'Reading container resource statistics' }; },
+  docker_inspect_health(args) { return { label: 'Docker', summary: 'Inspecting container health' }; },
+  docker_system_df(args) { return { label: 'Docker', summary: 'Reading Docker disk usage' }; },
+  docker_vm_snapshot(args) { return { label: 'Docker', summary: 'Reading VM resource snapshot' }; },
     });
   }
 }
