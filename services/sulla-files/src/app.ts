@@ -958,6 +958,11 @@ export function createApp(
       await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
       file=await requireFile(request,file.id,'edit',client);
       if(match!==file.current_version_id) throw new HttpError(409,'Files mount version changed');
+      const baseContent=await streamFileContent(db,config,store,file.id,match,undefined,new AbortController().signal);
+      if(!baseContent) throw new HttpError(409,'Files mount version changed');
+      const baseHash=createHash('sha256');
+      for await (const part of baseContent.body) baseHash.update(part);
+      if(sourceHash.toLowerCase()!==baseHash.digest('hex')) throw new HttpError(409,'Files mount version changed');
       const result=await insertStreamingUpload(client,config,store,{uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,
         expectedBytes:declaredBytes,actor,body:request,intentDb:db,existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'});
       await client.query('COMMIT');
