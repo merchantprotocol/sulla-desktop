@@ -38,6 +38,7 @@ function requiredObject(value: unknown, name: string): Record<string, unknown> {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AUDIT_MERGE_WINDOW = 5000;
 const AUDIT_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
 
 function sanitizedAuditMetadata(value: unknown): Record<string, string> {
@@ -308,15 +309,43 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         conditions.push(`(a.action ILIKE ${ search } OR COALESCE(a.pod_id,'') ILIKE ${ search } OR COALESCE(a.item_id::text,'') ILIKE ${ search } OR COALESCE(a.metadata->>'agentId','') ILIKE ${ search } OR COALESCE(a.metadata->>'operation','') ILIKE ${ search } OR COALESCE(a.metadata->>'destination','') ILIKE ${ search })`);
       }
     }
-    params.push(limit + 1, offset);
+    // Agent credential use lives in the file sink, not Postgres. Merge its recent events
+    // into the same newest-first window so limit/offset/filters behave as before.
+    // Windows deeper than AUDIT_MERGE_WINDOW fall back to Postgres events only.
+    const wantsFile = request.query.actor !== 'human' && offset + limit + 1 <= AUDIT_MERGE_WINDOW;
+    const window = wantsFile ? offset + limit + 1 : limit + 1;
+    params.push(window, wantsFile ? 0 : offset);
     const result = await db.query(
       `SELECT a.id,a.item_id,a.action,a.pod_id,a.metadata,a.blocked,a.reason,a.created_at
          FROM audit_log a LEFT JOIN items i ON i.id=a.item_id
         WHERE ${ conditions.join(' AND ') }
         ORDER BY a.created_at DESC,a.id DESC LIMIT $${ params.length - 1 } OFFSET $${ params.length }`, params,
     );
-    const hasMore = result.rows.length > limit;
-    const events = result.rows.slice(0, limit).map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) }));
+    let rows: Array<Record<string, any>> = result.rows;
+    if (wantsFile) {
+      const itemQuery = typeof request.query.item === 'string' ? request.query.item.toLowerCase() : null;
+      const needle = typeof request.query.query === 'string' ? request.query.query.trim().toLowerCase() : '';
+      const fromMs = typeof request.query.from === 'string' ? Date.parse(request.query.from) : null;
+      const fileEvents = await localAuthority.outboundAuditSink.readRecent(event => {
+        if (event.actor_user_id !== principalId || event.org_id !== null) return false;
+        if (itemQuery && event.item_id?.toLowerCase() !== itemQuery) return false;
+        if (request.query.blocked === 'true' && !event.blocked) return false;
+        if (fromMs !== null && Date.parse(event.created_at) < fromMs) return false;
+        if (needle) {
+          const hay = [event.action, event.pod_id, event.item_id, event.metadata?.agentId, event.metadata?.operation, event.metadata?.destination]
+            .map(value => typeof value === 'string' ? value.toLowerCase() : '').join('\n');
+          if (!hay.includes(needle)) return false;
+        }
+        return true;
+      }, window);
+      const fileRows = fileEvents.map((event, index) => ({
+        id: `file-${ event.created_at }-${ index }`, item_id: event.item_id, action: event.action, pod_id: event.pod_id,
+        metadata: event.metadata, blocked: event.blocked, reason: event.reason, created_at: event.created_at,
+      }));
+      rows = [...rows, ...fileRows].sort((a, b) => Date.parse(String(b.created_at)) - Date.parse(String(a.created_at))).slice(offset);
+    }
+    const hasMore = rows.length > limit;
+    const events = rows.slice(0, limit).map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) }));
     const currentSession = localAuthority.humanSessionStatus(sessionId, csrf);
     if (currentSession.phase !== 'unlocked' || localAuthority.status().principalId !== principalId) {
       throw new LocalVaultError('vault_locked', 423, 'Vault locked during audit request');
