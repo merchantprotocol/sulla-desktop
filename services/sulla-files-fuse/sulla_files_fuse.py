@@ -529,9 +529,13 @@ class SullaFiles(pyfuse3.Operations):
                         break
                 return
         # A changed or uncached directory is streamed in bounded keyset pages.
-        # Drop only this directory's old children; other cached directories stay hot.
-        for old_name in list(children):
-            self._forget("/".join(filter(None, [directory_path, old_name])))
+        # Inodes must stay stable across a refresh: a process may hold a child directory as its cwd
+        # or an open path, and forgetting it here made its next operation fail with ENOENT
+        # ("nonexistent directory") whenever anything re-listed the parent (health probes, agents).
+        # Only names that are gone after a complete listing are pruned, below.
+        old_names = set(children)
+        seen_names = set()
+        listed_fully = False
         cursor = None
         absolute_index = 0
         total = 0
@@ -549,6 +553,7 @@ class SullaFiles(pyfuse3.Operations):
                 total += 1
                 name = row["path"].rsplit("/", 1)[-1]
                 full_path = "/".join(filter(None, [directory_path, name]))
+                seen_names.add(name)
                 inode = self._node(full_path, row["kind"] == "directory")
                 self.nodes[inode].update({**row, "path": full_path, "filesPath": row.get("path", ""),
                     "collectionId": collection_id, "mtimeMs": _mtime_ms(row.get("updated_at"))})
@@ -558,7 +563,12 @@ class SullaFiles(pyfuse3.Operations):
                     return
             cursor = page.get("nextCursor")
             if not cursor:
+                listed_fully = True
                 break
+        # Only a fully received listing proves a name is gone (not a 304, not a partial reply).
+        if listed_fully:
+            for gone in old_names - seen_names:
+                self._forget("/".join(filter(None, [directory_path, gone])))
         if total <= MAX_CACHED_NODES and len(self.children.get(directory_path, {})) == total:
             self.directory_complete.add(directory_path)
         else:
