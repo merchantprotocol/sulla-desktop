@@ -22,6 +22,7 @@ import urllib.request
 import logging
 import contextvars
 import re
+from collections import OrderedDict
 
 import yaml
 
@@ -37,6 +38,8 @@ MAX_OPEN_HANDLES = 32
 # against the container memory limit).
 SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
 MAX_TOKEN_BYTES = 4096
+MAX_CACHED_NODES = 50_000
+DIRECTORY_PAGE_SIZE = 500
 # Methods whose outcome doesn't depend on how many times they're applied, so
 # retrying a transient 409 from Files' own SERIALIZABLE-conflict retry loop is safe.
 IDEMPOTENT_RETRY_METHODS = ("DELETE", "PUT")
@@ -264,11 +267,21 @@ class FilesApi:
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             raise OSError(errno.EIO, f"Files service unavailable: {error}") from error
 
-    async def snapshot(self, etag=None):
-        headers = {"If-None-Match": etag} if etag else None
-        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree", "GET", None, headers)
-        next_etag = response_headers.get("ETag", etag)
-        return (None if status == 304 else json.loads(body)), next_etag
+    async def directory_page(self, collection_id, path, cursor=None, etag=None):
+        query = {"path": path, "limit": DIRECTORY_PAGE_SIZE}
+        if collection_id: query["collectionId"] = collection_id
+        if cursor: query["cursor"] = cursor
+        headers = {"If-None-Match": etag} if etag and not cursor else None
+        status, response_headers, body = await trio.to_thread.run_sync(
+            self._request, f"/v1/fuse/directory?{urllib.parse.urlencode(query)}", "GET", None, headers)
+        return (None if status == 304 else json.loads(body)), response_headers.get("ETag", etag)
+
+    async def entry(self, collection_id, path):
+        values = {"path": path}
+        if collection_id: values["collectionId"] = collection_id
+        query = urllib.parse.urlencode(values)
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/entry?{query}")
+        return json.loads(body)
 
     async def read(self, file_id):
         _, headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content")
@@ -344,15 +357,16 @@ class SullaFiles(pyfuse3.Operations):
         self.api = api
         self.next_inode = pyfuse3.ROOT_INODE + 1
         self.nodes = {pyfuse3.ROOT_INODE: {"path": "", "directory": True}}
-        self.path_inode = {"": pyfuse3.ROOT_INODE}
-        self.children = {}
+        self.path_inode = OrderedDict({"": pyfuse3.ROOT_INODE})
+        self.children = OrderedDict()
         self.handles = {}
         self.next_handle = 1
         self.uid = 0
         self.gid = 0
+        self.directory_etags = {}
+        self.directory_complete = set()
+        self.node_limit = MAX_CACHED_NODES
         self.snapshot_at = 0.0
-        self.snapshot_etag = None
-        self.refresh_lock = trio.Lock()
         self.metadata_cache = {}
 
     def _describe(self, describe, args):
@@ -383,93 +397,54 @@ class SullaFiles(pyfuse3.Operations):
         finally:
             request_actor.reset(token)
 
-    def _fresh(self):
-        return time.monotonic() - self.snapshot_at < SNAPSHOT_TTL_SECONDS
-
     async def refresh(self, force=False):
-        if not force and self._fresh():
-            return
-        async with self.refresh_lock:
-            if not force and self._fresh():
-                return
-            started = time.monotonic()
-            previous_etag, before = self.snapshot_etag, len(self.path_inode)
-            try:
-                snapshot, self.snapshot_etag = await self.api.snapshot(self.snapshot_etag)
-            except OSError as error:
-                emit("snapshot-failed", logging.WARNING, forced=force, errno=_errno_name(error.errno), error=str(error),
-                     staleSeconds=round(time.monotonic() - self.snapshot_at, 1) if self.snapshot_at else None)
-                raise
-            fetched = time.monotonic()
-            stats["snapshots"] += 1
-            if snapshot is not None:
-                self._apply(snapshot)
-                applied = time.monotonic()
-                emit("snapshot-applied", logging.INFO if previous_etag is None or applied - started >= SLOW_REQUEST_SECONDS else logging.DEBUG,
-                     forced=force, collections=len(snapshot.get("collections", [])), folders=len(snapshot.get("folders", [])),
-                     files=len(snapshot.get("files", [])), nodesBefore=before, nodesAfter=len(self.path_inode),
-                     fetchMs=round((fetched - started) * 1000, 1), applyMs=round((applied - fetched) * 1000, 1),
-                     etagChanged=previous_etag != self.snapshot_etag)
-            else:
-                stats["snapshotsUnchanged"] += 1
-                emit("snapshot-unchanged", logging.DEBUG, forced=force, fetchMs=round((fetched - started) * 1000, 1))
-            self.snapshot_at = started
+        """Legacy startup hook; directory contents are deliberately loaded on demand."""
+        return
 
-    def _apply(self, snapshot):
-        self.metadata_cache.clear()
-        present = {""}
-        roots = {}
-        root_collection_id = snapshot.get("rootCollectionId")
-        if root_collection_id:
-            self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = root_collection_id
-            roots[root_collection_id] = ""
-        for collection in snapshot["collections"]:
-            root = collection.get("tree_path", "")
-            roots[collection["id"]] = root
-            if not root:
+    def _touch_node(self, inode):
+        node = self.nodes.get(inode)
+        if node is not None and inode != pyfuse3.ROOT_INODE:
+            self.path_inode.move_to_end(node["path"])
+            self._evict_nodes()
+        return node
+
+    def _evict_nodes(self):
+        skipped = 0
+        while len(self.path_inode) > self.node_limit + 1 and skipped < len(self.path_inode):
+            path, inode = next(iter(self.path_inode.items()))
+            if inode == pyfuse3.ROOT_INODE or any(handle.get("inode") == inode for handle in self.handles.values()):
+                self.path_inode.move_to_end(path)
+                skipped += 1
                 continue
-            parts = root.split('/')
-            for index in range(1, len(parts) + 1):
-                path = "/".join(parts[:index]); present.add(path)
-                inode = self._node(path, True)
-                if index == len(parts):
-                    self.nodes[inode].update({"collectionId":collection["id"], "collectionRoot":True})
-        for folder in snapshot["folders"]:
-            root = roots.get(folder["collection_id"])
-            if root is None: continue
-            full = "/".join(filter(None, [root, folder['path']]))
-            for index in range(1, len(full.split('/')) + 1):
-                path = "/".join(full.split('/')[:index]); present.add(path)
-                inode = self._node(path, True); self.nodes[inode].update({"collectionId":folder["collection_id"]})
-        for row in snapshot["files"]:
-            root = roots.get(row["collection_id"])
-            if root is None: continue
-            full = "/".join(filter(None, [root, row['path']])); parts=full.split('/')
-            for index in range(1,len(parts)):
-                path="/".join(parts[:index]); present.add(path)
-                inode=self._node(path,True); self.nodes[inode].update({"collectionId":row["collection_id"]})
-            present.add(full); inode=self._node(full,False)
-            self.nodes[inode].update({**row,"path":full,"filesPath":row["path"],"collectionId":row["collection_id"],"mtimeMs":_mtime_ms(row.get("updated_at"))})
-        # Metadata manifests are virtual files. A real file of the same name wins,
-        # and repositories stay completely untouched (including nested folders).
-        directories = [(inode, node) for inode, node in self.nodes.items() if node.get("directory") and node.get("collectionId")]
-        for _, directory in directories:
-            path = directory["path"]
-            parts = path.split("/") if path else []
-            in_git = any("/".join(parts[:index] + [".git"]) in self.path_inode for index in range(len(parts) + 1))
-            manifest_path = "/".join(filter(None, [path, METADATA_NAME]))
-            if in_git or manifest_path in present:
-                continue
-            present.add(manifest_path)
-            inode = self._node(manifest_path, False)
-            self.nodes[inode].update({
-                "path": manifest_path, "virtualMetadata": True, "size": 0,
-                "collectionId": directory["collectionId"],
-                "filesPath": self._files_path(path, directory["collectionId"]),
-            })
-        for path, inode in list(self.path_inode.items()):
-            if path and path not in present:
-                self._forget(path)
+            self._forget(path)
+            skipped = 0
+
+    async def _resolve(self, parent_inode, name):
+        parent = self.nodes.get(parent_inode)
+        if not parent or not parent.get("directory"):
+            raise pyfuse3.FUSEError(errno.ENOENT)
+        name = os.fsdecode(name)
+        path = "/".join(filter(None, [parent["path"], name]))
+        inode = self.path_inode.get(path)
+        if inode is not None:
+            return inode
+        collection_id = parent.get("collectionId")
+        try:
+            row = await self.api.entry(collection_id, self._files_path(path, collection_id) if collection_id else path)
+            collection_id = collection_id or row.get("collection_id") or row.get("collectionId")
+            if collection_id and parent_inode == pyfuse3.ROOT_INODE:
+                parent["collectionId"] = collection_id
+                self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = collection_id
+        except OSError as error:
+            if error.errno == errno.EIO and getattr(error, "status", None) == 404:
+                raise pyfuse3.FUSEError(errno.ENOENT) from error
+            raise
+        if not collection_id:
+            raise pyfuse3.FUSEError(errno.ENOENT)
+        inode = self._node(path, row.get("kind") == "directory")
+        self.nodes[inode].update({**row, "path": path, "filesPath": self._files_path(path, collection_id), "collectionId": collection_id,
+                                  "mtimeMs": _mtime_ms(row.get("updated_at"))})
+        return inode
 
     def _node(self, path, directory):
         inode = self.path_inode.get(path)
@@ -478,12 +453,17 @@ class SullaFiles(pyfuse3.Operations):
             self.next_inode += 1
             self.path_inode[path] = inode
             self.nodes[inode] = {"path": path, "directory": directory}
-            self.children.setdefault(os.path.dirname(path), {})[os.path.basename(path)] = inode
+            self.children.setdefault(os.path.dirname(path), OrderedDict())[os.path.basename(path)] = inode
+        self.path_inode.move_to_end(path)
+        self._evict_nodes()
         return inode
 
     def _forget(self, path):
         inode = self.path_inode.pop(path, None)
         self.nodes.pop(inode, None)
+        self.children.pop(path, None)
+        self.directory_etags.pop(path, None)
+        self.directory_complete.discard(path)
         siblings = self.children.get(os.path.dirname(path))
         if siblings is not None:
             siblings.pop(os.path.basename(path), None)
@@ -511,26 +491,16 @@ class SullaFiles(pyfuse3.Operations):
 
     @traced("getattr", lambda s, a: s._inode_info(a[0], a[-1]))
     async def getattr(self, inode, ctx=None):
-        if inode == pyfuse3.ROOT_INODE:
-            try:
-                await self.refresh()
-            except OSError as error:
-                raise pyfuse3.FUSEError(error.errno) from error
+        if inode not in self.nodes:
+            raise pyfuse3.FUSEError(errno.ENOENT)
         return self._attrs(inode)
 
     @traced("lookup", lambda s, a: s._child_info(a[0], a[1], a[-1]))
     async def lookup(self, parent_inode, name, ctx=None):
         try:
-            await self.refresh()
+            inode = await self._resolve(parent_inode, name)
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
-        parent = self.nodes.get(parent_inode)
-        if not parent or not parent["directory"]:
-            raise pyfuse3.FUSEError(errno.ENOENT)
-        path = "/".join(filter(None, [parent["path"], os.fsdecode(name)]))
-        inode = self.path_inode.get(path)
-        if inode is None:
-            raise pyfuse3.FUSEError(errno.ENOENT)
         return self._attrs(inode)
 
     @traced("opendir", lambda s, a: s._inode_info(a[0], a[-1]))
@@ -541,17 +511,55 @@ class SullaFiles(pyfuse3.Operations):
 
     @traced("readdir", lambda s, a: s._inode_info(a[0]))
     async def readdir(self, fh, start_id, token):
-        try:
-            await self.refresh()
-        except OSError as error:
-            raise pyfuse3.FUSEError(error.errno) from error
-        parent = self.nodes[fh]["path"]
-        children = self.children.get(parent, {})
-        for index, (name, inode) in enumerate(sorted(children.items()), start=1):
-            if index <= start_id:
-                continue
-            if not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), index):
+        directory = self.nodes.get(fh)
+        if not directory:
+            raise pyfuse3.FUSEError(errno.ENOENT)
+        directory_path = directory["path"]
+        collection_id = directory.get("collectionId")
+        children = self.children.get(directory_path, {})
+        marker = self.directory_etags.get(directory_path)
+        if directory_path in self.directory_complete and marker:
+            page, _ = await self.api.directory_page(collection_id, self._files_path(directory_path, collection_id), etag=marker)
+            if page is None:
+                for index, (name, inode) in enumerate(sorted(children.items()), start=1):
+                    if index > start_id and not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), index):
+                        break
+                return
+        # A changed or uncached directory is streamed in bounded keyset pages.
+        # Drop only this directory's old children; other cached directories stay hot.
+        for old_name in list(children):
+            self._forget("/".join(filter(None, [directory_path, old_name])))
+        cursor = None
+        absolute_index = 0
+        total = 0
+        while True:
+            page, marker = await self.api.directory_page(collection_id,
+                self._files_path(directory_path, collection_id) if collection_id else "", cursor)
+            if page is None:
                 break
+            if page.get("rootCollectionId"):
+                collection_id = page["rootCollectionId"]
+                directory["collectionId"] = collection_id
+                self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = collection_id
+            self.directory_etags[directory_path] = marker
+            for row in page["entries"]:
+                total += 1
+                name = row["path"].rsplit("/", 1)[-1]
+                full_path = "/".join(filter(None, [directory_path, name]))
+                inode = self._node(full_path, row["kind"] == "directory")
+                self.nodes[inode].update({**row, "path": full_path, "filesPath": row.get("path", ""),
+                    "collectionId": collection_id, "mtimeMs": _mtime_ms(row.get("updated_at"))})
+                absolute_index += 1
+                if absolute_index > start_id and not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), absolute_index):
+                    self.directory_complete.discard(directory_path)
+                    return
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+        if total <= MAX_CACHED_NODES and len(self.children.get(directory_path, {})) == total:
+            self.directory_complete.add(directory_path)
+        else:
+            self.directory_complete.discard(directory_path)
 
     @traced("open", lambda s, a: s._inode_info(a[0], a[-1]))
     async def open(self, inode, flags, ctx):
@@ -813,7 +821,10 @@ class SullaFiles(pyfuse3.Operations):
             mapped = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
             log.error("Rename/save rejected: %s", error)
             raise pyfuse3.FUSEError(mapped) from error
-        await self.refresh(force=True)
+        self.directory_etags.pop(parent["path"], None)
+        self.directory_complete.discard(parent["path"])
+        self.directory_etags.pop(target_parent["path"], None)
+        self.directory_complete.discard(target_parent["path"])
 
     @traced("unlink", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def unlink(self, parent_inode, name, ctx):
@@ -822,6 +833,8 @@ class SullaFiles(pyfuse3.Operations):
         try: await self._as_actor(await self._actor(ctx), self.api.delete(node["id"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
+        self.directory_etags.pop(os.path.dirname(path), None)
+        self.directory_complete.discard(os.path.dirname(path))
 
     @traced("mkdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def mkdir(self, parent_inode, name, mode, ctx):
@@ -839,6 +852,8 @@ class SullaFiles(pyfuse3.Operations):
         try: await self._as_actor(await self._actor(ctx), self.api.rmdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
+        self.directory_etags.pop(parent["path"], None)
+        self.directory_complete.discard(parent["path"])
 
     def _metadata_path(self, node):
         return self._files_path(node["path"], node["collectionId"])
