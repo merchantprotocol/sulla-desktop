@@ -4,6 +4,8 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createApp } from './app.js';
+import { pruneLegacyOutboundAuditRows } from './auditRetention.js';
+import { LocalVaultAuthority } from './localAuthority.js';
 import { readFile } from 'node:fs/promises';
 import https from 'node:https';
 import { ensureDesktopAccount } from './auth.js';
@@ -19,7 +21,10 @@ const db = await connectDatabase(config);
 await untilDatabaseReady('migrations', () => migrate(db));
 await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config));
 
-const app = createApp(db, config);
+const localAuthority = new LocalVaultAuthority(db, config);
+const app = createApp(db, config, { localAuthority });
+// Background, batched, lock-free sweep of legacy agent-use rows; failures retry on next start.
+void pruneLegacyOutboundAuditRows(db).catch((error) => console.warn(`sulla-vault: audit row cleanup stopped (${ (error as Error).message }); it resumes on next start`));
 if (!config.tlsCertificatePath || !config.tlsPrivateKeyPath) {
   throw new Error('Desktop vault TLS identity is required');
 }
@@ -35,5 +40,6 @@ server.listen(config.port, '0.0.0.0', () => {
 guard.handleSignals(async() => {
   server.closeIdleConnections();
   server.close();
+  await localAuthority.outboundAuditSink.close();
   await db.end();
 });

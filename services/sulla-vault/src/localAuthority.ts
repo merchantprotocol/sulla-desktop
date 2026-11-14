@@ -8,6 +8,7 @@ import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import { join } from 'node:path';
 
 import pg from 'pg';
 import { IdentityError, VaultOperationError, type LocalEncryptedItem, type LocalItemContext } from '@sulla/domain';
@@ -96,7 +97,9 @@ import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionM
 import { SullaCloudSessionManagerFactory } from './sullaCloudSession/SullaCloudSessionManagerFactory.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
+import { AuditFileSink } from './auditFileSink.js';
 import { FilesAuditEmitter } from './filesAudit.js';
+import { OutboundAuditRecorder } from './outboundAudit.js';
 import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
 import type { VaultUserBackupRow } from './localCrypto/DesktopHumanBackup.js';
@@ -598,6 +601,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
   private readonly filesAudit: FilesAuditEmitter;
+  readonly outboundAuditSink: AuditFileSink;
+  private readonly outboundAudit: OutboundAuditRecorder;
   private codecProvider = new DomainVaultSyncCodecProvider();
 
   private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
@@ -621,6 +626,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
+    this.outboundAuditSink = new AuditFileSink({ dir: join(config.auditSpoolDir ?? '/var/lib/sulla-vault', 'audit-logs') });
+    this.outboundAudit = new OutboundAuditRecorder(this.outboundAuditSink);
     const credentials = [
       ['bootstrap', config.bootstrapServiceToken],
       ['control', config.controlServiceToken],
@@ -3537,18 +3544,20 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
   }
 
+  /** Agent credential use goes to the rotating file sink, never Postgres or the Files per-secret audit, and never as a reveal. */
   private async audit(
     input: BrokerExecuteRequest,
     item: ItemRow,
     blocked: boolean,
     reason: string | null,
-    db: Queryable = this.db,
+    _db?: Queryable,
   ): Promise<void> {
-    await this.auditLogRepository.recordOutboundRequest([input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
-        { agentId: input.claims.agent_id, operation: input.operation,
-          destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
-          ...(input.operation === 'item.http' ? { itemId: item.id } : {}) }, blocked, reason], db);
-    this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: item.id, action: 'vault_outbound_request', actor: input.claims.agent_id || input.claims.sub, result: blocked ? 'blocked' : 'allowed', meta: { operation: input.operation, agentId: input.claims.agent_id } });
+    this.outboundAudit.record({
+      actorUserId: input.claims.sub, orgId: item.org_id ?? null, collectionId: item.collection_id, itemId: item.id,
+      podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
+      destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
+      blocked, reason,
+    });
   }
 
   private async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {
@@ -3559,12 +3568,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     } catch {
       // Invalid destinations are represented by the denial reason, never copied into audit metadata.
     }
-    await this.auditLogRepository.recordOutboundDenial([input.claims.sub, input.claims.pod_id, {
-        agentId: input.claims.agent_id,
-        operation: input.operation,
-        ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
-        ...(destination ? { destination } : {}),
-      }, reason]);
+    this.outboundAudit.record({
+      actorUserId: input.claims.sub, podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
+      ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
+      ...(destination ? { destination } : {}),
+      blocked: true, reason,
+    });
   }
 }
 
