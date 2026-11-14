@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { AutomergeSnapshotRetention } from './automergeSnapshotRetention.js';
+import { AutomergeSnapshotRetention } from '../src/automergeSnapshotRetention.js';
 
 describe('AutomergeSnapshotRetention', () => {
   it('prunes one file at a time from a keyset scan, under row and time budgets, without touching restore history', async () => {

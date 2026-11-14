@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe,expect,it,vi } from 'vitest';
-import { ListingPage } from './ListingPage.js';
+import { ListingPage } from '../src/ListingPage.js';
 
 describe('ListingPage',()=>{
   it('keeps paging opt-in so legacy callers are not silently truncated',()=>{

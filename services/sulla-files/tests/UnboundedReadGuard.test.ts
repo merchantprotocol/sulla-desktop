@@ -7,11 +7,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { UnboundedReadGuard } from './UnboundedReadGuard.js';
-import { stateHash, type StateEntry } from './cloudSync/envelope.js';
-import { streamingStateHash } from './cloudSync/stateHashStream.js';
+import { UnboundedReadGuard } from '../src/UnboundedReadGuard.js';
+import { stateHash, type StateEntry } from '../src/cloudSync/envelope.js';
+import { streamingStateHash } from '../src/cloudSync/stateHashStream.js';
 
-const root = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
 
 /**
  * Reviewed reads that are still unbounded (2026-11-14, files-scale S2). Each count is a
