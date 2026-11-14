@@ -613,6 +613,7 @@ export interface IpcMainInvokeEvents {
   'sulla-files:operation-retry': (input: { operationId:string; request:import('@pkg/sulla-desktop/pages/files/types').FilesOperationRetry }) => import('@pkg/sulla-desktop/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-undo': (input: { operationId:string }) => import('@pkg/sulla-desktop/pages/files/types').FilesOperationReceipt;
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:list-page':       (input: { collectionId: string; path?: string; trash?: boolean; cursor?: string }) => { files: any[]; nextCursor: string | null; hasMore: boolean };
   'sulla-files:create-empty-file': (input: { collectionId: string; path: string }) => any;
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
