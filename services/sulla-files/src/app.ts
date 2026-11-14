@@ -376,8 +376,25 @@ export function createApp(
   }
 
   async function saveAutomergeVersion(client:pg.PoolClient,fileId:string,versionId:string,document:Automerge.Doc<TextDocument>):Promise<void> {
-    await client.query(`INSERT INTO file_automerge_versions(version_id,file_id,document,heads) VALUES($1,$2,$3,$4)
-      ON CONFLICT(version_id) DO NOTHING`,[versionId,fileId,saveTextDocument(document),JSON.stringify(textDocumentHeads(document))]);
+    const bytes=saveTextDocument(document), heads=textDocumentHeads(document);
+    await client.query(`INSERT INTO file_automerge_docs(file_id,document,heads,updated_at) VALUES($1,$2,$3,NOW())
+      ON CONFLICT(file_id) DO UPDATE SET document=EXCLUDED.document,heads=EXCLUDED.heads,updated_at=EXCLUDED.updated_at`,[fileId,bytes,JSON.stringify(heads)]);
+    await client.query(`INSERT INTO file_automerge_versions(version_id,file_id,document,heads) VALUES($1,$2,NULL,$3)
+      ON CONFLICT(version_id) DO UPDATE SET document=NULL,heads=EXCLUDED.heads`,[versionId,fileId,JSON.stringify(heads)]);
+    // A version snapshot can be discarded only when every version head is
+    // represented in the authoritative document. Unreachable heads (for
+    // example, after a document reset) retain their legacy snapshot.
+    const allChanges=new Set(Automerge.getAllChanges(document).map(change=>Automerge.decodeChange(change).hash));
+    const old=(await client.query('SELECT version_id,heads FROM file_automerge_versions WHERE file_id=$1 AND document IS NOT NULL AND version_id<>$2',[fileId,versionId])).rows;
+    for(const row of old){const versionHeads=Array.isArray(row.heads)?row.heads:JSON.parse(row.heads);if(versionHeads.every((head:string)=>allChanges.has(head)))await client.query('UPDATE file_automerge_versions SET document=NULL WHERE version_id=$1',[row.version_id]);}
+  }
+
+  async function currentAutomergeDocument(client:pg.PoolClient,fileId:string,versionId:string):Promise<Automerge.Doc<TextDocument>|undefined> {
+    const stored=(await client.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
+    if(stored)return loadTextDocument(stored.document);
+    // One-time compatibility bridge for rows written before migration 063.
+    const legacy=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2 AND document IS NOT NULL',[versionId,fileId])).rows[0];
+    return legacy?loadTextDocument(legacy.document):undefined;
   }
 
   async function textSave(client:pg.PoolClient,file:any,baseVersionId:string,submitted:Buffer,currentBytes:Buffer,readVersion:(fileId:string,versionId:string)=>Promise<Buffer> = (fileId,versionId)=>requireFuseExperiment().readStoredVersion(fileId,versionId)):Promise<{bytes:Buffer;document?:Automerge.Doc<TextDocument>;merged:boolean}> {
@@ -390,20 +407,20 @@ export function createApp(
     if(baseText===undefined||currentText===undefined||submittedText===undefined)return {bytes:submitted,merged:false};
     let document:Automerge.Doc<TextDocument>;
     if(stale){
-      const savedBase=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[baseVersionId,file.id])).rows[0];
-      const savedCurrent=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[file.current_version_id,file.id])).rows[0];
-      if(savedBase&&savedCurrent) {
-        document=Automerge.merge(loadTextDocument(savedCurrent.document),editTextDocument(Automerge.clone(loadTextDocument(savedBase.document)),submittedText));
+      const savedBase=(await client.query('SELECT heads FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[baseVersionId,file.id])).rows[0];
+      const savedCurrent=await currentAutomergeDocument(client,file.id,file.current_version_id);
+      let baseDocument:Automerge.Doc<TextDocument>|undefined,currentDocument:Automerge.Doc<TextDocument>|undefined;
+      if(savedCurrent){currentDocument=savedCurrent;if(savedBase){try{baseDocument=Automerge.view(currentDocument,Array.isArray(savedBase.heads)?savedBase.heads:JSON.parse(savedBase.heads));}catch{/* A pre-reset head is rebuilt from the plain version below. */}}}
+      if(baseDocument&&currentDocument) {
+        document=Automerge.merge(Automerge.clone(currentDocument),editTextDocument(Automerge.clone(baseDocument),submittedText));
       } else {
         const baseDocument=newTextDocument(baseText);
-        const currentDocument=editTextDocument(Automerge.clone(baseDocument),currentText);
-        document=Automerge.merge(currentDocument,editTextDocument(Automerge.clone(baseDocument),submittedText));
-        await saveAutomergeVersion(client,file.id,baseVersionId,baseDocument);
-        await saveAutomergeVersion(client,file.id,file.current_version_id,currentDocument);
+        const rebuiltCurrent=editTextDocument(Automerge.clone(baseDocument),currentText);
+        document=Automerge.merge(rebuiltCurrent,editTextDocument(Automerge.clone(baseDocument),submittedText));
       }
     } else {
-      const saved=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[file.current_version_id,file.id])).rows[0];
-      document=editTextDocument(saved?loadTextDocument(saved.document):newTextDocument(currentText),submittedText);
+      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
+      document=editTextDocument(saved??newTextDocument(currentText),submittedText);
     }
     const active=live.document(file.id);
     if(active) document=Automerge.merge(Automerge.clone(active),document);
@@ -430,15 +447,15 @@ export function createApp(
     if(!live.has(file.id)){
       const loaded=await loadFileContent(db,config,store,file.id,file.current_version_id);const text=loaded&&utf8Text(loaded.buffer);
       if(typeof text!=='string'||loaded!.buffer.length>8*1024*1024)throw new HttpError(415,'Live editing requires UTF-8 text up to 8 MiB');
-      const saved=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[file.current_version_id,file.id])).rows[0];
-      const document=saved?loadTextDocument(saved.document):newTextDocument(text);await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
+      const document=saved??newTextDocument(text);await saveAutomergeVersion(client,file.id,file.current_version_id,document);
       // Reauthorize on each durable write; revoked rights and protected paths fail closed.
       live.open(file.id,document,async snapshot=>{const request=liveWriters.get(file.id);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);const tx=await db.connect();try{await tx.query('BEGIN');let current=await requireFile(request,file.id,'edit',tx);await lockStoredNamespace(tx,current.collection_id);current=await requireFile(request,file.id,'edit',tx);
-        const latest=(await tx.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[current.current_version_id,file.id])).rows[0];
+        const latest=(await tx.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[file.id])).rows[0];
         if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
         const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,file.id,current.current_version_id);
         if(!existing?.buffer.equals(bytes)){const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,actor,message:'Live document edit',baseVersionId:current.current_version_id});await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);await tx.query('COMMIT');await audit(request,'live-edit',result,{versionId:result.current_version_id});}
-        else {await tx.query('UPDATE file_automerge_versions SET document=$2,heads=$3 WHERE version_id=$1 AND file_id=$4',[current.current_version_id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot)),current.id]);await tx.query('COMMIT');}
+        else {await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[current.id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);await tx.query('COMMIT');}
       }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}});
     }
     await client.query('COMMIT');const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
