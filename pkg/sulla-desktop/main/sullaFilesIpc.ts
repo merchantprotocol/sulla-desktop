@@ -604,6 +604,13 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:native-runtime', () => mountManager.status());
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
+  ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string }) => {
+    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:'250'});
+    if(input.cursor) query.set('cursor',input.cursor);
+    const response=await filesClient.request(`/v1/files?${query}`);
+    if(!response.ok) throw new FilesApiError(await response.text(),response.status);
+    return { files:await response.json(), nextCursor:response.headers.get('X-Next-Cursor'), hasMore:response.headers.get('X-Has-More')==='true' };
+  });
   ipcMain.handle('sulla-files:create-empty-file', (_event,input:{collectionId:string;path:string}) => json('/v1/files/empty',{method:'POST',body:JSON.stringify(input)}));
   ipcMain.handle('sulla-files:search', (_event, input:{ query: string; collectionId?: string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
