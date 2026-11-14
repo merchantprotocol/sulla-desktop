@@ -629,7 +629,14 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     ]);
     // Live refreshes need active work only. Batch compact check-ins/messages for
     // all visible jobs instead of issuing two history reads per job per tick.
-    const allJobs = await agentJobProvider.states.list(100, false);
+    // Live shows unfinished jobs plus failures/stops from the last hour (the ones
+    // the human watches for). Completed history stays out of the poll.
+    const failedCutoff = Date.now() - 60 * 60 * 1000;
+    const allJobs = (await agentJobProvider.states.list(100, true)).filter(job => {
+      if (job.status === 'completed') return false;
+      if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
+      return true;
+    });
     const telemetryByJob = await AgentJobMessagingModel.latestTelemetryForJobs(allJobs.map(job => job.jobId));
     const definitions = await agentDefinitionService.list();
     const modelByAgent = new Map(definitions.map(definition => [
