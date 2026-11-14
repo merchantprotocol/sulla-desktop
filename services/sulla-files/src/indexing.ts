@@ -22,6 +22,9 @@ export async function lockIndexingEligibility(client:pg.PoolClient, fileId:strin
 
 const CHUNK_CHARS = 3_500;
 const CHUNK_OVERLAP = 300;
+// Keep a worker's synchronous embedding/SQL burst short, then yield so queued
+// uploads and health checks can make progress even with a large persisted backlog.
+const INDEX_JOBS_PER_TURN = 10;
 
 function chunks(text:string):string[] {
   const output:string[] = [];
@@ -134,7 +137,15 @@ export class IndexingQueue {
   private async drain():Promise<void> {
     if (this.stopped || this.running) return;
     this.running = true;
-    try { while (!this.stopped && await this.processOne()) { /* drain persisted work */ } } finally { this.running = false }
+    try {
+      let processed = 0;
+      while (!this.stopped && await this.processOne()) {
+        if (++processed >= INDEX_JOBS_PER_TURN) {
+          processed = 0;
+          await new Promise<void>(resolve => setImmediate(resolve));
+        }
+      }
+    } finally { this.running = false }
   }
 
   private async processOne():Promise<boolean> {

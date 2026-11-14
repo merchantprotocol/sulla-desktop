@@ -11,7 +11,9 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 const MAX_TEXT = 4 * 1024 * 1024;
-const MAX_DOCUMENT_BYTES = 512 * 1024 * 1024;
+// Indexing is intentionally stricter than content storage: oversized files
+// remain downloadable, but never fan out into large native extractor buffers.
+export const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PDF_OCR_PAGES = 20;
