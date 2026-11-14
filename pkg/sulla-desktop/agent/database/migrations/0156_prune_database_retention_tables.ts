@@ -54,7 +54,9 @@ export const up = `
 
   -- The retired project service has no runtime readers or writers. Remove its
   -- legacy comments and the optional historical FK from artifact receipts.
+  ALTER TABLE IF EXISTS work_artifact_receipts DROP COLUMN IF EXISTS comment_id;
   DROP TABLE IF EXISTS work_task_comments CASCADE;
+  ALTER TABLE IF EXISTS heartbeat_run_audit DROP COLUMN IF EXISTS selected_task_comment_count;
 `;
 
 export const down = `
@@ -69,6 +71,10 @@ export const down = `
   );
   CREATE INDEX IF NOT EXISTS idx_work_task_comments_task
     ON work_task_comments (task_id, archived, created_at ASC);
+  ALTER TABLE IF EXISTS work_artifact_receipts
+    ADD COLUMN IF NOT EXISTS comment_id TEXT REFERENCES work_task_comments(id) ON DELETE SET NULL;
+  ALTER TABLE IF EXISTS heartbeat_run_audit
+    ADD COLUMN IF NOT EXISTS selected_task_comment_count INTEGER;
   DO $$ BEGIN
     IF to_regclass('work_artifact_receipts') IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM pg_constraint WHERE conname = 'work_artifact_receipts_comment_id_fkey'
