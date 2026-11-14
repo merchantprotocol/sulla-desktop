@@ -20,6 +20,8 @@ const MOUNT_PATH = SULLA_FILES_GUEST_MOUNT_PATH;
 const TOKEN_REFRESH_MS = 4 * 60_000;
 const DISABLED_REASON = 'The Files mount is unavailable.';
 const HEALTH_CHECK_MS = 60_000;
+const MOUNT_PROBE_TIMEOUT_SECONDS = 15;
+const MOUNT_UNRESPONSIVE_LIMIT = 3;
 const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const RETRY_STEADY_MS = 5 * 60_000;
 /** Written by the adapter container (services/sulla-files-fuse) on its /tmp tmpfs. */
@@ -336,6 +338,9 @@ export class SullaFilesMountManager extends EventEmitter {
     this.refreshTimer.unref?.();
     // Notice an adapter that disappears (container exit, external unmount).
     let probing = false;
+    // One slow probe under write load is not a dead mount: restarting the adapter aborts in-flight
+    // writes. Only a sustained run of unresponsive probes counts; a vanished mount still fails at once.
+    let unresponsive = 0;
     this.healthTimer = setInterval(() => {
       const executor = this.executor;
 
@@ -348,7 +353,10 @@ export class SullaFilesMountManager extends EventEmitter {
           this.runtimeFailure(generation, 'The guest Files adapter mount disappeared');
           return;
         }
-        if (!await isGuestPathUsable(executor, MOUNT_PATH, 5)) {
+        if (await isGuestPathUsable(executor, MOUNT_PATH, MOUNT_PROBE_TIMEOUT_SECONDS)) {
+          unresponsive = 0;
+        } else if (++unresponsive >= MOUNT_UNRESPONSIVE_LIMIT) {
+          unresponsive = 0;
           this.runtimeFailure(generation, 'The guest Files adapter mount is not responding');
         }
       }, () => undefined).finally(() => { probing = false });
