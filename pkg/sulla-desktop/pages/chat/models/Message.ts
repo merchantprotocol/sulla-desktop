@@ -139,7 +139,7 @@ export interface ToolQuestionMessage extends MessageBase {
   resolutionNote?: string;
   kind:        'tool_question';
   questions:   readonly ToolQuestionItem[];
-  status:      'pending' | 'answered' | 'timed_out';
+  status:      'pending' | 'answered' | 'timed_out' | 'closed';
   /** Round-trip id sent back on answer so the backend's parked promise
    *  (ApprovalService.parkQuestion) can settle. */
   questionId?: string;

@@ -218,7 +218,7 @@ export class PersonaAdapter {
             resolutionError: undefined,
           });
         } else if (message.kind === 'tool_question' && message.questionId === record.id) {
-          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'timed_out', resolutionError: undefined });
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'closed', resolutionError: undefined });
         }
       }
     };
@@ -269,7 +269,7 @@ export class PersonaAdapter {
         answers:    ev.answers,
       }).then(receipt => {
         if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
-        this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined, resolutionNote: receipt.late ? 'answered late — sent as a new message' : undefined } as any);
+        this.controller.updateMessage(ev.messageId, { status: receipt.closed ? 'closed' : 'answered', answers: ev.answers, resolutionError: undefined, resolutionNote: receipt.closed ? 'Question closed — the original conversation no longer exists.' : receipt.late ? 'answered late — sent as a new message' : undefined } as any);
         this.controller.transitionRun({ type: 'approvalResolved' });
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
     });

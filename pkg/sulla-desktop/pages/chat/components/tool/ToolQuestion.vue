@@ -14,7 +14,7 @@
 <template>
   <div :class="['question', { settled: msg.status !== 'pending' }]">
     <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
-    <div class="head">{{ msg.status === 'pending' ? 'Question' : 'Answered' }}</div>
+    <div class="head">{{ msg.status === 'pending' ? 'Question' : msg.status === 'closed' || msg.status === 'timed_out' ? 'Closed' : 'Answered' }}</div>
     <small v-if="msg.resolutionNote" class="resolution-note">{{ msg.resolutionNote }}</small>
 
     <div v-for="(q, qi) in msg.questions" :key="qi" class="qblock">
