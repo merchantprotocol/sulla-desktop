@@ -14,9 +14,9 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
   private telemetryVersion = 0;
   private readonly telemetryReads = new Map<string, { expiresAt: number; version: number; value: Record<string, Record<number, AgentJobTaskTelemetry>> }>();
   private readonly telemetryInFlight = new Map<string, Promise<Record<string, Record<number, AgentJobTaskTelemetry>>>>();
-  private clock: () => number = Date.now;
+  private telemetryClock: () => number = Date.now;
   /** Test seam for the telemetry cache clock. */
-  setClock(clock: () => number): void { this.clock = clock; }
+  setClock(clock: () => number): void { this.telemetryClock = clock; }
   /** Every check-in/message write goes through this repository; each one invalidates the telemetry cache. */
   private telemetryChanged(): void { this.telemetryVersion++; this.telemetryReads.clear(); }
   private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined }; }
@@ -205,14 +205,14 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     // Polled by several surfaces: serve a recent identical read, and share one query between concurrent callers.
     const key = [...new Set(jobIds)].sort().join('\u0000');
     const cached = this.telemetryReads.get(key);
-    if (cached && cached.expiresAt > this.clock() && cached.version === this.telemetryVersion) return cached.value;
+    if (cached && cached.expiresAt > this.telemetryClock() && cached.version === this.telemetryVersion) return cached.value;
     const running = this.telemetryInFlight.get(key);
     if (running) return running;
     const version = this.telemetryVersion;
     const read = this.queryLatestTelemetry(jobIds).then((value) => {
       if (version === this.telemetryVersion) {
         if (this.telemetryReads.size >= 64) this.telemetryReads.delete(this.telemetryReads.keys().next().value!);
-        this.telemetryReads.set(key, { expiresAt: this.clock() + AgentJobMessagingRepository.TELEMETRY_TTL_MS, version, value });
+        this.telemetryReads.set(key, { expiresAt: this.telemetryClock() + AgentJobMessagingRepository.TELEMETRY_TTL_MS, version, value });
       }
       return value;
     }).finally(() => { if (this.telemetryInFlight.get(key) === read) this.telemetryInFlight.delete(key); });
