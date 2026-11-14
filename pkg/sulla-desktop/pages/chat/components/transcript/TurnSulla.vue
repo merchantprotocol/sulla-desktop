@@ -20,8 +20,11 @@
 -->
 <template>
   <div
+    ref="turnEl"
     class="chat-turn sulla chat-fade-in"
     @contextmenu.prevent="onContextMenu"
+    @mousemove="onHoverBlock"
+    @mouseleave="hoverBlock = null"
   >
     <span class="chat-role"><span
       class="noir-avatar"
@@ -37,6 +40,21 @@
       class="chat-body"
       v-html="rendered"
     />
+    <button
+      v-if="hoverBlock"
+      type="button"
+      class="block-reply"
+      :style="{ top: `${hoverBlock.top}px` }"
+      title="Reply to this part"
+      @mousedown.prevent
+      @click="replyToBlock"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      ><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>
+      Reply
+    </button>
     <ChatFileCard v-for="file in fileReferences" :key="`${file.fileId}:${file.versionId}`" :reference="file" />
     <TurnActions
       role="sulla"
@@ -115,8 +133,38 @@ function onPin(): void {
   controller.togglePin(props.msg.id);
 }
 
+/** Reply to the whole message (the turn's hover action). */
 function onQuote(): void {
-  window.dispatchEvent(new CustomEvent('chat:quote', { detail: props.msg.text }));
+  sendReply(props.msg.text);
+}
+
+// ── Reply to one block (paragraph, list item, section card, code block) ──
+const REPLY_BLOCKS = 'p, li, pre, blockquote, table, section.reply-section > :is(h2, h3)';
+const turnEl = ref<HTMLElement | null>(null);
+const hoverBlock = ref<{ el: HTMLElement; top: number } | null>(null);
+
+function onHoverBlock(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('.block-reply')) return;
+  const block = target?.closest<HTMLElement>(REPLY_BLOCKS);
+  const turn = turnEl.value;
+  if (!block || !turn?.contains(block)) {
+    hoverBlock.value = null;
+    return;
+  }
+  // A section heading stands for its whole card.
+  const el = block.matches('h2, h3') ? block.parentElement! : block;
+  if (hoverBlock.value?.el === el) return;
+  hoverBlock.value = { el, top: el.getBoundingClientRect().top - turn.getBoundingClientRect().top };
+}
+
+function replyToBlock(): void {
+  if (hoverBlock.value) sendReply(hoverBlock.value.el.innerText);
+  hoverBlock.value = null;
+}
+
+function sendReply(excerpt: string): void {
+  window.dispatchEvent(new CustomEvent('chat:reply', { detail: { threadId: controller.thread.value.id, excerpt } }));
 }
 
 function onFork(): void {
@@ -135,6 +183,19 @@ function onNewChat(): void {
 </script>
 
 <style scoped>
+/* Hover "Reply" for the block under the pointer, pinned to the turn's right edge. */
+.chat-turn.sulla { position: relative; }
+.block-reply {
+  position: absolute; right: -8px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 9px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--border-default); background: var(--bg-surface);
+  color: var(--text-secondary); font: 500 12px var(--font-body);
+  box-shadow: var(--elev-float);
+  transform: translateX(100%);
+}
+.block-reply:hover { color: var(--text-primary); border-color: var(--accent); }
+.block-reply svg { width: 13px; height: 13px; fill: currentColor; }
 .noir-avatar {
   display: none;
 }

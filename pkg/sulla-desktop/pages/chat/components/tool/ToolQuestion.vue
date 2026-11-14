@@ -12,58 +12,151 @@
   back to the blocked backend tool via ChatController.answerQuestion.
 -->
 <template>
-  <div :class="['question', { settled: locked }]" :aria-disabled="locked">
-    <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
-    <div class="head">
-      {{ msg.status === 'answered' ? 'Answered' : msg.status === 'timed_out' ? 'Expired' : sending ? 'Answer sent' : 'Waiting for your answer' }}
-      <span v-if="remaining !== null" class="countdown" :class="{ urgent: remaining < 60_000 }">expires in {{ countdown }}</span>
-    </div>
-    <div v-if="expiredUnsent" class="expired">
+  <section
+    class="qc"
+    :class="{ 'qc-settled': locked }"
+    :aria-disabled="locked"
+    aria-label="Question from Sulla"
+  >
+    <header class="qc-status">
+      <span
+        class="qc-state"
+        :class="stateTone"
+      >
+        <span
+          class="qc-state-dot"
+          aria-hidden="true"
+        />{{ stateText }}
+      </span>
+      <span
+        v-if="remaining !== null"
+        class="qc-countdown"
+        :class="{ urgent: remaining < 60_000 }"
+      >Expires in {{ countdown }}</span>
+    </header>
+
+    <p
+      v-if="msg.resolutionError"
+      class="qc-error"
+      role="alert"
+    >
+      {{ msg.resolutionError }}
+    </p>
+    <p
+      v-if="expiredUnsent"
+      class="qc-note"
+    >
       This question expired before an answer was sent, so Sulla moved on without it.
-      <button v-if="hasDraft" type="button" class="send-late" @click="sendAsMessage">Send my answers as a message</button>
-    </div>
-    <small v-if="msg.resolutionNote" class="resolution-note">{{ msg.resolutionNote }}</small>
+      <button
+        v-if="hasDraft"
+        type="button"
+        class="qc-late"
+        @click="sendAsMessage"
+      >
+        Send my answers as a message
+      </button>
+    </p>
+    <p
+      v-if="msg.resolutionNote"
+      class="qc-note"
+    >
+      {{ msg.resolutionNote }}
+    </p>
 
-    <div v-for="(q, qi) in msg.questions" :key="qi" class="qblock">
-      <div v-if="q.header" class="chip">{{ q.header }}</div>
-      <div class="qtext">{{ q.question }}</div>
+    <fieldset
+      v-for="(q, qi) in msg.questions"
+      :key="qi"
+      class="qc-block"
+      :disabled="locked"
+    >
+      <legend class="qc-question">
+        <span
+          v-if="q.header"
+          class="qc-topic"
+        >{{ q.header }}</span>
+        {{ q.question }}
+      </legend>
+      <p
+        v-if="!locked"
+        class="qc-hint"
+      >
+        {{ q.multiSelect ? 'Choose any that apply' : 'Choose one' }}
+      </p>
 
-      <div class="options">
+      <div
+        v-if="!locked || picks[qi]?.length"
+        class="qc-options"
+        :role="q.multiSelect ? 'group' : 'radiogroup'"
+      >
         <button
           v-for="(opt, oi) in q.options"
           :key="oi"
           type="button"
-          :class="['opt', { picked: isPicked(qi, opt.label) }]"
-          :disabled="locked"
-          :title="opt.description || ''"
+          class="qc-option"
+          :class="{ picked: isPicked(qi, opt.label), multi: q.multiSelect }"
+          :role="q.multiSelect ? 'checkbox' : 'radio'"
+          :aria-checked="isPicked(qi, opt.label)"
           @click="toggle(qi, opt.label, q.multiSelect === true)"
         >
-          <span class="opt-label">{{ opt.label }}</span>
-          <span v-if="opt.description" class="opt-desc">{{ opt.description }}</span>
+          <span
+            class="qc-mark"
+            aria-hidden="true"
+          ><svg
+            v-if="q.multiSelect"
+            viewBox="0 0 16 16"
+          ><path d="M3.5 8.5l3 3 6-7" /></svg></span>
+          <span class="qc-option-text">
+            <span class="qc-label">{{ opt.label }}</span>
+            <span
+              v-if="opt.description"
+              class="qc-desc"
+            >{{ opt.description }}</span>
+          </span>
         </button>
       </div>
 
       <input
         v-if="!locked"
         v-model="otherText[qi]"
-        class="other"
+        class="qc-other"
         type="text"
-        placeholder="Or type your own answer…"
+        placeholder="Or write your own answer"
+        :aria-label="`Your own answer to: ${q.question}`"
         @keyup.enter="submit"
       >
-    </div>
+    </fieldset>
 
-    <div v-if="!locked" class="actions">
-      <button class="submit" type="button" :disabled="!canSubmit" @click="submit">Submit</button>
-    </div>
+    <footer
+      v-if="!locked"
+      class="qc-actions"
+    >
+      <button
+        class="qc-submit"
+        type="button"
+        :disabled="!canSubmit"
+        @click="submit"
+      >
+        Submit answer
+      </button>
+      <span
+        v-if="!canSubmit"
+        class="qc-hint"
+      >Pick an option or write an answer to continue.</span>
+    </footer>
 
-    <div v-else class="answers">
-      <div v-for="(a, ai) in (msg.answers || [])" :key="ai" class="answer">
-        <span class="answer-q">{{ a.question }}:</span>
-        <span class="answer-v">{{ a.selected.join(', ') || '—' }}</span>
-      </div>
-    </div>
-  </div>
+    <dl
+      v-else-if="msg.answers?.length"
+      class="qc-answers"
+    >
+      <template
+        v-for="(a, ai) in msg.answers"
+        :key="ai"
+      >
+        <dt>{{ a.question }}</dt>
+        <dd>{{ a.selected.join(', ') || 'No selection' }}</dd>
+      </template>
+    </dl>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -92,6 +185,12 @@ const countdown = computed(() => {
   const seconds = Math.ceil((remaining.value ?? 0) / 1_000);
   return `${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
 });
+const stateText = computed(() => {
+  if (props.msg.status === 'answered') return 'Answered';
+  if (props.msg.status === 'timed_out') return 'Expired';
+  return sending.value ? 'Answer sent' : 'Waiting for your answer';
+});
+const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
 const expiredUnsent = computed(() => props.msg.status === 'timed_out' && !(props.msg.answers?.length));
 const hasDraft = computed(() => picks.some(p => p.length > 0) || otherText.some(t => t.trim()));
 
@@ -143,98 +242,98 @@ function submit(): void {
 </script>
 
 <style scoped>
-.question {
-  padding: 16px 20px; margin: 4px 0;
-  border: 1px solid var(--accent-border, var(--accent-glow));
-  border-radius: 10px;
-  background: var(--accent-dim);
-}
-.head {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--accent-hover, var(--accent));
-  margin-bottom: 12px;
-  display: flex; align-items: center; gap: 10px;
-}
-.head::before {
-  content: "?"; width: 18px; height: 18px; border-radius: 50%;
-  background: var(--accent-hover, var(--accent)); color: var(--accent);
-  display: inline-flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 11px;
-}
-.qblock { margin-bottom: 16px; }
-.qblock:last-of-type { margin-bottom: 0; }
-.chip {
-  display: inline-block;
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--accent-hover, var(--accent));
-  border: 1px solid var(--accent-glow);
-  border-radius: 4px; padding: 2px 7px; margin-bottom: 8px;
-}
-.qtext {
-  font-family: var(--font-display); font-style: italic; font-size: 16px;
-  color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;
-}
-.options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.opt {
-  display: flex; flex-direction: column; gap: 3px; text-align: left;
-  padding: 9px 14px; border-radius: 7px; cursor: pointer;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-dim);
-  transition: all 0.15s ease;
-}
-.opt:hover:not(:disabled) {
-  border-color: var(--accent-hover, var(--accent));
-  background: var(--accent-dim);
-}
-.opt.picked {
-  border-color: var(--accent-hover, var(--accent));
-  background: var(--accent-dim);
-  box-shadow: 0 0 12px var(--accent-glow);
-}
-.opt:disabled { cursor: default; opacity: 0.55; }
-.opt-label { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); }
-.opt-desc { font-family: var(--font-body); font-size: 11.5px; color: var(--text-secondary); line-height: 1.4; }
-.other {
-  width: 100%; box-sizing: border-box;
-  padding: 8px 12px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 12.5px;
-  background: var(--bg-overlay);
-  border: 1px solid var(--accent-dim);
+/* One sans family throughout: the question reads like body text, options like
+   standard radio/checkbox rows. Only theme tokens every theme defines. */
+.qc {
+  margin: 4px 0;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-surface);
   color: var(--text-primary);
+  font-family: var(--font-body);
+  transition: opacity 0.2s ease;
 }
-.other:focus { outline: none; border-color: var(--accent-hover, var(--accent)); }
-.actions { display: flex; gap: 10px; margin-top: 6px; }
-.submit {
-  padding: 8px 18px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 10.5px;
-  letter-spacing: 0.22em; text-transform: uppercase;
-  cursor: pointer; transition: all 0.15s ease;
-  background: var(--accent, var(--accent)); color: var(--text-on-accent);
-  border: 1px solid var(--accent-hover, var(--accent));
+.qc-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
+.qc-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
+.qc-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.qc-state.done .qc-state-dot { background: var(--status-success); }
+.qc-state.closed .qc-state-dot { background: var(--text-muted); }
+.qc-countdown { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.qc-countdown.urgent { color: var(--status-warning); font-weight: 600; }
+
+.qc-block { margin: 0; padding: 0; border: 0; min-width: 0; }
+.qc-block + .qc-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-subtle, var(--border-default)); }
+.qc-question { padding: 0; max-width: 70ch; font-size: 15px; line-height: 1.6; font-weight: 400; color: var(--text-primary); }
+.qc-topic { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.qc-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-muted); }
+
+.qc-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 10px; }
+.qc-option {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%;
+  padding: 11px 14px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border-default); border-radius: 10px;
+  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
+  font: inherit;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.submit:hover:not(:disabled) { box-shadow: 0 0 18px var(--accent-glow); }
-.submit:disabled { opacity: 0.4; cursor: default; }
-/* Answered: faded, neutral and inert so it never reads as a second open prompt. */
-.question { transition: opacity 0.25s ease, filter 0.25s ease, background 0.25s ease, border-color 0.25s ease; }
-.question.settled {
-  opacity: 0.55;
-  filter: saturate(0.4);
-  background: transparent;
-  border-color: var(--border-subtle, var(--border-default));
-  pointer-events: none;
+.qc-option:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border-default)); }
+.qc-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qc-option.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)); }
+.qc-mark {
+  display: grid; place-items: center; flex: none; width: 18px; height: 18px; margin-top: 1px;
+  border: 1.5px solid var(--text-muted); border-radius: 50%;
 }
-/* Selections stay legible inside the faded card. */
-.question.settled .opt:not(.picked) { opacity: 0.6; }
-.question.settled .opt.picked { opacity: 1; box-shadow: none; }
-@media (prefers-reduced-motion: reduce) { .question { transition: none; } }
-.countdown { margin-left: auto; letter-spacing: 0.08em; color: var(--text-muted); }
-.countdown.urgent { color: var(--status-warning); }
-.expired { margin: -4px 0 12px; font-family: var(--font-body); font-size: 12.5px; color: var(--text-secondary); }
-/* The rest of an expired card is inert; this one action must stay usable. */
-.send-late { pointer-events: auto; display: block; margin-top: 8px; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--accent); background: transparent; color: var(--text-primary); font: 500 12px var(--font-body); cursor: pointer; }
-.question.settled:has(.send-late) { opacity: 0.85; }
-.answers { display: flex; flex-direction: column; gap: 4px; }
-.answer { font-family: var(--font-mono); font-size: 12px; }
-.answer-q { color: var(--text-secondary); }
-.answer-v { color: var(--status-success, var(--accent)); margin-left: 6px; }
+.qc-option.multi .qc-mark { border-radius: 5px; }
+.qc-option.picked .qc-mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
+.qc-option.multi.picked .qc-mark { box-shadow: none; }
+.qc-mark svg { width: 12px; height: 12px; fill: none; stroke: var(--text-on-accent, #fff); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.qc-option.multi.picked .qc-mark svg { opacity: 1; }
+.qc-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qc-label { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.qc-desc { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
+
+.qc-other {
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
+  border: 1px solid var(--border-default); border-radius: 8px;
+  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
+  font: 14px var(--font-body);
+}
+.qc-other::placeholder { color: var(--text-muted); }
+.qc-other:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+.qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.qc-actions .qc-hint { margin: 0; }
+.qc-submit {
+  height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--accent); color: var(--text-on-accent, #fff);
+  font: 600 13.5px var(--font-body);
+}
+.qc-submit:hover { filter: brightness(1.08); }
+.qc-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qc-submit:disabled { cursor: default; filter: none; opacity: 0.45; }
+
+.qc-error { margin: 0 0 12px; font-size: 13px; color: var(--status-error); }
+.qc-note { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.qc-late {
+  display: block; margin-top: 8px; padding: 6px 12px; cursor: pointer; pointer-events: auto;
+  border: 1px solid var(--accent); border-radius: 8px; background: transparent;
+  color: var(--text-primary); font: 600 13px var(--font-body);
+}
+
+.qc-answers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 0; margin: 14px 0 0; font-size: 13px; }
+.qc-answers dt { color: var(--text-secondary); }
+.qc-answers dd { margin: 0 0 8px; font-weight: 600; color: var(--text-primary); }
+
+/* Answered or expired: quieter and inert, so it never reads as a second open prompt. */
+.qc-settled { opacity: 0.62; background: transparent; }
+.qc-settled .qc-option { cursor: default; }
+/* Only the chosen options stay once answered (picks exist only in the session that answered). */
+.qc-settled .qc-option:not(.picked) { display: none; }
+.qc-settled .qc-option:hover { border-color: var(--border-default); }
+.qc-settled:has(.qc-late) { opacity: 0.9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qc, .qc-option { transition: none; }
+}
 </style>

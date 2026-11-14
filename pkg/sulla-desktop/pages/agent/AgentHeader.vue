@@ -348,6 +348,14 @@
           </svg>
         </button>
       </div>
+      <!-- Engine status: one dot for the whole app (replaces the chat's ONLINE pill). -->
+      <span
+        class="engine-status"
+        :class="engineStatus.tone"
+        role="status"
+        :title="`Sulla engine: ${engineStatus.label}`"
+        :aria-label="`Sulla engine: ${engineStatus.label}`"
+      />
       <!-- Three-dot menu (rendered in a popup BrowserWindow via IPC — see moreMenuWindow.ts) -->
       <div class="relative hidden lg:flex">
         <button
@@ -772,7 +780,27 @@ function onTabWheel(e: WheelEvent) {
   }
 }
 
+// ── Engine status dot ──
+const engineState = ref('STOPPED');
+const ENGINE_STATUS: Record<string, { label: string; tone: string }> = {
+  STARTED:  { label: 'Running', tone: 'ok' },
+  DISABLED: { label: 'Running', tone: 'ok' },
+  STARTING: { label: 'Starting…', tone: 'busy' },
+  STOPPING: { label: 'Shutting down…', tone: 'busy' },
+  ERROR:    { label: 'Error', tone: 'error' },
+  STOPPED:  { label: 'Stopped', tone: 'error' },
+};
+const engineStatus = computed(() => ENGINE_STATUS[engineState.value] ?? { label: engineState.value, tone: 'busy' });
+function onEngineState(_event: unknown, state: unknown): void {
+  engineState.value = String(state);
+}
+
 onMounted(() => {
+  ipcRenderer.on('k8s-check-state' as any, onEngineState);
+  try {
+    const initial = ipcRenderer.sendSync('k8s-state' as any) as string | undefined;
+    if (initial) engineState.value = initial;
+  } catch { /* main not ready; the next state event fills it in */ }
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
@@ -798,6 +826,7 @@ onMounted(() => {
 });
 onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
+  ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -2097,6 +2126,33 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-pinned-boundary::before {
   background: var(--border-strong, var(--border-default));
+}
+
+.engine-status {
+  width: 9px;
+  height: 9px;
+  margin: 0 4px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 18%, transparent);
+}
+
+.engine-status.busy {
+  background: var(--status-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 18%, transparent);
+  animation: engine-pulse 1.4s ease-in-out infinite;
+}
+
+.engine-status.error {
+  background: var(--status-error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-error) 18%, transparent);
+}
+
+@keyframes engine-pulse { 50% { opacity: .4; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-status.busy { animation: none; }
 }
 
 .tab-rename {

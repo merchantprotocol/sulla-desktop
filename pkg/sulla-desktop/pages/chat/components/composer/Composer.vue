@@ -27,6 +27,27 @@
 
       <div class="composer-card">
         <div class="composer-top">
+          <div
+            v-if="replyTo"
+            class="reply-chip"
+            role="status"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            ><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>
+            <span class="reply-chip-text"><b>Replying to</b> {{ replyTo }}</span>
+            <button
+              type="button"
+              class="reply-chip-x"
+              aria-label="Cancel reply"
+              title="Cancel reply (Esc)"
+              @mousedown.prevent
+              @click="replyTo = ''"
+            >
+              ×
+            </button>
+          </div>
           <QueueStrip />
           <AttachmentTray />
           <div v-if="useCases.intent.value" class="usecase-intent">
@@ -189,6 +210,7 @@ import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
+import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
@@ -221,6 +243,8 @@ function looksLikeUrl(input: string): boolean {
 }
 
 const draft        = ref('');
+// Excerpt the next message replies to; empty when not replying.
+const replyTo = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
 const filesMenuOpen = ref(false);
@@ -427,13 +451,20 @@ function onSend(text: string): void {
     });
     useCases.reset();
   } else {
-    controller.send(trimmed || '(attached)', [...controller.staged.value]);
+    const body = trimmed || (replyTo.value ? '' : '(attached)');
+    controller.send(replyTo.value ? composeReply(replyTo.value, body) : body, [...controller.staged.value]);
   }
   draft.value = '';
+  replyTo.value = '';
 }
 
 function onKeydown(e: KeyboardEvent): void {
   const p = controller.popover.value;
+  if (!p.open && e.key === 'Escape' && replyTo.value) {
+    e.preventDefault();
+    replyTo.value = '';
+    return;
+  }
   if (!p.open) {
     const el = e.target as HTMLTextAreaElement | null;
     const caretAtEnd = !el || (el.selectionStart === el.selectionEnd && el.selectionEnd === el.value.length);
@@ -570,24 +601,21 @@ function stopVoice(commit: boolean): void {
 
 onBeforeUnmount(() => {
   voiceAdapter.dispose();
-  window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.removeEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
   ipcRenderer.removeListener('capture-studio:recording-state', onScreenRecordingState);
 });
 
 function onAttachShortcut():void { browseFiles().catch(() => undefined) }
 
-// ─── Listen for quote events from Sulla turns ────────────────────
-// TurnSulla's "Quote" hover action dispatches this; we prefill the
-// composer with a markdown blockquote and focus the input.
-function onQuoteFromTurn(ev: Event): void {
-  const text = (ev as CustomEvent<string>).detail;
-  if (!text) return;
-  const quoted = text.split('\n').map(l => `> ${ l }`).join('\n');
-  draft.value = draft.value
-    ? `${ draft.value.replace(/\s+$/, '') }\n\n${ quoted }\n\n`
-    : `${ quoted }\n\n`;
-  // Focus + move caret to the end.
+// ─── Reply to a part of a Sulla message ──────────────────────────
+// A Reply on a Sulla turn (whole message or one block) sets a cancelable
+// "Replying to" chip; the excerpt is sent as a quote ahead of the user's
+// words. Every open chat hears the event, so only the matching thread acts.
+function onReplyFromTurn(ev: Event): void {
+  const detail = (ev as CustomEvent<{ threadId?: string; excerpt?: string }>).detail;
+  if (!detail?.excerpt || detail.threadId !== controller.thread.value.id) return;
+  replyTo.value = replyExcerpt(detail.excerpt);
   setTimeout(() => {
     const ta = taRef.value;
     if (!ta) return;
@@ -618,7 +646,7 @@ async function prefillFirstRunStarter(): Promise<void> {
 
 onMounted(() => {
   ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
-  window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.addEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.addEventListener('chat:attach-files', onAttachShortcut as EventListener);
   prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
@@ -916,4 +944,24 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 @media (prefers-reduced-motion: reduce) {
   .usecase-strip, .usecase-chip { animation: none; }
 }
+/* "Replying to" chip: which part of Sulla's message the next message answers. */
+.reply-chip {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 10px 12px 0; padding: 8px 8px 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+  color: var(--text-secondary); font: 13px/1.45 var(--font-body);
+}
+.reply-chip svg { flex: none; width: 15px; height: 15px; margin-top: 2px; fill: var(--accent); }
+.reply-chip-text {
+  flex: 1; min-width: 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: pre-line;
+}
+.reply-chip-text b { color: var(--text-primary); font-weight: 600; margin-right: 4px; }
+.reply-chip-x {
+  flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--text-muted); font-size: 17px; line-height: 1;
+}
+.reply-chip-x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
 </style>

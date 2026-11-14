@@ -13,7 +13,7 @@
     <button v-if="show.edit"       type="button" @click="$emit('edit')">Edit</button>
     <button v-if="show.copy"       type="button" @click="$emit('copy')">Copy</button>
     <button v-if="show.regenerate" type="button" @click="$emit('regenerate')">Regenerate</button>
-    <button v-if="show.quote"      type="button" @click="$emit('quote')">Quote</button>
+    <button v-if="show.quote"      type="button" title="Reply to this message" @click="$emit('quote')">Reply</button>
     <button v-if="show.pin"        type="button" @click="$emit('pin')">{{ pinned ? 'Unpin' : 'Pin' }}</button>
     <button v-if="show.fork"       type="button" @click="$emit('fork')">Fork</button>
   </div>

@@ -46,6 +46,7 @@
         @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
         @select="selectSubAgent"
         @visibility="subAgentRailVisible = $event"
+        @counts="subAgentCounts = $event"
       />
 
       <main class="main">
@@ -63,8 +64,13 @@
           bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
-        <StatusBadges />
-        <SessionMark editable />
+        <ChatHeader
+          :sub-agents="subAgentCounts"
+          :sub-agents-open="!subAgentsCollapsed"
+          :files-open="chatFilesOpen"
+          @toggle-subagents="subAgentsCollapsed = !subAgentsCollapsed"
+          @toggle-files="setChatFilesOpen(!chatFilesOpen)"
+        />
         <SearchBar />
 
         <EmptyState
@@ -104,8 +110,7 @@
 import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
-import StatusBadges       from './components/chrome/StatusBadges.vue';
-import SessionMark        from './components/chrome/SessionMark.vue';
+import ChatHeader         from './components/chrome/ChatHeader.vue';
 import DropOverlay        from './components/chrome/DropOverlay.vue';
 import ModelSwitcherModal from './components/chrome/ModelSwitcherModal.vue';
 import ShortcutsModal     from './components/chrome/ShortcutsModal.vue';
@@ -347,6 +352,7 @@ const onSupportPrompt = (event:Event) => {
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
 onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
 const subAgentRailVisible = ref(false);
+const subAgentCounts = ref({ total: 0, live: 0 });
 
 // Side panels can be tucked away to a tab on the edge; the choice
 // sticks across tabs and restarts.
@@ -718,6 +724,18 @@ watch(
     if (props.tabId && clean && clean !== 'New chat' && clean !== 'New Chat') {
       updateTab(props.tabId, { title: clean });
     }
+  },
+  { immediate: true },
+);
+// A chat tab and its chat share one name. Renaming the tab (right-click →
+// Rename Tab) renames the chat; the title watcher above then carries it back
+// to the tab, so the custom name is cleared rather than kept separately.
+watch(
+  () => tabs.find(t => t.id === props.tabId)?.customTitle,
+  (name) => {
+    if (!props.tabId || !name) return;
+    if (name !== controller.thread.value.title) controller.renameThread(name);
+    updateTab(props.tabId, { customTitle: undefined });
   },
   { immediate: true },
 );
