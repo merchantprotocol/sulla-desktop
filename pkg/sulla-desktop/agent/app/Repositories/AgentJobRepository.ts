@@ -169,30 +169,32 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
   async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
-    // The recursion carries only (job_id, created_at, depth); task JSON is neither copied through the
-    // working table nor sorted. Children are found through the typed agent_job_tasks.thread_id mirror
-    // (PK lookup per parent) instead of expanding every parent's jsonb. Full rows are read once, for
-    // the (at most 100) selected jobs.
-    const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
-      SELECT job_id, created_at, 1 AS lineage_depth
-      FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
-        AND (status IN ('running', 'parked') OR finished_at >= now() - INTERVAL '24 hours')
+    // Walk UP from the small live/recent set instead of DOWN through the thread's whole history:
+    // cost is bounded by running/parked + last-24h jobs (retention keeps that set small), not by how
+    // many jobs a busy thread ever launched. Ancestors are walked regardless of age, so a running
+    // grandchild of a long-finished parent still reaches the root thread. Every job on the path must
+    // be undismissed, matching the old downward walk. Depth guard stops malformed cycles.
+    const rows = await this.connection.select(`WITH RECURSIVE up AS (
+      SELECT c.job_id AS candidate_id, c.created_at, c.parent_thread_id AS thread, 1 AS depth
+      FROM agent_jobs c
+      WHERE c.dismissed_at IS NULL AND c.parent_thread_id IS NOT NULL
+        AND (c.status IN ('running', 'parked') OR c.finished_at >= now() - INTERVAL '24 hours')
       UNION ALL
-      SELECT child.job_id, child.created_at, parent.lineage_depth + 1
-      FROM lineage parent
-      JOIN agent_job_tasks task ON task.job_id = parent.job_id AND task.thread_id IS NOT NULL
-      JOIN agent_jobs child ON child.parent_thread_id = task.thread_id
-      -- Depth guard: managers nest at most a few levels; it also stops a malformed cycle.
-      WHERE child.dismissed_at IS NULL AND parent.lineage_depth < 6
-        AND (child.status IN ('running', 'parked') OR child.finished_at >= now() - INTERVAL '24 hours')
+      SELECT up.candidate_id, up.created_at, p.parent_thread_id, up.depth + 1
+      FROM up
+      JOIN agent_job_tasks t ON t.thread_id = up.thread
+      JOIN agent_jobs p ON p.job_id = t.job_id
+      WHERE up.thread <> $1 AND up.depth < 6 AND p.dismissed_at IS NULL AND p.parent_thread_id IS NOT NULL
     ), selected AS (
-      SELECT job_id, created_at FROM lineage GROUP BY job_id, created_at ORDER BY created_at DESC LIMIT $2
+      SELECT candidate_id AS job_id, created_at, MIN(depth) AS lineage_depth FROM up WHERE thread = $1
+      GROUP BY candidate_id, created_at ORDER BY created_at DESC LIMIT $2
     ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
       (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
         FROM jsonb_array_elements(j.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
       j.error,j.parent_channel,j.parent_thread_id,j.parent_agent_id,j.visibility,j.parent_job_id,j.parent_task_index,j.project_task_ids,
       j.completion_delivered_at,j.waiting_on_children,j.restart_resume_count,j.dismissed_at,j.stopped_by,j.stop_reason,j.orphaned_child_notices
-      FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id ORDER BY j.created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+      FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id
+      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
     return rows.map(row => this.map(row));
   }
 
@@ -343,7 +345,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
    * recovery tick from dragging an unbounded backlog of undelivered historical rows.
    */
   async pendingCompletions(limit = 500): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count,
+      results, tasks, parent_channel, parent_thread_id, completion_delivered_at
+      FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
         AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
@@ -391,8 +395,21 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       WHERE job.status IN ('completed', 'failed', 'stopped')
         AND job.finished_at < now() - ($1::bigint * interval '1 millisecond')
         AND job.waiting_on_children = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_job_tasks task
+          WHERE task.job_id = job.job_id AND task.task_status IN ('queued', 'running', 'parked')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_task_waits wait
+          WHERE wait.job_id = job.job_id AND wait.state IN ('scheduled', 'claimed')
+        )
+        -- Delivery is settled when it was acknowledged, there is no parent to deliver to, no task
+        -- still holds an unacknowledged completion (recovery would never send it), or the parent
+        -- has had a week to take it (abandoned conversation).
         AND (job.completion_delivered_at IS NOT NULL
-          OR job.parent_channel IS NULL OR job.parent_thread_id IS NULL)
+          OR job.parent_channel IS NULL OR job.parent_thread_id IS NULL
+          OR NOT (job.tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))')
+          OR job.finished_at < now() - interval '7 days')
         AND NOT EXISTS (
           SELECT 1 FROM agent_jobs child
           WHERE child.parent_job_id = job.job_id
@@ -407,8 +424,31 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       ORDER BY job.finished_at, job.job_id
       LIMIT $2
       FOR UPDATE OF job SKIP LOCKED
-    ) DELETE FROM agent_jobs job USING expired WHERE job.job_id = expired.job_id
-      RETURNING job.job_id`, [Math.max(0, Math.trunc(retentionMs)), Math.min(500, Math.max(1, Math.trunc(limit))) ]);
+    ), deleted AS (
+      DELETE FROM agent_jobs job USING expired WHERE job.job_id = expired.job_id
+      RETURNING job.job_id
+    ), released_claims AS (
+      -- work_file_claims.owner_job_id has no FK; drop claims owned by deleted jobs in the same statement.
+      DELETE FROM work_file_claims claim USING deleted WHERE claim.owner_job_id = deleted.job_id
+    ) SELECT job_id FROM deleted`, [Math.max(0, Math.trunc(retentionMs)), Math.min(500, Math.max(1, Math.trunc(limit))) ]);
     return rows.length;
+  }
+
+  /**
+   * Drain expired jobs in bounded batches with a short pause between them so the
+   * one-time backlog clears without a long lock or CPU spike. Bounded per pass.
+   */
+  async drainExpired(options: { retentionMs?: number; batchSize?: number; maxBatches?: number; pauseMs?: number } = {}): Promise<number> {
+    const batchSize = Math.min(500, Math.max(1, Math.trunc(options.batchSize ?? 500)));
+    const maxBatches = Math.max(1, Math.trunc(options.maxBatches ?? 10));
+    const pauseMs = Math.max(0, options.pauseMs ?? 250);
+    let total = 0;
+    for (let batch = 0; batch < maxBatches; batch++) {
+      const deleted = await this.deleteExpiredBatch(options.retentionMs, batchSize);
+      total += deleted;
+      if (deleted < batchSize) break;
+      if (pauseMs > 0 && batch + 1 < maxBatches) await new Promise(resolve => setTimeout(resolve, pauseMs));
+    }
+    return total;
   }
 }
