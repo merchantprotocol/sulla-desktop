@@ -28,6 +28,7 @@ import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { getSullaFileProvider } from './sullaFileProvider';
 import { FilesSyncV1 } from './cloud/filesSyncV1';
 import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
+import { FilesListingPager } from './FilesListingPager';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
@@ -186,18 +187,21 @@ function reference(file:any, collection?:any):FileReference {
   };
 }
 
-async function collectionsWithFiles():Promise<{ collection: any; files: any[] }[]> {
-  const collections = await json('/v1/collections') as any[];
-  return Promise.all(collections.map(async collection => ({
-    collection,
-    files: await json(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`) as any[],
-  })));
+const listingRequest = (url:string) => filesClient.request(url);
+
+/** Each collection's active files, one bounded page at a time. */
+async function* collectionFilePages(collections:any[], folderPath = ''):AsyncGenerator<{ collection:any; files:any[] }> {
+  for (const collection of collections) {
+    for await (const files of FilesListingPager.pages<any>(listingRequest, '/v1/files', { collectionId: String(collection.id), path: folderPath, trash: 'false' })) yield { collection, files };
+  }
 }
 
 async function findReferenceByPath(relativePath:string, collectionId?:string):Promise<FileReference | undefined> {
   const matches:FileReference[] = [];
-  for (const item of await collectionsWithFiles()) {
-    if (collectionId && item.collection.id !== collectionId) continue;
+  const collections = (await json('/v1/collections') as any[]).filter(collection => !collectionId || collection.id === collectionId);
+  // The server filters by the parent folder prefix, so only that subtree is paged.
+  const parent = relativePath.includes('/') ? relativePath.slice(0, relativePath.lastIndexOf('/')) : '';
+  for await (const item of collectionFilePages(collections, parent)) {
     const file = item.files.find(candidate => candidate.path === relativePath);
     if (file) matches.push(reference(file, item.collection));
   }
@@ -588,7 +592,12 @@ export function initSullaFilesIpc():void {
     feed.start();
   });
 
-  ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string; details?:boolean }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }${ input.details ? '&details=true' : '' }`));
+  ipcMain.handle('sulla-files:folders', async(_event, input:{ collectionId:string; details?:boolean }) => {
+    // Folder rows feed the tree and the folder metadata panel; read in bounded pages.
+    const folders:unknown[] = [];
+    for await (const page of FilesListingPager.pages<unknown>(listingRequest, '/v1/folders', { collectionId: input.collectionId, ...(input.details ? { details: 'true' } : {}) })) folders.push(...page);
+    return folders;
+  });
   ipcMain.handle('sulla-files:operation-capabilities', (_event, input:{ collectionId:string }) => json(`/v1/database-file-operations/capabilities?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:folder-operation-state', (_event, input:{ collectionId:string; path:string }) => filesClient.folderOperationState(input.collectionId, input.path));
   ipcMain.handle('sulla-files:operation-submit', (_event, input:FilesOperationRequest) => json('/v1/database-file-operations', { method: 'POST', body: JSON.stringify(input) }));
@@ -603,9 +612,18 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:native-runtime', () => mountManager.status());
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
-  ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
+  // Legacy whole-list channel (no in-repo renderer caller; the File Manager uses list-page).
+  // It stays complete but paged, and refuses rather than truncates past the legacy row cap.
+  ipcMain.handle('sulla-files:list', async(_event, input:{ collectionId: string; path?: string; trash?: boolean }) => {
+    const files:any[] = [];
+    for await (const page of FilesListingPager.pages<any>(listingRequest, '/v1/files', { collectionId: input.collectionId, path: input.path ?? '', trash: String(input.trash === true) })) {
+      if (files.length + page.length > 20_000) throw new FilesApiError('Listing exceeds 20,000 files; use sulla-files:list-page', 413);
+      files.push(...page);
+    }
+    return files;
+  });
   ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string }) => {
-    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:'250'});
+    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:String(FilesListingPager.pageSize)});
     if(input.cursor) query.set('cursor',input.cursor);
     const response=await filesClient.request(`/v1/files?${query}`);
     if(!response.ok) throw new FilesApiError(await response.text(),response.status);
@@ -705,9 +723,14 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:residency-status', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`));
   ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId: string; desiredState: 'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }), signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS) }));
   ipcMain.handle('files-ui:recent-references', async(_event, limit = 5) => {
-    const groups = await collectionsWithFiles();
-    return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, Math.max(1, Math.min(Number(limit), 20)));
+    // Keeps only the newest <= 20 references while pages stream through.
+    const keep = Math.max(1, Math.min(Number(limit) || 5, 20));
+    let newest:FileReference[] = [];
+    for await (const item of collectionFilePages(await json('/v1/collections') as any[])) {
+      newest = [...newest, ...item.files.map(file => reference(file, item.collection))]
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, keep);
+    }
+    return newest;
   });
   ipcMain.handle('files-ui:pick-reference', async(event) => {
     try {

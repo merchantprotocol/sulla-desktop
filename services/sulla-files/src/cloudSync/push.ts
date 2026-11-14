@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createHash } from 'node:crypto';
+import { headsAsPages, streamingStateHash } from './stateHashStream.js';
 import { deflateRawSync } from 'node:zlib';
 
 import { decryptAndVerifyChunk } from '../crypto.js';
@@ -107,10 +108,11 @@ export async function buildCommit(sync:Pick<SyncRow, 'collectionId' | 'keyVersio
 }
 
 /** Builds the exact signed body used by the commit transport for a bounded recursive delete. */
-export async function buildCommitBatch(sync:Pick<SyncRow, 'collectionId' | 'keyVersion' | 'lastSeq' | 'head'>, sessions:UploadSession[], cloudHeads:StateEntry[], root:Uint8Array, batch?:RecursiveDeleteMetadata):Promise<CommitRequest> {
+export async function buildCommitBatch(sync:Pick<SyncRow, 'collectionId' | 'keyVersion' | 'lastSeq' | 'head'>, sessions:UploadSession[], cloudHeads:StateEntry[] | AsyncIterable<StateEntry[]>, root:Uint8Array, batch?:RecursiveDeleteMetadata):Promise<CommitRequest> {
   if (!sessions.length || sessions.length>256) throw new Error('commit batch must contain 1 to 256 versions');
   if (batch && sessions.some(session=>!session.deleted)) throw new Error('recursive delete batches may contain only tombstones');
-  const projected = await commitStateHashMany(cloudHeads,sessions.map(session=>({fileId:session.fileId,versionId:session.versionId,deleted:session.deleted})));
+  // Heads stream page by page (fileId order) so a commit never loads every file's head.
+  const projected = await streamingStateHash(Array.isArray(cloudHeads) ? headsAsPages(cloudHeads) : cloudHeads, sessions.map(session=>({fileId:session.fileId,versionId:session.versionId,deleted:session.deleted})));
   const head = await signHead(root, {
     collectionId: sync.collectionId,
     keyVersion: sync.keyVersion,

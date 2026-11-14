@@ -65,6 +65,7 @@ import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
+const FOLDER_WHERE_CANDIDATES = 2000;
 const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
@@ -1568,9 +1569,11 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? '');
     if (!collectionId) throw new HttpError(400, 'collectionId is required');
     await requireCollection(request, collectionId, 'view', true, true);
+    const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
     let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL AND path>$2 ORDER BY path LIMIT $3", [collectionId,pageRequest.after,pageRequest.limit+1]);
-    const hasMore=rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,pageRequest.limit); pageRequest.apply(response,hasMore,page.at(-1)?.path);
+    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL AND path>$2 ORDER BY path LIMIT $3", [collectionId,pageRequest.after,paged?pageRequest.limit+1:ListingPage.legacyMaxRows+1]);
+    if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'folder listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
+    const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const visible:(string|{folderId:string;path:string;revision:string;description:string|null;namingHint:string|null;needsDescription:boolean})[] = [];
     for (const row of page) {
       try { await requirePath(request, collectionId, row.path, 'view'); visible.push(request.query.details==='true'?{folderId:row.id,path:row.path,revision:row.revision,description:row.description,namingHint:row.naming_hint,needsDescription:row.needs_description}:row.path) }
@@ -1580,16 +1583,18 @@ export function createApp(
   } catch (error) { next(error) } });
   app.get('/v1/folders/map', async(request:RequestWithIdentity,response,next)=>{ try {
     const limit=Math.min(40,Math.max(1,Number(request.query.limit??40)||40));
-    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL`);
-    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' ORDER BY c.explorer_path,f.path`);
+    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL ORDER BY explorer_path LIMIT $1`,[limit]);
+    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' ORDER BY c.explorer_path,f.path LIMIT $1`,[limit]);
     response.json([...roots.rows,...folders.rows].slice(0,limit).map(row=>({collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description')})));
   } catch(error){next(error)} });
   app.get('/v1/folders/where', async(request:RequestWithIdentity,response,next)=>{ try {
     const what=String(request.query.what??'').trim(); if(!what) throw new HttpError(400,'what is required');
     const kind=String(request.query.kind??''); const project=String(request.query.project??'');
     const tokens=[what,kind,project].join(' ').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>1);
-    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL`);
-    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)'`);
+    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL LIMIT ${FOLDER_WHERE_CANDIDATES}`);
+    // Only folders matching at least one token are ranked, capped; ranking needs candidates, not every folder.
+    const patterns=tokens.map(token=>`%${token.replace(/[\\%_]/g,'\\$&')}%`);
+    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' AND (cardinality($1::text[])=0 OR lower(c.name||' '||f.path||' '||f.description||' '||COALESCE(f.naming_hint,'')) LIKE ANY($1::text[])) ORDER BY f.path LIMIT ${FOLDER_WHERE_CANDIDATES}`,[patterns]);
     const ranked=[...roots.rows,...folders.rows].map(row=>{const haystack=`${row.name} ${row.path} ${row.description} ${row.naming_hint??''}`.toLowerCase();return{collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description'),score:tokens.reduce((score,token)=>score+(haystack.includes(token)?1:0),0)}}).sort((a,b)=>b.score-a.score||a.path.localeCompare(b.path)).slice(0,10);
     const suggested=ranked[0]??null; const filename=suggestedFileName(what,kind);
     response.json({matches:ranked,suggestedFolder:suggested,suggestedFilename:filename,suggestedPath:suggested?[suggested.path,filename].filter(Boolean).join('/'):filename});
@@ -1667,6 +1672,7 @@ export function createApp(
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
+    const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
     let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
     const params:any[] = [collectionId, path ? `${ path }/` : ''];
     let filter = '';
@@ -1676,8 +1682,9 @@ export function createApp(
     }
     const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2)) AND f.path>$${params.push(pageRequest.after)}${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path LIMIT $${params.push(pageRequest.limit+1)}`, params);
-    const hasMore=rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,pageRequest.limit); pageRequest.apply(response,hasMore,page.at(-1)?.path);
+      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2)) AND f.path>$${params.push(pageRequest.after)}${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path LIMIT $${params.push(paged ? pageRequest.limit+1 : ListingPage.legacyMaxRows+1)}`, params);
+    if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
+    const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const actor = identity(request); const visible = [];
     for (const row of page.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
       const role = access.role;
