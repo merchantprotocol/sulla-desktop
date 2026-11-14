@@ -5,12 +5,14 @@
 
 import { SubjectMemorySentModel } from '../database/models/SubjectMemorySentModel';
 import { WorkflowCheckpointModel } from '../database/models/WorkflowCheckpointModel';
+import { AgentJobRepository } from '../app/Repositories/AgentJobRepository';
 
 /** Periodically drain bounded batches of expired, non-resumable database history. */
 export class DatabaseRetentionService {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
   private readonly sentLedger = new SubjectMemorySentModel();
+  private readonly agentJobs = new AgentJobRepository();
 
   initialize(): void {
     if (this.timer) return;
@@ -30,6 +32,7 @@ export class DatabaseRetentionService {
     try {
       await this.sentLedger.deleteExpiredBatch();
       await WorkflowCheckpointModel.deleteExpiredBatch();
+      await this.agentJobs.deleteExpiredBatch();
     } catch (error) {
       console.warn('[DatabaseRetention] Bounded retention pass failed:', error);
     } finally {

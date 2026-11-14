@@ -148,7 +148,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count, results, tasks, error,
+      parent_channel, parent_thread_id, parent_agent_id, visibility, parent_job_id, parent_task_index,
+      project_task_ids, completion_delivered_at, waiting_on_children, restart_resume_count, dismissed_at,
+      stopped_by, stop_reason, orphaned_child_notices
+      FROM agent_jobs
       WHERE (($1::text IS NOT NULL AND parent_thread_id = $1) OR ($1::text IS NULL AND parent_thread_id IS NULL AND parent_agent_id = $2))
         AND created_at >= to_timestamp($3 / 1000.0)
         AND status <> 'stopped'
@@ -172,6 +176,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
       SELECT job_id, created_at, 1 AS lineage_depth
       FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+        AND (status IN ('running', 'parked') OR finished_at >= now() - INTERVAL '24 hours')
       UNION ALL
       SELECT child.job_id, child.created_at, parent.lineage_depth + 1
       FROM lineage parent
@@ -179,6 +184,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       JOIN agent_jobs child ON child.parent_thread_id = task.thread_id
       -- Depth guard: managers nest at most a few levels; it also stops a malformed cycle.
       WHERE child.dismissed_at IS NULL AND parent.lineage_depth < 6
+        AND (child.status IN ('running', 'parked') OR child.finished_at >= now() - INTERVAL '24 hours')
     ), selected AS (
       SELECT job_id, created_at FROM lineage GROUP BY job_id, created_at ORDER BY created_at DESC LIMIT $2
     ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
@@ -377,4 +383,32 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
+
+  /** Delete one bounded set of terminal jobs whose delivery and lineage are settled. */
+  async deleteExpiredBatch(retentionMs = 24 * 60 * 60 * 1000, limit = 500): Promise<number> {
+    const rows = await this.connection.select(`WITH expired AS (
+      SELECT job.job_id FROM agent_jobs job
+      WHERE job.status IN ('completed', 'failed', 'stopped')
+        AND job.finished_at < now() - ($1::bigint * interval '1 millisecond')
+        AND job.waiting_on_children = 0
+        AND (job.completion_delivered_at IS NOT NULL
+          OR job.parent_channel IS NULL OR job.parent_thread_id IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_jobs child
+          WHERE child.parent_job_id = job.job_id
+            AND (child.status IN ('running', 'parked')
+              OR (child.completion_delivered_at IS NULL
+                AND child.parent_channel IS NOT NULL AND child.parent_thread_id IS NOT NULL))
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_jobs parent
+          WHERE parent.job_id = job.parent_job_id AND parent.status IN ('running', 'parked')
+        )
+      ORDER BY job.finished_at, job.job_id
+      LIMIT $2
+      FOR UPDATE OF job SKIP LOCKED
+    ) DELETE FROM agent_jobs job USING expired WHERE job.job_id = expired.job_id
+      RETURNING job.job_id`, [Math.max(0, Math.trunc(retentionMs)), Math.min(500, Math.max(1, Math.trunc(limit))) ]);
+    return rows.length;
+  }
 }
