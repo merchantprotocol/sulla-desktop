@@ -275,6 +275,7 @@
       "github/github_fork_repo",
       "github/github_request_pr_reviewers",
       "github/github_trigger_workflow_run",
+      "github/github_update_repo",
       "github/github_update_file",
       "github/github_update_issue",
       "github/github_update_pr",
