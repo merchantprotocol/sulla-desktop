@@ -315,9 +315,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     disallowedTools:   string;
     /**
      * Host path of this spawn's system prompt file (cliSystemPromptFile).
-     * Passed as --append-system-prompt-file: ~/.claude/CLAUDE.md is written
-     * on the host, but the CLI runs in the VM under a different $HOME and
-     * never reads it — this flag is the only route Sulla's prompt has in.
+     * Passed as --append-system-prompt-file. The CLI runs in the VM under its
+     * own $HOME, so this flag is the only route Sulla's prompt has in. Sulla
+     * must never write the host's ~/.claude/CLAUDE.md: it belongs to the user.
      */
     systemPromptPath?: string | null;
     /** VM-side pidfile the launched claude records its PID in. */
