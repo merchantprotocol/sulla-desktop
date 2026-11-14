@@ -17,6 +17,7 @@ class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   readonly observedActivity: Array<number | null> = [];
   jobsForProjection?: (recentMs: number) => Promise<AgentJob[]>;
+  lineageForParentThread?: (parentThreadId: string, limit?: number) => Promise<AgentJob[]>;
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async job(jobId: string): Promise<AgentJob | undefined> {
@@ -112,6 +113,22 @@ describe('authoritative live agent state', () => {
     expect(read).toHaveBeenLastCalledWith(25, true);
     await states.list(2.9);
     expect(read).toHaveBeenLastCalledWith(2, true);
+  });
+
+  it('reuses one bounded lineage read across rapid refreshes for the same chat', async() => {
+    // risk: repeated subagent rail reads amplify Postgres work across open chats
+    const { store } = harness([job('worker', [task({ threadId: 'worker-thread' })], { parentThreadId: 'parent-thread' })]);
+    let now = 10_000;
+    const lineage = vi.fn(async() => store.allJobs());
+    store.lineageForParentThread = lineage;
+    const cachedStates = new AgentStateService(store, { jobs: new Map() }, () => now);
+    const first = await cachedStates.descendants('parent-thread');
+    const second = await cachedStates.descendants('parent-thread');
+    expect(second).toEqual(first);
+    expect(lineage).toHaveBeenCalledTimes(1);
+    now += 2_001;
+    await cachedStates.descendants('parent-thread');
+    expect(lineage).toHaveBeenCalledTimes(2);
   });
 
   it('bounds settled cache history while preserving complete reads and parked work', async() => {

@@ -37,7 +37,7 @@ export class AgentDetailFeed {
     private readonly setTimer: (callback: () => void, milliseconds: number) => TimerHandle,
     private readonly clearTimer: (handle: TimerHandle) => void,
     private readonly onChange: (snapshot: FeedSnapshot) => void,
-    private readonly intervalMs = 3_000,
+    private readonly intervalMs = 15_000,
   ) {}
 
   select(threadId?: string): void {

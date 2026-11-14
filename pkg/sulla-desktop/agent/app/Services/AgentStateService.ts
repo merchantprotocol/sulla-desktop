@@ -46,6 +46,8 @@ export class AgentJobMutationQueue {
 /** Sole write-through owner for durable and process-local agent state. */
 export class AgentStateService {
   private versionValue: number;
+  private readonly clock:() => number;
+  private readonly descendantReads = new Map<string, { expiresAt:number; jobs:AgentJob[] }>();
   private refreshInFlight?: Promise<AgentJob[]>;
   private readonly changes = new EventEmitter();
   private readiness: () => Promise<void> = async() => undefined;
@@ -55,6 +57,7 @@ export class AgentStateService {
   constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now,
     private readonly mutations = new AgentJobMutationQueue()) {
     this.versionValue = now();
+    this.clock = now;
   }
 
   get version(): number { return this.versionValue; }
@@ -139,8 +142,12 @@ export class AgentStateService {
   async descendants(parentThreadId: string): Promise<AgentJob[]> {
     await this.ready();
     if (this.store.lineageForParentThread) {
+      const cached = this.descendantReads.get(parentThreadId);
+      if (cached && cached.expiresAt > this.clock()) return cached.jobs;
       const persisted = await this.store.lineageForParentThread(parentThreadId, 100);
       const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
+      if (this.descendantReads.size >= 128 && !this.descendantReads.has(parentThreadId)) this.descendantReads.delete(this.descendantReads.keys().next().value!);
+      this.descendantReads.set(parentThreadId, { expiresAt: this.clock() + 2_000, jobs });
       for (const job of jobs) this.cache.jobs.set(job.jobId, job);
       this.trimTerminalCache();
       return jobs;
@@ -184,7 +191,7 @@ export class AgentStateService {
 
   async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
     const resumable: AgentJob[] = []; const exhausted: AgentJob[] = [];
-    const candidates = (await this.store.allJobs()).filter(job => job.status === 'running' && job.visibility !== 'tab')
+    const candidates = (await this.store.jobsForList(1, false)).filter(job => job.status === 'running' && job.visibility !== 'tab')
       .sort((left, right) => left.createdAt - right.createdAt || left.jobId.localeCompare(right.jobId));
     for (const candidate of candidates) {
       const exhaustedLimit = (candidate.restartResumeCount ?? 0) >= maxResumes;

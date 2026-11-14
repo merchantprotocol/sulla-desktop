@@ -627,15 +627,10 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       import('@pkg/agent/services/GraphRegistry'),
       import('@pkg/agent/services/AgentDefinitionService'),
     ]);
-    // Only enrich what the Live view can show: unfinished jobs, plus failures
-    // from the last hour. Enriching every historical job reads one log file
-    // per task on each 3s poll.
-    const failedCutoff = Date.now() - 60 * 60 * 1000;
-    const allJobs = (await agentJobProvider.states.list(100, true)).filter(job => {
-      if (job.status === 'completed') return false;
-      if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
-      return true;
-    });
+    // Live refreshes need active work only. Batch compact check-ins/messages for
+    // all visible jobs instead of issuing two history reads per job per tick.
+    const allJobs = await agentJobProvider.states.list(100, false);
+    const telemetryByJob = await AgentJobMessagingModel.latestTelemetryForJobs(allJobs.map(job => job.jobId));
     const definitions = await agentDefinitionService.list();
     const modelByAgent = new Map(definitions.map(definition => [
       definition.slug,
@@ -645,7 +640,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
 
     return Promise.all(allJobs.map(async job => {
       try {
-      const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
+      const telemetry = telemetryByJob[job.jobId] ?? {};
       const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
         const latestCheckin = telemetry[taskIndex]?.latestCheckin ?? null;

@@ -21,7 +21,7 @@ export class AgentsListPoller {
     private readonly clearTimer: (handle: TimerHandle) => void,
     private readonly onData: (data: AgentsListResponse) => void,
     private readonly onAvailability: (available: boolean) => void,
-    private readonly intervalMs = 3_000,
+    private readonly intervalMs = 15_000,
     private readonly onError: (reason: string) => void = () => undefined,
     private readonly reportError: (source: string, error: unknown) => void = (source, error) => ipcRenderer.send('debug:report' as any, source, { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : '' }),
   ) {}
