@@ -15,7 +15,7 @@
   <div :class="['question', { settled: locked }]" :aria-disabled="locked">
     <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
     <div class="head">
-      {{ msg.status === 'answered' ? 'Answered' : msg.status === 'closed' ? 'Closed' : msg.status === 'timed_out' ? 'Expired' : sending ? 'Answer sent' : 'Waiting for your answer' }}
+      {{ msg.status === 'answered' ? 'Answered' : msg.status === 'closed' || msg.status === 'timed_out' ? 'Closed' : sending ? 'Answer sent' : 'Waiting for your answer' }}
       <span v-if="remaining !== null" class="countdown" :class="{ urgent: remaining < 60_000 }">expires in {{ countdown }}</span>
     </div>
     <div v-if="expiredUnsent" class="expired">

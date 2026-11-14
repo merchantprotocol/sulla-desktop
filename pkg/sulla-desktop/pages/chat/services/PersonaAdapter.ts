@@ -211,7 +211,7 @@ export class PersonaAdapter {
             resolutionError: undefined,
           });
         } else if (message.kind === 'tool_question' && message.questionId === record.id) {
-          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'timed_out', resolutionError: undefined });
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'closed', resolutionError: undefined });
         }
       }
     };
