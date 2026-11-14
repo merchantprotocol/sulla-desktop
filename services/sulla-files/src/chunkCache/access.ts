@@ -8,9 +8,12 @@ import type pg from 'pg';
 export class ChunkAccessTracker {
   private readonly pending = new Map<string, { collectionId:string; chunkId:string }>();
   private timer?:NodeJS.Timeout;
-  constructor(private readonly db:Pick<pg.Pool, 'query'>, private readonly flushMs = 1_000) {}
+  constructor(private readonly db:Pick<pg.Pool, 'query'>, private readonly flushMs = 1_000, private readonly maxPending = 1_000) {}
+  get pendingSize():number { return this.pending.size }
   record(collectionId:string, chunkId:string):void {
-    this.pending.set(`${collectionId}:${chunkId}`, { collectionId, chunkId });
+    const key = `${collectionId}:${chunkId}`;
+    if (!this.pending.has(key) && this.pending.size >= this.maxPending) void this.flush().catch(() => undefined);
+    if (this.pending.size < this.maxPending || this.pending.has(key)) this.pending.set(key, { collectionId, chunkId });
     this.timer ??= setTimeout(() => void this.flush().catch(() => undefined), this.flushMs);
     this.timer.unref();
   }
