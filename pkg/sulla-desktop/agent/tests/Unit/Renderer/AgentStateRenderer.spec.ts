@@ -19,10 +19,12 @@ class FakeTransport implements AgentStateTransport {
   push(snapshot: AgentStateSnapshot): void { this.listener?.({}, snapshot) }
 }
 class FakeHost implements AgentStateWindow {
+  intervalMs = 0;
+  intervalHandler?: () => void;
   document = { visibilityState: 'visible', addEventListener: (_type: string, _listener: () => void) => {}, removeEventListener: (_type: string, _listener: () => void) => {} };
   addEventListener(_type: string, _listener: () => void): void {}
   removeEventListener(_type: string, _listener: () => void): void {}
-  setInterval(_handler: () => void, _ms: number): ReturnType<typeof setInterval> { return 1 as unknown as ReturnType<typeof setInterval> }
+  setInterval(handler: () => void, ms: number): ReturnType<typeof setInterval> { this.intervalHandler = handler; this.intervalMs = ms; return 1 as unknown as ReturnType<typeof setInterval> }
   clearInterval(_handle: ReturnType<typeof setInterval>): void {}
 }
 class RowFactory {
@@ -58,6 +60,25 @@ describe('AgentTreeBuilder', () => {
 });
 
 describe('AgentStateClient', () => {
+  it('backs off snapshot polling to 60 seconds and skips timer reads while hidden', async() => {
+    // risk: idle or background views amplify agent-job database polling
+    const transport = new FakeTransport(snapshot(1, []));
+    let reads = 0;
+    const invoke = transport.invoke.bind(transport);
+    transport.invoke = async(channel: string) => { reads++; return invoke(channel) };
+    const host = new FakeHost();
+    const client = new AgentStateClient(transport, host);
+    await client.start();
+    expect(host.intervalMs).toBe(60_000);
+    host.document.visibilityState = 'hidden';
+    host.intervalHandler?.();
+    expect(reads).toBe(1);
+    host.document.visibilityState = 'visible';
+    host.intervalHandler?.();
+    expect(reads).toBe(2);
+    client.stop();
+  });
+
   it('applies pushes, ignores older versions, and resync restores authoritative rows after a drop', async() => {
     // risk: stale operational state
     const factory = new RowFactory(); const transport = new FakeTransport(snapshot(1, [factory.create('first:0')])); const client = new AgentStateClient(transport, new FakeHost());

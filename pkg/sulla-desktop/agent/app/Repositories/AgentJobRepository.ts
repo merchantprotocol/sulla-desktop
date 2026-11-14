@@ -166,9 +166,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
   async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
-      SELECT agent_jobs.*, 1 AS lineage_depth FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+      SELECT job_id,status,created_at,finished_at,task_count,tasks,error,parent_channel,parent_thread_id,parent_agent_id,
+        visibility,parent_job_id,parent_task_index,project_task_ids,completion_delivered_at,waiting_on_children,
+        restart_resume_count,dismissed_at,stopped_by,stop_reason,orphaned_child_notices,1 AS lineage_depth
+      FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
       UNION ALL
-      SELECT child.*, parent.lineage_depth + 1 FROM lineage parent
+      SELECT child.job_id,child.status,child.created_at,child.finished_at,child.task_count,child.tasks,child.error,
+        child.parent_channel,child.parent_thread_id,child.parent_agent_id,child.visibility,child.parent_job_id,
+        child.parent_task_index,child.project_task_ids,child.completion_delivered_at,child.waiting_on_children,
+        child.restart_resume_count,child.dismissed_at,child.stopped_by,child.stop_reason,child.orphaned_child_notices,
+        parent.lineage_depth + 1 FROM lineage parent
       -- LATERAL keeps the child lookup on the parent_thread_id index (6 ms on 3k
       -- jobs). The previous IN (subselect) form seq-scanned every level (3.8 s).
       CROSS JOIN LATERAL jsonb_array_elements(parent.tasks) task
@@ -177,7 +184,12 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       WHERE child.dismissed_at IS NULL AND parent.lineage_depth < 6
     ), selected AS (
       SELECT * FROM lineage ORDER BY created_at DESC LIMIT $2
-    ) SELECT * FROM selected ORDER BY created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+    ) SELECT job_id,status,created_at,finished_at,task_count,'[]'::jsonb AS results,
+      (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+        FROM jsonb_array_elements(selected.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
+      error,parent_channel,parent_thread_id,parent_agent_id,visibility,parent_job_id,parent_task_index,project_task_ids,
+      completion_delivered_at,waiting_on_children,restart_resume_count,dismissed_at,stopped_by,stop_reason,orphaned_child_notices
+      FROM selected ORDER BY created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
     return rows.map(row => this.map(row));
   }
 
@@ -208,6 +220,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async allJobs(): Promise<AgentJob[]> {
     return (await this.query().unsafeAll().get()).map(row => this.map(row));
   }
+
+  /** Compact active work for operational callers that do not need durable history or result payloads. */
+  async activeJobs(): Promise<AgentJob[]> { return this.jobsForList(1, false) }
 
   /**
    * Live Agents projection input: every running/parked job, jobs that ended within `recentMs`, and the
@@ -248,9 +263,19 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
-      SELECT * FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL
+      SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
+        parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
+        dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
+        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+          FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
+      FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL
       UNION ALL
-      (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
+      (SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
+        parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
+        dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
+        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+          FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
+       FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children,
       orphaned_child_notices, stopped_by, stop_reason, '[]'::jsonb AS results,

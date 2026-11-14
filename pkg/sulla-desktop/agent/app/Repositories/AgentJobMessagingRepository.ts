@@ -180,7 +180,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     if (jobIds.length === 0) return {};
     const [checkinRows, messageRows] = await Promise.all([
       this.connection.select<any>(
-        `SELECT DISTINCT ON (job_id, task_index) *
+        `SELECT DISTINCT ON (job_id, task_index) job_id, task_index, step, summary, files_touched, blockers, percent, created_at
            FROM agent_job_checkins
           WHERE job_id = ANY($1::text[])
           ORDER BY job_id, task_index, created_at DESC`,

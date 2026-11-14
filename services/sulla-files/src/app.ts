@@ -160,6 +160,8 @@ export function createApp(
   cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const inFlightRequests = new Map<string, number>();
+  app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
   const snapshotPruner = setInterval(() => { void snapshotRetention.prune().catch(error => console.warn('[SullaFiles] Automerge snapshot retention failed:', error)); }, 60_000);
   snapshotPruner.unref();
@@ -168,6 +170,21 @@ export function createApp(
   app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   app.disable('x-powered-by');
+  app.use((request, response, next) => {
+    const path = request.path.slice(0, 200);
+    inFlightRequests.set(path, (inFlightRequests.get(path) ?? 0) + 1);
+    let finished = false;
+    const release = () => {
+      if (finished) return;
+      finished = true;
+      const remaining = (inFlightRequests.get(path) ?? 1) - 1;
+      if (remaining) inFlightRequests.set(path, remaining);
+      else inFlightRequests.delete(path);
+    };
+    response.once('finish', release);
+    response.once('close', release);
+    next();
+  });
   app.post('/v1/bootstrap/challenge', bootstrapJsonParser, async(request, response) => {
     if (config.mode !== 'desktop' || !bootstrapAuthority) return response.sendStatus(404);
     try { return response.json(await bootstrapAuthority.challenge(request.body)) } catch (error) {

@@ -57,7 +57,9 @@ export class AgentFleetProjectionService {
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
     const all = request.scope === 'mine'
       ? await this.states.descendants(this.requiredCaller(request.callerThreadId))
-      : await this.states.jobs();
+      // The user-facing all-jobs list is a compact projection. `jobs()` hydrates the entire
+      // durable table (including inline result JSON) and is reserved for reconciliation.
+      : await this.states.list(request.limit ?? 25, request.includeFinished ?? true);
     const index = new AgentLineageIndex(all);
     const scoped = request.scope === 'mine'
       ? index.descendants(this.requiredCaller(request.callerThreadId))
@@ -69,7 +71,7 @@ export class AgentFleetProjectionService {
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
   async supervisionCandidates(): Promise<FleetJobView[]> {
-    const all = await this.states.jobs();
+    const all = await this.states.jobsForProjection(5 * 60_000);
     const childParentThreads = new Set(all.map(job => job.parentThreadId).filter((value): value is string => !!value));
     const managers = all.filter(job => ['running', 'parked'].includes(job.status) && job.tasks.some(task => !!task.threadId && childParentThreads.has(task.threadId)));
     const managerThreads = new Set(managers.flatMap(job => job.tasks.map(task => task.threadId).filter((value): value is string => !!value)));
@@ -87,8 +89,9 @@ export class AgentFleetProjectionService {
   }
 
   async job(jobId: string): Promise<FleetJobView | undefined> {
-    const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobs()]);
+    const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobsForProjection(60 * 60_000)]);
     if (!job) return undefined;
+    if (!all.some(candidate => candidate.jobId === job.jobId)) all.push(job);
     const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.telemetryForJob(jobId), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews([job])]);
     return (await this.project([job], all, { [jobId]: telemetry }, true, stranded, false, reviews))[0];
   }
