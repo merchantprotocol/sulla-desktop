@@ -141,6 +141,8 @@ export class RecordingEnrichmentQueue {
   private timer?: NodeJS.Timeout;
   private running = false;
   private stopped = false;
+  private activeJob:string | null = null;
+  get diagnosticJob():string | null { return this.activeJob }
 
   constructor(private readonly db:pg.Pool, private readonly filesRoot:string) {}
 
@@ -167,9 +169,11 @@ export class RecordingEnrichmentQueue {
       WHERE version_id=(SELECT version_id FROM recording_enrichment_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING file_id,version_id,attempts`);
     const job = claimed.rows[0]; if (!job) return false;
+    this.activeJob = String(job.file_id);
     const tools = await runtime();
     if (!tools) {
       await this.db.query("UPDATE recording_enrichment_jobs SET status='waiting_runtime',last_error='whisper.cpp model/runtime not installed' WHERE version_id=$1", [job.version_id]);
+      this.activeJob = null;
       return true;
     }
 
@@ -203,6 +207,7 @@ export class RecordingEnrichmentQueue {
       const message = error instanceof Error ? error.message : String(error); const terminal = job.attempts >= 3;
       await this.db.query(`UPDATE recording_enrichment_jobs SET status=$2,last_error=$3,available_at=NOW()+INTERVAL '30 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END WHERE version_id=$1`, [job.version_id, terminal ? 'failed' : 'pending', message.slice(0, 500)]);
     } finally {
+      this.activeJob = null;
       if (temp) await rm(temp, { recursive: true, force: true }).catch(() => undefined);
     }
     return true;

@@ -38,6 +38,7 @@ import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
 import { ProcessGuard } from './ProcessGuard.js';
+import { MemoryTelemetry } from './MemoryTelemetry.js';
 import { FilesCloudBroker } from './cloudBroker.js';
 import { FilesCloudChunkSource } from './cloudSync/chunkSource.js';
 import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
@@ -172,6 +173,14 @@ const cloudSync = cloudBroker && config.keyring instanceof FilesKeyring
   : undefined;
 if (chunkStore instanceof CachingStore) await chunkStore.start();
 const app = createApp(db, config, manager, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
+const memoryTelemetry = new MemoryTelemetry(() => ({
+  requests: Object.fromEntries(app.locals.inFlightRequests ?? []),
+  indexer: indexer.diagnosticJob,
+  enrichment: enrichment?.diagnosticJob ?? null,
+}));
+memoryTelemetry.start();
+process.once('SIGTERM', () => memoryTelemetry.close());
+process.once('SIGINT', () => memoryTelemetry.close());
 requestHandler = app;
 startSearchCleanup(db);
 startRetiredSystemAreaCleanup(db, (collectionId, chunkId) => chunkStore.delete(collectionId, chunkId));

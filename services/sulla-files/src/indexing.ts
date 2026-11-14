@@ -94,6 +94,8 @@ export class IndexingQueue {
   private timer?:            NodeJS.Timeout;
   private running = false;
   private stopped = false;
+  private activeJob:string | null = null;
+  get diagnosticJob():string | null { return this.activeJob }
 
   constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
@@ -153,6 +155,7 @@ export class IndexingQueue {
       WHERE version_id=(SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING file_id,version_id,attempts`);
     const job = claimed.rows[0]; if (!job) return false;
+    this.activeJob = String(job.file_id);
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
       const eligibilityClient = await this.db.connect();
@@ -236,6 +239,7 @@ export class IndexingQueue {
         await client.query('COMMIT');
       } catch (failureError) { await client.query('ROLLBACK'); throw failureError } finally { client.release() }
     } finally {
+      this.activeJob = null;
       try { await source?.cleanup?.() } catch { console.warn('[SullaFiles] index source cleanup failed') }
     }
     return true;
