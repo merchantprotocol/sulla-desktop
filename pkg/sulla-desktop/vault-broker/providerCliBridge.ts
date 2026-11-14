@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 
 import { requireConfiguredCredentialBroker } from './index';
+import { recordVaultFailure, recordVaultSuccess, vaultFailureKind } from './vaultHealth';
 
 import type { BrokerInjection, ToolExecutionContext, LocalVaultBrokerClient } from './index';
 
@@ -143,11 +144,11 @@ export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
   /** Emit one credential-free timing record into Desktop's perf log. */
   logTiming?(message: string): void;
   /** Abort owned by the job/process lifecycle. Aborting it revokes the lease and active stream. */
-  signal?:         AbortSignal;
-  broker?:         Pick<LocalVaultBrokerClient, 'executeStream' | 'requestFor'>;
-  listenHost?:     string;
+  signal?:           AbortSignal;
+  broker?:           Pick<LocalVaultBrokerClient, 'executeStream' | 'requestFor'>;
+  listenHost?:       string;
   /** Optional service hostname visible from the provider container. */
-  advertisedHost?: string;
+  advertisedHost?:   string;
   /** Map the ephemeral listen port to a caller-reachable HTTP origin. */
   advertisedOrigin?: (port: number) => string;
 }
@@ -396,7 +397,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
     if (beforeUpstreamCache && beforeUpstreamCache.expiresAt > now) return beforeUpstreamCache.promise;
     const promise = options.beforeUpstream(identity);
     beforeUpstreamCache = { expiresAt: now + 5_000, promise };
-    promise.catch(() => { if (beforeUpstreamCache?.promise === promise) beforeUpstreamCache = undefined });
+    promise.catch(() => { if (beforeUpstreamCache?.promise === promise) beforeUpstreamCache = undefined; });
     return promise;
   };
 
@@ -520,6 +521,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       }), requestAbort.signal);
       upstreamHeadersMs = performance.now() - upstreamStartedAt;
       status = upstream.status;
+      if (upstream.status === 423) recordVaultFailure('locked'); else recordVaultSuccess();
       if (upstream.status >= 400) {
         console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
       }
@@ -550,6 +552,9 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       response.end();
     } catch (error) {
       const failure = classifyProviderBridgeFailure(error);
+      const brokerStatus = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
+      const vaultKind = vaultFailureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
+      if (vaultKind) recordVaultFailure(vaultKind);
       failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' }`;
       console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
         `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);

@@ -408,6 +408,19 @@ export class ChatController {
     this.bus.emit({ kind: 'messageUpdated', threadId: this.thread.value.id, messageId: id, patch });
   }
 
+  /**
+   * Drop repeated copies of the same message id, keeping the first. Older
+   * builds re-appended backend messages already restored from the local save,
+   * leaving duplicate cards that a by-id update could never reach.
+   */
+  removeDuplicateMessages(): void {
+    const ids = new Set<MessageId>();
+    const unique = this.thread.value.messages.filter(m => !ids.has(m.id) && ids.add(m.id));
+    if (unique.length === this.thread.value.messages.length) return;
+    this.thread.value = { ...this.thread.value, messages: unique, updatedAt: Date.now() };
+    this.persist();
+  }
+
   removeMessage(id: MessageId): void {
     this.thread.value = {
       ...this.thread.value,

@@ -2271,7 +2271,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 .tree-roots button:hover,.tree-roots button.on { background:var(--ink-05); color:var(--text); }
 .collection-drops { display: grid; gap: 4px; margin: 0 8px 10px; }
 .collection-drops .btn { width: 100%; white-space: normal; }
-.nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--muted); font-weight: 500; }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--type-sidebar-color, var(--muted)); font-weight: 500; font-family: var(--type-sidebar-font, inherit); font-size: var(--type-sidebar-size, inherit); }
 .nav a .sv { display: grid; width: 16px; height: 16px; flex: none; opacity: .8; }
 .nav a .sv :deep(svg) { width: 16px; height: 16px; }
 .nav a:hover { background: var(--ink-05); color: var(--text); }

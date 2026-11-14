@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { withGitHubBrokerRemote } from './gitBrokerTransport';
+import { GitTraceSummary } from './gitTraceSummary';
 import { usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
@@ -37,11 +38,14 @@ export class GitFetchWorker extends BaseTool {
     const remote = typeof input.remote === 'string' && input.remote.trim() ? input.remote.trim() : 'origin';
     const branch = typeof input.branch === 'string' && input.branch.trim() ? input.branch.trim() : '';
     const prune = input.prune === true;
+    const trace = input.trace === true;
+    let brokerUrl: string | undefined;
+    const traceSuffix = (stderr: string) => trace ? `\nGit HTTP trace (redacted):\n${ GitTraceSummary.redact(stderr, brokerUrl) || '(no HTTP trace lines captured)' }` : '';
     if (!absolutePath) return { successBoolean: false, responseString: 'absolutePath is required.' };
     const localAuthority = usesContainerVaultAuthority();
 
     let token: string | undefined;
-    const redact = (value: string) => token ? value.split(token).join('***') : value;
+    const redact = (value: string) => GitTraceSummary.redactCredentials(token ? value.split(token).join('***') : value, brokerUrl);
     try {
       const rootResult = await runCommand(
         `git -C ${ quote(absolutePath) } rev-parse --show-toplevel`,
@@ -84,18 +88,18 @@ export class GitFetchWorker extends BaseTool {
         ? ` ${ quote(`+refs/heads/${ branch }:refs/remotes/${ remote }/${ branch }`) }`
         : ` ${ quote(`+refs/heads/*:refs/remotes/${ remote }/*`) }`;
       const runFetch = (target: string) => runCommand(
-        `${ authPrefix }git ${ credFlags }-C ${ quote(repoRoot) } fetch${ prune ? ' --prune' : '' } ${ quote(target) }${ refspec }`,
+        `${ trace ? 'GIT_TRACE_CURL=1 GIT_CURL_VERBOSE=1 ' : '' }${ authPrefix }git ${ credFlags }-C ${ quote(repoRoot) } fetch${ prune ? ' --prune' : '' } ${ quote(target) }${ refspec }`,
         [], { runInGuest: true, timeoutMs: 120_000 },
       );
       const result = localAuthority
         ? await (async() => {
           const remoteUrl = await runCommand(`git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrl.exitCode !== 0) return remoteUrl;
-          return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), runFetch);
+          return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), proxyUrl => { brokerUrl = proxyUrl; return runFetch(proxyUrl); });
         })()
         : await runFetch(fetchTarget.replace(/^'|'$/g, ''));
       if (result.exitCode !== 0) {
-        return { successBoolean: false, responseString: redact(`Git fetch failed: ${ result.stderr || result.stdout }`) };
+        return { successBoolean: false, responseString: redact(`Git fetch failed: ${ result.stderr || result.stdout }${ traceSuffix(result.stderr) }`) };
       }
 
       const after = await remoteRefs(repoRoot, remote);
@@ -116,7 +120,7 @@ export class GitFetchWorker extends BaseTool {
           : `Fetched ${ remote }${ branch ? `/${ branch }` : '' }; remote-tracking refs already current.`,
       };
     } catch (error) {
-      return { successBoolean: false, responseString: redact(`Git fetch failed: ${ (error as Error).message }`) };
+      return { successBoolean: false, responseString: redact(`Git fetch failed: ${ (error as Error).message }${ traceSuffix('') }`) };
     }
   }
 }

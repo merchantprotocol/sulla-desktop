@@ -5,7 +5,7 @@
 
 import {
   AuthExpired, AuthRevoked, CliExhausted, EmptyResponse, Interrupted, ProviderFailure, QuotaExceeded, RateLimited,
-  RoutingUnavailable, TimedOut, Transient, Unknown, VaultLocked, legacyProviderFailure,
+  RoutingUnavailable, TimedOut, Transient, Unknown, legacyProviderFailure, findVaultFailure,
 } from './failures';
 
 export type LLMFailureKind =
@@ -108,6 +108,11 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   if (infrastructure) {
     return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: 'Sulla could not start the model runtime.' };
   }
+  // A locked or unreachable vault is Sulla-side: never count it against the provider or ask to reconnect a model.
+  const vault = findVaultFailure(error);
+  if (vault) {
+    return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: vault.userMessage };
+  }
   // Every CLI provider shares the bridge, so a bridge outage is Sulla's, never the provider's (Jonathon's routing rule).
   if (isProviderBridgeFailure(error)) {
     return {
@@ -145,7 +150,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (typed instanceof AuthExpired || typed instanceof AuthRevoked || typed instanceof VaultLocked) {
+  if (typed instanceof AuthExpired || typed instanceof AuthRevoked) {
     return {
       kind:            'auth',
       retryPrimary:    false,

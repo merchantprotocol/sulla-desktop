@@ -27,6 +27,7 @@ import DockerSection from '@pkg/components/settings/sections/DockerSection.vue';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import type { Container, Volume } from '@pkg/store/container-engine';
 import initDockerClient from '@pkg/utils/dockerClient';
+import { singleFlight } from '@pkg/utils/singleFlight';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
@@ -239,15 +240,15 @@ function setTab(tab: string) {
 
 /* `docker ps` adds the status line ("Exited (1) 2 hours ago") and mounts the store doesn't keep. */
 const rowInfo = ref<Record<string, any>>({});
-async function loadRowInfo() {
+const loadRowInfo = singleFlight(async() => {
   const rows = await execJsonLines('ps', ['-a', '--no-trunc', '--format={{json .}}']);
 
   rowInfo.value = Object.fromEntries(rows.map(r => [r.ID, r]));
-}
+});
 
 /* Live CPU and memory for every running container. */
 const usage = ref<Record<string, { cpu: number, mem: number }>>({});
-async function loadUsage() {
+const loadUsage = singleFlight(async() => {
   if (!runningCount.value) {
     usage.value = {};
 
@@ -259,7 +260,7 @@ async function loadUsage() {
     cpu: parseFloat(r.CPUPerc) || 0,
     mem: parseSize(String(r.MemUsage || '').split('/')[0]),
   }]));
-}
+});
 const usageFor = (c: Container) => usage.value[c.id];
 
 /* ── Container detail ── */
@@ -866,13 +867,13 @@ const meters = computed(() => {
     { label: 'Disk', value: diskUsed.value === undefined ? '—' : gb(diskGB, 0), of: diskSize ? `of ${ diskSize } GB` : '', width: pct(diskGB, diskSize) },
   ];
 });
-async function loadDiskUsed() {
+const loadDiskUsed = singleFlight(async() => {
   const rows = await execJsonLines('system', ['df', '--format={{json .}}']);
 
   if (rows.length) {
     diskUsed.value = rows.reduce((n, r) => n + parseSize(r.Size), 0);
   }
-}
+});
 const kubernetesOn = computed(() => !!settings.value?.kubernetes?.enabled);
 async function restartDocker() {
   if (backendState.value === 'STARTING' || backendState.value === 'STOPPING') {

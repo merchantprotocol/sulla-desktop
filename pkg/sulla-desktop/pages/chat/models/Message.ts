@@ -146,6 +146,8 @@ export interface ToolQuestionMessage extends MessageBase {
   questionId?: string;
   /** Populated once the user answers — mirrors what was sent back. */
   answers?:    readonly ToolQuestionAnswerItem[];
+  /** When the backend stops waiting for an answer (ms epoch), from the decisions store. */
+  expiresAt?:  number;
 }
 
 // ─── Patch ────────────────────────────────────────────────────────

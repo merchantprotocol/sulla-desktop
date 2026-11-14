@@ -26,7 +26,7 @@ export class SleepPreventionService {
     this.activeHolders.add(label);
     if (this.caffeinateProcess) return;
     try {
-      const proc = this.spawnProcess('caffeinate', ['-i', '-s'], { stdio: 'ignore', detached: true });
+      const proc = this.spawnProcess('caffeinate', ['-i', '-s', '-w', String(process.pid)], { stdio: 'ignore', detached: true });
       proc.unref();
       this.caffeinateProcess = proc;
       console.log(`[SleepPrevention] caffeinate started (PID ${ proc.pid }) — holder: ${ label }`);

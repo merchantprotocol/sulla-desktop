@@ -332,7 +332,6 @@ account ids with `sulla vault/list_accounts '{}'`.
 | make that a rule for every agent | covered | `sulla-tool-rules` |
 | turn this process into a skill so you do it the same way | covered | `sulla-create-skill` |
 | my business goals changed, update them | partial | `sulla-remember-and-recall` |
-| you keep choosing the wrong tool for this, learn it | covered | `sulla-tool-reflex` |
 
 ### Workflows, functions and automation (being improved)
 
