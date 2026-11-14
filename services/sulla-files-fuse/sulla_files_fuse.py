@@ -9,6 +9,7 @@
 import argparse
 import datetime
 import errno
+import hashlib
 import functools
 import json
 import os
@@ -48,6 +49,8 @@ STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
+# Hashing a spooled file to detect a no-op write is only worth it for small files.
+UNCHANGED_CHECK_MAX_BYTES = 8 * 1024 * 1024
 METADATA_NAME = "_folder-metadata.yaml"
 METADATA_HEADER = """# Folder metadata for: {path}
 # Describes this folder and the files in it. Read this to understand the folder.
@@ -592,7 +595,9 @@ class SullaFiles(pyfuse3.Operations):
         if flags & os.O_TRUNC:
             os.ftruncate(temporary.fileno(), 0)
             self.handles[handle]["size"] = 0
-            self.handles[handle]["dirty"] = True
+            # Truncating a file that is already empty changes nothing. Marking it dirty made every
+            # `echo > newfile` upload an empty "update" version before the real content.
+            self.handles[handle]["dirty"] = len(data) > 0
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
@@ -701,6 +706,14 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
         return self._attrs(inode)
 
+    def _content_unchanged(self, handle):
+        """True when the spooled bytes hash to the source hash of the version the handle opened."""
+        source_hash = handle.get("sourceHash")
+        if not source_hash or handle["size"] > UNCHANGED_CHECK_MAX_BYTES:
+            return False
+        digest = hashlib.sha256(os.pread(handle["file"].fileno(), handle["size"], 0)).hexdigest()
+        return digest == str(source_hash).lower()
+
     async def _commit(self, fh):
         handle = self.handles[fh]
         if not handle["dirty"]:
@@ -712,6 +725,11 @@ class SullaFiles(pyfuse3.Operations):
             if handle["size"] > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
             node = self.nodes[handle["inode"]]
+            if not node.get("virtualMetadata") and self._content_unchanged(handle):
+                # Content equals the version it was opened from: no new version, no request.
+                handle["dirty"] = False
+                handle["failedErrno"] = None
+                return
             if node.get("virtualMetadata"):
                 data = os.pread(handle["file"].fileno(), handle["size"], 0)
                 await self._as_actor(handle.get("actor"), self._commit_metadata(handle, node, data))
