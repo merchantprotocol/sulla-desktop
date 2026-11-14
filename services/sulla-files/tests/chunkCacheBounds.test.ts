@@ -4,9 +4,10 @@ import { DEFAULT_CACHE_MAX_BYTES, cacheMaxBytes } from '../src/chunkCache/budget
 import { chunks, MAX_EMBEDDING_BATCH_CHARS, MAX_EMBEDDING_BATCH_TEXTS } from '../src/indexing.js';
 
 describe('files scale bounds', () => {
-  it('keeps resident chunk cache default at 64 MiB and bounds queued access events', async() => {
+  it('keeps the on-disk chunk cache default and bounds queued access events', async() => {
     // risk: native-memory — event bursts cannot retain a collection-sized map.
-    expect(DEFAULT_CACHE_MAX_BYTES).toBe(64 * 1024 * 1024);
+    // The cache is disk-backed (offline availability); its default is not a memory cap and must not shrink.
+    expect(DEFAULT_CACHE_MAX_BYTES).toBe(20 * 1024 ** 3);
     expect(cacheMaxBytes(String(8 * 1024 * 1024))).toBe(8 * 1024 * 1024);
     const calls:any[] = [];
     const tracker = new ChunkAccessTracker({ query: async(...args:any[]) => { calls.push(args); return { rows:[], rowCount:0 } } } as any, 60_000, 25);
