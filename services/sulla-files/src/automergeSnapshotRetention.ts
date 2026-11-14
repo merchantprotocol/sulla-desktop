@@ -75,7 +75,8 @@ export class AutomergeSnapshotRetention {
         if (files.length === 0) { this.cursor = FIRST_FILE; break; } // one full lap done; resume next run
         for (const { file_id: fileId } of files) {
           if (remaining() <= 0) return removed;
-          removed += await this.pruneFile(fileId, Math.max(1, remaining()));
+          // Floor the statement timeout: a sliver of leftover budget would only get the statement cancelled.
+          removed += await this.pruneFile(fileId, Math.min(5_000, Math.max(250, remaining())));
           this.cursor = fileId;
         }
       }

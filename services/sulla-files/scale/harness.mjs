@@ -106,8 +106,8 @@ try {
     ['Automerge save current document read', `SELECT document,heads FROM file_automerge_docs WHERE file_id=(SELECT id FROM files WHERE collection_id=$1 ORDER BY path LIMIT 1)`, [collection]],
     ['Search candidates', `SELECT f.id,f.path,f.mime,f.size FROM files f JOIN file_search_text s ON s.file_id=f.id WHERE f.collection_id=$1 AND s.search_vector @@ plainto_tsquery('simple',$2) ORDER BY f.path LIMIT 1000`, [collection, 'synthetic scale']],
     ['FUSE directory page (#2306 /v1/fuse/directory, root of the collection)', `SELECT * FROM (
-      SELECT 'file' AS kind,f.id,f.path,f.mime,f.size,f.updated_at FROM files f WHERE f.collection_id=$1 AND f.parent_path='' AND f.deleted_at IS NULL
-      UNION ALL SELECT 'directory' AS kind,d.id,d.path,NULL,0,d.updated_at FROM file_folders d WHERE d.collection_id=$1 AND d.parent_path='' AND d.deleted_at IS NULL
+      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id::text AS "versionId" FROM files f WHERE f.collection_id=$1 AND f.parent_path='' AND f.deleted_at IS NULL
+      UNION ALL SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId" FROM file_folders d WHERE d.collection_id=$1 AND d.parent_path='' AND d.deleted_at IS NULL
     ) direct_children WHERE path>'' ORDER BY path LIMIT 501`, [collection]],
     ['Automerge snapshot retention, one file (merged #2302 per-file pass)', AutomergeSnapshotRetention.FILE_PRUNE_SQL, [liveFileId, 50, 30, 100]],
   ];
