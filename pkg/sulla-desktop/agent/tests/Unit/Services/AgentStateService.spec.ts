@@ -161,7 +161,7 @@ describe('authoritative live agent state', () => {
     const second = await cachedStates.descendants('parent-thread');
     expect(second).toEqual(first);
     expect(lineage).toHaveBeenCalledTimes(1);
-    now += 2_001;
+    now += 6_001;
     await cachedStates.descendants('parent-thread');
     expect(lineage).toHaveBeenCalledTimes(2);
   });

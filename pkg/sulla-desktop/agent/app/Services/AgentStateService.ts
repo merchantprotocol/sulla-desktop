@@ -50,7 +50,10 @@ export class AgentJobMutationQueue {
 export class AgentStateService {
   private versionValue: number;
   private readonly clock:() => number;
-  private readonly descendantReads = new Map<string, { expiresAt:number; jobs:AgentJob[] }>();
+  private readonly descendantReads = new Map<string, { expiresAt:number; writeVersion:number; jobs:AgentJob[] }>();
+  private readonly descendantInFlight = new Map<string, Promise<AgentJob[]>>();
+  /** Bumped only when a durable job row is actually written; gates the lineage read cache. */
+  private writeVersion = 0;
   private refreshInFlight?: Promise<AgentJob[]>;
   private liveRefreshInFlight?: Promise<AgentJob[]>;
   private readonly changes = new EventEmitter();
@@ -161,14 +164,13 @@ export class AgentStateService {
     await this.ready();
     if (this.store.lineageForParentThread) {
       const cached = this.descendantReads.get(parentThreadId);
-      if (cached && cached.expiresAt > this.clock()) return cached.jobs;
-      const persisted = await this.store.lineageForParentThread(parentThreadId, 100);
-      const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
-      if (this.descendantReads.size >= 128 && !this.descendantReads.has(parentThreadId)) this.descendantReads.delete(this.descendantReads.keys().next().value!);
-      this.descendantReads.set(parentThreadId, { expiresAt: this.clock() + 2_000, jobs });
-      for (const job of jobs) this.cache.jobs.set(job.jobId, job);
-      this.trimTerminalCache();
-      return jobs;
+      if (cached && cached.expiresAt > this.clock() && cached.writeVersion === this.writeVersion) return cached.jobs;
+      // Single-flight: concurrent identical lineage reads share one recursive query.
+      const running = this.descendantInFlight.get(parentThreadId);
+      if (running) return running;
+      const read = this.readLineage(parentThreadId).finally(() => { if (this.descendantInFlight.get(parentThreadId) === read) this.descendantInFlight.delete(parentThreadId); });
+      this.descendantInFlight.set(parentThreadId, read);
+      return read;
     }
     const jobs = await this.jobs(); const threadIds = new Set([parentThreadId]); const descendants: AgentJob[] = [];
     let added = true;
@@ -177,6 +179,20 @@ export class AgentStateService {
       descendants.push(job); for (const task of job.tasks) if (task.threadId) threadIds.add(task.threadId); added = true;
     } }
     return descendants.sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  private async readLineage(parentThreadId: string): Promise<AgentJob[]> {
+    const startedAt = this.writeVersion;
+    const persisted = await this.store.lineageForParentThread!(parentThreadId, 100);
+    const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
+    // Only a read that no write overtook may be remembered; a 6s ceiling covers writers outside this service.
+    if (startedAt === this.writeVersion) {
+      if (this.descendantReads.size >= 128 && !this.descendantReads.has(parentThreadId)) this.descendantReads.delete(this.descendantReads.keys().next().value!);
+      this.descendantReads.set(parentThreadId, { expiresAt: this.clock() + 6_000, writeVersion: startedAt, jobs });
+    }
+    for (const job of jobs) this.cache.jobs.set(job.jobId, job);
+    this.trimTerminalCache();
+    return jobs;
   }
 
   async list(limit = 25, includeFinished = true): Promise<AgentJob[]> {
@@ -204,7 +220,7 @@ export class AgentStateService {
   }
 
   async create(job: AgentJob): Promise<AgentJob> {
-    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
+    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.writeVersion++; this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
   }
 
   async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
@@ -238,7 +254,9 @@ export class AgentStateService {
       const next = deriveStatus ? this.withDerivedStatus(candidate) : candidate;
       if (precondition && !await precondition(current, next)) return undefined;
       if (persist && !await persist(next)) return undefined;
-      if (!persist) await this.store.replaceState(next);
+      // A reconcile pass that changes nothing must not rewrite the row (tasks jsonb) or invalidate read caches.
+      if (persist) this.writeVersion++;
+      else if (JSON.stringify(current) !== JSON.stringify(next)) { await this.store.replaceState(next); this.writeVersion++; }
       this.cache.jobs.set(next.jobId, next);
       this.trimTerminalCache();
       this.emitChange();
@@ -279,7 +297,7 @@ export class AgentStateService {
     return stoppedIds;
   }
 
-  touch(): void { this.emitChange(); }
+  touch(): void { this.writeVersion++; this.emitChange(); }
   async commit(job: AgentJob): Promise<void> {
     await this.mutateJob(job.jobId, () => job);
   }
