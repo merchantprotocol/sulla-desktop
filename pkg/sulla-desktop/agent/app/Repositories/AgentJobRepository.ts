@@ -165,31 +165,28 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
   async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
+    // The recursion carries only (job_id, created_at, depth); task JSON is neither copied through the
+    // working table nor sorted. Children are found through the typed agent_job_tasks.thread_id mirror
+    // (PK lookup per parent) instead of expanding every parent's jsonb. Full rows are read once, for
+    // the (at most 100) selected jobs.
     const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
-      SELECT job_id,status,created_at,finished_at,task_count,tasks,error,parent_channel,parent_thread_id,parent_agent_id,
-        visibility,parent_job_id,parent_task_index,project_task_ids,completion_delivered_at,waiting_on_children,
-        restart_resume_count,dismissed_at,stopped_by,stop_reason,orphaned_child_notices,1 AS lineage_depth
+      SELECT job_id, created_at, 1 AS lineage_depth
       FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
       UNION ALL
-      SELECT child.job_id,child.status,child.created_at,child.finished_at,child.task_count,child.tasks,child.error,
-        child.parent_channel,child.parent_thread_id,child.parent_agent_id,child.visibility,child.parent_job_id,
-        child.parent_task_index,child.project_task_ids,child.completion_delivered_at,child.waiting_on_children,
-        child.restart_resume_count,child.dismissed_at,child.stopped_by,child.stop_reason,child.orphaned_child_notices,
-        parent.lineage_depth + 1 FROM lineage parent
-      -- LATERAL keeps the child lookup on the parent_thread_id index (6 ms on 3k
-      -- jobs). The previous IN (subselect) form seq-scanned every level (3.8 s).
-      CROSS JOIN LATERAL jsonb_array_elements(parent.tasks) task
-      JOIN agent_jobs child ON child.parent_thread_id = task->>'threadId'
+      SELECT child.job_id, child.created_at, parent.lineage_depth + 1
+      FROM lineage parent
+      JOIN agent_job_tasks task ON task.job_id = parent.job_id AND task.thread_id IS NOT NULL
+      JOIN agent_jobs child ON child.parent_thread_id = task.thread_id
       -- Depth guard: managers nest at most a few levels; it also stops a malformed cycle.
       WHERE child.dismissed_at IS NULL AND parent.lineage_depth < 6
     ), selected AS (
-      SELECT * FROM lineage ORDER BY created_at DESC LIMIT $2
-    ) SELECT job_id,status,created_at,finished_at,task_count,'[]'::jsonb AS results,
+      SELECT job_id, created_at FROM lineage GROUP BY job_id, created_at ORDER BY created_at DESC LIMIT $2
+    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
       (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
-        FROM jsonb_array_elements(selected.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
-      error,parent_channel,parent_thread_id,parent_agent_id,visibility,parent_job_id,parent_task_index,project_task_ids,
-      completion_delivered_at,waiting_on_children,restart_resume_count,dismissed_at,stopped_by,stop_reason,orphaned_child_notices
-      FROM selected ORDER BY created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+        FROM jsonb_array_elements(j.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
+      j.error,j.parent_channel,j.parent_thread_id,j.parent_agent_id,j.visibility,j.parent_job_id,j.parent_task_index,j.project_task_ids,
+      j.completion_delivered_at,j.waiting_on_children,j.restart_resume_count,j.dismissed_at,j.stopped_by,j.stop_reason,j.orphaned_child_notices
+      FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id ORDER BY j.created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
     return rows.map(row => this.map(row));
   }
 
@@ -219,6 +216,15 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async allJobs(): Promise<AgentJob[]> {
     return (await this.query().unsafeAll().get()).map(row => this.map(row));
+  }
+
+  /**
+   * Every running/parked job with full task payloads. The working set is a handful of rows (partial
+   * index idx_agent_jobs_projection_active), unlike allJobs() which reads every job ever run.
+   */
+  async liveJobs(): Promise<AgentJob[]> {
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE status IN ('running', 'parked') ORDER BY created_at ASC`);
+    return rows.map(row => this.map(row));
   }
 
   /** Compact active work for operational callers that do not need durable history or result payloads. */
@@ -326,19 +332,25 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND completion_delivered_at IS NULL`, [jobId]);
   }
 
-  async pendingCompletions(): Promise<AgentJob[]> {
+  /**
+   * Bounded by idx_agent_jobs_undelivered_completion (partial, sort-key ordered); LIMIT keeps one
+   * recovery tick from dragging an unbounded backlog of undelivered historical rows.
+   */
+  async pendingCompletions(limit = 500): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
         AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
         AND parent_channel IS NOT NULL
         AND parent_thread_id IS NOT NULL
-      ORDER BY COALESCE(finished_at, created_at) ASC`);
+      ORDER BY COALESCE(finished_at, created_at) ASC
+      LIMIT $1`, [Math.min(1000, Math.max(1, Math.trunc(limit) || 500))]);
     return rows.map(row => this.map(row));
   }
 
   async findByTaskThread(threadId: string): Promise<AgentJob | undefined> {
-    const row = await this.connection.first(`SELECT * FROM agent_jobs WHERE tasks @> jsonb_build_array(jsonb_build_object('threadId', $1::text)) ORDER BY created_at DESC LIMIT 1`, [threadId]);
+    const row = await this.connection.first(`SELECT j.* FROM agent_job_tasks t JOIN agent_jobs j ON j.job_id = t.job_id
+      WHERE t.thread_id = $1 ORDER BY j.created_at DESC LIMIT 1`, [threadId]);
     return row ? this.map(row) : undefined;
   }
 

@@ -138,8 +138,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
   async telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>> {
     const [checkinRows, messageRows] = await Promise.all([
       this.connection.select<any>(
-        `SELECT * FROM agent_job_checkins
-          WHERE job_id = $1
+        // Only the 3 newest per task are ever kept below; do not drag a long-running job's whole history.
+        `SELECT * FROM (
+           SELECT c.*, row_number() OVER (PARTITION BY task_index ORDER BY created_at DESC) AS rn
+             FROM agent_job_checkins c WHERE job_id = $1
+         ) recent WHERE rn <= 3
           ORDER BY task_index, created_at DESC`,
         [jobId],
       ),
@@ -173,6 +176,15 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     }
 
     return telemetry;
+  }
+
+  /** Newest check-in time (ms) for one task: a single (job_id, task_index, created_at DESC) index probe. */
+  async latestCheckinAt(jobId: string, taskIndex: number): Promise<number | null> {
+    const rows = await this.connection.select<any>(
+      `SELECT created_at FROM agent_job_checkins WHERE job_id = $1 AND task_index = $2 ORDER BY created_at DESC LIMIT 1`,
+      [jobId, taskIndex],
+    );
+    return rows?.[0]?.created_at ? new Date(rows[0].created_at).getTime() : null;
   }
 
   /** Compact telemetry for a job list: one latest check-in and one message count per task. */
