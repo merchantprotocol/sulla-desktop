@@ -883,7 +883,11 @@ export function createApp(
       const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
       await requireCollection(request, collectionId, 'edit');
       await client.query('BEGIN'); await lockStoredNamespace(client, collectionId);
-      const file = await insertVersion(client, { collectionId, path: filePath,
+      // A trashed file keeps its (collection_id, path) row, so a plain INSERT hit the unique index and
+      // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
+      // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
+      const trashed = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NOT NULL FOR UPDATE', [collectionId, filePath])).rows[0];
+      const file = await insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
         mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor,
         createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
       await client.query('COMMIT'); await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
