@@ -173,8 +173,10 @@
     gap: 10px;
     padding: 6px 10px;
     border-radius: 8px;
-    color: var(--muted);
+    color: var(--type-sidebar-color, var(--muted));
     font-weight: 500;
+    font-family: var(--type-sidebar-font, inherit);
+    font-size: var(--type-sidebar-size, inherit);
   }
   .nav a .sv {
     display: grid;

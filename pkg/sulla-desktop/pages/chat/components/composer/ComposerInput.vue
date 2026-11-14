@@ -84,7 +84,7 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   background: transparent; border: none; outline: none;
   resize: none; min-height: 28px; max-height: 160px;
   padding: 0; width: 100%; line-height: 1.4;
-  caret-color: var(--accent-hover);
+  caret-color: var(--text-primary);
 }
 .input::placeholder {
   color: var(--text-muted) !important;
@@ -100,7 +100,7 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   color: var(--text-primary) !important; background: transparent !important; box-shadow: none !important;
   font-family: var(--font-body) !important; font-size: 15.5px !important;
   font-style: normal !important; line-height: 1.45; letter-spacing: -0.005em;
-  caret-color: var(--accent-hover);
+  caret-color: var(--text-primary);
 }
 .input::placeholder {
   color: var(--text-dim) !important; opacity: 1;

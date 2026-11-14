@@ -449,8 +449,8 @@ export default defineComponent({
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-family: var(--font-body);
-  font-size: var(--fs-code);
+  font-family: var(--type-menus-font, var(--font-body));
+  font-size: var(--type-menus-size, var(--fs-code));
 }
 
 .context-menu-item {
@@ -510,13 +510,13 @@ export default defineComponent({
   border-radius: 16px;
   box-shadow: var(--elev-float), inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 15.625%, transparent);
   backdrop-filter: blur(20px);
-  font-family: var(--font-mono);
+  font-family: var(--type-menus-font, var(--font-mono));
 }
 
 .context-menu-item {
   min-height: 34px;
   padding: 7px 10px;
-  color: var(--text-muted);
+  color: var(--type-menus-color, var(--text-muted));
   border-radius: 10px;
   transition: color 0.14s, background 0.14s, transform 0.35s cubic-bezier(.22, 1, .36, 1);
 }

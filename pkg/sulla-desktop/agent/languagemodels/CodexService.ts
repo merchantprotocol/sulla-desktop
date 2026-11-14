@@ -100,13 +100,25 @@ export class CodexService extends BaseLanguageModel {
   private lastStableContextHash = new Map<string, string>();
 
   private readonly SESSION_KEY_PREFIX = 'codex_session:';
+  /**
+   * Codex records the model in its thread and refuses to resume it with a different
+   * one ("This session was recorded with model X but is resuming with Y"). Fallback
+   * routing can run several Codex models on one conversation, so each model keeps its
+   * own thread: the key is conversation + model.
+   */
+  private sessionKey(convId: string): string {
+    const model = this.model && this.model !== 'codex' ? this.model : 'default';
+    return `${ convId }@${ model }`;
+  }
+
   private async getSession(convId: string): Promise<string | undefined> {
-    const cached = this.sessions.get(convId);
+    const key = this.sessionKey(convId);
+    const cached = this.sessions.get(key);
     if (cached) return cached;
     try {
-      const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ key }`);
       if (stored) {
-        this.sessions.set(convId, stored);
+        this.sessions.set(key, stored);
         return stored;
       }
     } catch { /* Redis unavailable — start fresh session */ }
@@ -114,17 +126,19 @@ export class CodexService extends BaseLanguageModel {
   }
 
   private async setSession(convId: string, sessionId: string): Promise<void> {
-    this.sessions.set(convId, sessionId);
+    const key = this.sessionKey(convId);
+    this.sessions.set(key, sessionId);
     try {
-      await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId);
+      await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ key }`, sessionId);
     } catch { /* Durable store unavailable — session persists in memory only this run */ }
   }
 
   private async deleteSession(convId: string): Promise<void> {
-    this.sessions.delete(convId);
+    const key = this.sessionKey(convId);
+    this.sessions.delete(key);
     this.recallDedupe.reset(convId);
     try {
-      await providerSessionStore.delete(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      await providerSessionStore.delete(`${ this.SESSION_KEY_PREFIX }${ key }`);
     } catch { /* Durable store unavailable — non-fatal */ }
   }
 
@@ -145,7 +159,7 @@ export class CodexService extends BaseLanguageModel {
      * Host path of a per-run instructions file (cliSystemPromptFile), passed
      * as -c model_instructions_file. It REPLACES codex's base instructions,
      * so it is only used for subconscious agents — their caller-built prompt
-     * (observer / Reflex Trainer role) is otherwise dropped, since AGENTS.md
+     * (observer role) is otherwise dropped, since AGENTS.md
      * carries only the general Sulla prompt.
      */
     instructionsPath?: string | null;
@@ -1307,7 +1321,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // pipe") lands in stderr and must not wipe a valid thread.
         const resumeFailed = existingSession && !retryWithoutSession && !sawToolExecution &&
           (errored || code !== 0) &&
-          /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
+          /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)|recorded with model .* resuming with/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
           this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(

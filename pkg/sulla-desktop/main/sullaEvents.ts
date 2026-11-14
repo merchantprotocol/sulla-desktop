@@ -38,7 +38,6 @@ import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
 import { initSullaPatchEvents } from './sullaPatchEvents';
-import { initSullaReflexEvents } from './sullaReflexEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
@@ -373,7 +372,6 @@ export function initSullaEvents(): void {
   initSullaFunctionEvents();
   initSullaApprovalEvents();
   initSullaPatchEvents();
-  initSullaReflexEvents();
   initSullaRecipeDockerEvents();
   initRecipeRailApps();
 

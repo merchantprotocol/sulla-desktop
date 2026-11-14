@@ -40,6 +40,7 @@ import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/a
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
+import { sullaRuntimeShareList } from './sullaRuntime/shares';
 import {
   assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaOptionalServicesPlanned, setSullaRuntimeActive, setSullaRuntimeStartFailure,
   SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest,
@@ -585,23 +586,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
   /** Host folders shared into the guest under short virtio-fs tags, at the same path. */
   protected sullaRuntimeShares(): SullaRuntimeShare[] {
-    // Only app-owned transport/cache roots cross the VM boundary. User home,
-    // external volumes, and Darwin's broad temporary roots are Files-owned.
-    const locations = ['/tmp/sulla-desktop'];
+    // Unpackaged source checkouts build services in the guest (see resolveSullaServiceImage).
+    const sourceRoot = !Electron.app.isPackaged && fs.existsSync(path.join(process.cwd(), 'services')) ? process.cwd() : undefined;
 
-    for (const extraDir of [paths.cache, paths.logs, paths.resources]) {
-      const found = locations.some(loc => !path.relative(path.normalize(loc), path.normalize(extraDir)).startsWith('../'));
-
-      if (!found) {
-        locations.push(extraDir);
-      }
-    }
-
-    return locations.map((location, index) => ({
-      tag:      `sulla${ index }`,
-      hostPath: location,
-      readOnly: location === paths.resources,
-    }));
+    return sullaRuntimeShareList([paths.cache, paths.logs], paths.resources, sourceRoot);
   }
 
   protected async startSullaRuntimeThroughDockerReady(config: BackendSettings, shares: SullaRuntimeShare[]): Promise<void> {
@@ -1437,6 +1425,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
+        // Node is otherwise PID 1 here and never reaps orphans. BusyBox wget
+        // forks an ssl_client helper for every HTTPS healthcheck; when it is
+        // orphaned it becomes a zombie under Node, one every 10s (~8,600/day).
+        // Docker's init (tini) as PID 1 reaps them.
+        init: true,
         healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }

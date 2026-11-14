@@ -11,6 +11,7 @@ import { computed } from 'vue';
 import PrefCard from '../PrefCard.vue';
 import PrefIcon from '../PrefIcon.vue';
 import PrefRow from '../PrefRow.vue';
+import TypographyCard from './TypographyCard.vue';
 
 import { useTheme, availableThemes, type ThemeScheme } from '@pkg/composables/useTheme';
 
@@ -51,7 +52,7 @@ function setMode(target: 'light' | 'dark') {
     <div class="ph">
       <div>
         <h1>Appearance</h1>
-        <p>Colors and light or dark mode.</p>
+        <p>Colors, light or dark mode, and typography.</p>
       </div>
     </div>
 
@@ -105,5 +106,7 @@ function setMode(target: 'light' | 'dark') {
         <span class="soon">Match Mac coming soon</span>
       </PrefRow>
     </PrefCard>
+
+    <TypographyCard />
   </div>
 </template>
