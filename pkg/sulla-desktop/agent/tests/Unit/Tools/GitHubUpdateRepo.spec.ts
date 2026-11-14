@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 const { createGitHubOctokit } = vi.hoisted(() => ({ createGitHubOctokit: vi.fn() }));
 vi.mock('../../../tools/github/octokit', () => ({ createGitHubOctokit }));
+// Approval policy storage belongs to the application/Postgres runtime; these tests exercise the registered tool path, not policy persistence.
+vi.mock('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: vi.fn().mockResolvedValue(false) } }));
 
 import { githubToolManifests } from '../../../tools/github/manifests';
 import { ToolRegistry } from '../../../tools/registry';
