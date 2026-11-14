@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { postgresClient } from '../database/PostgresClient';
+import { SubjectMemorySentModel } from '../database/models/SubjectMemorySentModel';
 import { POTION_MODEL_NAME } from './MemoryRecallService';
 import { PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
@@ -236,16 +237,10 @@ export async function recallV7SubjectMemory(
   if (!e) return null;
   const cue = context.join('\n');
   const q = e.embed(cue);
-  if (reset)
-    await postgresClient.query(
-      'UPDATE subject_memory.sent SET cleared=true WHERE thread_id=$1',
-      [threadId]
-    );
-  const sentRows = await postgresClient.query<{ key: string }>(
-    'SELECT key FROM subject_memory.sent WHERE thread_id=$1 AND cleared=false',
-    [threadId]
-  );
-  const sent = new Set(sentRows.map((x) => x.key));
+  const sentLedger = new SubjectMemorySentModel();
+  if (reset) await sentLedger.clearThread(threadId);
+  await sentLedger.deleteExpiredBatch();
+  const sent = await sentLedger.activeKeys(threadId);
   const lexical = new Set(
     cue
       .toLowerCase()
@@ -425,11 +420,7 @@ export async function recallV7SubjectMemory(
   shownEpisodes.forEach((x) => keys.push(`e:${x}`));
   skills.forEach((x) => keys.push(`s:${x.slug}@${x.version_ts}`));
   keys.push(...shownOverviews);
-  if (keys.length)
-    await postgresClient.query(
-      `INSERT INTO subject_memory.sent(thread_id,key,source) SELECT $1,x,'recall' FROM unnest($2::text[]) x ON CONFLICT(thread_id,key) DO UPDATE SET cleared=false,sent_at=now(),source='recall'`,
-      [threadId, keys]
-    );
+  await sentLedger.record(threadId, keys);
   return (
     docs.filter((d) => /^- /m.test(d) || /^### /m.test(d)).join('\n\n') || null
   );

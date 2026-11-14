@@ -44,6 +44,25 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
     created_at:     'timestamp',
   };
 
+  /** Delete a bounded batch for terminal executions older than 14 days. */
+  static async deleteExpiredBatch(): Promise<number> {
+    const rows = await postgresClient.queryAll<{ id: number }>(`
+      WITH expired AS (
+        SELECT checkpoint.id
+        FROM workflow_checkpoints AS checkpoint
+        JOIN workflow_executions AS execution USING (execution_id)
+        WHERE execution.status IN ('completed', 'failed')
+          AND COALESCE(execution.completed_at, execution.terminal_at, execution.updated_at) < NOW() - INTERVAL '14 days'
+        ORDER BY checkpoint.id
+        LIMIT 250
+      )
+      DELETE FROM workflow_checkpoints AS checkpoint
+      USING expired WHERE checkpoint.id = expired.id
+      RETURNING checkpoint.id
+    `, []);
+    return rows.length;
+  }
+
   /**
    * Get all checkpoints for an execution, ordered by sequence.
    */
@@ -145,6 +164,7 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
       created_at:     new Date(),
     } as any;
     await checkpoint.save();
+    await WorkflowCheckpointModel.deleteExpiredBatch();
     return checkpoint;
   }
 }
