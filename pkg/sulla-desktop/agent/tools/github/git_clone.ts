@@ -24,12 +24,16 @@ export class GitCloneWorker extends BaseTool {
     const absolutePath = typeof input.absolutePath === 'string' ? input.absolutePath.trim() : '';
     const branch = typeof input.branch === 'string' ? input.branch.trim() : '';
     const depth = input.depth;
+    const filter = input.filter;
     if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
       return { successBoolean: false, responseString: 'owner and repo must be valid GitHub path components.' };
     }
     if (!absolutePath.startsWith('/')) return { successBoolean: false, responseString: 'absolutePath must be an absolute path.' };
     if (input.depth !== undefined && (!Number.isInteger(depth) || depth < 1)) {
       return { successBoolean: false, responseString: 'depth must be a positive integer.' };
+    }
+    if (filter !== undefined && filter !== 'blob:none') {
+      return { successBoolean: false, responseString: 'filter must be blob:none when provided.' };
     }
     const remoteUrl = `https://github.com/${ owner }/${ repo.replace(/\.git$/, '') }.git`;
     const localAuthority = usesContainerVaultAuthority();
@@ -42,18 +46,18 @@ export class GitCloneWorker extends BaseTool {
     try {
       if (!localAuthority) token = (await getIntegrationService().getIntegrationValue('github', 'token'))?.value;
       const args = [
-        `git clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''} ${ quote(remoteUrl) } ${ quote(absolutePath) }`,
+        `git clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''}${ filter ? ' --filter=blob:none' : ''} ${ quote(remoteUrl) } ${ quote(absolutePath) }`,
       ];
-      const clone = (target: string) => runCommand(target, [], { runInGuest: true, timeoutMs: 120_000 });
+      const clone = (target: string) => runCommand(target, [], { runInGuest: true, timeoutMs: 1_800_000 });
       let result;
       if (localAuthority) {
         result = await withGitHubBrokerRemote(this.executionContext, remoteUrl, proxyUrl => {
           brokerUrl = proxyUrl;
-          return clone(`git clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''} ${ quote(proxyUrl) } ${ quote(absolutePath) }`);
+          return clone(`git clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''}${ filter ? ' --filter=blob:none' : ''} ${ quote(proxyUrl) } ${ quote(absolutePath) }`);
         });
       } else if (token) {
         const helper = `'!f(){ test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GH_PAT"; }; f'`;
-        result = await clone(`GH_PAT=${ quote(token) } GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=${ helper } clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''} ${ quote(remoteUrl) } ${ quote(absolutePath) }`);
+        result = await clone(`GH_PAT=${ quote(token) } GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=${ helper } clone${ branch ? ` --branch ${ quote(branch) }` : ''}${ depth ? ` --depth ${ depth }` : ''}${ filter ? ' --filter=blob:none' : ''} ${ quote(remoteUrl) } ${ quote(absolutePath) }`);
       } else {
         result = await clone(args[0]);
       }

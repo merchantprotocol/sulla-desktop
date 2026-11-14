@@ -268,6 +268,7 @@ export const githubToolManifests: ToolManifest[] = [
       absolutePath: { type: 'string', description: 'Absolute destination path for the clone' },
       branch:       { type: 'string', optional: true, description: 'Branch to check out' },
       depth:        { type: 'number', optional: true, description: 'Optional positive shallow-clone depth' },
+      filter:       { type: 'string', optional: true, enum: ['blob:none'], description: 'Optional partial clone that defers blob downloads' },
     },
     operationTypes: ['create'],
     loader:         () => import('./git_clone'),
