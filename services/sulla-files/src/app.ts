@@ -37,7 +37,7 @@ import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
-import { insertStreamingUpload } from './streamingUpload.js';
+import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
 import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
 import { isUseCasePath } from './useCasePaths.js';
 import { isSullaWritablePath } from './systemPaths.js';
@@ -1854,21 +1854,33 @@ export function createApp(
     await audit(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
     response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
   }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()} });
-  app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
+  app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); let inTransaction = false; try {
     const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request);
     const lengthHeader = request.header('content-length') ?? request.header('x-sulla-expected-bytes');
     const expectedBytes = lengthHeader === undefined ? undefined : Number(lengthHeader);
     if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 2 * 1024 * 1024 * 1024)) throw new HttpError(400, 'valid content-length is required');
-    await beginUploadIntent(db, uploadId, collectionId);
-    await client.query('BEGIN'); await lockStoredNamespace(client, collectionId);
-    const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
-    if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } }
-    else await requirePath(request, collectionId, path, 'edit');
     const baseVersionId = typeof request.query.baseVersionId === 'string' ? request.query.baseVersionId : undefined;
-    if (baseVersionId !== undefined && (!UUID.test(baseVersionId) || existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { await client.query('ROLLBACK'); return response.status(409).json({ code: 'VERSION_CONFLICT', error: 'The Files version this upload was based on is no longer current.', currentVersionId: existing?.current_version_id ?? null }) }
-    const file = await insertStreamingUpload(client, config, store, { uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream', expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, actor, body: request, intentDb: db, existingFile: existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined, message: 'Uploaded' });
-    await client.query('COMMIT'); await completeUploadIntent(db, uploadId).catch(()=>undefined); await audit(request, 'upload', file); response.status(201).json(file);
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+    const conflict = (current:any) => response.status(409).json({ code: 'VERSION_CONFLICT', error: 'The Files version this upload was based on is no longer current.', currentVersionId: current?.current_version_id ?? null });
+    const authorize = async(row:any) => {
+      if (row) { await assertUnprotectedFile(client, row); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, row.id, 'edit') } }
+      else await requirePath(request, collectionId, path, 'edit');
+    };
+    await beginUploadIntent(db, uploadId, collectionId);
+    // Authorize and fail fast BEFORE reading the body. The body is streamed into chunks with no
+    // transaction open: a slow client must never hold BEGIN or the namespace lock (Postgres kills
+    // idle-in-transaction sessions after 60 s, and the lock would block every other writer).
+    const before = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2', [collectionId, path])).rows[0];
+    await authorize(before);
+    if (baseVersionId !== undefined && (!UUID.test(baseVersionId) || before?.current_version_id !== baseVersionId || before?.deleted_at)) return conflict(before);
+    const streamed = await streamUploadChunks(config, store, { uploadId, collectionId, expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, body: request, intentDb: db });
+    // Short metadata transaction: re-read under the lock and re-check what may have changed while streaming.
+    await client.query('BEGIN'); inTransaction = true; await lockStoredNamespace(client, collectionId);
+    const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
+    if (existing?.id !== before?.id) await authorize(existing); else if (existing) await assertUnprotectedFile(client, existing);
+    if (baseVersionId !== undefined && (existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { await client.query('ROLLBACK'); inTransaction = false; return conflict(existing) }
+    const file = await commitStreamedUpload(client, { uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream', expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, actor, body: request, intentDb: db, existingFile: existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined, message: 'Uploaded' }, streamed);
+    await client.query('COMMIT'); inTransaction = false; await completeUploadIntent(db, uploadId).catch(()=>undefined); await audit(request, 'upload', file); response.status(201).json(file);
+  } catch (error) { if (inTransaction) await client.query('ROLLBACK').catch(() => undefined); next(error) } finally { client.release() } });
   app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);
@@ -1881,17 +1893,20 @@ export function createApp(
     if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > 2 * 1024 * 1024 * 1024) throw new HttpError(400, 'valid content-length is required');
     const actor = identity(request);
     await beginUploadIntent(db, uploadId, collectionId);
+    // Stream the body into chunks first (no transaction held during the network transfer), then
+    // pick the path and write metadata in a short transaction.
+    const streamed = await streamUploadChunks(config, store, { uploadId, collectionId, expectedBytes: declaredBytes, body: request, intentDb: db });
     await client.query('BEGIN');
     await lockStoredNamespace(client, collectionId);
     const path = await availableStoredPath(client, collectionId, requestedPath, keepBoth);
     if (path !== requestedPath) await requirePath(request, collectionId, path, 'edit');
     await assertStoredFilePath(client, collectionId, path);
     await ensureStoredFileParents(client, collectionId, path, actor);
-    const file = await insertStreamingUpload(client, config, store, {
+    const file = await commitStreamedUpload(client, {
       uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream',
       expectedBytes: declaredBytes, actor, body: request, intentDb: db,
       message: path === requestedPath ? 'Imported into Files' : `Imported as ${ path } to preserve both files`,
-    });
+    }, streamed);
     await client.query('COMMIT');
     await completeUploadIntent(db, uploadId).catch(() => undefined);
     response.status(201).json({ ...file, requested_path: requestedPath, conflict_resolution: path === requestedPath ? 'none' : 'kept-both' });

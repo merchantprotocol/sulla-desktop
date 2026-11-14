@@ -62,12 +62,21 @@ async function assertChunkMetadata(client:pg.PoolClient, collectionId:string, ch
   }
 }
 
-export async function insertStreamingUpload(
-  client:pg.PoolClient,
+export interface StreamedUpload {
+  chunkIds:string[];
+  chunks:{ id: string; size: number; storedSize: number }[];
+  totalSize:number;
+  sourceHash:string;
+}
+
+/** Phase 1: read the request body, encrypt and publish chunks under the upload intent.
+ * Uses no transaction, so a slow client never holds a database transaction or the
+ * namespace lock open (idle-in-transaction is killed after 60 s). */
+export async function streamUploadChunks(
   config:Config,
   store:Store,
-  input:StreamingUploadInput,
-):Promise<any> {
+  input:Pick<StreamingUploadInput, 'uploadId' | 'collectionId' | 'expectedBytes' | 'maxBytes' | 'body' | 'intentDb'>,
+):Promise<StreamedUpload> {
   // These methods are supplied by the shared Files detail/media stack. Keeping
   // the contract explicit here lets this upload PR remain independently based
   // on the approved sharing head while the parent integrates both siblings.
@@ -97,6 +106,16 @@ export async function insertStreamingUpload(
     chunks.push({ id, size: plain.byteLength, storedSize: encrypted.byteLength });
   }
 
+  return { chunkIds, chunks, totalSize, sourceHash: sourceHash.digest('hex') };
+}
+
+/** Phase 2: short metadata transaction on `client` (caller holds BEGIN and the namespace lock). */
+export async function commitStreamedUpload(
+  client:pg.PoolClient,
+  input:StreamingUploadInput,
+  streamed:StreamedUpload,
+):Promise<any> {
+  const { chunkIds, chunks, totalSize } = streamed;
   const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: totalSize })).digest('hex');
   await assertManifestMetadata(client, manifestHash, chunkIds, totalSize);
   for (const chunk of chunks) await assertChunkMetadata(client, input.collectionId, chunk);
@@ -117,5 +136,15 @@ export async function insertStreamingUpload(
   await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]);
   await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
     VALUES($1,$2,$3,$4,$5,$6,$7)`, [agentWrite ? 'agent-or-device' : 'user', createdById, input.actor.deviceId || null, file.id, version.id, version.publication_status === 'draft' ? 'draft-write' : 'upload', {path:input.path}]);
-  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime, source_hash: sourceHash.digest('hex') };
+  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime, source_hash: streamed.sourceHash };
+}
+
+/** Both phases on one client (kept for the 64 MiB FUSE replace path). */
+export async function insertStreamingUpload(
+  client:pg.PoolClient,
+  config:Config,
+  store:Store,
+  input:StreamingUploadInput,
+):Promise<any> {
+  return commitStreamedUpload(client, input, await streamUploadChunks(config, store, input));
 }
