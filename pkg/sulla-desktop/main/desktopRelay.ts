@@ -229,6 +229,11 @@ export class DesktopRelayClient {
 
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
+    // Before the settings database is up, reads come from a fallback file that
+    // never holds the pairing. Treat that as "not known yet" so the caller's
+    // retry loop tries again, instead of concluding no phone is paired and
+    // leaving mobile with no chats for the whole session.
+    if (!paired && !SullaSettingsModel.ready) throw new Error('Settings database not ready yet');
     if (paired) {
       this.connect(paired);
     } else {
