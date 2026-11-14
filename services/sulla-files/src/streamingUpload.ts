@@ -32,7 +32,8 @@ interface StreamingUploadInput {
   collectionId:  string;
   path:          string;
   mime:          string;
-  expectedBytes: number;
+  expectedBytes?: number;
+  maxBytes?: number;
   actor:         FilesIdentity;
   body:          Readable;
   intentDb:      pg.Pool;
@@ -60,21 +61,37 @@ async function assertChunkMetadata(client:pg.PoolClient, collectionId:string, ch
   }
 }
 
-async function * plaintextChunks(body:Readable, expectedBytes:number):AsyncGenerator<Buffer> {
-  let pending = Buffer.alloc(0);
-  let total = 0;
-  for await (const value of body) {
-    const incoming = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    total += incoming.byteLength;
-    if (total > expectedBytes) throw new Error('Upload exceeded its declared size');
-    pending = pending.byteLength ? Buffer.concat([pending, incoming]) : incoming;
-    while (pending.byteLength >= CHUNK_BYTES) {
-      yield pending.subarray(0, CHUNK_BYTES);
-      pending = pending.subarray(CHUNK_BYTES);
+export class PlaintextChunkReader {
+  constructor(private readonly body:Readable, private readonly expectedBytes?:number, private readonly maxBytes = Number.MAX_SAFE_INTEGER, private readonly observeBufferedBytes?:(bytes:number)=>void) {}
+
+  async * chunks():AsyncGenerator<Buffer> {
+    // Copy at most one fixed-size chunk. Incoming stream frames are borrowed and
+    // never concatenated, so a large frame cannot cause a second whole-file copy.
+    let pending = Buffer.allocUnsafe(CHUNK_BYTES);
+    let used = 0;
+    let total = 0;
+    this.observeBufferedBytes?.(CHUNK_BYTES);
+    for await (const value of this.body) {
+      const incoming = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      total += incoming.byteLength;
+      if (total > this.maxBytes || (this.expectedBytes !== undefined && total > this.expectedBytes)) throw new Error('Upload exceeded its declared size');
+      let offset = 0;
+      while (offset < incoming.byteLength) {
+        const copied = Math.min(CHUNK_BYTES - used, incoming.byteLength - offset);
+        incoming.copy(pending, used, offset, offset + copied);
+        used += copied;
+        offset += copied;
+        this.observeBufferedBytes?.(CHUNK_BYTES);
+        if (used === CHUNK_BYTES) {
+          yield pending;
+          pending = Buffer.allocUnsafe(CHUNK_BYTES);
+          used = 0;
+        }
+      }
     }
+    if (this.expectedBytes !== undefined && total !== this.expectedBytes) throw new Error('Upload did not match its declared size');
+    if (used || total === 0) yield pending.subarray(0, used);
   }
-  if (total !== expectedBytes) throw new Error('Upload did not match its declared size');
-  if (pending.byteLength || total === 0) yield pending;
 }
 
 export async function insertStreamingUpload(
@@ -94,7 +111,7 @@ export async function insertStreamingUpload(
   const sourceHash = createHash('sha256');
   let totalSize = 0;
 
-  for await (const plain of plaintextChunks(input.body, input.expectedBytes)) {
+  for await (const plain of new PlaintextChunkReader(input.body, input.expectedBytes, input.maxBytes).chunks()) {
     totalSize += plain.byteLength;
     sourceHash.update(plain);
     const id = crypto.chunkId(plain, dedupKey);

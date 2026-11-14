@@ -182,7 +182,7 @@ export function createApp(
       return response.status(failure.status).json({ code: failure.code, error: failure.message });
     }
   });
-  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest', '/v1/local/system-areas/ingest'].includes(request.path) ||
+  app.use((request, response, next) => ['/v1/files/import', '/v1/local/native-sources/ingest', '/v1/local/system-areas/ingest'].includes(request.path) ||
     /^\/v1\/fuse\/files\/[0-9a-f-]+\/content\/stream$/i.test(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
@@ -923,18 +923,26 @@ export function createApp(
     await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
     await client.query('COMMIT'); response.status(204).end();
   } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
-  app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
-    let file = await requireFile(request, request.params.id, 'view');
-    // Agents reading the mount see acknowledged editor changes without waiting for the debounce.
-    if(live.has(file.id)){await live.flush(file.id);file=await requireFile(request,file.id,'view');}
-    const manager = requireFuseExperiment();
-    const bytes = await manager.readStoredVersion(file.id,file.current_version_id);
-    const sourceHash=createHash('sha256').update(bytes).digest('hex');
-    response.setHeader('Cache-Control', 'private, no-store');
-    response.setHeader('ETag', `"${ file.current_version_id }"`);
-    response.setHeader('X-Sulla-Source-Hash', sourceHash);
-    response.type(file.mime).send(bytes);
-  } catch (error) { next(error) } });
+  app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => {
+    const controller = new AbortController(); const abort = () => controller.abort();
+    request.once('aborted', abort); response.once('close', abort);
+    try {
+      let file = await requireFile(request, request.params.id, 'view');
+      if(live.has(file.id)){await live.flush(file.id);file=await requireFile(request,file.id,'view');}
+      const stream = await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,controller.signal);
+      if (!stream) return response.sendStatus(404);
+      const hash=createHash('sha256');
+      for await (const part of stream.body) { controller.signal.throwIfAborted(); hash.update(part) }
+      const content = await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,controller.signal);
+      if (!content) return response.sendStatus(404);
+      response.setHeader('ETag', `"${ file.current_version_id }"`);
+      response.setHeader('X-Sulla-Source-Hash', hash.digest('hex'));
+      await sendFileStream(request,response,content);
+    } catch(error) {
+      if (!controller.signal.aborted && !response.headersSent) next(error);
+      else if (!controller.signal.aborted) response.destroy(error as Error);
+    } finally { request.off('aborted',abort); response.off('close',abort) }
+  });
   app.put('/v1/fuse/files/:id/content/stream', async(request:RequestWithIdentity, response, next) => {
     const client=await db.connect(); const uploadId=randomUUID();
     try {
@@ -1841,7 +1849,21 @@ export function createApp(
     await audit(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
     response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
   }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()} });
-  app.put('/v1/files/upload', express.raw({ type: '*/*', limit: '2gb' }), async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request); await client.query('BEGIN'); await lockStoredNamespace(client, collectionId); const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0]; if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } } else await requirePath(request, collectionId, path, 'edit'); const baseVersionId = typeof request.query.baseVersionId === 'string' ? request.query.baseVersionId : undefined; if (baseVersionId !== undefined && (!UUID.test(baseVersionId) || existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { await client.query('ROLLBACK'); return response.status(409).json({ code: 'VERSION_CONFLICT', error: 'The Files version this upload was based on is no longer current.', currentVersionId: existing?.current_version_id ?? null }) } const bytes=Buffer.from(request.body as Buffer); const saved=existing&&(live.has(existing.id)||(bytes.length<=8*1024*1024&&utf8Text(bytes)!==undefined))?await textSave(client,existing,existing.current_version_id,bytes,(await loadFileContent(db,config,store,existing.id,existing.current_version_id))!.buffer,async(id,version)=>(await loadFileContent(db,config,store,id,version))!.buffer):{bytes,document:undefined}; const file = await insertVersion(client, { collectionId, fileId: existing?.id, path, mime: request.header('content-type') ?? 'application/octet-stream', bytes: saved.bytes, actor, message: 'Uploaded' }); if(saved.document)await saveAutomergeVersion(client,file.id,file.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)adoptLive(request,file.id,saved.document); await audit(request, 'upload', file); response.status(201).json(file) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
+    const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request);
+    const lengthHeader = request.header('content-length') ?? request.header('x-sulla-expected-bytes');
+    const expectedBytes = lengthHeader === undefined ? undefined : Number(lengthHeader);
+    if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 2 * 1024 * 1024 * 1024)) throw new HttpError(400, 'valid content-length is required');
+    await beginUploadIntent(db, uploadId, collectionId);
+    await client.query('BEGIN'); await lockStoredNamespace(client, collectionId);
+    const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
+    if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } }
+    else await requirePath(request, collectionId, path, 'edit');
+    const baseVersionId = typeof request.query.baseVersionId === 'string' ? request.query.baseVersionId : undefined;
+    if (baseVersionId !== undefined && (!UUID.test(baseVersionId) || existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { await client.query('ROLLBACK'); return response.status(409).json({ code: 'VERSION_CONFLICT', error: 'The Files version this upload was based on is no longer current.', currentVersionId: existing?.current_version_id ?? null }) }
+    const file = await insertStreamingUpload(client, config, store, { uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream', expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, actor, body: request, intentDb: db, existingFile: existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined, message: 'Uploaded' });
+    await client.query('COMMIT'); await completeUploadIntent(db, uploadId).catch(()=>undefined); await audit(request, 'upload', file); response.status(201).json(file);
+  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);
