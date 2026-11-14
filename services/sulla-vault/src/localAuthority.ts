@@ -3164,7 +3164,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     sink: BrokerStreamSink,
   ): Promise<void> {
     const method = input.method.toUpperCase();
-    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
+    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie', 'x-sulla-git-request-id']);
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
     headers['accept-encoding'] = 'identity';
     const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
@@ -3176,14 +3176,33 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
     const binary = input.responseType === 'binary-stream';
     const redactor = binary ? null : new StreamingRedactor(prepared.secrets);
+    const requestedId = Object.entries(input.headers ?? {}).find(([name]) => name.toLowerCase() === 'x-sulla-git-request-id')?.[1];
+    const requestId = typeof requestedId === 'string' && /^[0-9a-f-]{36}$/i.test(requestedId) ? requestedId : randomUUID();
+    const startedAt = Date.now();
+    let received = 0;
+    let logged = false;
+    let endedBy = 'unknown';
+    let terminalReason: unknown;
+    const target = new URL(prepared.target);
+    const pathParts = target.pathname.split('/').filter(Boolean);
+    const repository = target.hostname === 'github.com' && pathParts.length >= 2 ? `${ pathParts[0] }/${ pathParts[1].replace(/\.git$/, '') }` : 'unknown';
+    const service = input.operation === 'github.git' ? (target.pathname.includes('git-receive-pack') ? 'receive-pack' : 'upload-pack') : input.operation;
+    const logTermination = () => {
+      if (logged) return;
+      logged = true;
+      const error = terminalReason instanceof Error ? { name: terminalReason.name, code: (terminalReason as NodeJS.ErrnoException).code, message: prepared.secrets.reduce((message, secret) => secret ? message.split(secret).join('[secret redacted]') : message, terminalReason.message) } : terminalReason;
+      console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), bytesReceived: received, durationMs: Date.now() - startedAt, endedBy, ...(error ? { reason: error } : {}) }));
+    };
+    if (binary) console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), event: 'start' }));
 
     await new Promise<void>((resolve, reject) => {
       let started = false;
-      let received = 0;
       let aborted = false;
       let current: ClientRequest | undefined;
       sink.onAbort(() => {
         aborted = true;
+        endedBy = 'downstream-abort';
+        terminalReason = 'broker client disconnected';
         current?.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
       });
       this.openUpstream(prepared.target, {
@@ -3202,10 +3221,14 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           if (aborted) request.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
         },
         onError: (_request, safe) => {
+          if (endedBy === 'unknown') endedBy = safe instanceof Error && /timed out/i.test(safe.message) ? 'vault-timeout' : 'upstream-error';
+          terminalReason = safe;
           if (started) {
             sink.destroy(safe);
+            logTermination();
             resolve();
           } else {
+            logTermination();
             reject(safe);
           }
         },
@@ -3225,6 +3248,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
               sink.start(302, { location });
               this.inFlight.delete(request);
               sink.end();
+              endedBy = 'upstream-redirect';
+              logTermination();
               resolve();
               return;
             }
@@ -3268,14 +3293,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             }
           });
           response.on('end', () => {
-            try { this.requireGeneration(prepared.generation); } catch (error) { request.destroy(error as Error); return; }
+            try { this.requireGeneration(prepared.generation); } catch (error) { endedBy = 'vault-generation-change'; terminalReason = error; request.destroy(error as Error); return; }
             const tail = redactor?.flush();
             if (tail?.byteLength) sink.write(tail);
             this.inFlight.delete(request);
             sink.end();
+            endedBy = 'upstream-end';
+            logTermination();
             resolve();
           });
-          response.on('error', error => request.destroy(error));
+          response.on('error', error => { endedBy = 'upstream-response-error'; terminalReason = error; request.destroy(error); });
         },
       });
     });

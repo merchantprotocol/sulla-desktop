@@ -6,7 +6,8 @@ import http from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import { withGitHubBrokerRemote } from '../../../../tools/github/gitBrokerTransport';
 
-const { executeStream } = vi.hoisted(() => ({ executeStream: vi.fn() }));
+const { executeStream, info } = vi.hoisted(() => ({ executeStream: vi.fn(), info: vi.fn() }));
+vi.mock('@pkg/utils/logging', () => ({ default: { background: { info } } }));
 vi.mock('../../../../../vault-broker', () => ({
   requireConfiguredCredentialBroker: () => ({ requestFor: (_ctx: unknown, request: unknown) => request, executeStream }),
 }));
@@ -41,5 +42,31 @@ describe('GitHub broker HTTP transport', () => {
       });
     });
     expect(received).toBe(total);
+  });
+
+  it('logs token-free request identity, byte count, duration, and termination side', async() => {
+    info.mockClear();
+    let token = '';
+    executeStream.mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    const received = await withGitHubBrokerRemote({} as any, 'https://github.com/acme/repo.git', async proxyUrl => {
+      const parsed = new URL(proxyUrl);
+      token = parsed.pathname.split('/')[1];
+      return await new Promise<number>((resolve, reject) => {
+        let bytes = 0;
+        http.get({ host: '127.0.0.1', port: Number(parsed.port), path: `${ parsed.pathname }/git-upload-pack` }, response => {
+          response.on('data', chunk => { bytes += chunk.byteLength; });
+          response.on('end', () => resolve(bytes));
+          response.on('error', reject);
+        }).on('error', reject);
+      });
+    });
+    expect(received).toBe(3);
+    const record = JSON.parse(String(info.mock.calls.at(-1)?.[0]));
+    expect(record).toMatchObject({ component: 'github.git.broker', repository: 'acme/repo', service: 'upload-pack', bytesForwarded: 3, endedBy: 'upstream-end' });
+    expect(record.requestId).toEqual(expect.any(String));
+    expect(record.durationMs).toEqual(expect.any(Number));
+    expect(record.startedAt).toEqual(expect.any(String));
+    expect(executeStream.mock.calls.at(-1)?.[0].headers['x-sulla-git-request-id']).toBe(record.requestId);
+    expect(String(info.mock.calls.at(-1)?.[0])).not.toContain(token);
   });
 });
