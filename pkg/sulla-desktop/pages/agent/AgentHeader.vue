@@ -465,7 +465,7 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
@@ -580,7 +580,7 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
-const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string } | null>(null);
+const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string; tabId: string } | null>(null);
 let tabPeekTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hideTabPeek() {
@@ -601,11 +601,14 @@ function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
   const left = Math.max(0, Math.min(desiredLeft, wrapperRect.width - width));
 
   tabPeekTimer = setTimeout(() => {
+    tabPeekTimer = null;
+    if (!orderedTabs.value.some(candidate => candidate.id === tab.id)) return;
     tabPeek.value = {
       left,
       pinned: tab.pinned,
       status: tab.statusLine,
       title:  tab.label,
+      tabId:  tab.id,
     };
     tabPeekTimer = null;
   }, tab.pinned ? 250 : 500);
@@ -843,6 +846,8 @@ onMounted(() => {
   nextTick(syncTabStrip);
 });
 onActivated(() => nextTick(syncTabStrip));
+// A kept-alive header that is hidden never gets mouseleave, so its preview would stay on screen.
+onDeactivated(hideTabPeek);
 onUnmounted(() => {
   ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   hideTabPeek();
@@ -1118,6 +1123,13 @@ watch(
 // The newly active tab's strip becomes visible after the parent re-renders;
 // carry the scroll offset over and keep the focused tab in view.
 watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
+// Sulla closes idle agent tabs by itself; a preview for a tab that disappeared under the
+// pointer never received mouseleave and floated over the page (2026-11-14). Also drop it
+// when the page changes.
+watch(() => orderedTabs.value.map(tab => tab.id), ids => {
+  if (tabPeek.value && !ids.includes(tabPeek.value.tabId)) hideTabPeek();
+});
+watch(() => route.path, hideTabPeek);
 
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
