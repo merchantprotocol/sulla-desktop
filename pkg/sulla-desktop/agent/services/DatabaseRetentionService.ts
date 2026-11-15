@@ -32,12 +32,21 @@ export class DatabaseRetentionService {
     this.timer = undefined;
   }
 
+  private async drainBatches(deleteBatch: () => Promise<number>, limit: number, deadline: number): Promise<void> {
+    while (Date.now() < deadline) {
+      const deleted = await deleteBatch();
+      if (deleted < limit) return;
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+  }
+
   private async runOnce(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      await this.sentLedger.deleteExpiredBatch();
-      await WorkflowCheckpointModel.deleteExpiredBatch();
+      const deadline = Date.now() + 20_000;
+      await this.drainBatches(() => this.sentLedger.deleteExpiredBatch(), 500, deadline);
+      await this.drainBatches(() => WorkflowCheckpointModel.deleteExpiredBatch(), 250, deadline);
       await this.agentJobs.drainExpired();
     } catch (error) {
       console.warn('[DatabaseRetention] Bounded retention pass failed:', error);

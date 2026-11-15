@@ -40,42 +40,50 @@ dbDescribe('database retention with real Postgres', () => {
     await database.query('DELETE FROM subject_memory.sent WHERE thread_id=$1', [threadId]);
   });
 
-  it('prunes only idle-thread rows and preserves active-thread suppression keys', async() => {
-    // risk: data accuracy — an active thread must never lose its suppression ledger.
-    const active = `retention-active-${ randomUUID() }`;
-    const idle = `retention-idle-${ randomUUID() }`;
-    await sentLedger.record(active, ['e:active']);
-    await sentLedger.record(idle, ['e:idle']);
-    await database.query("UPDATE subject_memory.sent SET sent_at=NOW()-INTERVAL '15 days' WHERE thread_id=$1", [idle]);
+  it('expires ledger rows individually after 48 hours while newer keys still suppress', async() => {
+    // risk: data accuracy — expired keys are removed without losing recent suppression.
+    const thread = `retention-ledger-${ randomUUID() }`;
+    await sentLedger.record(thread, ['old-key', 'new-key']);
+    await database.query("UPDATE subject_memory.sent SET sent_at=NOW()-INTERVAL '49 hours' WHERE thread_id=$1 AND key='old-key'", [thread]);
     await sentLedger.deleteExpiredBatch();
-    expect(await sentLedger.activeKeys(active)).toEqual(new Set(['e:active']));
-    expect(await sentLedger.activeKeys(idle)).toEqual(new Set());
-    await database.query('DELETE FROM subject_memory.sent WHERE thread_id=$1', [active]);
+    expect(await database.query('SELECT key FROM subject_memory.sent WHERE thread_id=$1', [thread])).toEqual([{ key: 'new-key' }]);
+    expect(await sentLedger.activeKeys(thread)).toEqual(new Set(['new-key']));
+    await database.query('DELETE FROM subject_memory.sent WHERE thread_id=$1', [thread]);
   });
 
-  it('keeps running, suspended, and recent checkpoints while deleting old terminal checkpoints', async() => {
-    // risk: resumability — checkpoints for live or recent runs must remain available to restart_from_checkpoint.
+  it('deletes checkpoints on successful completion and expires failed runs at 30 days only', async() => {
+    // risk: resumability/data retention — successful state is discarded, failed state remains until its own 30-day age.
     const prefix = `retention-${ randomUUID() }`;
-    const executions = [
-      { id: `${ prefix }-running`, status: 'running', old: true },
-      { id: `${ prefix }-suspended`, status: 'suspended', old: true },
-      { id: `${ prefix }-recent`, status: 'completed', old: false },
-      { id: `${ prefix }-finished`, status: 'failed', old: true },
+    const rows = [
+      { id: `${prefix}-success`, status: 'running', age: 1 },
+      { id: `${prefix}-failed-29`, status: 'failed', age: 29 },
+      { id: `${prefix}-failed-31`, status: 'failed', age: 31 },
+      { id: `${prefix}-running`, status: 'running', age: 31 },
+      { id: `${prefix}-suspended`, status: 'suspended', age: 31 },
     ];
-    for (const execution of executions) {
+    for (const row of rows) {
       await database.query(`INSERT INTO workflow_executions (execution_id,workflow_id,workflow_name,workflow_slug,status,started_at,completed_at,updated_at)
-        VALUES ($1,'retention-test','Retention test','retention-test',$2,NOW()-INTERVAL '15 days',
-          CASE WHEN $2 IN ('completed','failed') THEN NOW() - CASE WHEN $3 THEN INTERVAL '15 days' ELSE INTERVAL '1 day' END END,
-          NOW()-INTERVAL '15 days')`, [execution.id, execution.status, execution.old]);
-      await database.query(`INSERT INTO workflow_checkpoints (execution_id,workflow_id,workflow_name,node_id,node_label,node_subtype,sequence,playbook_state)
-        VALUES ($1,'retention-test','Retention test','node','Node','test',1,'{}'::jsonb)`, [execution.id]);
+        VALUES ($1,'retention-test','Retention test','retention-test',$2,NOW()-INTERVAL '40 days',
+          CASE WHEN $2='failed' THEN NOW()-($3 * INTERVAL '1 day') END,NOW()-INTERVAL '40 days')`, [row.id,row.status,row.age]);
+      await database.query(`INSERT INTO workflow_checkpoints (execution_id,workflow_id,workflow_name,node_id,node_label,node_subtype,sequence,playbook_state,created_at)
+        VALUES ($1,'retention-test','Retention test','node','Node','test',1,'{}'::jsonb,NOW()-($2 * INTERVAL '1 day'))`, [row.id,row.age]);
     }
+    const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+    await WorkflowExecutionModel.markCompleted(`${prefix}-success`);
     await checkpoints.deleteExpiredBatch();
-    const rows = await database.query<{ execution_id: string }>(`SELECT execution_id FROM workflow_checkpoints WHERE execution_id LIKE $1 ORDER BY execution_id`, [`${ prefix }-%`]);
-    expect(rows.map(row => row.execution_id)).toEqual([
-      `${ prefix }-recent`, `${ prefix }-running`, `${ prefix }-suspended`,
-    ]);
-    await database.query('DELETE FROM workflow_checkpoints WHERE execution_id LIKE $1', [`${ prefix }-%`]);
-    await database.query('DELETE FROM workflow_executions WHERE execution_id LIKE $1', [`${ prefix }-%`]);
+    const remaining = await database.query<{ execution_id: string }>(`SELECT execution_id FROM workflow_checkpoints WHERE execution_id LIKE $1 ORDER BY execution_id`, [`${prefix}-%`]);
+    expect(remaining.map(row => row.execution_id)).toEqual([`${prefix}-failed-29`,`${prefix}-running`,`${prefix}-suspended`]);
+    await database.query('DELETE FROM workflow_checkpoints WHERE execution_id LIKE $1', [`${prefix}-%`]);
+    await database.query('DELETE FROM workflow_executions WHERE execution_id LIKE $1', [`${prefix}-%`]);
+  });
+
+  it('drains more than one ledger batch in a single retention pass', async() => {
+    // risk: storage growth — the hourly pass must outpace the ledger write rate across multiple pages.
+    const prefix = `retention-batch-${ randomUUID() }`;
+    await database.query(`INSERT INTO subject_memory.sent (thread_id,key,source,sent_at)
+      SELECT $1, 'key-' || n, 'recall', NOW()-INTERVAL '3 days' FROM generate_series(1,1100) n`, [prefix]);
+    const { DatabaseRetentionService } = await import('../../services/DatabaseRetentionService');
+    await (new DatabaseRetentionService() as any).runOnce();
+    expect(await database.query('SELECT key FROM subject_memory.sent WHERE thread_id=$1', [prefix])).toHaveLength(0);
   });
 });
