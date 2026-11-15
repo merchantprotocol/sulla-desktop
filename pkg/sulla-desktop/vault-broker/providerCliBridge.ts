@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 
+import { ProviderModelPin } from './ProviderModelPin';
 import { requireConfiguredCredentialBroker } from './index';
 import { recordVaultFailure, recordVaultSuccess, vaultFailureKind } from './vaultHealth';
 
@@ -191,11 +192,7 @@ function sameIdentity(left: ToolExecutionContext, right: ToolExecutionContext): 
 }
 
 function modelAllowed(body: unknown, models: readonly string[] | undefined): boolean {
-  if (!models?.length) return true;
-  const model = body && typeof body === 'object' && !Array.isArray(body) && 'model' in body
-    ? (body as { model?: unknown }).model
-    : undefined;
-  return typeof model === 'string' && models.includes(model);
+  return ProviderModelPin.allows(ProviderModelPin.requested(body), models);
 }
 
 async function liveContext(
@@ -492,7 +489,8 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       }
       if (!modelAllowed(bodyResult.body, identity.models)) {
         status = 403;
-        sendError(response, status, 'provider_model_denied');
+        // Model names only (no secrets): says which pin refused which request.
+        sendError(response, status, 'provider_model_denied', { reason: `requested=${ String(ProviderModelPin.requested(bodyResult.body) ?? '(none)') } allowed=${ (identity.models ?? []).join(',') }` });
         return;
       }
       const headers = requestHeaders(request.headers);
