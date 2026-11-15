@@ -30,6 +30,8 @@ export interface DesktopEnrollmentDependencies {
   readonly random: RandomSource;
   readonly polling: EnrollmentPollingConfig;
   readonly sleeper?: EnrollmentSleeper;
+  /** Upper bound for the Cloud vault lookup; a lookup that never answers must not be cached forever. */
+  readonly lookupTimeoutMs?: number;
 }
 
 /**
@@ -40,6 +42,7 @@ export interface DesktopEnrollmentDependencies {
  */
 export class DesktopEnrollmentCoordinator {
   static readonly POLLING: EnrollmentPollingConfig = { intervalMs: 5_000, maxAttempts: 60 };
+  static readonly LOOKUP_TIMEOUT_MS = 30_000;
 
   private pending: Promise<EnrollmentDisposition> | null = null;
   private prepared: Promise<EnrollmentState> | null = null;
@@ -61,7 +64,7 @@ export class DesktopEnrollmentCoordinator {
     // is answering would otherwise fail every later retry for the whole run
     // (seen on a fresh iMac first run: vault creation refused for minutes).
     if (!this.prepared) {
-      const lookup = this.lookup();
+      const lookup = this.boundedLookup();
       this.prepared = lookup;
       lookup.catch(() => { if (this.prepared === lookup) this.prepared = null });
     }
@@ -78,6 +81,21 @@ export class DesktopEnrollmentCoordinator {
     const disposition = await this.gate();
     if (disposition !== 'approval_available' && disposition !== 'waiting_for_approver') return disposition;
     return this.enroll(await this.prepared!, masterKey, cloudUserId);
+  }
+
+  private async boundedLookup(): Promise<EnrollmentState> {
+    const timeoutMs = this.deps.lookupTimeoutMs ?? DesktopEnrollmentCoordinator.LOOKUP_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.lookup(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('enrollment_lookup_timeout')), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async lookup(): Promise<EnrollmentState> {

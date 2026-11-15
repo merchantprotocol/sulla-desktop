@@ -33,7 +33,8 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
-import { getFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { FirstRunVaultCreation } from '@pkg/main/firstRun/FirstRunVaultCreation';
 import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/main/firstRun/firstRunTrace';
 import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -99,6 +100,13 @@ export function clearPendingCloudMasterKey(): void {
 
 function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string): void {
   firstRunTrace('vault', 'vault key derived from the Cloud password and held in memory', { userId });
+  // A fresh sign-in ends the hold that an expired first-run session left in
+  // first-run-state.json. Nothing else clears it, and while it is set the
+  // vault is never created, so the key would sit in memory until quit.
+  if (getFirstRunState().credentialsSaved === false) {
+    updateFirstRunState({ credentialsSaved: undefined });
+    firstRunTrace('vault', 'cleared the expired-sign-in hold; a fresh Cloud key is here');
+  }
   zeroPendingCloudMasterKey();
   pendingCloudMasterKey = key;
   pendingCloudAccountKdf = kdf;
@@ -645,73 +653,47 @@ export function initSullaCloudAuthEvents(): void {
   if (!accountWrapFlushHookInstalled) {
     accountWrapFlushHookInstalled = true;
     const lifecycle = getServiceLifecycleManager();
-    let flushing = false;
-    let wrapRetryMs = 2_000;
-    let wrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
-    let lastWait = '';
-    const traceWait = (reason: string) => {
-      if (reason === lastWait) return;
-      lastWait = reason;
-      firstRunTrace('vault', `vault creation waiting: ${ reason }`);
-    };
-    const flushWhenReady = () => {
-      // First run never calls, waits on, or creates the vault. Its sign-in and
-      // derived key remain in main-process memory until the wizard has closed.
-      if (getFirstRunState().credentialsSaved === false) return;
-      if (pendingCloudMasterKey && !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) traceWait('vault service not ready yet');
-      // Create the vault as soon as its service is up, even mid-setup: the key
-      // exists from the Account step, and waiting only widens the window
-      // where a quit loses it. Sign-ins held in memory flush right after.
-      if (flushing || !pendingCloudMasterKey ||
-          !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) return;
-      flushing = true;
-      void (async() => {
-        // An unlocked vault moves to the account password; a vault that does
-        // not exist yet is created only after Cloud proves there is no existing vault.
-        let creating = false;
-        if (!lifecycle.isVaultUnlocked()) {
-          const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-          const status = await getDesktopVaultClient().status();
-          if (!status.setup?.required) {
-            traceWait('a vault from an earlier install exists and is locked; it must be unlocked with its old password or recovery key');
-            return;
-          }
-          const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
-          let disposition = await DesktopVaultEnrollment.coordinator.gate();
-          if (disposition === 'approval_available' || disposition === 'waiting_for_approver') {
-            traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a signed-in computer, phone, or Cloud session.');
-            disposition = await DesktopVaultEnrollment.coordinator.complete(pendingCloudMasterKey!, pendingCloudUserId!);
-          }
-          if (disposition === 'approval_available' || disposition === 'waiting_for_approver') { traceWait('Waiting for your other Sulla to approve this computer. Approval has to come from a computer, phone, or Cloud session that is signed in.'); return; }
-          if (disposition === 'recovery') { traceWait('the existing Cloud vault needs recovery'); return; }
-          if (disposition === 'trusted') { traceWait('this computer is trusted; waiting for the existing Cloud vault to sync'); return; }
-          if (disposition === 'adopted') { zeroPendingCloudMasterKey(); firstRunTrace('vault', 'existing Cloud vault adopted and unlocked'); return; }
-          creating = true;
-        }
-        firstRunTrace('vault', creating ? 'no Cloud vault exists; creating it from the Cloud key' : 'vault is unlocked; moving it to the Cloud password');
+    // Gate on the vault CONTAINER answering, not the lifecycle 'vault' service:
+    // that service waits on postgres, database-manager and the managed-services
+    // reconcile, none of which creating the vault needs (see FirstRunVaultCreation).
+    const creation = new FirstRunVaultCreation({
+      // First run never calls, waits on, or creates the vault while its sign-in
+      // is held only in memory for a returning Cloud session.
+      holdUntilWizardCloses: () => getFirstRunState().credentialsSaved === false,
+      hasPendingKey:         () => !!pendingCloudMasterKey,
+      containerStatus:       async() => {
+        const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+        const status = await getDesktopVaultClient().status();
+        return { unlocked: status.unlocked, setupRequired: status.setup?.required };
+      },
+      lifecycleUnlocked: () => lifecycle.isVaultUnlocked(),
+      enrollmentGate:    async() => {
+        const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
+        return DesktopVaultEnrollment.coordinator.gate();
+      },
+      enrollmentComplete: async() => {
+        const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
+        return DesktopVaultEnrollment.coordinator.complete(pendingCloudMasterKey!, pendingCloudUserId!);
+      },
+      createOrRewrap: async() => {
+        const creating = !lifecycle.isVaultUnlocked();
         await flushAccountPasswordWrap();
-        firstRunTrace('vault', creating ? 'vault created and unlocked' : 'vault now uses the Cloud password');
-        if (creating) {
-          console.log('[SullaCloudAuth] Vault created from the Cloud account password and unlocked');
-        }
-        wrapRetryMs = 2_000;
-      })().catch(error => {
-        console.error('[SullaCloudAuth] Account-password vault migration failed; retrying:', error instanceof Error ? error.message : String(error));
-        firstRunTrace('vault', 'vault creation failed; will retry', { error, retryInMs: wrapRetryMs });
-        if (!wrapRetryTimer) {
-          wrapRetryTimer = setTimeout(() => {
-            wrapRetryTimer = undefined;
-            flushWhenReady();
-          }, wrapRetryMs);
-          wrapRetryTimer.unref?.();
-          wrapRetryMs = Math.min(wrapRetryMs * 2, 60_000);
-        }
-      }).finally(() => { flushing = false });
-    };
-    lifecycle.on('vault:state', flushWhenReady);
-    lifecycle.on('service:ready', (name: string) => { if (name === 'vault') flushWhenReady() });
-    const retry = setInterval(flushWhenReady, 5_000);
-    retry.unref?.();
+        if (creating) console.log('[SullaCloudAuth] Vault created from the Cloud account password and unlocked');
+      },
+      publishUnlocked: async() => {
+        const { onVaultUnlocked } = await import('@pkg/sulla');
+        await onVaultUnlocked();
+      },
+      zeroKey:  zeroPendingCloudMasterKey,
+      trace:    (message, detail) => firstRunTrace('vault', message, detail),
+      logError: message => console.error(message),
+    });
+    lifecycle.on('vault:state', (unlocked: boolean) => {
+      if (unlocked) void creation.poke();
+      else void creation.onLifecycleLocked();
+    });
+    lifecycle.on('service:ready', (name: string) => { if (name === 'vault') void creation.poke() });
+    creation.start();
   }
   const ipcMainProxy = getIpcMainProxy(console);
 
