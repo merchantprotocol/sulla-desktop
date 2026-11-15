@@ -113,19 +113,21 @@ export class AgentJobLifecycleService {
   }
 }
 
-export const returnedTaskSettlement = new ReturnedTaskSettlement({
+// Explicit types: these two singletons reference each other, which TypeScript
+// cannot infer through.
+export const returnedTaskSettlement: ReturnedTaskSettlement = new ReturnedTaskSettlement({
   getJob,
   liveJobs:             () => agentJobProvider.states.refreshLive(),
   resultFor:            returnedJobResult,
   recordTaskCompletion,
   deliver:              deliverJobCompletion,
   completeJob,
-  hasLiveRunner:        threadId => agentJobLifecycle.hasLiveWaiter(threadId),
+  hasLiveRunner:        (threadId: string): boolean => agentJobLifecycle.hasLiveWaiter(threadId),
 });
 
-export const agentJobLifecycle = new AgentJobLifecycleService(
+export const agentJobLifecycle: AgentJobLifecycleService = new AgentJobLifecycleService(
   agentJobProvider.jobs,
   parkJobTask,
   resumeParkedJob,
-  (jobId, taskIndex) => returnedTaskSettlement.settle(jobId, taskIndex),
+  (jobId: string, taskIndex: number): Promise<boolean> => returnedTaskSettlement.settle(jobId, taskIndex),
 );
