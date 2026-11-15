@@ -234,9 +234,22 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    this.files = activePage.files.map(file => filesItem(file));
-    this.filesCursor = activePage.nextCursor;
-    this.filesHasMore = activePage.hasMore;
+    // The tree comes from the complete folder list, so every file page must load before the snapshot is
+    // shown. Loading only the first page made folders that sort later look empty (scroll-to-load never
+    // fires in a folder that shows no files).
+    const loaded = [...activePage.files];
+    let cursor = activePage.nextCursor;
+    let hasMore = activePage.hasMore;
+    while (hasMore && cursor && loaded.length < 20_000) {
+      const page = await ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, cursor }) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      loaded.push(...page.files);
+      if (page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
+      hasMore = page.hasMore;
+    }
+    this.files = loaded.map(file => filesItem(file));
+    this.filesCursor = cursor;
+    this.filesHasMore = hasMore && Boolean(cursor);
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
