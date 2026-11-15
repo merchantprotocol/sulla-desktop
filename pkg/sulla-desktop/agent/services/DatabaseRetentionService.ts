@@ -5,12 +5,20 @@
 
 import { SubjectMemorySentModel } from '../database/models/SubjectMemorySentModel';
 import { WorkflowCheckpointModel } from '../database/models/WorkflowCheckpointModel';
+import { AgentJobRepository } from '../app/Repositories/AgentJobRepository';
+import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
+import { postgresClient } from '../database/PostgresClient';
 
 /** Periodically drain bounded batches of expired, non-resumable database history. */
 export class DatabaseRetentionService {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
   private readonly sentLedger = new SubjectMemorySentModel();
+  // The repository needs the live Postgres connection; built lazily on the first pass.
+  private agentJobsRepository: AgentJobRepository | undefined;
+  private get agentJobs(): AgentJobRepository {
+    return this.agentJobsRepository ??= new AgentJobRepository(new DesktopPostgresConnection(postgresClient));
+  }
 
   initialize(): void {
     if (this.timer) return;
@@ -30,6 +38,7 @@ export class DatabaseRetentionService {
     try {
       await this.sentLedger.deleteExpiredBatch();
       await WorkflowCheckpointModel.deleteExpiredBatch();
+      await this.agentJobs.drainExpired();
     } catch (error) {
       console.warn('[DatabaseRetention] Bounded retention pass failed:', error);
     } finally {
