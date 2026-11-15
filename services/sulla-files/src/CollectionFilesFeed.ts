@@ -55,6 +55,20 @@ export class CollectionFilesFeed {
     return result.rows;
   }
 
+  /**
+   * Recursive totals for each direct child folder of `path` (''= root), so folder rows show their real file count
+   * and size even though the client only loads the open folder's own files. One grouped range scan of the subtree.
+   */
+  async folderSummaries(collectionId:string, path:string):Promise<{ name:string; fileCount:number; totalBytes:number; updatedAt:string|null }[]> {
+    const prefix = path ? `${ path }/` : '';
+    const rows = (await this.db.query(`SELECT split_part(substr(f.path,length($2)+1),'/',1) AS name,COUNT(*)::bigint AS file_count,COALESCE(SUM(f.size),0)::bigint AS total_bytes,MAX(f.updated_at) AS updated_at
+      FROM files f WHERE f.collection_id=$1 AND starts_with(f.path,$2) AND position('/' in substr(f.path,length($2)+1))>0
+        AND f.deleted_at IS NULL AND f.current_version_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+        AND right(f.path,${ METADATA_NAME.length + 1 })<>'/${ METADATA_NAME }'
+      GROUP BY 1 ORDER BY 1`, [collectionId, prefix])).rows;
+    return rows.map(row => ({ name: String(row.name), fileCount: Number(row.file_count), totalBytes: Number(row.total_bytes), updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null }));
+  }
+
   /** Collection-wide totals computed by the server, never from whichever rows a client happens to have loaded. */
   async stats(collectionId:string):Promise<CollectionFileStats> {
     const row = (await this.db.query(`SELECT COUNT(*)::bigint AS file_count,COALESCE(SUM(f.size),0)::bigint AS total_bytes,

@@ -1759,6 +1759,16 @@ export function createApp(
     await requireCollection(request, collectionId, 'view', true, true);
     response.json(await filesFeed.stats(collectionId));
   } catch (error) { next(error) } });
+  app.get('/v1/folders/summary', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    const path = cleanPath(String(request.query.path ?? '')); await requireCollection(request, collectionId, 'view', true, true);
+    const visible = [];
+    for (const summary of await filesFeed.folderSummaries(collectionId, path)) {
+      const folderPath = path ? `${ path }/${ summary.name }` : summary.name; if (isProtectedPath(folderPath)) continue;
+      try { await requirePath(request, collectionId, folderPath, 'view'); visible.push({ path: folderPath, ...summary }) } catch (error:any) { if (error.status !== 403) throw error }
+    }
+    response.json(visible);
+  } catch (error) { next(error) } });
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';

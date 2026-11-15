@@ -139,6 +139,17 @@ describe.skipIf(!databaseUrl)('folder listing, recent and stats SQL (real Postgr
     await expect(feed.recent({ collectionId, limit: 5, createdByType: "user' OR 1=1 --" })).rejects.toThrow(RangeError);
   });
 
+  // risk: a folder row reading "0 files" while it holds files (the open folder only loads its own rows).
+  it('summarises each child folder recursively without leaking prefix-sharing siblings', async() => {
+    await seed(['a/1.md', 'a/b/2.md', 'a/b/c/3.md', 'a-b/4.md', 'top.md'], { size: 5 });
+    await seed(['a/gone.md'], { deleted: true });
+    await seed(['a/_folder-metadata.yaml']);
+    const feed = new CollectionFilesFeed(pool, 'f.id');
+    expect((await feed.folderSummaries(collectionId, '')).map(row => [row.name, row.fileCount, row.totalBytes])).toEqual([['a', 3, 15], ['a-b', 1, 5]]);
+    expect((await feed.folderSummaries(collectionId, 'a')).map(row => [row.name, row.fileCount])).toEqual([['b', 2]]);
+    expect(await feed.folderSummaries(collectionId, 'a/b/c')).toEqual([]);
+  });
+
   // risk: misleading storage and badge figures — totals must cover the whole collection, not the open folder.
   it('counts the whole collection server-side for stats', async() => {
     await seed(['a/1.md', 'a/b/2.md', 'z/3.md'], { size: 100 });
