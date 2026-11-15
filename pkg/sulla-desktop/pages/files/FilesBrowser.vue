@@ -1472,7 +1472,8 @@ function openQuickLookSelection() { const entry=quickLookEntry.value;if(!entry)r
 async function openLinked(fileId:string, path:string) {
   let file = snapshot.value?.files.find(item => item.id === fileId);
   if (!file) {
-    try { const loaded=await props.dataSource.load();snapshot.value=loaded;file=loaded.files.find(item=>item.id===fileId) }
+    // Only the open folder is loaded, so resolve the linked file by id wherever it lives.
+    try { if (props.dataSource.filesByIds) file=(await props.dataSource.filesByIds([fileId]))[0]; else { const loaded=await props.dataSource.load();snapshot.value=loaded;file=loaded.files.find(item=>item.id===fileId) } }
     catch (cause) { operationError.value=cause instanceof Error?cause.message:String(cause);return }
   }
   if (file) openDisplayEntry(toDisplay(file));
@@ -2077,7 +2078,9 @@ async function navigateTo(detail:FilesNavigationPayload) {
   collectionsRoot.value = false;
   if (detail.collectionId && detail.collectionId !== snapshot.value?.collection.id) { await selectCollection(detail.collectionId) }
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
-  const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
+  let file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
+  // A linked file outside the open folder is resolved by id; it must not be mistaken for a folder path.
+  if (!file && detail.fileId && props.dataSource.filesByIds) file = (await props.dataSource.filesByIds([detail.fileId]).catch(() => []))[0];
   // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
   if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
     openPath(detail.path ?? '');
