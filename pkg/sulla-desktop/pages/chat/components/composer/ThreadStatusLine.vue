@@ -476,7 +476,8 @@ onBeforeUnmount(() => {
 .ta-line.ta-you .ta-lead { color: var(--status-warning); }
 .ta-line.ta-stalled { border-color: color-mix(in srgb, var(--status-error) 55%, transparent); background: color-mix(in srgb, var(--status-error) 10%, var(--ta-well)); }
 .ta-line.ta-stalled .ta-lead { color: var(--status-error); }
-.ta-line.ta-idle { background: transparent; border-color: transparent; color: var(--ta-ink-3); }
+/* Quieter than active states but still solid: the line sits over scrolling messages. */
+.ta-line.ta-idle { background: var(--ta-well); border-color: var(--border-default); color: var(--ta-ink-3); }
 .ta-line.ta-idle .ta-lead { color: var(--ta-ink-2); font-weight: 500; }
 
 .ta-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
