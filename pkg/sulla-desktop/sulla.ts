@@ -22,6 +22,7 @@ import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';
 import { ChatCompletionsServer, getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
+import { headlessBrowserReaper } from '@pkg/main/HeadlessBrowserReaper';
 import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
 
@@ -388,6 +389,14 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       console.log('[Background] MCP server host started');
     },
     async() => { await getMCPServerHost().stop() },
+  );
+
+  lifecycle.registerOnce('headless-browser-reaper', [],
+    async() => {
+      headlessBrowserReaper.start();
+      console.log('[Background] Headless browser reaper started');
+    },
+    async() => { headlessBrowserReaper.stop() },
   );
 
   lifecycle.registerOnce('accounts', [],
