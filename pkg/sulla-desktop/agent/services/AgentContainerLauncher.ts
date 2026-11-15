@@ -277,6 +277,29 @@ export function isContainerGoneError(error: unknown): boolean {
   return /no such container|is not running/i.test(text);
 }
 
+/**
+ * `sulla-runtime exec` exits 255 with no stderr when the VM's command channel
+ * is not up yet (right after a VM start). Retry an idempotent guest step a few
+ * times instead of failing the whole agent job on that boot race.
+ */
+export async function retryWhileGuestStarting<T>(
+  step: () => Promise<T>,
+  attempts = 5,
+  delayMs = 2_000,
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (error) {
+      const starting = (error as { exitCode?: unknown })?.exitCode === 255 && !(error as { stderr?: string }).stderr?.trim();
+      if (!starting || attempt >= attempts) throw error;
+      console.warn(`[AgentContainer] Guest command channel not ready (attempt ${ attempt }/${ attempts }); retrying`);
+      await sleep(delayMs);
+    }
+  }
+}
+
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
@@ -811,7 +834,8 @@ async function provisionContainerSecrets(
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new InfrastructureFailure(`Invalid container secret name ${ key }`);
     return `${ key }\t${ Buffer.from(value).toString('base64') }`;
   }).join('\n') + '\n';
-  await guestExec([
+  // Idempotent (install -d, overwrite each file), so safe to retry.
+  await retryWhileGuestStarting(() => guestExec([
     'sh', '-c',
     [
       'set -eu', 'umask 077',
@@ -829,7 +853,7 @@ async function provisionContainerSecrets(
       ].join('\n'),
     ].join('; '),
     'sulla-container-secrets', secretDir, String(identity.uid), String(identity.gid),
-  ], encoded);
+  ], encoded));
   return secretDir;
 }
 
