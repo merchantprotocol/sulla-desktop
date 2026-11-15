@@ -345,8 +345,10 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
    * recovery tick from dragging an unbounded backlog of undelivered historical rows.
    */
   async pendingCompletions(limit = 500): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count,
-      results, tasks, parent_channel, parent_thread_id, completion_delivered_at
+    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count, results, tasks, error,
+      parent_channel, parent_thread_id, parent_agent_id, visibility, parent_job_id, parent_task_index,
+      project_task_ids, completion_delivered_at, waiting_on_children, restart_resume_count, dismissed_at,
+      stopped_by, stop_reason, orphaned_child_notices
       FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
