@@ -370,6 +370,8 @@ const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
 const selectedSubAgent = ref<ThreadAgentCard | null>(null);
 const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+// The composer's activity line reads this thread's agents and reports its state to the tab strip.
+provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
 
 function selectSubAgent(card: ThreadAgentCard): void {
   const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;

@@ -24,6 +24,7 @@
     <div class="composer-inner">
       <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
+      <ThreadStatusLine />
 
       <div class="composer-card">
         <div class="composer-top">
@@ -206,6 +207,7 @@ import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import CommandPopover     from './CommandPopover.vue';
+import ThreadStatusLine   from './ThreadStatusLine.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';

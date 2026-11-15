@@ -116,6 +116,14 @@
               <path :d="tab.iconPath" />
             </svg>
           </span>
+          <span
+            v-if="tab.activity && tab.activity !== 'idle'"
+            class="tab-activity-dot"
+            :class="`tab-activity-${tab.activity}`"
+            role="img"
+            :aria-label="ACTIVITY_LABEL[tab.activity]"
+            :title="ACTIVITY_LABEL[tab.activity]"
+          />
           <input
             v-if="renamingTabId === tab.id"
             ref="renameInput"
@@ -465,7 +473,17 @@ import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { orderPinnedFirst, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
+import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
+  working: 'Sulla is working',
+  waiting: 'Waiting on agents or a schedule',
+  you:     'Needs you',
+  stalled: 'No progress: an agent has gone quiet',
+  idle:    'Idle',
+};
 
 // Every page and every browser tab mounts its own AgentHeader, so there is one
 // tab strip per page. They share a single scroll offset so switching tabs
@@ -939,6 +957,8 @@ interface HeaderTab {
   isActive:   boolean;
   pinned:     boolean;
   working:    boolean;
+  /** Chat tabs only: what the thread is doing, for the tab's activity dot. */
+  activity?:  ThreadActivityState;
   statusLine: string;
   native?:    boolean;
   favicon?:   string;
@@ -1002,6 +1022,7 @@ const allTabsById = computed(() => {
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
+    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
@@ -1021,6 +1042,7 @@ const allTabsById = computed(() => {
       preview:    previewTabId.value === bt.id,
       pinned,
       working,
+      activity,
       statusLine: previewTabId.value === bt.id ? `preview · ${ statusLine }` : statusLine,
     });
   }
@@ -1471,6 +1493,23 @@ function handleTabContextMenuAction(
 </style>
 
 <style scoped>
+.tab-activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+.tab-activity-working { background: var(--accent); animation: tab-activity-breathe 1.6s cubic-bezier(.22, 1, .36, 1) infinite; }
+.tab-activity-waiting { background: color-mix(in srgb, var(--accent) 55%, var(--text-muted)); }
+.tab-activity-you { background: var(--status-warning); }
+.tab-activity-stalled { background: var(--status-error); }
+@keyframes tab-activity-breathe {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  70% { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .tab-activity-working { animation: none; } }
 /* Phase 4: Scroll wrapper */
 .tab-scroll-wrapper {
   display: flex;
