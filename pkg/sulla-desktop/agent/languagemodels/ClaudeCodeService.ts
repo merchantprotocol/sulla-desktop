@@ -207,6 +207,15 @@ function handoffAbortError(): Error {
   return error;
 }
 
+/**
+ * The CLI cannot resume this session: another run holds it, or its transcript is gone (a recreated
+ * container home after a restart). Either way the turn must start a fresh session instead of
+ * retrying the same dead id until recovery gives up (2026-11-14).
+ */
+export function resumeSessionUnusable(stderr: string): boolean {
+  return /Session ID .* is already in use|No conversation found with session ID/i.test(stderr);
+}
+
 export class ClaudeCodeService extends BaseLanguageModel {
   private readonly toolPolicy: ClaudeToolPolicy;
   override managesOwnLoop(): boolean {
@@ -1686,8 +1695,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const text = chunk.toString('utf-8');
           stderrBuffer += text;
           const trimmed = text.trim();
-          // Detect the session-collision signal so we can retry without it.
-          if (/Session ID .* is already in use/i.test(stderrBuffer)) {
+          // Detect a session we cannot resume (locked, or gone after a restart) so we retry without it.
+          if (resumeSessionUnusable(stderrBuffer)) {
             sessionInUse = true;
           }
           if (trimmed && !trimmed.includes('no stdin data received')) {
@@ -1874,10 +1883,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return;
           }
 
-          // Session lock collision — drop the cached id and retry once with a
+          // Session locked or missing — drop the cached id and retry once with a
           // fresh session so the user doesn't see a dead-end error.
           if (sessionInUse && !retryWithoutSession) {
-            log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
+            log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked or missing; retrying without --resume for conversationId=${ convId }`);
             this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true, turn)).then(
               r => resolve(r),
               reject,
