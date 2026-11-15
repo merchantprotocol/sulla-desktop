@@ -22,6 +22,7 @@ import { up as up_0157, down as down_0157 } from './0157_index_agent_job_message
 import { up as up_0158, down as down_0158 } from './0158_index_agent_job_polling';
 import { up as up_0159, down as down_0159 } from './0159_index_agent_job_retention';
 import { up as up_0160, down as down_0160 } from './0160_correct_database_retention_rules';
+import { up as up_0161, down as down_0161 } from './0161_add_org_agent_inbox_kind';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -296,4 +297,5 @@ export const migrationsRegistry = [
   { name: '0158_index_agent_job_polling', up: up_0158, down: down_0158 },
   { name: '0159_index_agent_job_retention', up: up_0159, down: down_0159 },
   { name: '0160_correct_database_retention_rules', up: up_0160, down: down_0160 },
+  { name: '0161_add_org_agent_inbox_kind', up: up_0161, down: down_0161 },
 ] as const;
