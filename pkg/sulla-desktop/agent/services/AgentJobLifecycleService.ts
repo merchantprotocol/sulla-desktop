@@ -2,8 +2,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
-import { parkJobTask, resumeParkedJob } from '../tools/agents/jobRegistry';
+import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
+import { completeJob, getJob, parkJobTask, recordTaskCompletion, resumeParkedJob } from '../tools/agents/jobRegistry';
 
 interface ParkedWaiter { resolve: () => void; }
 export interface ChildDependencyCounter { openChildrenForThread(threadId: string): Promise<number>; }
@@ -19,6 +21,7 @@ export class AgentJobLifecycleService {
     private readonly children: ChildDependencyCounter,
     private readonly parkTask: (jobId: string, taskIndex: number, waitingOnChildren: number) => Promise<unknown>,
     private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<unknown>,
+    private readonly settleReturn: (jobId: string, taskIndex: number) => Promise<boolean> = () => Promise.resolve(false),
   ) {}
 
   openChildren(threadId: string): Promise<number> {
@@ -92,10 +95,37 @@ export class AgentJobLifecycleService {
   async endWakeTurn(jobId: string, taskIndex: number): Promise<void> {
     await this.parkTask(jobId, taskIndex, 0);
   }
+
+  /**
+   * End a dispatched wake turn of a dormant task (no spawn_agent runner owns
+   * it any more). A return_result recorded during the turn is settled and
+   * delivered here, because the runner that normally does so is gone;
+   * re-parking it would strand the result on a task nothing will wake again.
+   */
+  async endDormantWakeTurn(jobId: string, taskIndex: number): Promise<void> {
+    try {
+      if (await this.settleReturn(jobId, taskIndex)) return;
+    } catch (error) {
+      // Parked with its return still recorded; the startup sweep settles it.
+      console.warn(`[AgentJobLifecycle] Failed to settle returned task ${ jobId }#${ taskIndex } after its wake turn:`, error);
+    }
+    await this.parkTask(jobId, taskIndex, 0);
+  }
 }
+
+export const returnedTaskSettlement = new ReturnedTaskSettlement({
+  getJob,
+  liveJobs:             () => agentJobProvider.states.refreshLive(),
+  resultFor:            returnedJobResult,
+  recordTaskCompletion,
+  deliver:              deliverJobCompletion,
+  completeJob,
+  hasLiveRunner:        threadId => agentJobLifecycle.hasLiveWaiter(threadId),
+});
 
 export const agentJobLifecycle = new AgentJobLifecycleService(
   agentJobProvider.jobs,
   parkJobTask,
   resumeParkedJob,
+  (jobId, taskIndex) => returnedTaskSettlement.settle(jobId, taskIndex),
 );

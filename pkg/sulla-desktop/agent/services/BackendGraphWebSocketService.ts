@@ -18,7 +18,7 @@ import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
-import { agentJobLifecycle } from './AgentJobLifecycleService';
+import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -190,11 +190,11 @@ export class BackendGraphWebSocketService {
       console.warn(`[BackendGraphWS] Deferred orchestrator wake for thread ${ threadId }: a turn is already running; the message stays queued for its next turn.`);
       return false;
     }
-    await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+    const receipt = await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
       `[Message from orchestrator]\n${ message }`, threadId, undefined, agentId || parked.agentId, 'system', {
         source: 'orchestrator_job_message', ...messageMeta,
       });
-    return true;
+    return receipt !== 'deferred';
   }
 
   /** Every completion claim owned by this turn, including steers injected into a live delegated run. */
@@ -512,6 +512,12 @@ export class BackendGraphWebSocketService {
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
     agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
+    // No spawn_agent runner survives a restart, so a return recorded by a
+    // runner that died (or by a dormant wake turn that predates this fix)
+    // would otherwise never reach its parent.
+    returnedTaskSettlement.settleStranded()
+      .then(count => { if (count) console.log(`[BackendGraphWS] Settled ${ count } returned delegated task(s) left without a runner`); })
+      .catch(err => console.warn('[BackendGraphWS] Failed to settle stranded returned tasks:', err));
   }
 
   /**
@@ -1071,7 +1077,9 @@ export class BackendGraphWebSocketService {
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask
         // only acts while the job is still 'running', so this is a no-op then).
-        if (wakeTurnToRepark) await agentJobLifecycle.endWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
+        // A return_result made during the turn is settled and delivered here
+        // instead: no spawn_agent runner is left to hand it to the parent.
+        if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);
