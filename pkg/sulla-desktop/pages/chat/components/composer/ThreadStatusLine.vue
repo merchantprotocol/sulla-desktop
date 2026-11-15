@@ -210,7 +210,7 @@ import ThreadAgentActions from './ThreadAgentActions.vue';
 import ThreadQuestionItem from './ThreadQuestionItem.vue';
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
@@ -270,12 +270,12 @@ const ageText = computed(() => {
 });
 
 function rowState(row: AgentStateRow): ThreadActivityState {
-  if (row.state === 'quiet') return 'stalled';
+  if (row.state === 'quiet') return row.runtimeAlive ? 'quiet' : 'stalled';
   if (row.state === 'blocked') return 'waiting';
   if (row.state === 'parked') return parkedActivity(row).state;
   return 'working';
 }
-const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', starting: 'Starting', scheduled: 'Scheduled', blocked: 'Blocked' } as const;
+const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', quiet: 'Quiet', starting: 'Starting', scheduled: 'Scheduled', blocked: 'Blocked' } as const;
 function rowChip(row: AgentStateRow): string {
   if (row.state === 'queued') return CHIP.starting;
   if (waitTarget(row) === 'github') return 'On GitHub';
@@ -286,7 +286,7 @@ function rowChip(row: AgentStateRow): string {
 function shortShas(text: string): string { return text.replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1') }
 function rowDetail(row: AgentStateRow): string {
   if (row.state === 'parked') return parkedActivity(row).detail;
-  if (row.state === 'quiet') return `no check-in for ${ age(Date.parse(row.lastActivityAt)) }`;
+  if (row.state === 'quiet') return quietDetail(row, now.value);
   if (row.state === 'blocked') return blockedDetail(row);
   const running = runningDetail(row, now.value);
   if (running) return running;

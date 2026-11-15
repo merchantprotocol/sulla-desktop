@@ -99,7 +99,7 @@ function toolAction(namespace: string, tool: string): string {
  */
 function plainToolNames(text: string): string {
   return text
-    .replace(/\b(?:sulla\s+)?([a-z]+)\/([a-z][\w-]*)/g, (all, ns: string, tool: string) => NAMESPACE[ns] ? `${ NAMESPACE[ns] } ${ toolAction(ns, tool) }` : all)
+    .replace(/\b(?:sulla\s+)?([A-Za-z]+)\/([a-z][\w-]*)/g, (all, ns: string, tool: string) => NAMESPACE[ns.toLowerCase()] ? `${ NAMESPACE[ns.toLowerCase()] } ${ toolAction(ns, tool) }` : all)
     .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, word => ACTIONS[word] ?? word)
     // GitHub's review verdicts as words: CHANGES_REQUESTED → "changes requested".
     .replace(/\b(CHANGES_REQUESTED|APPROVED|COMMENTED|DISMISSED)\b/g, word => word.toLowerCase().replace(/_/g, ' '));

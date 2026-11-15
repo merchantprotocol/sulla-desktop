@@ -10,9 +10,11 @@ import type { Message } from '../models/Message';
 /**
  * What a chat thread is doing right now, so a thread never looks the same
  * whether Sulla is busy, waiting, blocked on the user or idle.
- * Priority: needs you > stalled > working > waiting > idle.
+ * Priority: needs you > stalled > working > quiet > waiting > idle. Quiet is an
+ * agent with no output lately whose container is still running; stalled is one
+ * that stopped responding (or that we cannot see running).
  */
-export type ThreadActivityState = 'you' | 'stalled' | 'working' | 'waiting' | 'idle';
+export type ThreadActivityState = 'you' | 'stalled' | 'working' | 'quiet' | 'waiting' | 'idle';
 
 export interface ThreadActivityItem {
   state:  Exclude<ThreadActivityState, 'idle'>;
@@ -41,7 +43,7 @@ export interface ThreadActivityInput {
 }
 
 const LEAD: Record<ThreadActivityState, string> = {
-  you: 'Needs you', stalled: 'No progress', working: 'Working', waiting: 'Waiting', idle: 'Idle',
+  you: 'Needs you', stalled: 'No progress', working: 'Working', quiet: 'Quiet', waiting: 'Waiting', idle: 'Idle',
 };
 
 function plural(n: number, word: string): string {
@@ -110,7 +112,7 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
     return parked.state === 'waiting' ? { state: 'waiting', title: row.label, detail: parked.detail, at, ref } : null;
   }
   case 'quiet':
-    return { state: 'stalled', title: row.label, detail: said || 'no check-in lately', at, ref };
+    return { state: row.runtimeAlive ? 'quiet' : 'stalled', title: row.label, detail: quietDetail(row, Date.now()), at, ref };
   case 'blocked':
     return { state: 'waiting', title: row.label, detail: blockedDetail(row), at, ref };
   default:
@@ -153,12 +155,16 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     state = 'stalled';
     // One silent agent must not hide the rest: say what else is still moving.
     const working = count('working');
-    parts = [`${ plural(count('stalled'), 'agent') } silent`, working ? `${ plural(working, 'agent') } still working` : 'it may have stopped'];
+    parts = [`${ plural(count('stalled'), 'agent') } stopped responding`, ...(working ? [`${ plural(working, 'agent') } still working`] : [])];
   } else if (input.running || has('working')) {
     state = 'working';
     parts = [count('working') ? `${ plural(count('working'), 'agent') } running` : 'Sulla is replying'];
     const lead = items.find(item => item.state === 'working');
     if (lead) parts.push(lead.title);
+    if (has('quiet')) parts.push(`${ count('quiet') } quiet`);
+  } else if (has('quiet')) {
+    state = 'quiet';
+    parts = [`${ plural(count('quiet'), 'agent') } quiet`, 'still running'];
   } else if (has('waiting')) {
     state = 'waiting';
     const parked = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'waiting');
@@ -179,6 +185,16 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
   }
 
   return { state, lead: LEAD[state], parts, items, lastActivityAt };
+}
+
+/**
+ * A quiet agent in words: "quiet 6m · still running" when its container is
+ * still attached, "no output for 12m · container gone" when it is not.
+ */
+export function quietDetail(row: AgentStateRow, now: number): string {
+  const age = activityAge(now - (Date.parse(row.lastActivityAt) || now));
+  if (row.runtimeAlive) return `quiet ${ age } · still running`;
+  return `no output for ${ age }${ row.runtimeAlive === false ? ' · container gone' : '' }`;
 }
 
 /** "12s", "4m", "2h": compact age for the status line. */

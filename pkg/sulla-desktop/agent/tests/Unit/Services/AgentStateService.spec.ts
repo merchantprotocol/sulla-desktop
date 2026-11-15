@@ -300,8 +300,26 @@ describe('authoritative live agent state', () => {
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
     // risk: an hour-silent task is presented as actively working
     const { states } = harness([job('quiet', [task({ startedAt: 1_000 })])]);
-    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }).snapshot();
-    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true });
+    // Watching since before the task started, so its silence is real.
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true, runtimeAlive: null });
+  });
+
+  // risk: right after a restart every running agent read "silent · it may have stopped" because in-memory activity was empty
+  it('does not count the time before a restart as silence', async() => {
+    const { states } = harness([job('resumed', [task({ startedAt: 1_000 })])]);
+    const justStarted = new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await justStarted.snapshot()).rows[0].state).toBe('working');
+    const later = new AgentStateProjector(states, new EmptyTelemetry(), () => 14_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await later.snapshot()).rows[0].state).toBe('quiet');
+  });
+
+  // risk: a quiet agent whose container is still running read as stopped
+  it('says whether a quiet container agent is still running', async() => {
+    const { states } = harness([job('quiet', [task({ startedAt: 1_000, threadId: 't-quiet' })])]);
+    const runtime = { alive: (thread: string | undefined | null) => thread === 't-quiet' };
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, runtime, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', runtimeAlive: true });
   });
 
   it('keeps snapshot state working when task-scoped model activity is fresh but its check-in is old', async() => {

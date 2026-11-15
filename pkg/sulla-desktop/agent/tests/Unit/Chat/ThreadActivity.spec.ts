@@ -91,7 +91,21 @@ describe('a chat thread always says what it is doing', () => {
   // risk: one silent agent turned the whole line into "it may have stopped" while others worked
   it('says what else is still working when one agent goes silent', () => {
     const a = deriveThreadActivity({ ...base, agents: [row('quiet'), row('working', { key: 'job:w1' }), row('working', { key: 'job:w2' })] });
-    expect(a).toMatchObject({ state: 'stalled', parts: ['1 agent silent', '2 agents still working'] });
+    expect(a).toMatchObject({ state: 'stalled', parts: ['1 agent stopped responding', '2 agents still working'] });
+  });
+
+  // risk: "Nothing needs you" with a red dot and "it may have stopped" for an agent that was still running
+  it('a quiet agent that is still running reads as quiet, not stopped', () => {
+    const lastActivityAt = new Date(Date.now() - 6 * 60_000).toISOString();
+    const a = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: true, lastActivityAt })] });
+    expect(a).toMatchObject({ state: 'quiet', lead: 'Quiet', parts: ['1 agent quiet', 'still running'] });
+    expect(a.items[0].detail).toBe('quiet 6m · still running');
+    const gone = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: false, lastActivityAt })] });
+    expect(gone).toMatchObject({ state: 'stalled', parts: ['1 agent stopped responding'] });
+    expect(gone.items[0].detail).toBe('no output for 6m · container gone');
+    const alongside = deriveThreadActivity({ ...base, agents: [row('working', { key: 'job:w' }), row('quiet', { runtimeAlive: true, lastActivityAt })] });
+    expect(alongside.state).toBe('working');
+    expect(alongside.parts).toContain('1 quiet');
   });
 
   // risk: an agent in one long command read as idle filler text instead of what it is doing

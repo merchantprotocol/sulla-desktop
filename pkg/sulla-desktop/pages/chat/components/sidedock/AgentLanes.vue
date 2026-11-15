@@ -67,7 +67,7 @@
         v-for="node in live"
         :key="node.row.key"
         class="ln-row ln-agent"
-        :class="{ 'ln-child': node.indent > 0, 'ln-open': expanded === node.row.key }"
+        :class="{ 'ln-child': node.indent > 0, 'ln-open': expanded === node.row.key, 'ln-stalled': node.row.state === 'quiet' && !node.row.runtimeAlive }"
         :style="node.indent ? { '--ln-indent': `${node.indent * 20}px` } : undefined"
         @click="onRowClick($event, node.row.key)"
       >
@@ -298,6 +298,8 @@ const finished = computed(() => new AgentTreeBuilder([]).flatten(tree.value).map
 const summary = computed(() => {
   const activity = deriveThreadActivity({ running: controller.isRunning.value, messages: controller.messages.value, agents: live.value.map(node => node.row), heartbeatMinutes: null });
   if (activity.state === 'you') return { state: 'you', lead: 'Needs you', parts: activity.parts };
+  // A stopped agent is worth a look: say so in red instead of "Nothing needs you".
+  if (activity.state === 'stalled') return { state: 'stalled', lead: 'No progress', parts: activity.parts };
   return { state: activity.state, lead: 'Nothing needs you', parts: activity.state === 'idle' ? ['nothing running'] : activity.parts };
 });
 const needsYou = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>

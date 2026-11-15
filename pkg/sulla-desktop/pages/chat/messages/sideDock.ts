@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { blockedDetail, parkedActivity, runningDetail, waitTarget } from './threadActivity';
+import { blockedDetail, parkedActivity, quietDetail, runningDetail, waitTarget } from './threadActivity';
 import { WorkSteps } from './workSteps';
 
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
@@ -118,7 +118,11 @@ function laneStepRaw(row: AgentStateRow, now: number): string {
   if (row.state === 'parked' && row.waitReason) return row.waitReason.replace(/^\s*waiting\s+(?:for|on)\s+/i, '').replace(/^./, c => c.toUpperCase());
   if (row.state === 'parked') return parkedActivity(row).detail;
   if (row.state === 'blocked') return blockedDetail(row).replace(/^waiting on Sulla: /, 'Asked Sulla: ');
-  if (row.state === 'quiet') return 'no check-in lately';
+  if (row.state === 'quiet') {
+    const said = row.lastCheckinSummary?.trim();
+    const words = quietDetail(row, now);
+    return said ? `${ words[0].toUpperCase() }${ words.slice(1) } · last: ${ said }` : `${ words[0].toUpperCase() }${ words.slice(1) }`;
+  }
   return runningDetail(row, now) || row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
 

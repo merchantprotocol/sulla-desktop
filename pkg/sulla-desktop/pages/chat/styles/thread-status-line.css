@@ -134,3 +134,8 @@
   .ta-head > .ta-last { grid-column: 1 / -1; grid-row: 3; }
   .ta-body { padding-left: 14px; }
 }
+/* Quiet: no output lately but its container is still running. */
+.ta-row-quiet { background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
+.ta-line.ta-quiet .ta-lead { color: var(--status-warning); }
+.ta-dot-quiet { background: var(--status-warning); }
+.ta-chip-quiet { background: color-mix(in srgb, var(--status-warning) 18%, transparent); color: var(--status-warning); }

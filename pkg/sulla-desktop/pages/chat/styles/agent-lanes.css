@@ -18,6 +18,8 @@
 .ln-sum-you .ln-sum-dot { background: var(--status-warning); }
 .ln-sum-you b { color: var(--status-warning); }
 .ln-sum-stalled .ln-sum-dot { background: var(--status-error); }
+.ln-sum-stalled b { color: var(--status-error); }
+.ln-sum-quiet .ln-sum-dot { background: var(--status-warning); }
 .ln-sum-working .ln-sum-dot { background: var(--accent); }
 .ln-empty { padding: 18px 6px; color: var(--ln-ink-3); font-size: 13px; }
 .ln-list { overflow: hidden; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-page); }
@@ -64,6 +66,8 @@
 /* Message, open and stop show on the lane you are on (hover, keyboard focus, or open), so the task gets the room. */
 .ln-agent .ln-acts { display: none; }
 .ln-agent:hover .ln-acts, .ln-agent:focus-within .ln-acts, .ln-agent.ln-open .ln-acts { display: flex; }
+/* A stopped agent shows Nudge and Stop without hovering. */
+.ln-agent.ln-stalled .ln-acts { display: flex; }
 .ln-ib {
   display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid transparent; border-radius: 6px;
   background: none; color: var(--ln-ink-2); cursor: pointer;

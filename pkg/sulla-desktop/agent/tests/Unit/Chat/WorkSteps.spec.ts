@@ -85,6 +85,8 @@ describe('Sulla tools inside loops and agents\' words read plainly', () => {
   it('an agent naming Sulla\'s tools reads as the action', () => {
     expect(WorkSteps.plainToolNames('sulla github/git_push and git_fetch fail')).toBe('GitHub push and fetch fail');
     expect(WorkSteps.plainToolNames('the user_seats table')).toBe('the user_seats table');
+    // risk: a lane read "Agents/return result failed…"
+    expect(WorkSteps.plainToolNames('Agents/return_result failed; retrying')).toBe('Agents return result failed; retrying');
   });
 });
 

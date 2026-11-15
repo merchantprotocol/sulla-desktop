@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { AgentRuntimeLiveness } from './AgentRuntimeLiveness';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '../../../shared/agentState/AgentStateSnapshot';
 
@@ -26,7 +27,10 @@ export class AgentStateProjector {
   private inFlight?: Promise<AgentStateSnapshot>;
   constructor(private readonly states: AgentStateService, private readonly telemetry: AgentStateTelemetry,
     private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {},
-    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs)) { this.config = { ...DEFAULT_CONFIG, ...config }; }
+    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs),
+    private readonly runtime?: Pick<AgentRuntimeLiveness, 'alive'>,
+    /** When this process started watching: activity before it (a restart) is unknown, not silence. */
+    private readonly observedSince: number = clock()) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
   snapshot(): Promise<AgentStateSnapshot> {
     if (this.inFlight) return this.inFlight;
@@ -68,7 +72,9 @@ export class AgentStateProjector {
         : await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
       const activity = this.activity.project(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null);
-      const state = activity.state as AgentViewStatus;
+      // Just after a restart the in-memory activity is empty; count silence from when this process began watching.
+      let state = activity.state as AgentViewStatus;
+      if (state === 'quiet' && now - Math.max(activity.lastActivityAt, this.observedSince) < this.config.quietAfterMs) state = 'working';
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? waitingByThread.get(task.threadId) ?? 0 : 0;
@@ -86,6 +92,7 @@ export class AgentStateProjector {
         lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         toolInFlight: this.toolView(state, this.activity.toolInFlight(job.jobId, taskIndex)),
+        runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
     return { version, generatedAt: new Date(now).toISOString(), rows };

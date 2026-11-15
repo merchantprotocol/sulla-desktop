@@ -232,7 +232,8 @@ describe('a failure that was retried', () => {
 describe('the lane step and activity meter', () => {
   it('says what the agent is doing now, and a stalled agent reads flat', () => {
     expect(laneStep(row('j:0', 'working', { toolInFlight: { name: 'pnpm test', since: new Date(NOW - 120_000).toISOString() } }), NOW)).toContain('pnpm test');
-    expect(laneStep(row('j:0', 'quiet'), NOW)).toBe('no check-in lately');
+    expect(laneStep(row('j:0', 'quiet', { lastActivityAt: new Date(NOW - 7 * 60_000).toISOString(), lastCheckinSummary: 'Design set' }), NOW)).toBe('No output for 7m · last: Design set');
+    expect(laneStep(row('j:0', 'quiet', { runtimeAlive: true, lastActivityAt: new Date(NOW - 7 * 60_000).toISOString(), lastCheckinSummary: null }), NOW)).toBe('Quiet 7m · still running');
     // risk: a 40-character commit hash filled the lane's step line
     expect(laneStep(row('j:0', 'working', { lastCheckinSummary: 'Pushed fix commit bb3f01443952aea49f2eff28109f09d6a7954975 to the branch' }), NOW)).toBe('Pushed fix commit bb3f014 to the branch');
     const trail = new ActivityTrail();
