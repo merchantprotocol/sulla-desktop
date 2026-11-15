@@ -999,7 +999,20 @@ export function createApp(
       if(!Number.isSafeInteger(declaredBytes)||declaredBytes<0) throw new HttpError(400,'valid content-length is required');
       if(declaredBytes>FUSE_MAX_FILE_BYTES) throw new HttpError(413,'Files mount writes are limited to 64 MiB');
       const actor=identity(request);
-      if(match!==file.current_version_id) throw new HttpError(409,'Files mount version changed');
+      const contentHash=request.header('x-sulla-content-hash')?.toLowerCase();
+      if(match!==file.current_version_id) {
+        // A retried upload whose first attempt committed: the current version already holds this content.
+        if(contentHash&&/^[0-9a-f]{64}$/.test(contentHash)&&Number(file.size)===declaredBytes) {
+          const current=await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,new AbortController().signal);
+          const currentHash=createHash('sha256'); if(current) for await (const part of current.body) currentHash.update(part);
+          if(current&&currentHash.digest('hex')===contentHash) {
+            request.resume();
+            response.setHeader('ETag',`"${file.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',contentHash);
+            return response.json({id:file.id,collectionId:file.collection_id,path:file.path,mime:file.mime,size:Number(file.size),versionId:file.current_version_id,sourceHash:contentHash,mtimeMs:Date.now()});
+          }
+        }
+        throw new HttpError(409,'Files mount version changed');
+      }
       const baseContent=await streamFileContent(db,config,store,file.id,match,undefined,new AbortController().signal);
       if(!baseContent) throw new HttpError(409,'Files mount version changed');
       const baseHash=createHash('sha256');
