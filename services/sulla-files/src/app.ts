@@ -1432,7 +1432,7 @@ export function createApp(
       next(error);
     }
   });
-  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
     if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts, durable Memory and Projects');
@@ -1455,7 +1455,10 @@ export function createApp(
       ? [...new Set<string>(request.body.derivedFrom.filter((value:unknown):value is string => typeof value === 'string'))].sort()
       : [];
 
-    await client.query('BEGIN');
+    // Authorize sources and encrypt the content before the transaction; it then holds only DB statements.
+    for (const sourceId of derived) await requireFile(request, sourceId, 'view');
+    const staged = await stageVersionContent(collection.id, bytes);
+    const outcome = await transactions.run('agent-put', async client => {
     await lockStoredNamespace(client, collection.id);
     const pathFile = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collection.id, path])).rows[0];
     const requestedFile = requestedFileId ? (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [requestedFileId])).rows[0] : undefined;
@@ -1481,18 +1484,24 @@ export function createApp(
         if (prior.message !== message) throw new HttpError(409, 'idempotencyKey was already used with a different message');
         const priorEdges = (await client.query("SELECT dst_id FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from' ORDER BY dst_id", [prior.file_id])).rows.map(row => row.dst_id);
         if (priorEdges.length !== derived.length || priorEdges.some((id, index) => id !== derived[index])) throw new HttpError(409, 'idempotencyKey was already used with different artifact sources');
-        const content = await loadFileContent(db, config, store, prior.file_id, prior.id);
-        if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
-        await client.query('COMMIT');
-        return response.status(200).json({ fileId: prior.file_id, versionId: prior.id, collectionId: collection.id, path });
+        return { prior: { fileId: prior.file_id as string, versionId: prior.id as string } };
       }
     }
-    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, actor, createdByType: 'agent-run', createdById: creatorId, message });
+    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, staged, actor, createdByType: 'agent-run', createdById: creatorId, message });
     await client.query("DELETE FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from'", [file.id]);
-    for (const sourceId of derived) { const source = await requireFile(request, sourceId, 'view'); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
-    await client.query('COMMIT'); await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
+    for (const sourceId of derived) { const source = await fileRow(sourceId, client); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
+    return { file };
+    });
+    if ('prior' in outcome && outcome.prior) {
+      // Idempotent replay: compare content outside the transaction (it reads chunks through the pool).
+      const content = await loadFileContent(db, config, store, outcome.prior.fileId, outcome.prior.versionId);
+      if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
+      return response.status(200).json({ fileId: outcome.prior.fileId, versionId: outcome.prior.versionId, collectionId: collection.id, path });
+    }
+    const file = (outcome as { file:any }).file;
+    await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
     response.status(201).json({ fileId: file.id, versionId: file.current_version_id, collectionId: collection.id, path: file.path });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
   app.post('/v1/agent-files/ensure', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });

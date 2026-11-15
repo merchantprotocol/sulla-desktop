@@ -29,6 +29,8 @@ export class DatabaseFailureClassifier {
   private static readonly connectionMessages = [
     'connection terminated', 'not queryable', 'connection error', 'econnreset', 'econnrefused', 'epipe',
     'terminating connection', 'client was closed', 'cannot use a pool after calling end',
+    // pg-pool's connectionTimeoutMillis: the pool is saturated, nothing ran, the request may retry.
+    'timeout exceeded when trying to connect',
   ];
 
   isConnectionLoss(error:unknown):boolean {

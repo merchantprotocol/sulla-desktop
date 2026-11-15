@@ -15,7 +15,9 @@ const MIGRATION_LOCK = 8_795_043;
 const MIGRATION_RETRIES = 3;
 const sleep = (ms:number) => new Promise(resolve => setTimeout(resolve, ms));
 export async function connect(url:string, max = 10, startup = new StartupDatabaseWait({ name: 'SullaFiles' })) {
-  const db = new pg.Pool({ connectionString: url, max });
+  // A request that cannot get a connection within 20 s fails (as a retryable 503) instead of
+  // waiting forever: a pool starved by clients that each wait on the pool again never recovers.
+  const db = new pg.Pool({ connectionString: url, max, connectionTimeoutMillis: 20_000 });
   // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
   db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
   // pg-pool only listens on idle clients. A checked-out client that Postgres
