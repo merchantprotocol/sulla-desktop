@@ -18,6 +18,7 @@ interface ProcessRecord {
   pid: number;
   ppid: number;
   cpuSeconds: number;
+  startedAt: string;
   command: string;
   args: string;
 }
@@ -29,6 +30,7 @@ interface CpuObservation {
   unchangedSince: number;
   command: string;
   args: string;
+  startedAt: string;
 }
 
 interface ProcessCommandResult {
@@ -74,8 +76,8 @@ export class HeadlessBrowserReaper {
 
   private async sampleTarget(target: ProcessTarget): Promise<void> {
     const listing = await this.command('ps', [process.platform === 'darwin'
-      ? '-axo pid=,ppid=,time=,args='
-      : '-eo pid=,ppid=,time=,args='], target);
+      ? '-axo pid=,ppid=,time=,lstart=,args='
+      : '-eo pid=,ppid=,time=,lstart=,args='], target);
     if (listing.exitCode !== 0) throw new Error(listing.stderr || `ps exited ${ listing.exitCode } (${ target })`);
 
     const processes = this.parseProcessList(listing.stdout);
@@ -92,10 +94,10 @@ export class HeadlessBrowserReaper {
       const key = `${ target }:${ root.pid }`;
       seen.add(key);
       const previous = this.observations.get(key);
-      const unchangedSince = previous && previous.totalCpuSeconds === totalCpuSeconds && previous.command === root.command && previous.args === root.args
+      const unchangedSince = previous && previous.totalCpuSeconds === totalCpuSeconds && previous.command === root.command && previous.args === root.args && previous.startedAt === root.startedAt
         ? previous.unchangedSince
         : sampledAt;
-      this.observations.set(key, { totalCpuSeconds, unchangedSince, command: root.command, args: root.args });
+      this.observations.set(key, { totalCpuSeconds, unchangedSince, command: root.command, args: root.args, startedAt: root.startedAt });
 
       const parentExists = byPid.has(root.ppid);
       const orphaned = !parentExists || root.ppid === 1;
@@ -106,18 +108,18 @@ export class HeadlessBrowserReaper {
         orphaned,
         idleForMs,
       });
-      if (decision.reap) await this.terminateTree(target, root.pid, pids, Math.round(idleForMs / 1000), decision.reason!);
+      if (decision.reap) await this.terminateTree(target, root.pid, pids.map(pid => byPid.get(pid)!).filter(Boolean), Math.round(idleForMs / 1000), decision.reason!);
     }
     for (const key of this.observations.keys()) if (key.startsWith(`${ target }:`) && !seen.has(key)) this.observations.delete(key);
   }
 
   private parseProcessList(output: string): ProcessRecord[] {
     return output.split('\n').flatMap(line => {
-      const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+      const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(.+)$/.exec(line);
       if (!match) return [];
-      const [, pidText, ppidText, cpuTime, args] = match;
+      const [, pidText, ppidText, cpuTime, startedAt, args] = match;
       const command = /^"([^"]+)"|^(\S+)/.exec(args)?.slice(1).find(Boolean) ?? '';
-      return [{ pid: Number(pidText), ppid: Number(ppidText), cpuSeconds: parseProcessCpuTime(cpuTime), command, args }];
+      return [{ pid: Number(pidText), ppid: Number(ppidText), cpuSeconds: parseProcessCpuTime(cpuTime), startedAt: startedAt.replace(/\s+/g, ' ').trim(), command, args }];
     });
   }
 
@@ -141,10 +143,11 @@ export class HeadlessBrowserReaper {
     return pids;
   }
 
-  private async terminateTree(target: ProcessTarget, rootPid: number, pids: number[], ageSeconds: number, reason: string): Promise<void> {
+  private async terminateTree(target: ProcessTarget, rootPid: number, processes: ProcessRecord[], ageSeconds: number, reason: string): Promise<void> {
     console.warn(`[HeadlessBrowserReaper] Reaping pid=${ rootPid } target=${ target } age=${ ageSeconds}s reason=${ reason }`);
-    const pidList = pids.join(' ');
-    const script = `for pid in ${ pidList }; do kill -TERM "$pid" 2>/dev/null || true; done; sleep ${ TERM_GRACE_MS / 1000 }; for pid in ${ pidList }; do kill -KILL "$pid" 2>/dev/null || true; done`;
+    const pidList = processes.map(proc => proc.pid).join(' ');
+    const identityList = processes.map(proc => `'${ proc.pid }|${ proc.startedAt }'`).join(' ');
+    const script = `for pid in ${ pidList }; do kill -TERM "$pid" 2>/dev/null || true; done; sleep ${ TERM_GRACE_MS / 1000 }; for identity in ${ identityList }; do pid="\${identity%%|*}"; expected="\${identity#*|}"; actual=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/  */ /g;s/ *$//'); [ "$actual" = "$expected" ] && kill -KILL "$pid" 2>/dev/null || true; done`;
     const result = await this.command('sh', ['-c', script], target);
     if (result.exitCode !== 0) console.warn(`[HeadlessBrowserReaper] Could not finish terminating pid=${ rootPid } target=${ target }: ${ result.stderr }`);
     this.observations.delete(`${ target }:${ rootPid }`);
