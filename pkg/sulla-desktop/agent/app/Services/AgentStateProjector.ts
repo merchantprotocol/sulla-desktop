@@ -77,7 +77,11 @@ export class AgentStateProjector {
         rootThreadId: lineage.rootThreadId, threadId: task.threadId ?? null,
         depth: lineage.depth, agentId: task.agentId || null, label: task.label || task.agentId,
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
-        stateReason: this.reason(state, job, task, checkin), stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
+        stateReason: this.reason(state, job, task, checkin),
+        // Why a parked task is waiting and when it checks again, so the window can say "waiting on GitHub checks · 12:12".
+        waitReason: state === 'parked' ? task.waitReason ?? null : null,
+        wakeAt: state === 'parked' && task.wakeAt !== undefined && task.wakeAt > now ? this.iso(task.wakeAt) : null,
+        stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
         lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,

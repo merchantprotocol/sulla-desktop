@@ -105,3 +105,25 @@ describe('a chat thread always says what it is doing', () => {
     expect([activityAge(12_000), activityAge(240_000), activityAge(7_200_000)]).toEqual(['12s', '4m', '2h']);
   });
 });
+
+describe('an agent waiting on GitHub', () => {
+  // risk: lanes said "waiting on a scheduled wake-up" while the agent was really waiting for CI on a pushed fix
+  const wake = new Date(Date.UTC(2026, 10, 15, 18, 12)).toISOString();
+  const ci = row('parked', { key: 'job:ci', stateReason: 'scheduled wake-up', waitReason: 'CI full-tests and full-pr-tests running on 391bf1f0123456789012345678901234567890ab', wakeAt: wake });
+  const slow = row('parked', { key: 'job:slow', stateReason: 'scheduled wake-up', waitReason: 'one more window before reporting', wakeAt: wake });
+
+  it('says what it waits on and when it looks again', async() => {
+    const { waitTarget } = await import('@pkg/pages/chat/messages/threadActivity');
+    expect(waitTarget(ci)).toBe('github');
+    expect(waitTarget(slow)).toBe('other');
+    expect(parkedActivity(ci).detail).toMatch(/^waiting on GitHub: CI full-tests and full-pr-tests running on 391bf1f · checks again /);
+  });
+
+  it('tells the thread which waits are GitHub\'s and when the next look is', () => {
+    const activity = deriveThreadActivity({ ...base, agents: [ci, slow] });
+    expect(activity.state).toBe('waiting');
+    expect(activity.parts[0]).toBe('1 agent waiting on GitHub checks');
+    expect(activity.parts[1]).toBe('1 agent waiting on other work');
+    expect(activity.parts[2]).toMatch(/^next check /);
+  });
+});

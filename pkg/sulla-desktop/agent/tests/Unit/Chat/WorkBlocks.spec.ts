@@ -47,7 +47,7 @@ describe('thinking work log', () => {
   it('is one line by default: what it did, who did it, how long', () => {
     const block = mount(ThinkingGroup, { props: { messages: log }, global });
 
-    expect(block.find('.wb-title').text()).toBe('Ran 2 steps · get_pr, merge_pr');
+    expect(block.find('.wb-title').text()).toBe('Ran 2 steps · read PR, merge PR');
     expect(block.find('.wb-by').text()).toBe('PProduct Owneropus-5.5');
     expect(block.find('.wb-meta').text()).toBe('52s · 2 steps');
     expect(block.find('.wb-body').exists()).toBe(false);
@@ -58,8 +58,8 @@ describe('thinking work log', () => {
     await block.find('.wb-head').trigger('click');
 
     expect(block.findAll('.tg-step').map(step => step.find('.tg-v').text())).toEqual([
-      'github get_pr · ripple-receptionist-worker #4334',
-      'github merge_pr · ripple-receptionist-worker #4334 · aefaf0d',
+      'GitHub · read PR · ripple-receptionist-worker #4334',
+      'GitHub · merge PR · ripple-receptionist-worker #4334 · aefaf0d',
     ]);
     await block.findAll('.tg-link')[1].trigger('click');
     expect(block.find('.tg-raw').text()).toContain('aefaf0d6bb0eecdab35ceabf6485f16b12cbd0e2');

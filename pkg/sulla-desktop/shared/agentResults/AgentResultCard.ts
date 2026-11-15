@@ -104,13 +104,28 @@ const PROBLEM = /\b(blocker|blocked|blocking|failed|failure|error|cannot|can't|c
  * Used for blocked and failed cards, including ones built before the model
  * step could supply it.
  */
+/** Sulla's own housekeeping notes appended to a report, e.g. "[Container recovery] Guest workspace retained at …". */
+const SYSTEM_NOTE = /^\[(?:container [a-z]+|workspace[^\]]*|sulla[^\]]*)\]\s/i;
+
+/** The agent's words only: cut from the first housekeeping note Sulla appended. */
+export function withoutSystemNotes(report: string): string {
+  const lines = report.split('\n');
+  const at = lines.findIndex(line => SYSTEM_NOTE.test(line.trim()));
+  return (at >= 0 ? lines.slice(0, at) : lines).join('\n');
+}
+
+/** A housekeeping note is never the problem, whoever recorded it as one. */
+export function isSystemNote(text: string | undefined): boolean { return !!text && SYSTEM_NOTE.test(text.trim()) }
+
 export function findProblem(report: string): string | undefined {
-  const sentences = report
+  const sentences = withoutSystemNotes(report)
     .split(/\n+|(?<=[.!?])\s+(?=[A-Z])/)
     .map(part => part.replace(/^[#>*\-\s]+/, '').trim())
     .filter(part => part.length >= 12);
-  const hit = [...sentences].reverse().find(sentence => PROBLEM.test(sentence));
-  if (!hit) return undefined;
+  const found = [...sentences].reverse().find(sentence => PROBLEM.test(sentence));
+  if (!found) return undefined;
+  // The card labels it "Blocked:" itself; the agent's own "[BLOCKED]" tag would repeat it.
+  const hit = found.replace(/^\[(?:blocked|failed|error)\]\s*/i, '');
 
   return hit.length > 260 ? `${ hit.slice(0, 257) }…` : hit;
 }
@@ -119,12 +134,10 @@ export function findProblem(report: string): string | undefined {
 export function reportTail(report: string, outcome: string, lines = 3): string[] {
   const all = report.split('\n').map(line => line.trim()).filter(Boolean);
   if (all.length <= 1) return [];
-  // Sulla's own housekeeping notes (`[Container recovery] Guest workspace
-  // retained at …`) are appended after the agent's words: cut from there.
-  const note = all.findIndex(line => /^\[[A-Z][\w ]{2,40}\]\s/.test(line));
-  if (note >= 0) all.splice(note);
+  // Sulla's own housekeeping notes come after the agent's words: cut from there.
+  const kept = withoutSystemNotes(all.join('\n')).split('\n').filter(Boolean);
   // Closing braces and brackets left by a JSON report say nothing.
-  for (let index = all.length - 1; index >= 0; index--) if (!/[\p{L}\p{N}]/u.test(all[index])) all.splice(index, 1);
+  const meaningful = kept.filter(line => /[\p{L}\p{N}]/u.test(line));
 
-  return all.slice(-lines).filter(line => line !== outcome).map(line => (line.length > 220 ? `${ line.slice(0, 217) }…` : line));
+  return meaningful.slice(-lines).filter(line => line !== outcome).map(line => (line.length > 220 ? `${ line.slice(0, 217) }…` : line));
 }

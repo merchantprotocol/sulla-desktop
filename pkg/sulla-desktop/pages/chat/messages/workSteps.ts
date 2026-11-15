@@ -57,7 +57,65 @@ export function workSteps(messages: readonly (ThinkingMessage | ToolMessage)[]):
  * reads as title "github merge_pr", detail "x #4334 · aefaf0d". Anything else
  * keeps the command's first words as the title.
  */
-export function summariseCommand(command: string): { title: string; short?: string; detail: string } {
+/** Sulla's tool namespaces and the actions people recognise; anything else reads with spaces for underscores. */
+const NAMESPACE: Record<string, string> = { github: 'GitHub', agents: 'Agents', meta: 'Sulla', slack: 'Slack', files: 'Files', memory: 'Memory', calendar: 'Calendar', gmail: 'Gmail' };
+const ACTIONS: Record<string, string> = {
+  get_pr:           'read PR',
+  merge_pr:         'merge PR',
+  create_pr:        'open PR',
+  list_prs:         'list PRs',
+  update_pr:        'update PR',
+  close_pr:         'close PR',
+  check_runs:       'CI checks',
+  get_check_runs:   'CI checks',
+  list_check_runs:  'CI checks',
+  ci_logs:          'CI logs',
+  get_ci_logs:      'CI logs',
+  rerun_checks:     'rerun CI',
+  get_pr_comments:  'read PR comments',
+  create_review:    'post review',
+  post_review:      'post review',
+  add_comment:      'comment',
+  get_file:         'read file',
+  search_code:      'search code',
+  send_job_message: 'message agent',
+  spawn_agent:      'start agent',
+  check_agent_jobs: 'check agents',
+  report_progress:  'report progress',
+  return_result:    'return result',
+  stop_job:         'stop agent',
+  git_push:         'push',
+  git_fetch:        'fetch',
+  exechost:         'run on host',
+  browse_tools:     'find tools',
+};
+function toolAction(namespace: string, tool: string): string {
+  return ACTIONS[tool] ?? tool.replace(/[_-]+/g, ' ');
+}
+
+/**
+ * Agents' own words, with Sulla's tool names said plainly:
+ * "sulla github/git_push and git_fetch fail" → "GitHub push and fetch fail".
+ */
+export function plainToolNames(text: string): string {
+  return text
+    .replace(/\b(?:sulla\s+)?([a-z]+)\/([a-z][\w-]*)/g, (all, ns: string, tool: string) => NAMESPACE[ns] ? `${ NAMESPACE[ns] } ${ toolAction(ns, tool) }` : all)
+    .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, word => ACTIONS[word] ?? word)
+    // GitHub's review verdicts as words: CHANGES_REQUESTED → "changes requested".
+    .replace(/\b(CHANGES_REQUESTED|APPROVED|COMMENTED|DISMISSED)\b/g, word => word.toLowerCase().replace(/_/g, ' '));
+}
+
+/** Wrappers that only limit or schedule the real command: `timeout 60`, `nice -n 5`, `nohup`, `env X=1`, `time`, `sudo`. */
+const WRAPPER = /^(?:timeout(?:\s+-[\w=-]+)*\s+\d+(?:\.\d+)?[smhd]?|nice(?:\s+-n)?(?:\s+-?\d+)?|nohup|time|sudo|env(?:\s+\w+=\S*)*)\s+/;
+
+function unwrap(command: string): string {
+  let out = command.trim();
+  for (let previous = ''; previous !== out;) { previous = out; out = out.replace(WRAPPER, '') }
+  return out;
+}
+
+export function summariseCommand(raw: string): { title: string; short?: string; detail: string } {
+  const command = unwrap(raw);
   const sulla = /^sulla\s+([\w-]+)\/([\w-]+)\s*(?:'([^]*?)'?)?\s*(?:2>&1.*)?$/.exec(command);
   if (sulla) {
     const args = parseArgs(sulla[3]);
@@ -68,10 +126,14 @@ export function summariseCommand(command: string): { title: string; short?: stri
       typeof args.query === 'string' ? `"${ args.query.slice(0, 60) }"` : '',
       typeof args.path === 'string' ? args.path : '',
     ].filter(Boolean);
-    return { title: `${ sulla[1] } ${ sulla[2] }`, short: sulla[2], detail: parts.join(' · ') };
+    const action = toolAction(sulla[1], sulla[2]);
+    return { title: `${ NAMESPACE[sulla[1]] ?? sulla[1] } · ${ action }`, short: action, detail: parts.join(' · ') };
   }
   const words = command.replace(/\s+/g, ' ').trim();
-  return { title: commandName(words), detail: words.length > 90 ? `${ words.slice(0, 89) }…` : words };
+  const title = commandName(words);
+  // A Sulla tool inside a loop: "GitHub · read PR" titles it; "read PR" names it in a list.
+  const short = title.includes(' · ') ? title.split(' · ').pop() : undefined;
+  return { title, ...(short ? { short } : {}), detail: words.length > 90 ? `${ words.slice(0, 89) }…` : words };
 }
 
 /** Steps that only set the stage (`cd x &&`, `echo ---;`, loop keywords), never the point of a command. */
@@ -90,6 +152,10 @@ function commandName(command: string): string {
     const words = segment.trim().split(' ').filter(word => word && !/^\w+=/.test(word));
     if (/^(for|case|select)$/.test(words[0] ?? '')) continue; // a loop header names a variable, not a program
     while (words.length && KEYWORDS.test(words[0])) words.shift();
+    const rest = unwrap(words.join(' '));
+    const tool = /^sulla\s+([\w-]+)\/([\w-]+)/.exec(rest);
+    if (tool) return `${ NAMESPACE[tool[1]] ?? tool[1] } · ${ toolAction(tool[1], tool[2]) }`;
+    words.splice(0, words.length, ...rest.split(' ').filter(Boolean));
     const program = (words[0] ?? '').split('/').pop() ?? '';
     if (!program || SETUP.test(program) || !/^[\w.-]+$/.test(program)) continue;
     const next = words[1];

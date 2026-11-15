@@ -12,36 +12,43 @@
 -->
 <template>
   <div class="ta">
-    <button
-      type="button"
-      class="ta-line"
-      :class="`ta-${activity.state}`"
-      :aria-expanded="open"
-      aria-controls="ta-tray"
-      :disabled="!hasItems"
-      @click="open = !open"
+    <!-- The line, then any trailing controls the host adds (the dock's move button), in one row. -->
+    <div
+      class="ta-row"
+      :class="`ta-row-${activity.state}`"
     >
-      <span
-        class="ta-dot"
-        :class="`ta-dot-${activity.state}`"
-      />
-      <span class="ta-lead">{{ activity.lead }}</span>
-      <template
-        v-for="part in activity.parts"
-        :key="part"
+      <button
+        type="button"
+        class="ta-line"
+        :class="`ta-${activity.state}`"
+        :aria-expanded="open"
+        aria-controls="ta-tray"
+        :disabled="!hasItems"
+        @click="open = !open"
       >
-        <span class="ta-sep">·</span><span class="ta-part">{{ part }}</span>
-      </template>
-      <span
-        v-if="ageText"
-        class="ta-age"
-      >{{ ageText }}</span>
-      <span
-        v-if="hasItems"
-        class="ta-chev"
-        aria-hidden="true"
-      >⌄</span>
-    </button>
+        <span
+          class="ta-dot"
+          :class="`ta-dot-${activity.state}`"
+        />
+        <span class="ta-lead">{{ activity.lead }}</span>
+        <template
+          v-for="part in activity.parts"
+          :key="part"
+        >
+          <span class="ta-sep">·</span><span class="ta-part">{{ part }}</span>
+        </template>
+        <span
+          v-if="ageText"
+          class="ta-age"
+        >{{ ageText }}</span>
+        <span
+          v-if="hasItems"
+          class="ta-chev"
+          aria-hidden="true"
+        >⌄</span>
+      </button>
+      <slot name="end" />
+    </div>
 
     <div
       v-if="open && hasItems"
@@ -280,7 +287,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, runningDetail, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 import ToolApproval from '../tool/ToolApproval.vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 
@@ -350,6 +357,7 @@ function rowState(row: AgentStateRow): ThreadActivityState {
 const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', starting: 'Starting', scheduled: 'Scheduled', blocked: 'Blocked' } as const;
 function rowChip(row: AgentStateRow): string {
   if (row.state === 'queued') return CHIP.starting;
+  if (waitTarget(row) === 'github') return 'On GitHub';
   if (row.state === 'blocked') return CHIP.blocked;
   return CHIP[rowState(row)];
 }
@@ -463,6 +471,8 @@ onBeforeUnmount(() => {
   background: transparent; color: var(--ta-ink-2); font: inherit; font-size: 13px;
   text-align: left; cursor: pointer; transition: background-color .18s cubic-bezier(.22,1,.36,1), border-color .18s cubic-bezier(.22,1,.36,1);
 }
+.ta-row { display: flex; align-items: center; border-radius: 22px 22px 0 0; }
+.ta-row > .ta-line { flex: 1; min-width: 0; border-radius: 22px 0 0 0; }
 .ta-line:hover:not(:disabled) { background: var(--ta-well-raised); }
 .ta-line:disabled { cursor: default; }
 .ta-line:focus-visible, .ta-head:focus-visible, .ta-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -472,10 +482,12 @@ onBeforeUnmount(() => {
 .ta-age { margin-left: auto; color: var(--ta-ink-2); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
 .ta-chev { color: var(--ta-ink-2); transition: transform .2s cubic-bezier(.22,1,.36,1); }
 .ta-line[aria-expanded="true"] .ta-chev { transform: rotate(180deg); }
-.ta-line.ta-working { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-primary); }
-.ta-line.ta-you { background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
+.ta-line.ta-working { color: var(--text-primary); }
+.ta-row-working { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ta-row-you { background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
+.ta-row-stalled { background: color-mix(in srgb, var(--status-error) 10%, transparent); }
 .ta-line.ta-you .ta-lead { color: var(--status-warning); }
-.ta-line.ta-stalled { background: color-mix(in srgb, var(--status-error) 10%, transparent); }
+
 .ta-line.ta-stalled .ta-lead { color: var(--status-error); }
 /* Quieter than active states. */
 .ta-line.ta-idle { background: transparent; color: var(--ta-ink-3); }

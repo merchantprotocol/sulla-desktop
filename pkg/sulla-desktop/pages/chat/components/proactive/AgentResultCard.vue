@@ -79,13 +79,13 @@
           class="ar-problem"
           :class="{ 'ar-failed': item.status !== 'blocked' }"
         >
-          <b>{{ item.status === 'blocked' ? 'Blocked' : 'Failed' }}:</b> {{ problemOf(item) }}
+          <b>{{ item.status === 'blocked' ? 'Blocked' : 'Failed' }}:</b> {{ shortenHashes(problemOf(item) ?? '') }}
         </p>
         <p
           class="ar-outcome"
           :class="{ 'ar-secondary': problemOf(item) }"
         >
-          {{ item.outcome }}
+          {{ shortenHashes(item.outcome) }}
         </p>
         <!-- 2 · Whose move it is. -->
         <p
@@ -104,7 +104,7 @@
             v-for="(line, li) in tailOf(item)"
             :key="li"
           >
-            {{ line }}
+            {{ shortenHashes(line) }}
           </li>
         </ul>
 
@@ -270,7 +270,7 @@
           </button>
           <span class="ar-sp" />
           <button
-            v-for="step in stepsFor(item)"
+            v-for="step in sullaWorking ? [] : stepsFor(item)"
             :key="step.label"
             type="button"
             class="ar-btn"
@@ -330,8 +330,9 @@ import { computed, reactive, ref } from 'vue';
 import { useAgentResultActions } from '../../composables/useAgentResultActions';
 import { useChatController } from '../../controller/useChatController';
 import { useLineTime } from '../../messages/lineTime';
+import { shortenHashes } from '../../messages/sideDock';
 
-import { PURPOSE_LABEL, findProblem, reportTail } from '@pkg/shared/agentResults/AgentResultCard';
+import { PURPOSE_LABEL, findProblem, isSystemNote, reportTail } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentResultCardData, AgentResultEnvironment, AgentResultFinding, AgentResultItem, AgentResultTone } from '@pkg/shared/agentResults/AgentResultCard';
 
 const props = defineProps<{ data: AgentResultCardData; messageId?: string }>();
@@ -401,7 +402,9 @@ function duration(ms: number): string {
 function problemOf(item: AgentResultItem): string | undefined {
   if (item.status === 'completed') return undefined;
   // The card already labels it "Blocked:" or "Failed:"; drop the agent's own label.
-  return (item.problem || findProblem(item.report))?.replace(/^(blocker|blocked|error|failed)\s*[:\-–]\s*/i, '');
+  // A recorded problem that is only Sulla's housekeeping note says nothing about what went wrong.
+  const recorded = isSystemNote(item.problem) ? undefined : item.problem;
+  return (recorded || findProblem(item.report))?.replace(/^\[?(blocker|blocked|error|failed)\]?\s*[:\-–]?\s*/i, '');
 }
 /** A sentence ready to sit inside a drafted message: no trailing full stop. */
 function clause(text: string | undefined): string {
@@ -423,6 +426,9 @@ const whoNext = computed(() => {
   if (later.some(message => message.kind === 'sulla')) return 'Sulla replied below. If it is still open, resolve it with Sulla or mark it handled.';
   return 'Waiting on you: resolve it with Sulla, or mark it handled.';
 });
+
+/** Sulla is already on it: offering to hand it to Sulla again would only queue a duplicate. */
+const sullaWorking = computed(() => whoNext.value === 'Sulla is working on it now.');
 
 // ── 3 · Main buttons by state; each only drafts a message ──
 function stepsFor(item: AgentResultItem): { label: string; prompt: string; primary: boolean }[] {

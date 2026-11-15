@@ -21,7 +21,11 @@
     3. start/stop voice    on mic click — delegates to VoiceSessionAdapter
 -->
 <template>
-  <div class="composer-wrap" ref="wrapEl">
+  <div
+    ref="wrapEl"
+    class="composer-wrap"
+    :class="{ 'cw-side': side }"
+  >
     <div class="composer-inner">
       <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
@@ -36,7 +40,35 @@
         box, one solid surface with no gaps for the transcript to show through.
       -->
       <div class="composer-card">
-        <ThreadStatusLine />
+        <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
+        <div class="dock-status">
+          <ThreadStatusLine>
+            <template #end>
+              <span
+                class="dock-divider"
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                class="dock-move"
+                title="Move to the side"
+                aria-label="Move the message box and activity to the side column"
+                @click="setPosition('side')"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                ><rect
+                  x="3"
+                  y="4"
+                  width="18"
+                  height="16"
+                  rx="2"
+                /><path d="M15 4v16" /></svg>
+              </button>
+            </template>
+          </ThreadStatusLine>
+        </div>
         <div class="composer-top">
           <div
             v-if="replyTo"
@@ -136,7 +168,7 @@
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
             <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
-            <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
+            <button class="model-btn" type="button" :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle" :style="{ '--usage': `${usagePercent}%` }" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
               <span class="model-name">{{ selectionLabel }}</span>
               <span class="model-caret">▾</span>
@@ -157,7 +189,10 @@
         </div>
       </div>
 
-      <div class="hints">
+      <div
+        class="hints"
+        :class="{ 'hints-contextual': contextualHints }"
+      >
         <div class="classic-guide">
           <span><kbd>⏎</kbd> send</span>
           <span><kbd>hold ␣</kbd> talk</span>
@@ -208,6 +243,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
+import { useDockPosition } from '../../composables/useDockPosition';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerAttach     from './ComposerAttach.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
@@ -272,6 +308,8 @@ const filesImportError = ref('');
 
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
+  // The side column is narrow: keep the hint to one line there.
+  if (side.value) return controller.isRunning.value ? 'Queue a message…' : 'Ask Sulla…';
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
     : 'Ask Sulla anything…';
@@ -292,6 +330,10 @@ const usagePercent = computed(() => {
   if (!contextLimit.value) return 0;
   return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
 });
+
+// ─── Dock position (bottom or side column) ─────────────────────────
+const { position: dockPosition, setPosition } = useDockPosition();
+const side = computed(() => dockPosition.value === 'side');
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -314,6 +356,8 @@ const intentSendHint = computed(() => {
 
   return `send + run ${ picked.title }`;
 });
+/** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
+const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();
@@ -1015,4 +1059,42 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   background: transparent; color: var(--text-muted); font-size: 17px; line-height: 1;
 }
 .reply-chip-x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+
+/* ─── Side dock: the box fills the bottom of the right column ─── */
+/* The move button sits at the end of the status row: a hairline, then a quiet icon button. */
+.dock-divider { flex: none; width: 1px; height: 18px; background: var(--border-default); }
+.dock-move {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0 6px;
+  border: 1px solid transparent; border-radius: 8px; background: none; cursor: pointer;
+  color: color-mix(in srgb, var(--text-primary) 72%, var(--bg-surface));
+  transition: background-color .15s cubic-bezier(.22, 1, .36, 1), color .15s cubic-bezier(.22, 1, .36, 1);
+}
+.dock-move:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
+.dock-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dock-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.cw-side { position: static; padding: 0; }
+.cw-side .composer-inner { max-width: none; }
+.cw-side .composer-card,
+.cw-side .composer-card:focus-within { border-radius: 0; transform: none; box-shadow: none; background: var(--bg-surface); }
+.cw-side .composer-card:has(.composer:focus-within) { box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* The tabs and lanes carry the status there; the line stays mounted for the tab dots. */
+.cw-side .dock-status { display: none; }
+/* One row: + · heartbeat · agent · text · mic · send. */
+.cw-side .composer { flex-wrap: wrap; align-items: center; min-height: 0; gap: 2px; padding: 6px 8px; }
+.cw-side .usecase-strip { order: -1; flex: 0 0 calc(100% - 16px); }
+.cw-side .composer > .voice-ui { order: 5; flex: 1 1 0; min-width: 0; }
+.cw-side .composer-tools { display: contents; }
+.cw-side .composer > .input { order: 5; flex: 1 1 0; min-width: 0; min-height: 30px; padding: 6px 6px; }
+.cw-side .mic-btn, .cw-side .composer-send-wrap { order: 9; }
+.cw-side .tool-spacer, .cw-side .usage-meter { display: none; }
+.cw-side .model-btn {
+  order: 3; position: relative; flex: none; width: 30px; height: 30px; max-width: none; margin: 0 2px; padding: 0; justify-content: center;
+  border-radius: 50%; box-shadow: none;
+  background: conic-gradient(var(--accent) var(--usage, 0%), color-mix(in srgb, var(--text-primary) 14%, transparent) 0);
+}
+.cw-side .model-btn::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--bg-surface); }
+.cw-side .model-btn .model-avatar { position: relative; z-index: 1; width: 22px; height: 22px; flex-basis: 22px; font-size: 10px; }
+.cw-side .model-btn .model-name, .cw-side .model-btn .model-caret { display: none; }
+.cw-side .hints { display: none; }
+.cw-side .hints.hints-contextual { display: flex; margin: 0 0 6px; }
 </style>

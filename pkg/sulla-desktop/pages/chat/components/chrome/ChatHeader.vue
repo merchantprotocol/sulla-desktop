@@ -14,7 +14,18 @@
 <template>
   <header class="chat-header">
     <!-- Empty left column keeps the title centred. -->
-    <div class="ch-left" />
+    <div class="ch-left">
+      <button
+        v-if="origin"
+        class="ch-origin"
+        type="button"
+        :title="`Return to ${origin.name}`"
+        @click="origin.back()"
+      >
+        <span aria-hidden="true">↩</span>
+        <span class="ch-origin-t">Launched by {{ origin.name }}</span>
+      </button>
+    </div>
 
     <div class="ch-center">
       <span
@@ -33,6 +44,7 @@
 
     <div class="ch-actions">
       <button
+        v-if="!dockSide"
         class="ch-btn"
         type="button"
         :class="{ on: subAgentsOpen && subAgents.total > 0, off: subAgents.total === 0 }"
@@ -62,6 +74,7 @@
         >none yet</span>
       </button>
       <button
+        v-if="!dockSide"
         class="ch-btn"
         type="button"
         :class="{ on: filesOpen }"
@@ -87,14 +100,30 @@
           viewBox="0 0 24 24"
           aria-hidden="true"
         ><path d="M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2" /></svg>
-        History
+        <span class="ch-label">History</span>
+      </button>
+      <button
+        class="ch-btn"
+        type="button"
+        title="Find a chat, pin, decision or result (⌘P)"
+        @click="emit('find-chat')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        ><circle
+          cx="11"
+          cy="11"
+          r="6"
+        /><path d="M20 20l-4.5-4.5" /></svg>
+        <span class="ch-label">Find chat</span> <kbd class="ch-kbd">⌘P</kbd>
       </button>
     </div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, inject, ref, type Ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 
@@ -102,10 +131,14 @@ defineProps<{
   subAgents:     { total: number; live: number };
   subAgentsOpen: boolean;
   filesOpen:     boolean;
+  /** The dock is on the side: its tabs replace the Sub-agents and Files buttons. */
+  dockSide?:     boolean;
 }>();
-const emit = defineEmits<{ (e: 'toggle-subagents'): void; (e: 'toggle-files'): void }>();
+const emit = defineEmits<{ (e: 'toggle-subagents'): void; (e: 'toggle-files'): void; (e: 'find-chat'): void }>();
 
 const controller = useChatController();
+/** Set when this chat is an agent's own tab: who launched it, and a way back. */
+const origin = inject<Ref<{ name: string; back: () => void } | null>>('chat:agent-origin', ref(null));
 const titleEl = ref<HTMLElement | null>(null);
 const historyOpen = computed(() => controller.sidebar.value.historyOpen);
 
@@ -160,5 +193,20 @@ function cancelTitle(): void {
 .ch-none { font-size: 11px; color: var(--text-muted); }
 @media (max-width: 760px) {
   .ch-btn { padding: 0 8px; }
+}
+.ch-kbd { margin-left: 2px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 4px; color: color-mix(in srgb, var(--text-primary) 58%, var(--bg-surface)); font: 10.5px var(--font-mono, ui-monospace, monospace); }
+.ch-origin {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
+  border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
+  color: color-mix(in srgb, var(--text-primary) 72%, var(--bg-surface)); font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em; cursor: pointer;
+}
+.ch-origin:hover { color: var(--accent); border-color: var(--accent); }
+.ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Buttons never wrap their labels; in a narrow header (side dock open) they drop to icons, with their names in the tooltip. */
+.chat-header { container-type: inline-size; }
+.ch-btn { white-space: nowrap; }
+@container (max-width: 760px) {
+  .ch-label, .ch-kbd { display: none; }
 }
 </style>

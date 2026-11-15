@@ -21,7 +21,8 @@
 <template>
   <div
     class="chat-root"
-    :class="{ 'artifact-open': hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': chatFilesOpen }"
+    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'subagents-open': !dockSide && subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
+    :style="{ '--side-ratio': String(sideRatio) }"
   >
     <Canvas />
 
@@ -70,6 +71,8 @@
           :files-open="chatFilesOpen"
           @toggle-subagents="subAgentsCollapsed = !subAgentsCollapsed"
           @toggle-files="setChatFilesOpen(!chatFilesOpen)"
+          :dock-side="dockSide"
+          @find-chat="switcherOpen = true"
         />
         <SearchBar />
 
@@ -80,22 +83,62 @@
         />
         <Transcript v-else />
 
-        <Composer />
+        <!--
+          One Composer, moved (not remounted) into the side dock when the dock
+          is on the side, so the draft, attachments and queue come along.
+        -->
+        <Teleport
+          :to="sideBox ?? 'body'"
+          :disabled="!dockSide || !sideBox"
+        >
+          <Composer />
+        </Teleport>
       </main>
 
-      <ArtifactSidebar
-        :collapsed="artifactCollapsed"
-        :agent="selectedSubAgent"
-        @toggle-collapse="artifactCollapsed = !artifactCollapsed"
-        @open-agent="openSubAgentCard"
-        @dismiss-agent="dismissSubAgent"
-      />
-      <ChatFilesDrawer
-        :open="chatFilesOpen"
-        @close="setChatFilesOpen(false)"
-        @open-files="openFiles"
-      />
+      <template v-if="!dockSide">
+        <ArtifactSidebar
+          :collapsed="artifactCollapsed"
+          :agent="selectedSubAgent"
+          @toggle-collapse="artifactCollapsed = !artifactCollapsed"
+          @open-agent="openSubAgentCard"
+          @dismiss-agent="dismissSubAgent"
+        />
+        <ChatFilesDrawer
+          :open="chatFilesOpen"
+          @close="setChatFilesOpen(false)"
+          @open-files="openFiles"
+        />
+      </template>
+      <SideDock
+        v-else
+        ref="sideDock"
+      >
+        <template #files>
+          <ChatFilesDrawer
+            :open="true"
+            @close="sideDock?.selectTab('sulla')"
+            @open-files="openFiles"
+          />
+        </template>
+        <template #artifacts>
+          <ArtifactSidebar
+            :collapsed="false"
+            :agent="selectedSubAgent"
+            @toggle-collapse="sideDock?.selectTab('sulla')"
+            @open-agent="openSubAgentCard"
+            @dismiss-agent="dismissSubAgent"
+          />
+        </template>
+      </SideDock>
     </div>
+    <QuickSwitcher
+      v-if="switcherOpen"
+      :threads="allThreads"
+      :pinned="pinnedEntries"
+      @activate="id => { switcherOpen = false; onActivate(id) }"
+      @jump-to="target => { switcherOpen = false; onJumpTo(target) }"
+      @close="switcherOpen = false"
+    />
 
     <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
 
@@ -125,6 +168,9 @@ import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
+import SideDock          from './components/sidedock/SideDock.vue';
+import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
+import { useDockPosition } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 
@@ -700,6 +746,21 @@ function onForkEvent(ev: Event): void {
 const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
+// ─── Dock position: bottom of the chat, or the right-hand side column ───
+const { position: dockPosition, sideRatio } = useDockPosition();
+const dockSide = computed(() => dockPosition.value === 'side');
+const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
+const sideBox = computed(() => sideDock.value?.boxEl ?? null);
+// Find chat (⌘P): past chats, pins, and this chat's decisions and results.
+const switcherOpen = ref(false);
+function onFindChatKey(event: KeyboardEvent): void {
+  if (props.isActive === false || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'p') return;
+  event.preventDefault();
+  switcherOpen.value = !switcherOpen.value;
+}
+onMounted(() => window.addEventListener('keydown', onFindChatKey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFindChatKey));
+
 function setChatFilesOpen(open:boolean):void {
   chatFilesOpen.value = open;
   window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open } }));
@@ -918,5 +979,21 @@ onBeforeUnmount(() => {
   .chat-root.chat-files-open.artifact-open .main { right: 436px; }
   .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: 70vw; }
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
+}
+
+/* ─── Side dock: the right column holds the tabs and the message box ─── */
+/* Its width is a saved share of the chat area (dragged on its edge), kept between 340px and 70%. */
+.chat-root { --side-dock-w: clamp(340px, calc(var(--side-ratio, 0.32) * 100%), 70%); }
+.chat-root.dock-side .main { right: var(--side-dock-w, 440px); }
+/* useResizeSync sets these inline from the bottom box; on the side nothing sits over the transcript. */
+.chat-root.dock-side .main { --composer-h: 0px !important; --scroller-pad-b: 48px !important; }
+.chat-root.dock-side .composer-backdrop { display: none; }
+/* The Sulla tab's lanes replace the Sub-agents rail (kept mounted for its counts). */
+.chat-root.dock-side .shell :deep(.sd-agent-rail) { display: none; }
+.chat-root.dock-side .shell :deep(.sdk-embed .chat-files-drawer) {
+  position: static; display: flex; width: auto; height: 100%; border-left: 0; background: none; backdrop-filter: none;
+}
+.chat-root.dock-side .shell :deep(.sdk-embed .sd-artifact-panel) {
+  position: static; width: auto !important; height: 100%; margin: 0; border-radius: 0; box-shadow: none; background: none; backdrop-filter: none;
 }
 </style>

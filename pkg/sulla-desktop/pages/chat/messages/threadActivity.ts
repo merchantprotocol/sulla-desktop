@@ -55,8 +55,31 @@ function plural(n: number, word: string): string {
  */
 export function parkedActivity(row: AgentStateRow): { state: 'waiting' | 'idle'; detail: string } {
   if (row.waitingOnChildren > 0) return { state: 'waiting', detail: `waiting on ${ plural(row.waitingOnChildren, 'agent') }` };
+  if (row.waitReason || row.wakeAt) return { state: 'waiting', detail: waitDetail(row) };
   if (row.stateReason) return { state: 'waiting', detail: `waiting on a ${ row.stateReason }` };
   return { state: 'idle', detail: 'idle, waiting for a message' };
+}
+
+/** Waits on something outside Sulla that GitHub runs: CI, tests, checks, builds, reviews on a PR. */
+const GITHUB_WAIT = /\b(ci|checks?|tests?|shards?|workflows?|build(?: job)?|github|pull request|pr\s*#?\d+|full-(?:pr-)?tests)\b/i;
+
+/** What a timer-parked agent waits on: GitHub's runs, or something else it named. */
+export function waitTarget(row: AgentStateRow): 'github' | 'other' | null {
+  if (row.state !== 'parked' || row.waitingOnChildren > 0 || !(row.waitReason || row.wakeAt)) return null;
+  return row.waitReason && GITHUB_WAIT.test(row.waitReason) ? 'github' : 'other';
+}
+
+/** "Waiting on GitHub: CI full-tests running on 391bf1f · checks again 12:12" */
+export function waitDetail(row: AgentStateRow): string {
+  const reason = (row.waitReason ?? '').replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1').trim();
+  const wake = row.wakeAt ? ` · checks again ${ clockOf(row.wakeAt) }` : '';
+  if (!reason) return `waiting${ wake ? ` until it checks again${ wake.replace(' · checks again', '') }` : '' }`;
+  return `${ waitTarget(row) === 'github' ? 'waiting on GitHub' : 'waiting' }: ${ reason }${ wake }`;
+}
+
+function clockOf(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? '' : at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 /**
@@ -138,8 +161,16 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     if (lead) parts.push(lead.title);
   } else if (has('waiting')) {
     state = 'waiting';
-    const parked = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent');
-    parts = parked.length ? [`${ plural(parked.length, 'agent') } waiting on others`] : [];
+    const parked = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'waiting');
+    const onGitHub = parked.filter(row => waitTarget(row) === 'github').length;
+    const others = parked.length - onGitHub;
+    parts = [
+      ...(onGitHub ? [`${ plural(onGitHub, 'agent') } waiting on GitHub checks`] : []),
+      ...(others ? [`${ plural(others, 'agent') } waiting on ${ onGitHub ? 'other work' : 'others' }`] : []),
+    ];
+    // When the next of them looks again, so a quiet thread reads as scheduled, not stuck.
+    const next = parked.map(row => (row.wakeAt ? Date.parse(row.wakeAt) : NaN)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    if (next) parts.push(`next check ${ clockOf(new Date(next).toISOString()) }`);
     if (input.heartbeatMinutes) parts.push(`heartbeat every ${ input.heartbeatMinutes } min`);
   } else {
     state = 'idle';

@@ -157,7 +157,7 @@
     </footer>
 
     <dl
-      v-else-if="msg.answers?.length"
+      v-else-if="msg.answers?.length && !picksShown"
       class="qc-answers"
     >
       <template
@@ -207,6 +207,9 @@ const stateText = computed(() => {
 const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
 const expiredUnsent = computed(() => props.msg.status === 'timed_out' && !(props.msg.answers?.length));
 const hasDraft = computed(() => picks.some(p => p.length > 0) || otherText.some(t => t.trim()));
+/** The answered card already shows each question with the option picked; the summary list is only for when those picks are not known (e.g. after a restart). */
+const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answers.every((answer, qi) =>
+  answer.selected.length > 0 && answer.selected.every(choice => picks[qi]?.includes(choice))));
 
 /** The deadline passed while the user was still choosing: keep their work by sending it as a chat message. */
 function sendAsMessage(): void {

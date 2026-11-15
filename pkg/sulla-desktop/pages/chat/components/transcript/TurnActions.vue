@@ -133,8 +133,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   transition-delay: 0s, 0s;
 }
 
-/* Under Sulla's reply: its own row, so it never covers the next message. */
+/* The newest reply: its own row under the text, always there. */
 .tact-sulla { min-height: 30px; margin: 6px 0 0 -8px; }
+/* Older replies reserve no space: the actions appear at the right of the reply's own
+   "SULLA · time" line, which is otherwise empty, so they never cover the next message. */
+.tact-sulla:not(.tact-latest) { position: absolute; top: -4px; right: 0; min-height: 0; margin: 0; }
 /* Under a user bubble: just below it, with an invisible bridge so the pointer can cross the gap. */
 .tact-you { position: absolute; top: 100%; right: 0; padding-top: 4px; }
 .tact-you::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 10px; }

@@ -66,3 +66,20 @@ describe('the end of an agent report', () => {
     expect(reportTail(report, 'Done')).toEqual(['"comment": "## Astra review APPROVED"']);
   });
 });
+
+describe('the problem a blocked card names', () => {
+  // risk: the card quoted Sulla's container-recovery note as the reason an agent was blocked
+  it('is the agent\'s own words, never Sulla\'s housekeeping note', async() => {
+    const { findProblem, isSystemNote } = await import('@pkg/shared/agentResults/AgentResultCard');
+    const report = [
+      'Reviewed #4352 against the pinned head.',
+      '[BLOCKED] Desktop is offline.',
+      '[Container recovery] Guest workspace retained at /mnt/data/sulla/runtime/conversations/abc/workspace.',
+      'workspace retained because its cleanup state could not be inspected safely',
+    ].join('\n');
+
+    expect(findProblem(report)).toBe('Desktop is offline.');
+    expect(isSystemNote('[Container recovery] Guest workspace retained')).toBe(true);
+    expect(isSystemNote('[BLOCKED] Desktop is offline.')).toBe(false);
+  });
+});
