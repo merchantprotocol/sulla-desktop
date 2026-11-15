@@ -33,6 +33,7 @@ import {
 } from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
+import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
 import {
@@ -1815,6 +1816,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const finish = async(error?: Error) => {
         if (settled) return;
         settled = true;
+        runTools.clear(run.state.metadata);
         clearTimeout(idleTimer);
         clearInterval(renewTimer);
         if (abortForceTimer) clearTimeout(abortForceTimer);
@@ -1882,6 +1884,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
           const item = event.item;
           const kind = item.item_type ?? item.type;
+          // Codex: a command or tool call is in flight from started to completed.
+          if (typeof item.id === 'string' && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(kind)) {
+            if (event.type === 'item.started') runTools.started(run.state.metadata, item.id, kind === 'command_execution' ? 'a command' : String(item.tool ?? kind));
+            else runTools.finished(run.state.metadata, item.id);
+          }
           if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
             streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
             flushStream(true);
@@ -1902,6 +1909,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         }
         if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
           activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+          // Claude Code: in flight until its tool_result comes back in a user message.
+          if (typeof nested.content_block.id === 'string') runTools.started(run.state.metadata, nested.content_block.id, nested.content_block.name === 'Bash' ? 'a command' : String(nested.content_block.name ?? 'a tool'));
+        }
+        if (event.type === 'user' && Array.isArray(event.message?.content)) {
+          for (const block of event.message.content) {
+            if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') runTools.finished(run.state.metadata, block.tool_use_id);
+          }
         }
       };
       const onData = (chunk: Buffer, parseProvider = false) => {

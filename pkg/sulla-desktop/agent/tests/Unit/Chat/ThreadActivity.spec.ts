@@ -88,6 +88,19 @@ describe('a chat thread always says what it is doing', () => {
     expect(a.state).toBe('stalled');
   });
 
+  // risk: one silent agent turned the whole line into "it may have stopped" while others worked
+  it('says what else is still working when one agent goes silent', () => {
+    const a = deriveThreadActivity({ ...base, agents: [row('quiet'), row('working', { key: 'job:w1' }), row('working', { key: 'job:w2' })] });
+    expect(a).toMatchObject({ state: 'stalled', parts: ['1 agent silent', '2 agents still working'] });
+  });
+
+  // risk: an agent in one long command read as idle filler text instead of what it is doing
+  it('shows a long-running command instead of the last check-in', () => {
+    const since = new Date(Date.now() - 7 * 60_000).toISOString();
+    const a = deriveThreadActivity({ ...base, agents: [row('working', { lastCheckinSummary: 'QBO sandbox seeded', toolInFlight: { name: 'a command', since } })] });
+    expect(a.items[0].detail).toBe('running a command for 7m');
+  });
+
   it('formats ages compactly', () => {
     expect([activityAge(12_000), activityAge(240_000), activityAge(7_200_000)]).toEqual(['12s', '4m', '2h']);
   });

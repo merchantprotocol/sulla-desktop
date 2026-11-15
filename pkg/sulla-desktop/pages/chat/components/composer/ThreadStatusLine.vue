@@ -142,13 +142,19 @@
           >{{ shortShas(rowDetail(node.row)) }}</span>
           <span class="ta-when">{{ age(Date.parse(node.row.lastActivityAt)) }}</span>
           <span class="ta-acts">
+            <!-- Icon-sized like its siblings: a text button overflowed the fixed actions column. -->
             <button
               v-if="node.row.canMessage && rowState(node.row) === 'stalled'"
               type="button"
-              class="ta-btn"
+              class="ta-btn ta-icon"
+              title="Nudge: ask for a status update"
+              :aria-label="`Nudge ${node.row.label}`"
               :disabled="busy.has(`m:${node.row.key}`)"
               @click.stop="nudge(node.row)"
-            >Nudge</button>
+            ><svg
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            ><path d="M8 2.5a3.5 3.5 0 0 0-3.5 3.5v2.2L3 10.5h10l-1.5-2.3V6A3.5 3.5 0 0 0 8 2.5zM6.5 12.5a1.5 1.5 0 0 0 3 0" /></svg></button>
             <button
               v-else-if="node.row.canMessage"
               type="button"
@@ -274,7 +280,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, runningDetail, type ThreadActivityState } from '../../messages/threadActivity';
 import ToolApproval from '../tool/ToolApproval.vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 
@@ -353,6 +359,8 @@ function rowDetail(row: AgentStateRow): string {
   if (row.state === 'parked') return parkedActivity(row).detail;
   if (row.state === 'quiet') return `no check-in for ${ age(Date.parse(row.lastActivityAt)) }`;
   if (row.state === 'blocked') return blockedDetail(row);
+  const running = runningDetail(row, now.value);
+  if (running) return running;
   return row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
 function humanTitle(msg: ToolQuestionMessage | ToolApprovalMessage): string {

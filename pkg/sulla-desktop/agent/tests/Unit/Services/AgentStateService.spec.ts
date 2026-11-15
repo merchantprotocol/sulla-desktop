@@ -474,6 +474,17 @@ describe('authoritative live agent state', () => {
     expect(rows.find(row => row.jobId === 'answered')?.state).not.toBe('blocked');
   });
 
+  it('carries a long-running command into the live row and keeps the agent working', async() => {
+    // risk: a worker inside one 7-minute command showed "No progress" in the chat
+    const seeding = job('seeding', [task({ startedAt: 1_000 })]);
+    const { states } = harness([seeding], 500_000);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: () => 60_000, toolInFlight: () => ({ name: 'a command', startedAt: 80_000 }) }, () => 500_000);
+
+    const [row] = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000, {}, activity).snapshot()).rows;
+
+    expect(row).toMatchObject({ state: 'working', toolInFlight: { name: 'a command', since: new Date(80_000).toISOString() } });
+  });
+
   it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {
     // risk: a delivered blocked result re-derives the job as running, so each restart fails it again and wakes the parent with a stale notice
     const returned = job('returned-blocked', [

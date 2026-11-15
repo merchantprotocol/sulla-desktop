@@ -86,7 +86,7 @@ describe('the activity line above the message box', () => {
   it('nudges a silent agent from its row with one click', async() => {
     const w = mountLine([row('quiet')]);
     await w.find('.ta-line').trigger('click');
-    const nudge = w.findAll('.ta-btn').find(b => b.text() === 'Nudge')!;
+    const nudge = w.findAll('.ta-btn').find(b => b.attributes('aria-label')?.startsWith('Nudge'))!;
     await nudge.trigger('click');
     expect(invoke).toHaveBeenCalledWith('agents:message-job', 'job-1', 0, expect.stringContaining('Status check'));
     w.unmount();

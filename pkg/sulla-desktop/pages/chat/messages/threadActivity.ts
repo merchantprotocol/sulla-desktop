@@ -64,6 +64,13 @@ export function parkedActivity(row: AgentStateRow): { state: 'waiting' | 'idle';
  * blocker to Sulla, not to the user. Only pending questions and approvals
  * need the user. The blocker text leads: it is what explains the state.
  */
+/** "running a command for 7m" once a single call has run a minute; it explains a long silence. */
+export function runningDetail(row: AgentStateRow, now: number): string | undefined {
+  const since = row.toolInFlight ? Date.parse(row.toolInFlight.since) : NaN;
+  if (!Number.isFinite(since) || now - since < 60_000) return undefined;
+  return `running ${ row.toolInFlight!.name } for ${ activityAge(now - since) }`;
+}
+
 export function blockedDetail(row: AgentStateRow): string {
   return `waiting on Sulla: ${ row.stateReason || row.lastCheckinSummary || 'reported a blocker' }`;
 }
@@ -74,7 +81,7 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
   const said = row.lastCheckinSummary || row.stateReason || '';
   switch (row.state) {
   case 'working': case 'queued':
-    return { state: 'working', title: row.label, detail: said || (row.state === 'queued' ? 'starting' : 'working'), at, ref };
+    return { state: 'working', title: row.label, detail: runningDetail(row, Date.now()) || said || (row.state === 'queued' ? 'starting' : 'working'), at, ref };
   case 'parked': {
     const parked = parkedActivity(row);
     return parked.state === 'waiting' ? { state: 'waiting', title: row.label, detail: parked.detail, at, ref } : null;
@@ -121,7 +128,9 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     parts = items.filter(item => item.state === 'you').map(item => `${ item.title }: ${ item.detail }`).slice(0, 2);
   } else if (has('stalled')) {
     state = 'stalled';
-    parts = [`${ plural(count('stalled'), 'agent') } silent`, 'it may have stopped'];
+    // One silent agent must not hide the rest: say what else is still moving.
+    const working = count('working');
+    parts = [`${ plural(count('stalled'), 'agent') } silent`, working ? `${ plural(working, 'agent') } still working` : 'it may have stopped'];
   } else if (input.running || has('working')) {
     state = 'working';
     parts = [count('working') ? `${ plural(count('working'), 'agent') } running` : 'Sulla is replying'];

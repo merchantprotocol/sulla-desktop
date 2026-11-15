@@ -55,6 +55,8 @@ export interface AgentStateRow {
  lastActivityAt: string;
  lastCheckinAt: string | null;
  lastCheckinSummary: string | null;
+ /** The oldest tool call the task is still running (e.g. a long shell command), when known. */
+ toolInFlight?: { name: string; since: string } | null;
  /** True only when the source of truth says a message can be delivered right now. */
  canMessage: boolean;
  /** True only when the task is live and can be stopped. */

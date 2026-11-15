@@ -81,6 +81,7 @@ export class AgentStateProjector {
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
         lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
+        toolInFlight: this.toolView(state, this.activity.toolInFlight(job.jobId, taskIndex)),
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
     return { version, generatedAt: new Date(now).toISOString(), rows };
@@ -110,6 +111,10 @@ export class AgentStateProjector {
       depth += 1;
     }
     return { rootThreadId, depth };
+  }
+
+  private toolView(state: AgentViewStatus, tool?: { name: string; startedAt: number }): AgentStateRow['toolInFlight'] {
+    return tool && (state === 'working' || state === 'quiet') ? { name: tool.name, since: new Date(tool.startedAt).toISOString() } : null;
   }
 
   private iso(value?: number | null): string | null { return value ? new Date(value).toISOString() : null; }
