@@ -5,57 +5,65 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <div class="w-error">
-    <div class="head">Sulla · encountered an error</div>
-    <p>{{ msg.text }}</p>
-    <div v-if="msg.detail" class="detail">{{ msg.detail }}</div>
-    <button
-      v-if="msg.action"
-      type="button"
-      class="action"
-      @click="$emit('action', msg.action.kind)"
+  <WorkBlock
+    icon="!"
+    tone="err"
+    :by="msg.by"
+  >
+    <template #title>
+      <b>{{ msg.text }}</b>
+    </template>
+    <template #meta>
+      {{ msg.detail ? 'details' : '' }}
+    </template>
+    <pre
+      v-if="msg.detail"
+      class="ec-detail"
+    >{{ msg.detail }}</pre>
+    <p
+      v-else
+      class="ec-none"
     >
-      {{ msg.action.label }}
-    </button>
-  </div>
+      No further detail was recorded.
+    </p>
+    <template #after>
+      <div
+        v-if="msg.action"
+        class="ec-acts"
+      >
+        <button
+          type="button"
+          class="ec-btn"
+          @click="$emit('action', msg.action.kind)"
+        >
+          {{ msg.action.label }}
+        </button>
+      </div>
+    </template>
+  </WorkBlock>
 </template>
 
 <script setup lang="ts">
+import WorkBlock from './WorkBlock.vue';
+
 import type { ErrorMessage } from '../../models/Message';
 defineProps<{ msg: ErrorMessage }>();
-defineEmits<{ (e: 'action', kind: 'retry' | 'continue' | 'dismiss' | 'connect'): void }>();
+defineEmits<(e: 'action', kind: 'retry' | 'continue' | 'dismiss' | 'connect') => void>();
 </script>
 
 <style scoped>
-.w-error {
-  padding: 12px 0 12px 22px;
-  border-left: 1px solid var(--status-warning);
-  position: relative;
-  font-family: var(--font-display); font-style: italic;
-  font-size: 15px; line-height: 1.65;
-  color: var(--status-error);
+.ec-detail {
+  max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 8px 10px; border-radius: 7px; background: var(--wb-raised);
+  color: var(--wb-ink-2); font: 12px/1.55 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.w-error::before {
-  content: ""; position: absolute; left: -4px; top: 18px;
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--status-error);
+.ec-none { margin: 8px 0 0; color: var(--wb-ink-3); font-size: 12.5px; }
+/* Retry / Connect stay visible: the error is often waiting on this click. */
+.ec-acts { padding: 0 12px 10px 44px; }
+.ec-btn {
+  height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: transparent;
+  color: var(--text-primary); font-family: var(--font-body); font-size: 12.5px; cursor: pointer;
 }
-.head {
-  font-family: var(--font-mono); font-style: normal;
-  font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--status-error); margin-bottom: 6px;
-}
-.detail {
-  font-family: var(--font-mono); font-style: normal; font-size: 12px;
-  color: var(--text-muted); margin-top: 8px;
-}
-.action {
-  margin-top: 12px;
-  padding: 6px 14px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--text-primary);
-  background: transparent; border: 1px solid var(--accent-glow);
-  cursor: pointer;
-}
-.action:hover { color: var(--text-on-accent); border-color: var(--accent-hover); background: var(--accent-dim); }
+.ec-btn:hover { border-color: var(--accent); }
+.ec-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 640px) { .ec-acts { padding-left: 12px; } }
 </style>

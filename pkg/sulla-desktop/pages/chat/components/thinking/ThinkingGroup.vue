@@ -4,174 +4,155 @@
   SPDX-License-Identifier: GPL-2.0-or-later
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
-<!-- One chronological, collapsible work log for thoughts and tool activity. -->
+<!--
+  One chronological work log for thoughts and tool activity, collapsed to a
+  single line that says what it is doing (live) or did (finished). Expanded,
+  it lists readable steps with each raw command one click away, and the full
+  log exactly as recorded.
+-->
 <template>
-  <section
-    :class="['thinking', completed ? 'settled' : 'live', { open }]"
-    :data-thinking="true"
+  <WorkBlock
+    :icon="completed ? '✓' : ''"
+    tone="think"
+    :live="!completed"
+    :by="by"
   >
-    <button
-      class="head"
-      type="button"
-      :aria-expanded="open"
-      @click="toggleOpen"
-    >
-      <template v-if="completed">
-        <span class="noir-summary">{{ completionLabel }}</span>
-        <span
-          v-if="!open"
-          class="summary"
-        >{{ summary }}</span>
-        <span
-          v-if="open"
-          class="label"
-        >{{ items.length }} entries</span>
-        <span class="elapsed">{{ completedMeta }}</span>
-        <span class="chev">▸</span>
+    <template #title>
+      <b>{{ title.lead }}</b><template v-if="title.rest">
+        · {{ title.rest }}
       </template>
-      <template v-else>
-        <span>Sulla is thinking</span>
-        <span class="elapsed">{{ elapsedLabel }} · {{ items.length }} entries</span>
-        <span class="chev">▸</span>
-      </template>
-    </button>
+    </template>
+    <template #meta>
+      {{ elapsedLabel }} · {{ steps.length }} step{{ steps.length === 1 ? '' : 's' }}
+    </template>
 
-    <div
-      v-if="!completed || open"
-      :class="open ? 'expanded' : 'stream'"
+    <ul
+      v-if="!showLog"
+      class="tg-steps"
     >
-      <template
-        v-for="(item, index) in visibleItems"
-        :key="item.key"
+      <li
+        v-for="step in steps"
+        :key="step.key"
+        class="tg-step"
       >
-        <div
-          v-if="item.kind === 'thought'"
-          :class="['thought', { 'expanded-thought': open }]"
-        >
+        <template v-if="step.kind === 'run' && step.tool">
+          <ToolCall :msg="step.tool" />
+        </template>
+        <template v-else>
+          <span class="tg-k">{{ step.kind === 'run' ? 'run' : step.kind === 'think' ? 'think' : 'note' }}</span>
           <span
-            v-if="open"
-            class="index"
-          >{{ String(index + 1).padStart(2, '0') }}</span>
-          {{ item.text }}
-        </div>
-        <ToolCall
-          v-else
-          :msg="item.message"
-        />
-      </template>
-    </div>
-  </section>
+            class="tg-v"
+            :class="{ 'tg-thought': step.kind === 'think' }"
+          >
+            <template v-if="step.kind === 'run'"><b>{{ step.title }}</b><template v-if="step.detail"> · <code>{{ step.detail }}</code></template></template>
+            <template v-else>{{ step.text }}</template>
+          </span>
+          <button
+            v-if="step.kind === 'run' && step.raw"
+            type="button"
+            class="tg-link"
+            :aria-expanded="rawOpen.has(step.key)"
+            @click="toggleRaw(step.key)"
+          >
+            raw
+          </button>
+          <pre
+            v-if="step.kind === 'run' && rawOpen.has(step.key)"
+            class="tg-raw"
+          >{{ step.raw }}</pre>
+        </template>
+      </li>
+    </ul>
+    <ol
+      v-else
+      class="tg-log"
+    >
+      <li
+        v-for="entry in log"
+        :key="entry.key"
+      >
+        {{ entry.text }}
+      </li>
+    </ol>
+    <button
+      type="button"
+      class="tg-link tg-switch"
+      @click="showLog = !showLog"
+    >
+      {{ showLog ? 'Show readable steps' : `Show all ${log.length} entries as logged` }}
+    </button>
+  </WorkBlock>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
+import { workSteps, workTitle } from '../../messages/workSteps';
 import ToolCall from '../tool/ToolCall.vue';
+import WorkBlock from '../transcript/WorkBlock.vue';
 
 import type { ThinkingMessage, ToolMessage } from '../../models/Message';
 
 const props = defineProps<{ messages: readonly (ThinkingMessage | ToolMessage)[] }>();
-const open = ref(false);
 
-type WorkItem =
-  | { kind: 'thought'; key: string; text: string }
-  | { kind: 'tool'; key: string; message: ToolMessage };
-
-const items = computed<WorkItem[]>(() => props.messages.flatMap<WorkItem>(message => {
-  if (message.kind === 'tool') {
-    return [{ kind: 'tool' as const, key: message.id, message }];
-  }
-  return message.thoughts.map((text, index) => ({
-    kind: 'thought' as const,
-    key:  `${ message.id }:${ index }`,
-    text,
-  }));
-}));
+const steps = computed(() => workSteps(props.messages));
 const completed = computed(() => props.messages.every(message =>
   message.kind === 'thinking' ? message.completed : message.status !== 'running'));
-const hasThinking = computed(() => props.messages.some(message => message.kind === 'thinking'));
+const summary = computed(() => props.messages.find((message): message is ThinkingMessage => message.kind === 'thinking' && !!message.summary)?.summary);
+const title = computed(() => workTitle(steps.value, completed.value, summary.value));
+const by = computed(() => props.messages.find(message => message.by)?.by);
+
+/** Every entry exactly as recorded, fillers included. */
+const log = computed(() => props.messages.flatMap(message => (message.kind === 'tool'
+  ? [{ key: message.id, text: `${ message.tool } · ${ message.desc }${ message.meta ? ` · ${ message.meta }` : '' }` }]
+  : message.thoughts.map((text, index) => ({ key: `${ message.id }:${ index }`, text })))));
+
+const showLog = ref(false);
+const rawOpen = reactive(new Set<string>());
+function toggleRaw(key: string): void { if (rawOpen.has(key)) rawOpen.delete(key); else rawOpen.add(key); }
+
 const startedAt = computed(() => Math.min(...props.messages.map(message =>
   message.kind === 'thinking' ? message.startedAt : message.createdAt)));
 const completedAt = computed(() => Math.max(startedAt.value, ...props.messages.map(message =>
   message.kind === 'thinking' ? (message.completedAt ?? message.createdAt) : message.createdAt)));
-const summary = computed(() => {
-  const first = items.value[0];
-  if (!first) return 'Thought for a moment';
-  return first.kind === 'thought' ? first.text : first.message.desc || first.message.tool;
-});
-const visibleLive = computed(() => items.value.slice(-4));
-const visibleItems = computed(() => open.value ? items.value : visibleLive.value);
-const completionLabel = computed(() => hasThinking.value ? `Thought for ${ elapsedLabel.value }` : 'Work details');
-const completedMeta = computed(() => hasThinking.value
-  ? `${ items.value.length } entries · ${ elapsedLabel.value }`
-  : `${ items.value.length } entries`);
-
-function toggleOpen(): void {
-  open.value = !open.value;
-}
 
 const tick = ref(0);
 let interval: ReturnType<typeof setInterval> | null = null;
-function startTicking(): void {
-  if (!interval) interval = setInterval(() => { tick.value++ }, 100);
-}
-function stopTicking(): void {
-  if (interval) clearInterval(interval);
-  interval = null;
-}
+function startTicking(): void { if (!interval) interval = setInterval(() => { tick.value++ }, 1000); }
+function stopTicking(): void { if (interval) clearInterval(interval); interval = null }
 onMounted(() => { if (!completed.value) startTicking(); });
-watch(completed, done => done ? stopTicking() : startTicking());
+watch(completed, done => (done ? stopTicking() : startTicking()));
 onBeforeUnmount(stopTicking);
 
 const elapsedLabel = computed(() => {
   const end = completed.value ? completedAt.value : Date.now() + tick.value * 0;
-  return `${ Math.max(0, (end - startedAt.value) / 1000).toFixed(1) }s`;
+  const seconds = Math.max(0, Math.round((end - startedAt.value) / 1000));
+  return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m ${ seconds % 60 }s`;
 });
 </script>
 
 <style scoped>
-.thinking {
-  position: relative; padding: 12px 0 12px 22px;
-  border-left: 1px solid var(--accent-dim);
+.tg-steps, .tg-log { margin: 8px 0 0; padding: 0; list-style: none; max-height: min(60vh, 760px); overflow-y: auto; }
+.tg-step {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: baseline;
+  padding: 5px 0; border-bottom: 1px solid var(--border-default); font-size: 13px;
 }
-.thinking::before {
-  content: ""; position: absolute; left: -4px; top: 18px;
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent-glow);
+.tg-step:last-child { border-bottom: 0; }
+.tg-step :deep(.tool) { grid-column: 1 / -1; }
+.tg-k { color: var(--wb-ink-3); font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .04em; text-transform: uppercase; }
+.tg-v { min-width: 0; overflow-wrap: anywhere; color: var(--wb-ink-2); }
+.tg-v b { color: var(--text-primary); font-weight: 600; }
+.tg-v code { color: var(--text-primary); font: 12px var(--font-mono, ui-monospace, monospace); }
+.tg-thought { font-style: italic; }
+.tg-link { padding: 0; border: 0; background: none; color: var(--wb-ink-3); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tg-link:hover { color: var(--text-primary); }
+.tg-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.tg-raw {
+  grid-column: 2 / -1; margin: 2px 0 4px; padding: 8px 10px; border-radius: 7px; background: var(--wb-raised);
+  color: var(--wb-ink-2); font: 12px/1.55 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.thinking.live { border-left-color: var(--accent-glow); }
-.thinking.live::before {
-  background: var(--accent-hover); box-shadow: 0 0 14px var(--accent-hover);
-  animation: chat-pulse 1.5s infinite;
-}
-.head {
-  width: 100%; padding: 0; border: 0; background: transparent;
-  display: flex; align-items: center; gap: 14px; text-align: left;
-  font: 10px var(--font-mono); letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--accent-hover); cursor: pointer;
-}
-.live .head { cursor: default; }
-.summary {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--text-secondary); font: italic 15px var(--font-display); letter-spacing: 0.003em; text-transform: none;
-}
-.elapsed { margin-left: auto; color: var(--text-muted); letter-spacing: 0.1em; }
-.chev { color: var(--text-muted); transition: transform 0.2s ease; }
-.open .chev { transform: rotate(90deg); }
-.noir-summary { display: none; }
-.stream { margin-top: 10px; }
-.thought {
-  padding: 3px 0; color: var(--text-secondary);
-  font: italic 15px/1.55 var(--font-display);
-}
-.expanded {
-  margin-top: 10px; max-height: min(65vh, 900px) !important; overflow-y: auto !important; padding-right: 8px;
-}
-.expanded-thought { position: relative; padding-left: 30px; }
-.index {
-  position: absolute; left: 0; top: 5px;
-  color: var(--text-dim); font: 9.5px var(--font-mono); font-style: normal;
-}
-:deep(.tool) { flex-wrap: wrap; border-left: 0; padding-left: 0; }
-:deep(.tool::before) { left: 1px; }
+.tg-log { padding-left: 0; counter-reset: entry; }
+.tg-log li { counter-increment: entry; padding: 3px 0 3px 34px; position: relative; color: var(--wb-ink-2); font: 12px/1.55 var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.tg-log li::before { content: counter(entry, decimal-leading-zero); position: absolute; left: 0; color: var(--wb-ink-3); }
+.tg-switch { display: inline-block; margin-top: 8px; }
 </style>

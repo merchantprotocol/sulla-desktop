@@ -112,6 +112,9 @@ export interface ThreadPersister {
 }
 
 // ─── Controller ───────────────────────────────────────────────────
+/** Work blocks that show which agent and model produced them. */
+const STAMPED_KINDS = new Set<Message['kind']>(['thinking', 'tool', 'patch', 'error']);
+
 export class ChatController {
   // ─── Reactive state — THE SINGLE SOURCE OF TRUTH ───────────────
   readonly thread:     Ref<Thread>;
@@ -370,12 +373,23 @@ export class ChatController {
 
   // ─── Message CRUD ───────────────────────────────────────────────
   appendMessage(m: Message): void {
+    m = this.stampAuthor(m);
     this.thread.value = {
       ...this.thread.value,
       messages:  [...this.thread.value.messages, m],
       updatedAt: Date.now(),
     };
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
+  }
+
+  /**
+   * Record which agent and model produced a work block as it arrives, so the
+   * label stays true after a later model switch. Only live arrivals are
+   * stamped: history restored on load keeps whatever it was saved with.
+   */
+  private stampAuthor(m: Message): Message {
+    if (m.by || !STAMPED_KINDS.has(m.kind) || Math.abs(Date.now() - m.createdAt) > 2 * 60_000) return m;
+    return { ...m, by: { agent: this.thread.value.agentId ?? undefined, model: this.model.value.name || undefined } } as Message;
   }
 
   /** Persist a completed batch append, such as backend-thread hydration. */
